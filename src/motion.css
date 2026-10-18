@@ -1,0 +1,17 @@
+:root{--motion-quick:140ms;--motion-standard:220ms;--motion-ease:cubic-bezier(.2,.75,.25,1)}
+.pill,.nav,.trip,.view-mode button,.outline,.solid,.favorite,.custom-place-chip{transition:background-color var(--motion-quick),color var(--motion-quick),border-color var(--motion-quick)}
+.motion-reveal{display:flow-root;min-width:0}
+.image-button img{transition:none}
+.image-button:hover img{transform:none}
+.composer{transition:background-color var(--motion-quick),border-color var(--motion-quick),box-shadow var(--motion-quick)}
+.inline-details,.member-strip,.source-note{animation:none}
+.map-panel{min-width:0}
+#place-editor{margin:-8px 0 24px}
+.location-add{display:inline-flex;align-items:center;gap:5px;border:1px dashed #a7b5a3;border-radius:5px;padding:6px 10px;font-size:12px;white-space:nowrap}
+.location-add svg{width:14px;height:14px}
+.location-add[aria-expanded=true]{background:#e8ece3;border-style:solid;border-color:#66816d}
+.custom-location-note{font-size:12px;color:#6c7867;line-height:1.8;margin:0 0 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.custom-location-note button{text-decoration:underline;text-underline-offset:3px;padding:5px 0}
+.custom-location-note span{overflow-wrap:anywhere}
+/* No entrance animation on first paint, no blanket transition:all. */
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}

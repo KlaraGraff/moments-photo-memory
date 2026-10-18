@@ -1,0 +1,77 @@
+"""Check the publishable source tree or the exact staged Git blobs."""
+from pathlib import Path
+import argparse
+import json
+import os
+import re
+import subprocess
+
+ROOT=Path(__file__).resolve().parents[1]
+IGNORED={'.git','dist','private-data','local-data','exports','backups','research','qa',
+         '__pycache__','node_modules','.venv'}
+EXACT={'.gitignore','README.md','demo/sample-data.json','docs/design-notes.html',
+       'vendor/leaflet/leaflet.js','vendor/leaflet/leaflet.css','vendor/leaflet/LICENSE',
+       'vendor/leaflet/manifest.json'}
+PATTERNS={
+ 'absolute-user-path':r'/(?:Users|home)/[^/\s]+/',
+ 'credential':r'\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{24,})',
+ 'private-key':r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',
+ 'embedded-media':r'data:(?:image|audio|video)/[^;\s"\']+;base64,[A-Za-z0-9+/]{80,}',
+ 'source-photo-id':r'\bP\d{4}\b',
+}
+
+def allowed(name):
+    path=Path(name)
+    return name in EXACT or (len(path.parts)==2 and path.parts[0] in {'src','scripts','tests'}
+       and path.suffix in {'.html','.css','.js','.mjs','.py'})
+
+def candidates(staged=False):
+    if staged:
+        result=subprocess.run(['git','ls-files','--cached','-z'],cwd=ROOT,capture_output=True,check=True)
+        for raw in result.stdout.split(b'\0'):
+            if not raw:continue
+            name=raw.decode();data=subprocess.run(['git','show',':'+name],cwd=ROOT,capture_output=True,check=True).stdout
+            yield name,data
+    else:
+        for folder,dirs,files in os.walk(ROOT):
+            dirs[:]=[d for d in dirs if d not in IGNORED]
+            for name in files:
+                path=Path(folder)/name
+                yield path.relative_to(ROOT).as_posix(),path.read_bytes() if not path.is_symlink() else b'\0'
+
+def inspect(name,data):
+    errors=[]
+    if not allowed(name):errors.append('outside-source-allowlist')
+    if len(data)>300_000:errors.append('oversized-file')
+    try:text=data.decode('utf-8')
+    except UnicodeDecodeError:return errors+['binary-file']
+    if '\0' in text:errors.append('binary-or-symlink')
+    for rule,pattern in PATTERNS.items():
+        if re.search(pattern,text):errors.append(rule)
+    if name=='demo/sample-data.json':
+        try:
+            sample=json.loads(text)
+            assert sample['kind']=='synthetic-demo-only'
+            assert set(sample)=={'kind','assets','groups','sourceNotes','covers'}
+            for asset in sample['assets']:
+                assert re.fullmatch(r'D\d{4}',asset['id'])
+                assert not any(k in asset for k in ['dataURI','filename','filePath','exif','locationProvenance'])
+                assert asset['date'] is None or asset['date'].startswith('2000:')
+                if asset['geo']:
+                    assert set(asset['geo'])=={'latitude','longitude'}
+                    assert 0<=asset['geo']['latitude']<=.02 and 0<=asset['geo']['longitude']<=.02
+        except (AssertionError,KeyError,TypeError,ValueError):errors.append('invalid-synthetic-demo')
+    return errors
+
+def scan(staged=False):
+    failures=[];count=0
+    for name,data in candidates(staged):
+        count+=1
+        for rule in inspect(name,data):failures.append({'file':name,'rule':rule})
+    return count,failures
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser();parser.add_argument('--staged',action='store_true')
+    count,failures=scan(parser.parse_args().staged)
+    print(json.dumps({'checked_files':count,'passed':not failures,'failures':failures},ensure_ascii=False,indent=2))
+    raise SystemExit(bool(failures))

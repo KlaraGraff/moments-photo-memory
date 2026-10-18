@@ -1,0 +1,17 @@
+import fs from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+const ctx=vm.createContext({});
+vm.runInContext(fs.readFileSync(new URL('../src/custom-places.js',import.meta.url),'utf8')+';globalThis.model=CustomPlaces;globalThis.ui=CustomPlaceUI;',ctx);
+const saved=new Map();const storage={getItem:k=>saved.get(k)??null,setItem:(k,v)=>saved.set(k,v)};
+const store=ctx.model.create({storage,knownIds:['D0001','D0002']});
+const a=store.save({name:'Demo place',trip:'journeyA',photoIds:['D0001','D0001'],clue:'A fictional memory'});
+assert.equal(a.photoIds.length,1);assert.equal(store.list('journeyA').length,1);assert.equal(store.list('journeyB').length,0);
+assert.throws(()=>store.save({name:' DEMO place ',trip:'journeyA'}),/duplicate-name/);
+store.save({...a,name:'A new name',photoIds:['D0001','D0002']});assert.equal(store.get(a.id).photoIds.length,2);
+const recovered=ctx.model.create({storage,knownIds:['D0001','D0002']});assert.equal(recovered.get(a.id).name,'A new name');
+const b=recovered.save({name:'<script>unsafe</script>',trip:'journeyB'});const markup=ctx.ui.chip(b,true,'de');assert(!markup.includes('<script>'));assert(markup.includes('aria-pressed="true"'));
+assert(recovered.remove(a.id));assert.equal(recovered.get(a.id),null);
+const broken={getItem:()=>'{bad',setItem:()=>{throw Error('must not overwrite');}};
+const memory=ctx.model.create({storage:broken,knownIds:['D0001']});memory.save({name:'Keep in memory',trip:'journeyA'});assert.equal(memory.storageStatus.code,'read-error');assert.equal(memory.list().length,1);
+console.log('Custom place CRUD, isolation, persistence, safe markup and failed-storage checks passed.');

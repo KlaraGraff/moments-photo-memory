@@ -1,0 +1,1386 @@
+{
+  "kind": "synthetic-demo-only",
+  "assets": [
+    {
+      "id": "D0001",
+      "date": "2000:01:01 08:00:00",
+      "trip": "journeyA",
+      "place": "Demo place 1",
+      "scene": "示例片刻 01",
+      "titleLabels": {
+        "zh": "示例片刻 01",
+        "en": "Demo moment 01",
+        "de": "Beispielmoment 01"
+      },
+      "tags": [
+        "人物",
+        "人像"
+      ],
+      "width": 720,
+      "height": 540,
+      "geo": {
+        "latitude": 0.0,
+        "longitude": 0.0
+      },
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-1",
+        "labels": {
+          "zh": "示例地点 1",
+          "en": "Demo place 1",
+          "de": "Beispielort 1"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 1",
+        "en": "Demo area A / Demo place 1",
+        "de": "Beispielgebiet A / Beispielort 1"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0002",
+      "date": "2000:01:02 09:10:00",
+      "trip": "journeyA",
+      "place": "Demo place 1",
+      "scene": "示例片刻 02",
+      "titleLabels": {
+        "zh": "示例片刻 02",
+        "en": "Demo moment 02",
+        "de": "Beispielmoment 02"
+      },
+      "tags": [
+        "风景",
+        "山景"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.002,
+        "longitude": 0.0
+      },
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-1",
+        "labels": {
+          "zh": "示例地点 1",
+          "en": "Demo place 1",
+          "de": "Beispielort 1"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 1",
+        "en": "Demo area A / Demo place 1",
+        "de": "Beispielgebiet A / Beispielort 1"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0003",
+      "date": "2000:01:03 10:20:00",
+      "trip": "journeyA",
+      "place": "Demo place 1",
+      "scene": "示例片刻 03",
+      "titleLabels": {
+        "zh": "示例片刻 03",
+        "en": "Demo moment 03",
+        "de": "Beispielmoment 03"
+      },
+      "tags": [
+        "美食",
+        "食物"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.004,
+        "longitude": 0.0
+      },
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-1",
+        "labels": {
+          "zh": "示例地点 1",
+          "en": "Demo place 1",
+          "de": "Beispielort 1"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 1",
+        "en": "Demo area A / Demo place 1",
+        "de": "Beispielgebiet A / Beispielort 1"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0004",
+      "date": "2000:01:04 11:30:00",
+      "trip": "journeyA",
+      "place": "Demo place 1",
+      "scene": "示例片刻 04",
+      "titleLabels": {
+        "zh": "示例片刻 04",
+        "en": "Demo moment 04",
+        "de": "Beispielmoment 04"
+      },
+      "tags": [
+        "人物",
+        "人像"
+      ],
+      "width": 720,
+      "height": 540,
+      "geo": {
+        "latitude": 0.006,
+        "longitude": 0.0
+      },
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-1",
+        "labels": {
+          "zh": "示例地点 1",
+          "en": "Demo place 1",
+          "de": "Beispielort 1"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 1",
+        "en": "Demo area A / Demo place 1",
+        "de": "Beispielgebiet A / Beispielort 1"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0005",
+      "date": "2000:01:05 12:40:00",
+      "trip": "journeyA",
+      "place": "Demo place 2",
+      "scene": "示例片刻 05",
+      "titleLabels": {
+        "zh": "示例片刻 05",
+        "en": "Demo moment 05",
+        "de": "Beispielmoment 05"
+      },
+      "tags": [
+        "风景",
+        "山景"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.008,
+        "longitude": 0.0
+      },
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-2",
+        "labels": {
+          "zh": "示例地点 2",
+          "en": "Demo place 2",
+          "de": "Beispielort 2"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 2",
+        "en": "Demo area A / Demo place 2",
+        "de": "Beispielgebiet A / Beispielort 2"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0006",
+      "date": "2000:01:06 13:50:00",
+      "trip": "journeyA",
+      "place": "Demo place 2",
+      "scene": "示例片刻 06",
+      "titleLabels": {
+        "zh": "示例片刻 06",
+        "en": "Demo moment 06",
+        "de": "Beispielmoment 06"
+      },
+      "tags": [
+        "美食",
+        "食物"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.01,
+        "longitude": 0.0
+      },
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-2",
+        "labels": {
+          "zh": "示例地点 2",
+          "en": "Demo place 2",
+          "de": "Beispielort 2"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 2",
+        "en": "Demo area A / Demo place 2",
+        "de": "Beispielgebiet A / Beispielort 2"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0007",
+      "date": "2000:01:07 14:00:00",
+      "trip": "journeyA",
+      "place": "Demo place 2",
+      "scene": "示例片刻 07",
+      "titleLabels": {
+        "zh": "示例片刻 07",
+        "en": "Demo moment 07",
+        "de": "Beispielmoment 07"
+      },
+      "tags": [
+        "人物",
+        "人像"
+      ],
+      "width": 720,
+      "height": 540,
+      "geo": {
+        "latitude": 0.012,
+        "longitude": 0.0
+      },
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-2",
+        "labels": {
+          "zh": "示例地点 2",
+          "en": "Demo place 2",
+          "de": "Beispielort 2"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 2",
+        "en": "Demo area A / Demo place 2",
+        "de": "Beispielgebiet A / Beispielort 2"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0008",
+      "date": null,
+      "trip": "journeyA",
+      "place": "Demo place 2",
+      "scene": "示例片刻 08",
+      "titleLabels": {
+        "zh": "示例片刻 08",
+        "en": "Demo moment 08",
+        "de": "Beispielmoment 08"
+      },
+      "tags": [
+        "风景",
+        "山景"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": null,
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-2",
+        "labels": {
+          "zh": "示例地点 2",
+          "en": "Demo place 2",
+          "de": "Beispielort 2"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 2",
+        "en": "Demo area A / Demo place 2",
+        "de": "Beispielgebiet A / Beispielort 2"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0009",
+      "date": "2000:01:02 16:20:00",
+      "trip": "journeyA",
+      "place": "Demo place 3",
+      "scene": "示例片刻 09",
+      "titleLabels": {
+        "zh": "示例片刻 09",
+        "en": "Demo moment 09",
+        "de": "Beispielmoment 09"
+      },
+      "tags": [
+        "美食",
+        "食物"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.002,
+        "longitude": 0.003
+      },
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-3",
+        "labels": {
+          "zh": "示例地点 3",
+          "en": "Demo place 3",
+          "de": "Beispielort 3"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 3",
+        "en": "Demo area A / Demo place 3",
+        "de": "Beispielgebiet A / Beispielort 3"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0010",
+      "date": "2000:01:03 17:30:00",
+      "trip": "journeyA",
+      "place": "Demo place 3",
+      "scene": "示例片刻 10",
+      "titleLabels": {
+        "zh": "示例片刻 10",
+        "en": "Demo moment 10",
+        "de": "Beispielmoment 10"
+      },
+      "tags": [
+        "人物",
+        "人像"
+      ],
+      "width": 720,
+      "height": 540,
+      "geo": {
+        "latitude": 0.004,
+        "longitude": 0.003
+      },
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-3",
+        "labels": {
+          "zh": "示例地点 3",
+          "en": "Demo place 3",
+          "de": "Beispielort 3"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 3",
+        "en": "Demo area A / Demo place 3",
+        "de": "Beispielgebiet A / Beispielort 3"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0011",
+      "date": "2000:01:04 18:40:00",
+      "trip": "journeyA",
+      "place": "Demo place 3",
+      "scene": "示例片刻 11",
+      "titleLabels": {
+        "zh": "示例片刻 11",
+        "en": "Demo moment 11",
+        "de": "Beispielmoment 11"
+      },
+      "tags": [
+        "风景",
+        "山景"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.006,
+        "longitude": 0.003
+      },
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-3",
+        "labels": {
+          "zh": "示例地点 3",
+          "en": "Demo place 3",
+          "de": "Beispielort 3"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 3",
+        "en": "Demo area A / Demo place 3",
+        "de": "Beispielgebiet A / Beispielort 3"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0012",
+      "date": "2000:01:05 19:50:00",
+      "trip": "journeyA",
+      "place": "Demo place 3",
+      "scene": "示例片刻 12",
+      "titleLabels": {
+        "zh": "示例片刻 12",
+        "en": "Demo moment 12",
+        "de": "Beispielmoment 12"
+      },
+      "tags": [
+        "美食",
+        "食物"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.008,
+        "longitude": 0.003
+      },
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-3",
+        "labels": {
+          "zh": "示例地点 3",
+          "en": "Demo place 3",
+          "de": "Beispielort 3"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 3",
+        "en": "Demo area A / Demo place 3",
+        "de": "Beispielgebiet A / Beispielort 3"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0013",
+      "date": "2000:01:06 08:00:00",
+      "trip": "journeyA",
+      "place": "Demo place 4",
+      "scene": "示例片刻 13",
+      "titleLabels": {
+        "zh": "示例片刻 13",
+        "en": "Demo moment 13",
+        "de": "Beispielmoment 13"
+      },
+      "tags": [
+        "人物",
+        "人像"
+      ],
+      "width": 720,
+      "height": 540,
+      "geo": {
+        "latitude": 0.01,
+        "longitude": 0.003
+      },
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-4",
+        "labels": {
+          "zh": "示例地点 4",
+          "en": "Demo place 4",
+          "de": "Beispielort 4"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 4",
+        "en": "Demo area A / Demo place 4",
+        "de": "Beispielgebiet A / Beispielort 4"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0014",
+      "date": "2000:01:07 09:10:00",
+      "trip": "journeyA",
+      "place": "Demo place 4",
+      "scene": "示例片刻 14",
+      "titleLabels": {
+        "zh": "示例片刻 14",
+        "en": "Demo moment 14",
+        "de": "Beispielmoment 14"
+      },
+      "tags": [
+        "风景",
+        "山景"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.012,
+        "longitude": 0.003
+      },
+      "locationArea": {
+        "id": "area-a",
+        "labels": {
+          "zh": "示例区域 A",
+          "en": "Demo area A",
+          "de": "Beispielgebiet A"
+        }
+      },
+      "locationSite": {
+        "id": "site-4",
+        "labels": {
+          "zh": "示例地点 4",
+          "en": "Demo place 4",
+          "de": "Beispielort 4"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 A / 示例地点 4",
+        "en": "Demo area A / Demo place 4",
+        "de": "Beispielgebiet A / Beispielort 4"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0015",
+      "date": "2000:02:01 10:20:00",
+      "trip": "journeyB",
+      "place": "Demo place 4",
+      "scene": "示例片刻 15",
+      "titleLabels": {
+        "zh": "示例片刻 15",
+        "en": "Demo moment 15",
+        "de": "Beispielmoment 15"
+      },
+      "tags": [
+        "美食",
+        "食物"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.0,
+        "longitude": 0.006
+      },
+      "locationArea": {
+        "id": "area-b",
+        "labels": {
+          "zh": "示例区域 B",
+          "en": "Demo area B",
+          "de": "Beispielgebiet B"
+        }
+      },
+      "locationSite": {
+        "id": "site-4",
+        "labels": {
+          "zh": "示例地点 4",
+          "en": "Demo place 4",
+          "de": "Beispielort 4"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 B / 示例地点 4",
+        "en": "Demo area B / Demo place 4",
+        "de": "Beispielgebiet B / Beispielort 4"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0016",
+      "date": "2000:02:02 11:30:00",
+      "trip": "journeyB",
+      "place": "Demo place 4",
+      "scene": "示例片刻 16",
+      "titleLabels": {
+        "zh": "示例片刻 16",
+        "en": "Demo moment 16",
+        "de": "Beispielmoment 16"
+      },
+      "tags": [
+        "人物",
+        "人像"
+      ],
+      "width": 720,
+      "height": 540,
+      "geo": {
+        "latitude": 0.002,
+        "longitude": 0.006
+      },
+      "locationArea": {
+        "id": "area-b",
+        "labels": {
+          "zh": "示例区域 B",
+          "en": "Demo area B",
+          "de": "Beispielgebiet B"
+        }
+      },
+      "locationSite": {
+        "id": "site-4",
+        "labels": {
+          "zh": "示例地点 4",
+          "en": "Demo place 4",
+          "de": "Beispielort 4"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 B / 示例地点 4",
+        "en": "Demo area B / Demo place 4",
+        "de": "Beispielgebiet B / Beispielort 4"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0017",
+      "date": "2000:02:03 12:40:00",
+      "trip": "journeyB",
+      "place": "Demo place 5",
+      "scene": "示例片刻 17",
+      "titleLabels": {
+        "zh": "示例片刻 17",
+        "en": "Demo moment 17",
+        "de": "Beispielmoment 17"
+      },
+      "tags": [
+        "风景",
+        "山景"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.004,
+        "longitude": 0.006
+      },
+      "locationArea": {
+        "id": "area-b",
+        "labels": {
+          "zh": "示例区域 B",
+          "en": "Demo area B",
+          "de": "Beispielgebiet B"
+        }
+      },
+      "locationSite": {
+        "id": "site-5",
+        "labels": {
+          "zh": "示例地点 5",
+          "en": "Demo place 5",
+          "de": "Beispielort 5"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 B / 示例地点 5",
+        "en": "Demo area B / Demo place 5",
+        "de": "Beispielgebiet B / Beispielort 5"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0018",
+      "date": "2000:02:04 13:50:00",
+      "trip": "journeyB",
+      "place": "Demo place 5",
+      "scene": "示例片刻 18",
+      "titleLabels": {
+        "zh": "示例片刻 18",
+        "en": "Demo moment 18",
+        "de": "Beispielmoment 18"
+      },
+      "tags": [
+        "美食",
+        "食物"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.006,
+        "longitude": 0.006
+      },
+      "locationArea": {
+        "id": "area-b",
+        "labels": {
+          "zh": "示例区域 B",
+          "en": "Demo area B",
+          "de": "Beispielgebiet B"
+        }
+      },
+      "locationSite": {
+        "id": "site-5",
+        "labels": {
+          "zh": "示例地点 5",
+          "en": "Demo place 5",
+          "de": "Beispielort 5"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 B / 示例地点 5",
+        "en": "Demo area B / Demo place 5",
+        "de": "Beispielgebiet B / Beispielort 5"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0019",
+      "date": "2000:02:05 14:00:00",
+      "trip": "journeyB",
+      "place": "Demo place 5",
+      "scene": "示例片刻 19",
+      "titleLabels": {
+        "zh": "示例片刻 19",
+        "en": "Demo moment 19",
+        "de": "Beispielmoment 19"
+      },
+      "tags": [
+        "人物",
+        "人像"
+      ],
+      "width": 720,
+      "height": 540,
+      "geo": {
+        "latitude": 0.008,
+        "longitude": 0.006
+      },
+      "locationArea": {
+        "id": "area-b",
+        "labels": {
+          "zh": "示例区域 B",
+          "en": "Demo area B",
+          "de": "Beispielgebiet B"
+        }
+      },
+      "locationSite": {
+        "id": "site-5",
+        "labels": {
+          "zh": "示例地点 5",
+          "en": "Demo place 5",
+          "de": "Beispielort 5"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 B / 示例地点 5",
+        "en": "Demo area B / Demo place 5",
+        "de": "Beispielgebiet B / Beispielort 5"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0020",
+      "date": "2000:02:06 15:10:00",
+      "trip": "journeyB",
+      "place": "Demo place 5",
+      "scene": "示例片刻 20",
+      "titleLabels": {
+        "zh": "示例片刻 20",
+        "en": "Demo moment 20",
+        "de": "Beispielmoment 20"
+      },
+      "tags": [
+        "风景",
+        "山景"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.01,
+        "longitude": 0.006
+      },
+      "locationArea": {
+        "id": "area-b",
+        "labels": {
+          "zh": "示例区域 B",
+          "en": "Demo area B",
+          "de": "Beispielgebiet B"
+        }
+      },
+      "locationSite": {
+        "id": "site-5",
+        "labels": {
+          "zh": "示例地点 5",
+          "en": "Demo place 5",
+          "de": "Beispielort 5"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 B / 示例地点 5",
+        "en": "Demo area B / Demo place 5",
+        "de": "Beispielgebiet B / Beispielort 5"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0021",
+      "date": "2000:02:07 16:20:00",
+      "trip": "journeyB",
+      "place": "Demo place 6",
+      "scene": "示例片刻 21",
+      "titleLabels": {
+        "zh": "示例片刻 21",
+        "en": "Demo moment 21",
+        "de": "Beispielmoment 21"
+      },
+      "tags": [
+        "美食",
+        "食物"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.012,
+        "longitude": 0.006
+      },
+      "locationArea": {
+        "id": "area-b",
+        "labels": {
+          "zh": "示例区域 B",
+          "en": "Demo area B",
+          "de": "Beispielgebiet B"
+        }
+      },
+      "locationSite": {
+        "id": "site-6",
+        "labels": {
+          "zh": "示例地点 6",
+          "en": "Demo place 6",
+          "de": "Beispielort 6"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 B / 示例地点 6",
+        "en": "Demo area B / Demo place 6",
+        "de": "Beispielgebiet B / Beispielort 6"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0022",
+      "date": "2000:02:01 17:30:00",
+      "trip": "journeyB",
+      "place": "Demo place 6",
+      "scene": "示例片刻 22",
+      "titleLabels": {
+        "zh": "示例片刻 22",
+        "en": "Demo moment 22",
+        "de": "Beispielmoment 22"
+      },
+      "tags": [
+        "人物",
+        "人像"
+      ],
+      "width": 720,
+      "height": 540,
+      "geo": {
+        "latitude": 0.0,
+        "longitude": 0.009
+      },
+      "locationArea": {
+        "id": "area-b",
+        "labels": {
+          "zh": "示例区域 B",
+          "en": "Demo area B",
+          "de": "Beispielgebiet B"
+        }
+      },
+      "locationSite": {
+        "id": "site-6",
+        "labels": {
+          "zh": "示例地点 6",
+          "en": "Demo place 6",
+          "de": "Beispielort 6"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 B / 示例地点 6",
+        "en": "Demo area B / Demo place 6",
+        "de": "Beispielgebiet B / Beispielort 6"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0023",
+      "date": "2000:02:02 18:40:00",
+      "trip": "journeyB",
+      "place": "Demo place 6",
+      "scene": "示例片刻 23",
+      "titleLabels": {
+        "zh": "示例片刻 23",
+        "en": "Demo moment 23",
+        "de": "Beispielmoment 23"
+      },
+      "tags": [
+        "风景",
+        "山景"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.002,
+        "longitude": 0.009
+      },
+      "locationArea": {
+        "id": "area-b",
+        "labels": {
+          "zh": "示例区域 B",
+          "en": "Demo area B",
+          "de": "Beispielgebiet B"
+        }
+      },
+      "locationSite": {
+        "id": "site-6",
+        "labels": {
+          "zh": "示例地点 6",
+          "en": "Demo place 6",
+          "de": "Beispielort 6"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 B / 示例地点 6",
+        "en": "Demo area B / Demo place 6",
+        "de": "Beispielgebiet B / Beispielort 6"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0024",
+      "date": "2000:02:03 19:50:00",
+      "trip": "journeyB",
+      "place": "Demo place 6",
+      "scene": "示例片刻 24",
+      "titleLabels": {
+        "zh": "示例片刻 24",
+        "en": "Demo moment 24",
+        "de": "Beispielmoment 24"
+      },
+      "tags": [
+        "美食",
+        "食物"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.004,
+        "longitude": 0.009
+      },
+      "locationArea": {
+        "id": "area-b",
+        "labels": {
+          "zh": "示例区域 B",
+          "en": "Demo area B",
+          "de": "Beispielgebiet B"
+        }
+      },
+      "locationSite": {
+        "id": "site-6",
+        "labels": {
+          "zh": "示例地点 6",
+          "en": "Demo place 6",
+          "de": "Beispielort 6"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 B / 示例地点 6",
+        "en": "Demo area B / Demo place 6",
+        "de": "Beispielgebiet B / Beispielort 6"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0025",
+      "date": "2000:02:04 08:00:00",
+      "trip": "journeyB",
+      "place": "Demo place 7",
+      "scene": "示例片刻 25",
+      "titleLabels": {
+        "zh": "示例片刻 25",
+        "en": "Demo moment 25",
+        "de": "Beispielmoment 25"
+      },
+      "tags": [
+        "人物",
+        "人像"
+      ],
+      "width": 720,
+      "height": 540,
+      "geo": {
+        "latitude": 0.006,
+        "longitude": 0.009
+      },
+      "locationArea": {
+        "id": "area-b",
+        "labels": {
+          "zh": "示例区域 B",
+          "en": "Demo area B",
+          "de": "Beispielgebiet B"
+        }
+      },
+      "locationSite": {
+        "id": "site-7",
+        "labels": {
+          "zh": "示例地点 7",
+          "en": "Demo place 7",
+          "de": "Beispielort 7"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 B / 示例地点 7",
+        "en": "Demo area B / Demo place 7",
+        "de": "Beispielgebiet B / Beispielort 7"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0026",
+      "date": "2000:02:05 09:10:00",
+      "trip": "journeyB",
+      "place": "Demo place 7",
+      "scene": "示例片刻 26",
+      "titleLabels": {
+        "zh": "示例片刻 26",
+        "en": "Demo moment 26",
+        "de": "Beispielmoment 26"
+      },
+      "tags": [
+        "风景",
+        "山景"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.008,
+        "longitude": 0.009
+      },
+      "locationArea": {
+        "id": "area-b",
+        "labels": {
+          "zh": "示例区域 B",
+          "en": "Demo area B",
+          "de": "Beispielgebiet B"
+        }
+      },
+      "locationSite": {
+        "id": "site-7",
+        "labels": {
+          "zh": "示例地点 7",
+          "en": "Demo place 7",
+          "de": "Beispielort 7"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 B / 示例地点 7",
+        "en": "Demo area B / Demo place 7",
+        "de": "Beispielgebiet B / Beispielort 7"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    },
+    {
+      "id": "D0027",
+      "date": "2000:02:06 10:20:00",
+      "trip": "journeyB",
+      "place": "Demo place 7",
+      "scene": "示例片刻 27",
+      "titleLabels": {
+        "zh": "示例片刻 27",
+        "en": "Demo moment 27",
+        "de": "Beispielmoment 27"
+      },
+      "tags": [
+        "美食",
+        "食物"
+      ],
+      "width": 600,
+      "height": 720,
+      "geo": {
+        "latitude": 0.01,
+        "longitude": 0.009
+      },
+      "locationArea": {
+        "id": "area-b",
+        "labels": {
+          "zh": "示例区域 B",
+          "en": "Demo area B",
+          "de": "Beispielgebiet B"
+        }
+      },
+      "locationSite": {
+        "id": "site-7",
+        "labels": {
+          "zh": "示例地点 7",
+          "en": "Demo place 7",
+          "de": "Beispielort 7"
+        }
+      },
+      "locationFullLabels": {
+        "zh": "示例区域 B / 示例地点 7",
+        "en": "Demo area B / Demo place 7",
+        "de": "Beispielgebiet B / Beispielort 7"
+      },
+      "locationConfidenceText": {
+        "zh": "虚构演示资料",
+        "en": "Synthetic demonstration data",
+        "de": "Fiktive Beispieldaten"
+      }
+    }
+  ],
+  "groups": {
+    "journeyA": [
+      [
+        "D0001",
+        "D0002"
+      ],
+      [
+        "D0003"
+      ],
+      [
+        "D0004"
+      ],
+      [
+        "D0005"
+      ],
+      [
+        "D0006"
+      ],
+      [
+        "D0007"
+      ],
+      [
+        "D0008"
+      ],
+      [
+        "D0009"
+      ],
+      [
+        "D0010"
+      ],
+      [
+        "D0011"
+      ],
+      [
+        "D0012"
+      ],
+      [
+        "D0013"
+      ],
+      [
+        "D0014"
+      ]
+    ],
+    "journeyB": [
+      [
+        "D0015"
+      ],
+      [
+        "D0016",
+        "D0017",
+        "D0018"
+      ],
+      [
+        "D0019"
+      ],
+      [
+        "D0020"
+      ],
+      [
+        "D0021"
+      ],
+      [
+        "D0022"
+      ],
+      [
+        "D0023"
+      ],
+      [
+        "D0024"
+      ],
+      [
+        "D0025"
+      ],
+      [
+        "D0026"
+      ],
+      [
+        "D0027"
+      ]
+    ]
+  },
+  "sourceNotes": {
+    "D0003": "这是一段虚构的示例回忆，用来体验就地记录。"
+  },
+  "covers": {
+    "journeyA": "D0001",
+    "journeyB": "D0015"
+  }
+}

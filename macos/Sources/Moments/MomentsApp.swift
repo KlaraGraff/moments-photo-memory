@@ -32,12 +32,15 @@ struct MomentsApp: App {
     init() {
         do {
             #if DEBUG
-            // UI tests must never touch the user's store: -MomentsUITesting
+            // Tests must never touch the user's store: -MomentsUITesting
             // uses an in-memory store, -MomentsUITestStoreDirectory a
             // throwaway on-disk store that survives relaunches.
-            let isUITesting = ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
+            // A unit-test host must not open the user's store either.
+            let isUnitTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             let testStoreDirectory = Self.uiTestStoreDirectory
             let testStoreURL = testStoreDirectory?.appending(path: "Moments.store")
+            let isUITesting = ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
+                || (isUnitTestHost && testStoreURL == nil)
             let container = try MomentsPersistence.makeContainer(
                 inMemory: isUITesting,
                 url: testStoreURL

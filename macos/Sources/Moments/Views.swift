@@ -11,6 +11,8 @@ private enum MomentsSection: Hashable {
 
 struct ContentView: View {
     @State private var selection: MomentsSection? = .library
+    /// Owned by the app so Library filters, density and scroll survive sidebar switches.
+    let libraryState: LibraryViewState
     @Environment(SelectionModel.self) private var shared
 
     var body: some View {
@@ -31,7 +33,7 @@ struct ContentView: View {
             .navigationTitle("Moments")
         } detail: {
             switch selection ?? .library {
-            case .library: LibraryView()
+            case .library: LibraryView(state: libraryState)
             case .places: PlacesScreen()
             case .footprints: FootprintsView()
             case .timeline: TimelineScreen()
@@ -48,48 +50,6 @@ struct ContentView: View {
             }
             shared.requestedDestination = nil
         }
-    }
-}
-
-struct LibraryView: View {
-    @Query private var items: [MediaItem]
-
-    var body: some View {
-        Group {
-            if items.isEmpty {
-                ContentUnavailableView("No memories yet", systemImage: "photo.on.rectangle", description: Text("Add a photo or import a synthetic demo to begin."))
-            } else {
-                List(items.sorted { ($0.captureDate ?? .distantPast) < ($1.captureDate ?? .distantPast) }) { item in
-                    HStack(spacing: 12) {
-                        Image(systemName: item.kind == .video ? "video" : "photo")
-                            .font(.title2)
-                            .foregroundStyle(.tint)
-                            .frame(width: 32)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(item.title.isEmpty ? item.id : item.title)
-                                .font(.headline)
-                            Text(item.id)
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                            if let date = item.captureDate {
-                                Text(date, format: .dateTime.year().month().day())
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-                        if item.source == .demo {
-                            Text("Synthetic demo")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-                .listStyle(.inset)
-            }
-        }
-        .navigationTitle("Library")
     }
 }
 

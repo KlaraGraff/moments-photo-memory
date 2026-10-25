@@ -30,6 +30,38 @@ final class PlaceAndRouteTests: XCTestCase {
         XCTAssertGreaterThan(segments[0].distanceMeters, 300_000)
     }
 
+    func testLongRoadTripSplitsCityClustersAndBuildsOverview() {
+        let stops = (0...20).map { index in
+            stop(
+                "road-\(index)",
+                hours: Double(index),
+                latitude: 0,
+                longitude: Double(index) * 0.0899322
+            )
+        }
+
+        let clusters = PlaceClusterer().clusters(for: stops, level: .city)
+        let segments = RouteBuilder(stops: stops).overview(level: .city)
+
+        XCTAssertGreaterThan(clusters.count, 1)
+        XCTAssertFalse(segments.isEmpty)
+    }
+
+    func testLongWalkSplitsSpotClustersWithinOneDay() {
+        let stops = (0...20).map { index in
+            stop(
+                "walk-\(index)",
+                hours: Double(index) / 4,
+                latitude: 0,
+                longitude: Double(index) * 0.00449661
+            )
+        }
+
+        let spots = PlaceClusterer().clusters(for: stops, level: .spot)
+
+        XCTAssertGreaterThan(spots.count, 1)
+    }
+
     func testReturningToCityKeepsMajorMoves() {
         let stops = [
             stop("a-1", hours: 0, latitude: 40.000, longitude: -74.000),

@@ -118,7 +118,7 @@ public struct PlaceClusterer: Sendable {
             }
         }
 
-        let components = connectedComponents(automaticStops, level: level)
+        let components = boundedClusters(automaticStops, level: level)
         for component in components {
             guard let anchor = component.first else { continue }
             let id = "\(level.rawValue)-\(Self.stableComponentKey(anchor.id))"
@@ -145,34 +145,42 @@ public struct PlaceClusterer: Sendable {
         }
     }
 
-    private func connectedComponents(_ stops: [PhotoStop], level: PlaceLevel) -> [[PhotoStop]] {
+    private func boundedClusters(_ stops: [PhotoStop], level: PlaceLevel) -> [[PhotoStop]] {
         guard !stops.isEmpty else { return [] }
-        var unionFind = UnionFind(count: stops.count)
         let radius = radiusMeters(for: level)
+        var clusters: [RunningPlaceCluster] = []
+        clusters.reserveCapacity(stops.count)
 
-        for left in stops.indices {
-            guard let leftCoordinate = stops[left].coordinate else { continue }
-            for right in stops.index(after: left)..<stops.endIndex {
-                guard let rightCoordinate = stops[right].coordinate else { continue }
-                guard leftCoordinate.distance(to: rightCoordinate) <= radius else { continue }
+        for stop in stops {
+            guard let coordinate = stop.coordinate else { continue }
+
+            var nearestIndex: Int?
+            var nearestDistance = Double.greatestFiniteMagnitude
+            for index in clusters.indices {
+                let cluster = clusters[index]
                 if level == .spot {
-                    let gap = abs(stops[left].date.timeIntervalSince(stops[right].date))
+                    let gap = abs(stop.date.timeIntervalSince(cluster.lastDate))
                     guard gap <= maximumTimeGap else { continue }
                 }
-                unionFind.union(left, right)
+
+                let distance = coordinate.distance(to: cluster.center)
+                guard distance <= radius else { continue }
+                if distance < nearestDistance {
+                    nearestDistance = distance
+                    nearestIndex = index
+                }
+            }
+
+            if let nearestIndex {
+                clusters[nearestIndex].append(stop, coordinate: coordinate)
+            } else {
+                clusters.append(RunningPlaceCluster(firstStop: stop, coordinate: coordinate))
             }
         }
 
-        var components: [Int: [PhotoStop]] = [:]
-        for index in stops.indices {
-            components[unionFind.find(index), default: []].append(stops[index])
-        }
-        return components.values
-            .map { $0.sorted(by: Self.photoOrder) }
-            .sorted {
-                guard let lhs = $0.first, let rhs = $1.first else { return $0.count < $1.count }
-                return Self.photoOrder(lhs, rhs)
-            }
+        return clusters
+            .sorted { Self.photoOrder($0.firstStop, $1.firstStop) }
+            .map(\.stops)
     }
 
     private func radiusMeters(for level: PlaceLevel) -> Double {
@@ -194,34 +202,55 @@ public struct PlaceClusterer: Sendable {
     }
 }
 
-private struct UnionFind {
-    private var parents: [Int]
-    private var ranks: [Int]
+private struct RunningPlaceCluster {
+    var stops: [PhotoStop]
+    let firstStop: PhotoStop
+    var center: GeoPoint
+    var lastDate: Date
 
-    init(count: Int) {
-        parents = Array(0..<count)
-        ranks = Array(repeating: 0, count: count)
+    private var vectorX: Double
+    private var vectorY: Double
+    private var vectorZ: Double
+
+    init(firstStop: PhotoStop, coordinate: GeoPoint) {
+        self.stops = [firstStop]
+        self.firstStop = firstStop
+        self.center = coordinate
+        self.lastDate = firstStop.date
+
+        let vector = Self.vector(for: coordinate)
+        self.vectorX = vector.x
+        self.vectorY = vector.y
+        self.vectorZ = vector.z
     }
 
-    mutating func find(_ value: Int) -> Int {
-        if parents[value] != value {
-            parents[value] = find(parents[value])
-        }
-        return parents[value]
+    mutating func append(_ stop: PhotoStop, coordinate: GeoPoint) {
+        let vector = Self.vector(for: coordinate)
+        vectorX += vector.x
+        vectorY += vector.y
+        vectorZ += vector.z
+        center = Self.center(vectorX: vectorX, vectorY: vectorY, vectorZ: vectorZ)
+        lastDate = stop.date
+        stops.append(stop)
     }
 
-    mutating func union(_ lhs: Int, _ rhs: Int) {
-        let left = find(lhs)
-        let right = find(rhs)
-        guard left != right else { return }
+    private static func vector(for point: GeoPoint) -> (x: Double, y: Double, z: Double) {
+        let radians = Double.pi / 180
+        let latitude = point.latitude * radians
+        let longitude = point.longitude * radians
+        let cosLatitude = cos(latitude)
+        return (
+            x: cosLatitude * cos(longitude),
+            y: cosLatitude * sin(longitude),
+            z: sin(latitude)
+        )
+    }
 
-        if ranks[left] < ranks[right] {
-            parents[left] = right
-        } else if ranks[left] > ranks[right] {
-            parents[right] = left
-        } else {
-            parents[right] = left
-            ranks[left] += 1
-        }
+    private static func center(vectorX: Double, vectorY: Double, vectorZ: Double) -> GeoPoint {
+        let radians = Double.pi / 180
+        let longitude = atan2(vectorY, vectorX) / radians
+        let horizontal = sqrt(vectorX * vectorX + vectorY * vectorY)
+        let latitude = atan2(vectorZ, horizontal) / radians
+        return GeoPoint(latitude: latitude, longitude: longitude)
     }
 }

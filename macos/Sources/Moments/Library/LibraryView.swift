@@ -235,6 +235,8 @@ struct LibraryView: View {
                         .font(.caption)
                 }
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("library.photoCount")
+                .accessibilityValue(String(cachedVisibleCount))
             }
             Spacer()
             if !selection.selectedItemIDs.isEmpty {
@@ -380,6 +382,7 @@ struct LibraryView: View {
                     Label("Import Folder…", systemImage: "folder.badge.plus")
                 }
                 .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("library.importFolder")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

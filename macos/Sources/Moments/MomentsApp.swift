@@ -17,21 +17,39 @@ struct MomentsApp: App {
     private var isUITestDarkMode: Bool {
         ProcessInfo.processInfo.arguments.contains("-MomentsUITestDarkMode")
     }
+
+    private static var uiTestStoreDirectory: URL? {
+        guard let index = ProcessInfo.processInfo.arguments.firstIndex(of: "-MomentsUITestStoreDirectory"),
+              index + 1 < ProcessInfo.processInfo.arguments.count else {
+            return nil
+        }
+        let path = ProcessInfo.processInfo.arguments[index + 1]
+        guard path.hasPrefix("/") else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
     #endif
 
     init() {
         do {
             #if DEBUG
-            // UI tests must never touch the user's persistent store. The
-            // launch argument selects a fresh in-memory container for each
-            // app launch; the normal path below remains unchanged.
+            // UI tests must never touch the user's store: -MomentsUITesting
+            // uses an in-memory store, -MomentsUITestStoreDirectory a
+            // throwaway on-disk store that survives relaunches.
             let isUITesting = ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
-            let container = try MomentsPersistence.makeContainer(inMemory: isUITesting)
+            let testStoreDirectory = Self.uiTestStoreDirectory
+            let testStoreURL = testStoreDirectory?.appending(path: "Moments.store")
+            let container = try MomentsPersistence.makeContainer(
+                inMemory: isUITesting,
+                url: testStoreURL
+            )
             #else
             let container = try MomentsPersistence.makeContainer()
             #endif
             #if DEBUG
-            try? DemoSeeder.seedIfNeeded(context: container.mainContext)
+            // The on-disk UI-test store holds only what the test imports.
+            if Self.uiTestStoreDirectory == nil {
+                try? DemoSeeder.seedIfNeeded(context: container.mainContext)
+            }
             #endif
             modelContainer = container
             storeError = nil

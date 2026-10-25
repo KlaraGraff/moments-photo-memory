@@ -12,7 +12,11 @@ IGNORED={'.git','dist','private-data','local-data','exports','backups','research
 EXACT={'.gitignore','README.md','AGENTS.md','demo/sample-data.json','docs/design-notes.html','docs/ui-quality-principles.md',
        'scripts/apple_photos_bridge.swift','scripts/apple_photos_host.swift',
        'vendor/leaflet/leaflet.js','vendor/leaflet/leaflet.css','vendor/leaflet/LICENSE',
-       'vendor/leaflet/manifest.json','docs/sharing-design.md'}
+       'vendor/leaflet/manifest.json','docs/sharing-design.md',
+       'macos/Config/Signing.xcconfig','macos/Config/Local.xcconfig.example'}
+# Gitignored per-developer files: skipped when scanning the working tree, and
+# never allowlisted, so staging one fails the --staged check.
+LOCAL_ONLY={'macos/Config/Local.xcconfig'}
 PATTERNS={
  'absolute-user-path':r'/(?:Users|home)/[^/\s]+/',
  'credential':r'\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{24,})',
@@ -45,6 +49,7 @@ def candidates(staged=False):
             for name in files:
                 if name in IGNORED:continue  # a worktree's .git is a file
                 path=Path(folder)/name
+                if path.relative_to(ROOT).as_posix() in LOCAL_ONLY:continue
                 yield path.relative_to(ROOT).as_posix(),path.read_bytes() if not path.is_symlink() else b'\0'
 
 def inspect(name,data):

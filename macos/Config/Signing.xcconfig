@@ -1,0 +1,14 @@
+// Code signing for the Moments app target.
+//
+// Committed defaults build unsigned (CI and fresh clones). To sign locally,
+// copy Local.xcconfig.example to Local.xcconfig (gitignored) and fill in your
+// team; nothing that identifies a developer account is ever committed.
+
+CODE_SIGN_STYLE = Automatic
+MOMENTS_BUNDLE_ID = org.example.Moments
+PRODUCT_BUNDLE_IDENTIFIER = $(MOMENTS_BUNDLE_ID)
+CODE_SIGNING_ALLOWED = NO
+CODE_SIGNING_REQUIRED = NO
+CODE_SIGN_IDENTITY =
+
+#include? "Local.xcconfig"

@@ -51,3 +51,5 @@ macos/.build/
 # SwiftPM build output
 macos/MomentsCore/.build/
 macos/MomentsCore/.swiftpm/
+# Local code-signing settings (team id, bundle id); see macos/Config/Local.xcconfig.example
+macos/Config/Local.xcconfig

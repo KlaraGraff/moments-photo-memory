@@ -32,7 +32,7 @@ struct ContentView: View {
         } detail: {
             switch selection ?? .library {
             case .library: LibraryView()
-            case .places: PlacesView()
+            case .places: PlacesScreen()
             case .footprints: FootprintsView()
             case .timeline: TimelineScreen()
             }
@@ -90,13 +90,6 @@ struct LibraryView: View {
             }
         }
         .navigationTitle("Library")
-    }
-}
-
-struct PlacesView: View {
-    var body: some View {
-        Map(initialPosition: .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0.005, longitude: 0.003), span: MKCoordinateSpan(latitudeDelta: 0.03, longitudeDelta: 0.03))))
-            .navigationTitle("Places")
     }
 }
 

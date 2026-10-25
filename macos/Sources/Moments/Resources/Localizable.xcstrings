@@ -58,6 +58,104 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加照片或导入合成演示即可开始。" } }
       }
     },
+    "Add a location to see places and routes." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Füge einen Standort hinzu, um Orte und Routen zu sehen." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add a location to see places and routes." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加定位后即可查看地点和路线。" } }
+      }
+    },
+    "Area cluster" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Gebietsgruppe" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Area cluster" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "区域聚类" } }
+      }
+    },
+    "City cluster" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Stadtgruppe" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "City cluster" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "城市聚类" } }
+      }
+    },
+    "Close" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Schließen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Close" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "关闭" } }
+      }
+    },
+    "Fit all" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Alle anzeigen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Fit all" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查看全部" } }
+      }
+    },
+    "Imagery" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Satellit" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Imagery" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "影像" } }
+      }
+    },
+    "Loading map…" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Karte wird geladen …" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading map…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载地图……" } }
+      }
+    },
+    "Map tiles unavailable" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Kartenteile nicht verfügbar" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Map tiles unavailable" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "地图图块不可用" } }
+      }
+    },
+    "No geotagged photos" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Keine Fotos mit Standort" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No geotagged photos" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "没有带定位的照片" } }
+      }
+    },
+    "Spot" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Ort" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Spot" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "地点" } }
+      }
+    },
+    "Standard" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Standard" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Standard" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "标准" } }
+      }
+    },
+    "Map style" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Kartenstil" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Map style" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "地图样式" } }
+      }
+    },
+    "Close photo strip" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Fotoleiste schließen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Close photo strip" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "关闭照片栏" } }
+      }
+    },
+    "photos" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Fotos" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "photos" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "张照片" } }
+      }
+    },
     "Your shared travel path will appear here." : {
       "localizations" : {
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Euer gemeinsamer Reiseweg erscheint hier." } },
@@ -104,13 +202,6 @@
       "localizations" : {
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Foto" } },
         "en" : { "stringUnit" : { "state" : "translated", "value" : "photo" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "张照片" } }
-      }
-    },
-    "photos" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Fotos" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "photos" } },
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "张照片" } }
       }
     },

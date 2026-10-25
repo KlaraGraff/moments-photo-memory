@@ -8,7 +8,7 @@ import subprocess
 
 ROOT=Path(__file__).resolve().parents[1]
 IGNORED={'.git','dist','private-data','local-data','exports','backups','research','qa',
-         '__pycache__','node_modules','.venv'}
+         '__pycache__','node_modules','.venv','.derivedData','DerivedData','build','.build'}
 EXACT={'.gitignore','README.md','AGENTS.md','demo/sample-data.json','docs/design-notes.html','docs/ui-quality-principles.md',
        'scripts/apple_photos_bridge.swift','scripts/apple_photos_host.swift',
        'vendor/leaflet/leaflet.js','vendor/leaflet/leaflet.css','vendor/leaflet/LICENSE',
@@ -23,7 +23,13 @@ PATTERNS={
 
 def allowed(name):
     path=Path(name)
-    return name in EXACT or (len(path.parts)==2 and path.parts[0] in {'src','scripts','tests'}
+    if name in EXACT:
+        return True
+    if path.parts and path.parts[0] == 'macos' and path.suffix in {'.swift', '.yml', '.xcstrings'}:
+        return True
+    if path.parts[:2] == ('.github', 'workflows') and path.suffix in {'.yml', '.yaml'}:
+        return True
+    return (len(path.parts)==2 and path.parts[0] in {'src','scripts','tests'}
        and path.suffix in {'.html','.css','.js','.mjs','.py'})
 
 def candidates(staged=False):
@@ -35,7 +41,7 @@ def candidates(staged=False):
             yield name,data
     else:
         for folder,dirs,files in os.walk(ROOT):
-            dirs[:]=[d for d in dirs if d not in IGNORED]
+            dirs[:]=[d for d in dirs if d not in IGNORED and not d.endswith(('.xcodeproj','.xcworkspace'))]
             for name in files:
                 path=Path(folder)/name
                 yield path.relative_to(ROOT).as_posix(),path.read_bytes() if not path.is_symlink() else b'\0'

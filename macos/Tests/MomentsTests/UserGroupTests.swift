@@ -63,6 +63,114 @@ final class UserGroupTests: XCTestCase {
         XCTAssertTrue(storedMembership.excluded)
     }
 
+    func testLibraryPhotoSegmentStillHidesScreenshots() {
+        let screenshot = MediaItem(id: "synthetic-screenshot", kind: .photo, isScreenshot: true)
+        let photo = MediaItem(id: "synthetic-photo", kind: .photo)
+        var criteria = LibraryFilterCriteria.default
+        criteria.mediaType = .photo
+        XCTAssertEqual(LibraryFilterEngine.filteredItems([screenshot, photo], by: criteria).map(\.id), ["synthetic-photo"])
+    }
+
+    func testScreenshotRulesUsePurePredicateAndEmptyRulesMatchNothing() {
+        let place = Place(id: "place-1", name: "Synthetic place")
+        let screenshot = MediaItem(id: "shot", kind: .photo, isScreenshot: true, place: place)
+        let group = UserGroupRuleSet(rules: [
+            UserGroupRule(field: .place, value: place.id),
+            UserGroupRule(field: .type, value: "screenshot")
+        ])
+        XCTAssertTrue(UserGroupRuleEngine.matches(screenshot, ruleSet: group))
+        XCTAssertFalse(UserGroupRuleEngine.matches(screenshot, ruleSet: UserGroupRuleSet()))
+        let emptyGroup = UserGroup(id: "empty", name: "Empty", kind: .smart)
+        XCTAssertTrue(UserGroupRuleEngine.visibleItems(for: emptyGroup, from: [screenshot], memberships: []).isEmpty)
+    }
+
+    func testDateRulesUseInclusiveLocalCalendarDays() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        let date = calendar.date(from: DateComponents(year: 2024, month: 1, day: 10, hour: 23))!
+        let item = MediaItem(id: "date-item", captureDate: date, kind: .photo)
+        let rule = UserGroupRule(field: .dateRange, value: "2024-01-10", secondaryValue: "2024-01-10")
+        let criteria = UserGroupRuleSet().libraryCriteria(for: rule, calendar: calendar)!
+        XCTAssertTrue(LibraryFilterEngine.matches(item, criteria: criteria, calendar: calendar, hidesScreenshots: false))
+        XCTAssertEqual(LibraryFilterEngine.filteredItems([item], by: criteria, calendar: calendar).map(\.id), [item.id])
+
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        let shanghaiDate = calendar.date(from: DateComponents(year: 2024, month: 1, day: 10, hour: 1))!
+        let shanghaiItem = MediaItem(id: "shanghai-item", captureDate: shanghaiDate, kind: .photo)
+        XCTAssertTrue(UserGroupRuleEngine.matches(shanghaiItem, ruleSet: UserGroupRuleSet(rules: [rule]), calendar: calendar))
+        XCTAssertEqual(UserGroupRuleSet.localDayKey(for: shanghaiDate, calendar: calendar), "2024-01-10")
+    }
+
+    func testSmartGroupsIncludePinnedItemsAndAllowReaddingExcludedItems() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let photo = MediaItem(id: "photo", kind: .photo)
+        let video = MediaItem(id: "video", kind: .video)
+        let group = UserGroup(id: "smart", name: "Synthetic smart", kind: .smart, rules: UserGroupRuleSet(rules: [UserGroupRule(field: .type, value: "photo")]))
+        context.insert(photo); context.insert(video); context.insert(group)
+        try context.save()
+
+        UserGroupRuleEngine.add(video, to: group, memberships: [], context: context)
+        UserGroupRuleEngine.remove(photo, from: group, memberships: [], context: context)
+        try context.save()
+        var memberships = try context.fetch(FetchDescriptor<UserGroupItem>())
+        XCTAssertEqual(Set(UserGroupRuleEngine.visibleItems(for: group, from: [photo, video], memberships: memberships).map(\.id)), Set(["video"]))
+
+        UserGroupRuleEngine.add(photo, to: group, memberships: [], context: context)
+        try context.save()
+        memberships = try context.fetch(FetchDescriptor<UserGroupItem>())
+        XCTAssertEqual(Set(UserGroupRuleEngine.visibleItems(for: group, from: [photo, video], memberships: memberships).map(\.id)), Set(["photo", "video"]))
+
+        UserGroupRuleEngine.convertToManual(group, items: [photo, video], memberships: memberships, context: context)
+        try context.save()
+        let converted = try context.fetch(FetchDescriptor<UserGroupItem>())
+        XCTAssertEqual(group.kind, .manual)
+        XCTAssertEqual(Set(converted.map(\.mediaID)), Set(["photo", "video"]))
+    }
+
+    func testMembershipActionsFetchFreshRowsAndRemoveDuplicates() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let item = MediaItem(id: "item")
+        let group = UserGroup(id: "manual", name: "Synthetic manual", kind: .manual)
+        context.insert(item); context.insert(group)
+        context.insert(UserGroupItem(groupID: group.id, mediaID: item.id))
+        context.insert(UserGroupItem(groupID: group.id, mediaID: item.id))
+        try context.save()
+
+        UserGroupRuleEngine.remove(item, from: group, memberships: [], context: context)
+        try context.save()
+        XCTAssertTrue(try context.fetch(FetchDescriptor<UserGroupItem>()).isEmpty)
+
+        UserGroupRuleEngine.add(item, to: group, memberships: [], context: context)
+        UserGroupRuleEngine.add(item, to: group, memberships: [], context: context)
+        try context.save()
+        XCTAssertEqual(try context.fetch(FetchDescriptor<UserGroupItem>()).count, 1)
+    }
+
+    func testPlaceAndTripRulesMatchIDsOnly() {
+        let place = Place(id: "place-id", name: "Display name")
+        let trip = Trip(id: "trip-id", name: "Trip name")
+        let item = MediaItem(id: "item", place: place, trip: trip)
+        XCTAssertTrue(UserGroupRuleEngine.matches(item, ruleSet: UserGroupRuleSet(rules: [
+            UserGroupRule(field: .place, value: place.id),
+            UserGroupRule(field: .trip, value: trip.id)
+        ])))
+        XCTAssertFalse(UserGroupRuleEngine.matches(item, ruleSet: UserGroupRuleSet(rules: [
+            UserGroupRule(field: .place, value: place.name)
+        ])))
+        XCTAssertFalse(UserGroupRuleEngine.matches(item, ruleSet: UserGroupRuleSet(rules: [
+            UserGroupRule(field: .trip, value: trip.name)
+        ])))
+
+        var libraryCriteria = LibraryFilterCriteria.default
+        libraryCriteria.placeID = place.name
+        XCTAssertTrue(LibraryFilterEngine.filteredItems([item], by: libraryCriteria).isEmpty)
+        libraryCriteria.placeID = nil
+        libraryCriteria.tripKey = trip.name
+        XCTAssertTrue(LibraryFilterEngine.filteredItems([item], by: libraryCriteria).isEmpty)
+    }
+
     func testConvertToManualSnapshotsCurrentMatches() throws {
         let container = try MomentsPersistence.makeContainer(inMemory: true)
         let context = container.mainContext

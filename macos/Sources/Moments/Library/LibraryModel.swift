@@ -222,65 +222,74 @@ enum LibraryFilterEngine {
         !item.isScreenshot && detection(for: item).isScreenshot
     }
 
-    static func filteredItems(_ items: [MediaItem], by criteria: LibraryFilterCriteria) -> [MediaItem] {
-        let calendar = Calendar.current
-        let from = criteria.fromDate.map(calendar.startOfDay(for:))
-        let toExclusive = criteria.toDate.flatMap {
-            calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: $0))
-        }
+    static func filteredItems(
+        _ items: [MediaItem],
+        by criteria: LibraryFilterCriteria,
+        calendar: Calendar = .current
+    ) -> [MediaItem] {
+        items.filter { matches($0, criteria: criteria, calendar: calendar, hidesScreenshots: true) }
+    }
 
-        return items.filter { item in
-            // Explicit screenshots remain out of the normal library, while
-            // the screenshot segment gives them an intentional home.
-            if criteria.mediaType == .screenshot {
-                guard item.isScreenshot else { return false }
-            } else {
-                guard !item.isScreenshot else { return false }
-            }
-            if criteria.screenshotFilter == .possibleOnly && !isPossibleScreenshot(item) { return false }
-            if let from {
-                guard let captureDate = item.effectiveCaptureDate, captureDate >= from else { return false }
-            }
-            if let toExclusive {
-                guard let captureDate = item.effectiveCaptureDate, captureDate < toExclusive else { return false }
-            }
-            if let placeID = criteria.placeID {
-                if placeID.hasPrefix("override:") {
-                    let overrideName = String(placeID.dropFirst("override:".count))
-                    if item.effectivePlaceName != overrideName { return false }
-                } else if item.place?.id != placeID && item.effectivePlaceName != placeID {
-                    return false
-                }
-            }
-            if criteria.mediaType != .all,
-               criteria.mediaType != .screenshot,
-               item.kind.rawValue != criteria.mediaType.rawValue {
-                return false
-            }
-            if criteria.favoritesOnly && !item.isFavorite { return false }
-            if let tripKey = criteria.tripKey, item.tripID != tripKey, item.trip?.name != tripKey, item.trip?.effectiveName != tripKey { return false }
-            if let tagID = criteria.tagID,
-               !item.tags.contains(where: { $0.id == tagID || $0.normalizedName == tagID || $0.displayName == tagID }) {
-                return false
-            }
-            switch criteria.memoryFilter {
-            case .all:
-                break
-            case .hasMemory:
-                guard item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return false }
-            case .noMemory:
-                guard item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return false }
-            }
-            return true
+    /// Evaluates a single item against the shared filter semantics. Screenshot
+    /// hiding belongs to the Library's normal segment; callers such as smart
+    /// groups can disable it while still using the same predicate.
+    static func matches(
+        _ item: MediaItem,
+        criteria: LibraryFilterCriteria,
+        calendar: Calendar = .current,
+        hidesScreenshots: Bool = false
+    ) -> Bool {
+        if criteria.mediaType == .screenshot {
+            guard item.isScreenshot else { return false }
+        } else if hidesScreenshots {
+            // The Library hides screenshots in every segment except Screenshots.
+            guard !item.isScreenshot else { return false }
         }
+        if criteria.screenshotFilter == .possibleOnly && !isPossibleScreenshot(item) { return false }
+        if let from = criteria.fromDate.map(calendar.startOfDay(for:)) {
+            guard let captureDate = item.effectiveCaptureDate, captureDate >= from else { return false }
+        }
+        if let to = criteria.toDate,
+           let toExclusive = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: to)) {
+            guard let captureDate = item.effectiveCaptureDate, captureDate < toExclusive else { return false }
+        }
+        if let placeID = criteria.placeID {
+            if placeID.hasPrefix("override:") {
+                let overrideName = String(placeID.dropFirst("override:".count))
+                guard item.effectivePlaceName == overrideName else { return false }
+            } else {
+                guard item.place?.id == placeID else { return false }
+            }
+        }
+        if criteria.mediaType != .all,
+           criteria.mediaType != .screenshot,
+           item.kind.rawValue != criteria.mediaType.rawValue {
+            return false
+        }
+        if criteria.favoritesOnly && !item.isFavorite { return false }
+        if let tripKey = criteria.tripKey, item.tripID != tripKey { return false }
+        if let tagID = criteria.tagID,
+           !item.tags.contains(where: { $0.id == tagID || $0.normalizedName == tagID || $0.displayName == tagID }) {
+            return false
+        }
+        switch criteria.memoryFilter {
+        case .all:
+            break
+        case .hasMemory:
+            guard item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return false }
+        case .noMemory:
+            guard item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return false }
+        }
+        return true
     }
 
     static func filteredItems(
         _ items: [MediaItem],
         by criteria: LibraryFilterCriteria,
-        preservingEditingItemID editingItemID: String?
+        preservingEditingItemID editingItemID: String?,
+        calendar: Calendar = .current
     ) -> [MediaItem] {
-        let filtered = filteredItems(items, by: criteria)
+        let filtered = filteredItems(items, by: criteria, calendar: calendar)
         guard criteria.memoryFilter != .all,
               let editingItemID,
               !filtered.contains(where: { $0.id == editingItemID }) else {
@@ -290,7 +299,7 @@ enum LibraryFilterEngine {
         var withoutMemoryFilter = criteria
         withoutMemoryFilter.memoryFilter = .all
         guard let editingItem = items.first(where: { $0.id == editingItemID }),
-              filteredItems([editingItem], by: withoutMemoryFilter).isEmpty == false else {
+              filteredItems([editingItem], by: withoutMemoryFilter, calendar: calendar).isEmpty == false else {
             return filtered
         }
         return filtered + [editingItem]

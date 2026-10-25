@@ -67,6 +67,28 @@
         }
       }
     },
+    "Add a condition to collect photos" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Füge eine Bedingung hinzu, um Fotos zu sammeln"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add a condition to collect photos"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加条件来收集照片"
+          }
+        }
+      }
+    },
     "Add a location to see places and routes." : {
       "localizations" : {
         "de" : {

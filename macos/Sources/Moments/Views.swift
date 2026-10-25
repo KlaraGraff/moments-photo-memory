@@ -37,10 +37,14 @@ struct ContentView: View {
     @Query private var items: [MediaItem]
     @Query(sort: \UserGroup.name) private var groups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
+    @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
+    @Query private var mediaTags: [MediaTag]
+    @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
     @AppStorage(LibraryLaunchState.appStorageKey) private var firstLaunchCompleted = false
     @State private var groupEditorKind: GroupEditorKind?
     @State private var groupToEdit: UserGroup?
     @State private var groupToDelete: UserGroup?
+    @State private var cachedGroupCounts: [String: Int] = [:]
 
     private var reviewCount: Int {
         items.reduce(into: 0) { count, item in
@@ -169,6 +173,9 @@ struct ContentView: View {
         .onAppear {
             if !items.isEmpty { firstLaunchCompleted = true }
         }
+        .onChange(of: groupCountsKey, initial: true) { _, _ in
+            refreshGroupCounts()
+        }
         .sheet(item: $groupEditorKind) { kind in
             GroupEditorSheet(kind: kind, group: groupToEdit, onDismiss: { groupToEdit = nil })
         }
@@ -195,7 +202,63 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
 
     private func groupItemCount(_ group: UserGroup) -> Int {
-        UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: groupItems).count
+        cachedGroupCounts[group.id] ?? 0
+    }
+
+    private var groupCountsKey: Int {
+        var hasher = Hasher()
+        for item in items {
+            hasher.combine(item.id)
+            hasher.combine(item.updatedAt)
+            hasher.combine(item.captureDate)
+            hasher.combine(item.kindRaw)
+            hasher.combine(item.isScreenshot)
+            hasher.combine(item.tripID)
+            hasher.combine(item.place?.id)
+        }
+        // Place renames reach rules through overrides.
+        for override in placeOverrides {
+            hasher.combine(override.id)
+            hasher.combine(override.nameOverride)
+        }
+        for group in groups {
+            hasher.combine(group.id)
+            hasher.combine(group.kind.rawValue)
+            hasher.combine(group.updatedAt)
+            hasher.combine(group.rules.mode.rawValue)
+            for rule in group.rules.rules {
+                hasher.combine(rule.field.rawValue)
+                hasher.combine(rule.op.rawValue)
+                hasher.combine(rule.value)
+                hasher.combine(rule.secondaryValue)
+            }
+        }
+        for membership in groupItems {
+            hasher.combine(membership.groupID)
+            hasher.combine(membership.mediaID)
+            hasher.combine(membership.excluded)
+        }
+        for memory in memoryRecords {
+            hasher.combine(memory.id)
+            hasher.combine(memory.mediaID)
+            hasher.combine(memory.updatedAt)
+            hasher.combine(memory.revision)
+        }
+        for mediaTag in mediaTags {
+            hasher.combine(mediaTag.id)
+            hasher.combine(mediaTag.mediaID)
+            hasher.combine(mediaTag.tagID)
+            hasher.combine(mediaTag.updatedAt)
+        }
+        return hasher.finalize()
+    }
+
+    private func refreshGroupCounts() {
+        var counts: [String: Int] = [:]
+        for group in groups {
+            counts[group.id] = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: groupItems).count
+        }
+        cachedGroupCounts = counts
     }
 
     private func receiveDrop(_ providers: [NSItemProvider], into group: UserGroup) -> Bool {

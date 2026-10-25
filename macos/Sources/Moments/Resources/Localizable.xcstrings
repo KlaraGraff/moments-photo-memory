@@ -64,6 +64,90 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Your shared travel path will appear here." } },
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "你们共同的旅行足迹会显示在这里。" } }
       }
+    },
+    "Countries" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Länder" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Countries" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "国家" } }
+      }
+    },
+    "Cities" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Städte" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cities" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "城市" } }
+      }
+    },
+    "Kilometres" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Kilometer" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Kilometres" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "公里" } }
+      }
+    },
+    "Looking up countries" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Länder werden gesucht" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Looking up countries" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在查询国家" } }
+      }
+    },
+    "Open ocean" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Offenes Meer" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open ocean" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "公海" } }
+      }
+    },
+    "Unknown location" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Unbekannter Ort" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown location" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "位置未知" } }
+      }
+    },
+    "City" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Stadt" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "City" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "城市" } }
+      }
+    },
+    "Visited countries" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Besuchte Länder" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Visited countries" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "到访国家" } }
+      }
+    },
+    "No geotagged memories" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Keine Erinnerungen mit Standort" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No geotagged memories" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "没有带位置的回忆" } }
+      }
+    },
+    "Add photos with locations to see your footprint." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Füge Fotos mit Standort hinzu, um deine Spuren zu sehen." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add photos with locations to see your footprint." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加带位置的照片即可查看足迹。" } }
+      }
+    },
+    "Offline: cached countries only" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Offline: nur zwischengespeicherte Länder" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Offline: cached countries only" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "离线：仅显示已缓存的国家" } }
+      }
+    },
+    "photos" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Fotos" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "photos" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "张照片" } }
+      }
     }
   }
 }

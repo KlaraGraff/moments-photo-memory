@@ -78,6 +78,7 @@ public final class PhotosImportController {
     private var albumTask: Task<Void, Never>?
     private var changeTask: Task<Void, Never>?
     private var pendingScopeCheckIdentifiers = Set<String>()
+    private var deletedDuringScopeCheck = Set<String>()
     private var container: ModelContainer?
     private var lastImportSelection: PhotosImportSelection?
     // Read in the nonisolated deinit to stop observing; only mutated on the main actor.
@@ -107,6 +108,7 @@ public final class PhotosImportController {
                 let deletedIdentifiers = Set(event.deletedLocalIdentifiers)
                 pendingNewAssetIdentifiers.removeAll { deletedIdentifiers.contains($0) }
                 pendingScopeCheckIdentifiers.subtract(deletedIdentifiers)
+                deletedDuringScopeCheck.formUnion(deletedIdentifiers)
                 queueInsertedIdentifiers(event.insertedLocalIdentifiers)
                 pendingDeletedAssetCount += event.deletedLocalIdentifiers.count
                 if let container, !event.deletedLocalIdentifiers.isEmpty {
@@ -247,8 +249,14 @@ public final class PhotosImportController {
             guard let self, !Task.isCancelled else { return }
             let candidates = Array(self.pendingScopeCheckIdentifiers).sorted()
             self.pendingScopeCheckIdentifiers.removeAll()
+            self.deletedDuringScopeCheck.removeAll()
+            // The debounce task owns this batch once it has taken the identifiers.
+            // A later change starts its own debounce task while this scope check
+            // finishes, so cancellation cannot discard the taken identifiers.
+            self.changeTask = nil
+            // Assets deleted while the scope check ran must not come back as new.
             let scoped = await self.insertedIdentifiers(in: candidates)
-            guard !Task.isCancelled else { return }
+                .filter { !self.deletedDuringScopeCheck.contains($0) }
             self.pendingNewAssetIdentifiers = Array(Set(self.pendingNewAssetIdentifiers + scoped)).sorted()
         }
     }

@@ -71,6 +71,20 @@ final class PlacesViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.snapshot(items: [missing, located], visibleItemIDs: nil, latitudeDelta: 0.1).clusters.count, 1)
     }
 
+    func testUndatedPhotosAreClusteredButLeftOutOfRoutes() {
+        let undated = MediaItem(id: "undated", captureDate: nil, latitude: 10, longitude: 10, title: "undated")
+        let items = [
+            undated,
+            item("a", hours: 0, latitude: 0, longitude: 0),
+            item("b", hours: 1, latitude: 0, longitude: 3)
+        ]
+        let snapshot = PlacesViewModel().snapshot(items: items, visibleItemIDs: nil, latitudeDelta: 10)
+
+        XCTAssertTrue(snapshot.clusters.contains { $0.stopIDs == ["undated"] })
+        XCTAssertFalse(snapshot.routeSegments.contains { $0.fromStopID == "undated" || $0.toStopID == "undated" })
+        XCTAssertEqual(snapshot.routeSegments.count, 1)
+    }
+
     private func item(_ id: String, hours: TimeInterval, latitude: Double, longitude: Double) -> MediaItem {
         MediaItem(
             id: id,

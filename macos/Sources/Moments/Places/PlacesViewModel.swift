@@ -79,14 +79,17 @@ struct PlacesViewModel {
         let stops = photoStops(from: items, visibleItemIDs: visibleItemIDs)
         let level = level(for: latitudeDelta)
         let clusters = clusterer.clusters(for: stops, level: level)
+        // Undated photos are still clustered, but have no place in the route order.
+        let datedIDs = Set(items.lazy.filter { $0.captureDate != nil }.map(\.id))
+        let routeStops = stops.filter { datedIDs.contains($0.id) }
         let routeSegments: [RouteSegment]
         switch level {
         case .city:
-            routeSegments = RouteBuilder(stops: stops, clusterer: clusterer).overview(level: .city)
+            routeSegments = RouteBuilder(stops: routeStops, clusterer: clusterer).overview(level: .city)
         case .area:
-            routeSegments = RouteBuilder(stops: stops, clusterer: clusterer).local(level: .area)
+            routeSegments = RouteBuilder(stops: routeStops, clusterer: clusterer).local(level: .area)
         case .spot:
-            routeSegments = RouteBuilder(stops: stops, clusterer: clusterer).local(level: .spot)
+            routeSegments = RouteBuilder(stops: routeStops, clusterer: clusterer).local(level: .spot)
         }
         let coordinateByID: [String: GeoPoint] = Dictionary(
             uniqueKeysWithValues: stops.compactMap { stop in

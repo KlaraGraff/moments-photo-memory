@@ -14,6 +14,8 @@ jobs:
         run: xcodegen generate --spec macos/project.yml
       - name: Build and test native app
         run: xcodebuild -project macos/Moments.xcodeproj -scheme Moments -destination 'platform=macOS' -derivedDataPath macos/.derivedData CODE_SIGNING_ALLOWED=NO build test
+      - name: Compile native UI smoke tests
+        run: xcodebuild -project macos/Moments.xcodeproj -scheme MomentsUITests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build-for-testing
       - name: Test MomentsCore package
         run: swift test --package-path macos/MomentsCore
       - name: Run repository checks

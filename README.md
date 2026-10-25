@@ -28,6 +28,17 @@ python3 scripts/serve.py --port 8767
 
 在浏览器打开 `http://127.0.0.1:8767`。地图底图需要联网，由 OpenStreetMap 提供；Leaflet 代码已随项目保存。道路规划使用 FOSSGIS / OSRM；首次发送坐标前需在页面中明确允许。只有点击规划时才发送选中的两点与出行方式，许可仅留在本标签页内存中。公共路线服务用于轻量原型，遵守[服务使用政策](https://routing.openstreetmap.de/about.html)；不要批量抓取路线。
 
+### 原生 macOS UI smoke suite
+
+原生 SwiftUI 应用的 UI smoke suite 使用独立的 `MomentsUITests` scheme。它通过 `-MomentsUITesting` 启动参数使用临时合成数据存储，不会打开用户的 Moments 数据。先用 XcodeGen 生成项目，然后运行：
+
+```sh
+xcodegen generate --spec macos/project.yml
+scripts/run-ui-smoke.sh
+```
+
+测试截图会导出到仓库外的 `$HOME/Developer/moments-ui-screenshots/<timestamp>`；也可以用 `MOMENTS_UI_SCREENSHOTS=/path/to/output` 指定目录。UI 测试需要 macOS 的辅助功能／自动化权限；CI 只编译 UI 测试目标。
+
 ```sh
 python3 scripts/check_privacy.py
 python3 -m unittest discover -s tests

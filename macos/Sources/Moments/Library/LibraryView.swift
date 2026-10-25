@@ -31,6 +31,9 @@ struct LibraryView: View {
     private var allPlaces: [Place]
     @Query(sort: \PlaceOverride.id)
     private var placeOverrides: [PlaceOverride]
+    @Query(sort: \UserGroup.name)
+    private var allGroups: [UserGroup]
+    @Query private var groupItems: [UserGroupItem]
 
     let state: LibraryViewState
     @Binding var firstLaunchCompleted: Bool
@@ -450,7 +453,9 @@ struct LibraryView: View {
                         LibrarySectionView(
                             section: section,
                             items: section.itemIDs.compactMap { cachedItemByID[$0] },
-                            state: state
+                            state: state,
+                            allGroups: allGroups,
+                            groupItems: groupItems
                         )
                         .id(section.id)
                         .onAppear { state.lastVisibleSectionID = section.id }
@@ -635,6 +640,8 @@ private struct LibrarySectionView: View {
     let section: LibrarySection
     let items: [MediaItem]
     let state: LibraryViewState
+    var allGroups: [UserGroup] = []
+    var groupItems: [UserGroupItem] = []
     var group: UserGroup? = nil
 
     private var columns: [GridItem] {
@@ -658,7 +665,7 @@ private struct LibrarySectionView: View {
 
             LazyVGrid(columns: columns, alignment: .leading, spacing: 28) {
                 ForEach(items, id: \.id) { item in
-                    LibraryPhotoCell(item: item, state: state, group: group)
+                    LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group)
                 }
             }
         }
@@ -678,10 +685,10 @@ private struct LibrarySectionView: View {
 private struct LibraryPhotoCell: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(\.modelContext) private var modelContext
-    @Query private var allGroups: [UserGroup]
-    @Query private var groupItems: [UserGroupItem]
     let item: MediaItem
     let state: LibraryViewState
+    let allGroups: [UserGroup]
+    let groupItems: [UserGroupItem]
     var group: UserGroup? = nil
 
     var body: some View {
@@ -968,8 +975,13 @@ struct GroupDetailView: View {
     @Query private var groups: [UserGroup]
     @Query private var items: [MediaItem]
     @Query private var memberships: [UserGroupItem]
+    @Query private var memoryRecords: [Memory]
+    @Query private var mediaTags: [MediaTag]
+    @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
     @State private var showingEditor = false
     @State private var showingDeleteConfirmation = false
+    @State private var cachedVisibleItemIDs: [String] = []
+    @State private var cachedVisibleItemsByID: [String: MediaItem] = [:]
 
     init(groupID: String, state: LibraryViewState) {
         self.groupID = groupID
@@ -979,9 +991,67 @@ struct GroupDetailView: View {
     private var group: UserGroup? { groups.first(where: { $0.id == groupID }) }
 
     private var visibleItems: [MediaItem] {
-        guard let group else { return [] }
-        return UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: memberships)
+        cachedVisibleItemIDs.compactMap { cachedVisibleItemsByID[$0] }
+    }
+
+    private var visibleItemsKey: Int {
+        var hasher = Hasher()
+        hasher.combine(groupID)
+        if let group {
+            hasher.combine(group.updatedAt)
+            hasher.combine(group.kind.rawValue)
+            hasher.combine(group.rules.mode.rawValue)
+            for rule in group.rules.rules {
+                hasher.combine(rule.field.rawValue)
+                hasher.combine(rule.op.rawValue)
+                hasher.combine(rule.value)
+                hasher.combine(rule.secondaryValue)
+            }
+        }
+        for item in items {
+            hasher.combine(item.id)
+            hasher.combine(item.updatedAt)
+            hasher.combine(item.captureDate)
+            hasher.combine(item.kindRaw)
+            hasher.combine(item.isScreenshot)
+            hasher.combine(item.tripID)
+            hasher.combine(item.place?.id)
+        }
+        // Place renames reach rules through overrides.
+        for override in placeOverrides {
+            hasher.combine(override.id)
+            hasher.combine(override.nameOverride)
+        }
+        for membership in memberships {
+            hasher.combine(membership.groupID)
+            hasher.combine(membership.mediaID)
+            hasher.combine(membership.excluded)
+        }
+        for memory in memoryRecords {
+            hasher.combine(memory.id)
+            hasher.combine(memory.mediaID)
+            hasher.combine(memory.updatedAt)
+            hasher.combine(memory.revision)
+        }
+        for mediaTag in mediaTags {
+            hasher.combine(mediaTag.id)
+            hasher.combine(mediaTag.mediaID)
+            hasher.combine(mediaTag.tagID)
+            hasher.combine(mediaTag.updatedAt)
+        }
+        return hasher.finalize()
+    }
+
+    private func refreshVisibleItems() {
+        guard let group else {
+            cachedVisibleItemIDs = []
+            cachedVisibleItemsByID = [:]
+            return
+        }
+        let sorted = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: memberships)
             .sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) > ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
+        cachedVisibleItemIDs = sorted.map(\.id)
+        cachedVisibleItemsByID = Dictionary(uniqueKeysWithValues: sorted.map { ($0.id, $0) })
     }
 
     private var sections: [LibrarySection] {
@@ -1013,7 +1083,13 @@ struct GroupDetailView: View {
                         ContentUnavailableView(
                             String(localized: "This group is empty"),
                             systemImage: group.kind == .smart ? "sparkles" : "folder",
-                            description: Text(group.kind == .smart ? String(localized: "Matching items will appear here automatically.") : String(localized: "Add photos from the Library context menu or drag them onto this group."))
+                            description: Text(
+                                group.kind == .smart
+                                    ? (group.rules.rules.isEmpty
+                                        ? String(localized: "Add a condition to collect photos")
+                                        : String(localized: "Matching items will appear here automatically."))
+                                    : String(localized: "Add photos from the Library context menu or drag them onto this group.")
+                            )
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
@@ -1022,8 +1098,10 @@ struct GroupDetailView: View {
                                 ForEach(sections) { section in
                                     LibrarySectionView(
                                         section: section,
-                                        items: section.itemIDs.compactMap { id in visibleItems.first(where: { $0.id == id }) },
+                                        items: section.itemIDs.compactMap { cachedVisibleItemsByID[$0] },
                                         state: state,
+                                        allGroups: groups,
+                                        groupItems: memberships,
                                         group: group
                                     )
                                 }
@@ -1067,6 +1145,9 @@ struct GroupDetailView: View {
             } else {
                 ContentUnavailableView(String(localized: "Group unavailable"), systemImage: "folder")
             }
+        }
+        .onChange(of: visibleItemsKey, initial: true) { _, _ in
+            refreshVisibleItems()
         }
     }
 }
@@ -1215,9 +1296,8 @@ struct GroupEditorSheet: View {
         if let tripKey = criteria.tripKey { result.append(UserGroupRule(field: .trip, value: tripKey)) }
         if criteria.mediaType != .all { result.append(UserGroupRule(field: .type, value: criteria.mediaType.rawValue)) }
         if criteria.fromDate != nil || criteria.toDate != nil {
-            let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withFullDate]
-            let from = criteria.fromDate.map { formatter.string(from: $0) } ?? "0001-01-01"
-            let to = criteria.toDate.map { formatter.string(from: $0) }
+            let from = criteria.fromDate.map { UserGroupRuleSet.localDayKey(for: $0) } ?? "0001-01-01"
+            let to = criteria.toDate.map { UserGroupRuleSet.localDayKey(for: $0) }
             result.append(UserGroupRule(field: .dateRange, value: from, secondaryValue: to))
         }
         if criteria.memoryFilter != .all {

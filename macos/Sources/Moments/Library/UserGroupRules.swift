@@ -57,17 +57,17 @@ enum UserGroupRuleEngine {
     static func canDelete(_ group: UserGroup, accountID: String = MomentsAccount.localID) -> Bool {
         group.ownerAccountID == accountID
     }
-    static func matches(_ item: MediaItem, ruleSet: UserGroupRuleSet) -> Bool {
-        guard !ruleSet.rules.isEmpty else { return true }
-        let results = ruleSet.rules.map { matches(item, rule: $0) }
+    static func matches(_ item: MediaItem, ruleSet: UserGroupRuleSet, calendar: Calendar = .current) -> Bool {
+        guard !ruleSet.rules.isEmpty else { return false }
+        let results = ruleSet.rules.map { matches(item, rule: $0, calendar: calendar) }
         switch ruleSet.mode {
         case .all: return results.allSatisfy { $0 }
         case .any: return results.contains { $0 }
         }
     }
 
-    static func matchingItems(_ items: [MediaItem], ruleSet: UserGroupRuleSet) -> [MediaItem] {
-        items.filter { matches($0, ruleSet: ruleSet) }
+    static func matchingItems(_ items: [MediaItem], ruleSet: UserGroupRuleSet, calendar: Calendar = .current) -> [MediaItem] {
+        items.filter { matches($0, ruleSet: ruleSet, calendar: calendar) }
     }
 
     /// Computes the current smart-group contents while retaining explicit
@@ -76,45 +76,62 @@ enum UserGroupRuleEngine {
     static func smartItems(
         from items: [MediaItem],
         ruleSet: UserGroupRuleSet,
-        exclusions: Set<String> = []
+        pinnedIDs: Set<String> = [],
+        exclusions: Set<String> = [],
+        calendar: Calendar = .current
     ) -> [MediaItem] {
-        matchingItems(items, ruleSet: ruleSet).filter { !exclusions.contains($0.id) }
+        let matchingIDs = Set(matchingItems(items, ruleSet: ruleSet, calendar: calendar).map(\.id))
+        let includedIDs = (matchingIDs.union(pinnedIDs)).subtracting(exclusions)
+        var seen = Set<String>()
+        return items.filter { includedIDs.contains($0.id) && seen.insert($0.id).inserted }
     }
 
     static func visibleItems(
         for group: UserGroup,
         from items: [MediaItem],
-        memberships: [UserGroupItem]
+        memberships: [UserGroupItem],
+        calendar: Calendar = .current
     ) -> [MediaItem] {
         let groupMemberships = memberships.filter { $0.groupID == group.id }
         switch group.kind {
         case .manual:
             let ids = Set(groupMemberships.filter { !$0.excluded }.map(\.mediaID))
-            return items.filter { ids.contains($0.id) }
+            var seen = Set<String>()
+            return items.filter { ids.contains($0.id) && seen.insert($0.id).inserted }
         case .smart:
+            let pinned = Set(groupMemberships.filter { !$0.excluded }.map(\.mediaID))
             let exclusions = Set(groupMemberships.filter(\.excluded).map(\.mediaID))
-            return smartItems(from: items, ruleSet: group.rules, exclusions: exclusions)
+            return smartItems(from: items, ruleSet: group.rules, pinnedIDs: pinned, exclusions: exclusions, calendar: calendar)
         }
     }
 
     static func add(_ item: MediaItem, to group: UserGroup, memberships: [UserGroupItem], context: ModelContext) {
-        if let membership = memberships.first(where: { $0.groupID == group.id && $0.mediaID == item.id }) {
-            membership.excluded = false
-            return
+        let fresh = fetchMemberships(for: group.id, mediaID: item.id, context: context)
+        if fresh.isEmpty == false {
+            for membership in fresh { membership.excluded = false }
+        } else {
+            context.insert(UserGroupItem(groupID: group.id, mediaID: item.id))
         }
-        context.insert(UserGroupItem(groupID: group.id, mediaID: item.id))
     }
 
     static func remove(_ item: MediaItem, from group: UserGroup, memberships: [UserGroupItem], context: ModelContext) {
+        let fresh = fetchMemberships(for: group.id, mediaID: item.id, context: context)
         if group.kind == .smart {
-            if let membership = memberships.first(where: { $0.groupID == group.id && $0.mediaID == item.id }) {
-                membership.excluded = true
+            if fresh.isEmpty == false {
+                for membership in fresh { membership.excluded = true }
             } else {
                 context.insert(UserGroupItem(groupID: group.id, mediaID: item.id, excluded: true))
             }
-        } else if let membership = memberships.first(where: { $0.groupID == group.id && $0.mediaID == item.id }) {
-            context.delete(membership)
+        } else {
+            for membership in fresh { context.delete(membership) }
         }
+    }
+
+    private static func fetchMemberships(for groupID: String, mediaID: String, context: ModelContext) -> [UserGroupItem] {
+        let predicate = #Predicate<UserGroupItem> { membership in
+            membership.groupID == groupID && membership.mediaID == mediaID
+        }
+        return (try? context.fetch(FetchDescriptor<UserGroupItem>(predicate: predicate))) ?? []
     }
 
     static func convertToManual(_ group: UserGroup, items: [MediaItem], memberships: [UserGroupItem], context: ModelContext) {
@@ -130,11 +147,11 @@ enum UserGroupRuleEngine {
         group.updatedAt = .now
     }
 
-    private static func matches(_ item: MediaItem, rule: UserGroupRule) -> Bool {
-        guard let criteria = UserGroupRuleSet().libraryCriteria(for: rule) else {
+    private static func matches(_ item: MediaItem, rule: UserGroupRule, calendar: Calendar) -> Bool {
+        guard let criteria = UserGroupRuleSet().libraryCriteria(for: rule, calendar: calendar) else {
             return rule.op == .isNot
         }
-        let result = LibraryFilterEngine.filteredItems([item], by: criteria).contains { $0.id == item.id }
+        let result = LibraryFilterEngine.matches(item, criteria: criteria, calendar: calendar, hidesScreenshots: false)
         return rule.op == .equals ? result : !result
     }
 }
@@ -142,7 +159,7 @@ enum UserGroupRuleEngine {
 extension UserGroupRuleSet {
     /// The subset represented by the Library's existing filter engine. This
     /// keeps date, place, type, and memory semantics aligned with LibraryView.
-    func libraryCriteria(for rule: UserGroupRule) -> LibraryFilterCriteria? {
+    func libraryCriteria(for rule: UserGroupRule, calendar: Calendar = .current) -> LibraryFilterCriteria? {
         var criteria = LibraryFilterCriteria.default
         switch rule.field {
         case .place: criteria.placeID = rule.value
@@ -153,15 +170,25 @@ extension UserGroupRuleSet {
         case .hasMemory:
             criteria.memoryFilter = rule.value.lowercased() == "true" ? .hasMemory : .noMemory
         case .dateRange:
-            let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withFullDate]
-            guard let from = formatter.date(from: rule.value) else { return nil }
+            guard let from = Self.localDayDate(rule.value, calendar: calendar) else { return nil }
             criteria.fromDate = from
             if let secondaryValue = rule.secondaryValue {
-                guard let to = formatter.date(from: secondaryValue) else { return nil }
+                guard let to = Self.localDayDate(secondaryValue, calendar: calendar) else { return nil }
                 criteria.toDate = to
             }
         case .tag: criteria.tagID = rule.value
         }
         return criteria
+    }
+
+    static func localDayKey(for date: Date, calendar: Calendar = .current) -> String {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
+    }
+
+    private static func localDayDate(_ value: String, calendar: Calendar) -> Date? {
+        let parts = value.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
     }
 }

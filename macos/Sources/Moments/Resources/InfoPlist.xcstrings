@@ -1,0 +1,28 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "NSPhotoLibraryUsageDescription" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moments benötigt Zugriff auf deine Fotomediathek, um Fotos zu importieren, ohne Originale zu kopieren."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moments needs access to your photo library to import photos without copying originals."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moments 需要访问照片图库，以便在不复制原件的情况下导入照片。"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

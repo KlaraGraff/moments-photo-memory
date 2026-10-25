@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import SwiftData
 import MomentsCore
@@ -383,6 +384,13 @@ struct LibraryView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("library.importFolder")
+                Button {
+                    NotificationCenter.default.post(name: .momentsShowPhotosImport, object: nil)
+                } label: {
+                    Label("Import from Apple Photos…", systemImage: "photo.on.rectangle")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("library.importPhotos")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

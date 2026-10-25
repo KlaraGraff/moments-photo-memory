@@ -184,6 +184,7 @@ struct FolderImporter {
                 sourceReferencesRaw: sourceReferencesJSON(metadata.sourceReferences),
                 pairedVideoContentHash: metadata.pairedVideoContentHash,
                 pairedVideoBookmarkData: metadata.pairedVideoBookmarkData,
+                perceptualHash: metadata.perceptualHash,
                 reviewDecisionRaw: organized.reasons.isEmpty ? ImportReviewDecision.accepted.rawValue : ImportReviewDecision.pending.rawValue
             )
             model.place = organized.placeID.flatMap { placeModels[$0] }

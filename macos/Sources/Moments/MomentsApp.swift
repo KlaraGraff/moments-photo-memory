@@ -8,6 +8,8 @@ struct MomentsApp: App {
     @State private var selection = SelectionModel()
     @State private var libraryState = LibraryViewState()
     @State private var importController = ImportController()
+    @State private var photosImportController = PhotosImportController(importer: PhotosImporter(source: PhotoKitAssetSource()))
+    @State private var showingPhotosImport = false
 
     #if DEBUG
     private var isUITestSmallWindow: Bool {
@@ -72,7 +74,16 @@ struct MomentsApp: App {
                     .environment(selection)
                     .environment(importController)
                     .modelContainer(modelContainer)
-                    .onAppear { importController.configure(container: modelContainer) }
+                    .onAppear {
+                        importController.configure(container: modelContainer)
+                        photosImportController.configure(container: modelContainer)
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
+                        showingPhotosImport = true
+                    }
+                    .sheet(isPresented: $showingPhotosImport) {
+                        PhotosImportSheet(controller: photosImportController)
+                    }
                     #if DEBUG
                     .frame(width: isUITestSmallWindow ? 900 : nil, height: isUITestSmallWindow ? 600 : nil)
                     .preferredColorScheme(isUITestDarkMode ? .dark : nil)
@@ -85,6 +96,8 @@ struct MomentsApp: App {
             CommandGroup(after: .newItem) {
                 Button("Import Folder…") { importController.chooseFolder() }
                     .keyboardShortcut("i", modifiers: [.command, .shift])
+                Button("Import from Apple Photos…") { showingPhotosImport = true }
+                    .keyboardShortcut("p", modifiers: [.command, .shift])
             }
         }
     }

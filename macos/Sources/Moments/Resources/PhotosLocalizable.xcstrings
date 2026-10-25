@@ -1,0 +1,69 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Import from Apple Photos…" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Aus Apple Fotos importieren …" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Import from Apple Photos…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从 Apple Photos 导入…" } }
+      }
+    },
+    "Apple Photos access is unavailable" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Zugriff auf Apple Fotos ist nicht verfügbar" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos access is unavailable" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos 访问不可用" } }
+      }
+    },
+    "Apple Photos access is limited" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Zugriff auf Apple Fotos ist eingeschränkt" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos access is limited" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos 访问受限" } }
+      }
+    },
+    "Open System Settings" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Systemeinstellungen öffnen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open System Settings" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开系统设置" } }
+      }
+    },
+    "Count selection" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Auswahl zählen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Count selection" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "统计选择数量" } }
+      }
+    },
+    "Import from Apple Photos" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Aus Apple Fotos importieren" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Import from Apple Photos" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从 Apple Photos 导入" } }
+      }
+    },
+    "All photos" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Alle Fotos" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "All photos" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "全部照片" } }
+      }
+    },
+    "Albums" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Alben" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Albums" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "相册" } }
+      }
+    },
+    "Date range" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Datumsbereich" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Date range" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "日期范围" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

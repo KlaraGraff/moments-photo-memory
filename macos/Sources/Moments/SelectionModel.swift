@@ -1,33 +1,47 @@
 import Observation
 
-/// The small piece of cross-screen selection state shared by the native views.
+/// Sidebar destinations other screens can ask the window to switch to.
+enum SidebarDestination: Hashable {
+    case library
+    case places
+    case footprints
+    case timeline
+}
+
+/// Shared cross-screen state, injected once with `.environment(_:)` on the
+/// window and read with `@Environment(SelectionModel.self)`.
 ///
-/// `MomentsApp` injects one instance with SwiftUI's environment. Library owns
-/// the selection gesture; Places and Timeline can read `selectedItemIDs` and
-/// use `focusedItemID` when they need to reveal one item.
+/// - Library owns `visibleItemIDs` (the result of its filters) and writes it
+///   whenever filters change; Places and Timeline only read it.
+/// - Any screen may change the selection; `focusedItemID` is the one item the
+///   other screens should reveal (fly the map to it, scroll to it).
 @MainActor
 @Observable
 final class SelectionModel {
-    /// Media item ids currently selected across the app.
+    /// Media item ids currently selected, in any screen.
     var selectedItemIDs: Set<String> = []
-
-    /// The item another screen should bring into view, if any.
+    /// The item to bring into view; `nil` means keep the current viewport.
     var focusedItemID: String?
+    /// Ids that pass the Library filters; `nil` means no filter is active.
+    var visibleItemIDs: Set<String>?
+    /// A screen asks to switch the sidebar; the window clears it after switching.
+    var requestedDestination: SidebarDestination?
 
-    /// Selects one item and makes it the cross-screen focus.
-    func select(_ id: String) {
-        selectedItemIDs = [id]
-        focusedItemID = id
-    }
+    init() {}
 
-    /// Replaces the selection and focuses the supplied item, or the first id.
+    /// Replaces the selection and reveals `focus` (or the first id).
     func select(_ ids: some Sequence<String>, focus: String? = nil) {
         let set = Set(ids)
         selectedItemIDs = set
         focusedItemID = focus ?? set.sorted().first
     }
 
-    /// Adds or removes one item without changing the current focus unless it is removed.
+    /// Selects one item and makes it the cross-screen focus.
+    func select(_ id: String) {
+        select([id], focus: id)
+    }
+
+    /// Adds or removes one item; focus moves only when the focused item is removed.
     func toggle(_ id: String) {
         if selectedItemIDs.contains(id) {
             selectedItemIDs.remove(id)
@@ -38,13 +52,17 @@ final class SelectionModel {
         }
     }
 
-    /// Clears all selected and focused items.
+    func isSelected(_ id: String) -> Bool {
+        selectedItemIDs.contains(id)
+    }
+
     func clear() {
-        selectedItemIDs.removeAll()
+        selectedItemIDs = []
         focusedItemID = nil
     }
 
-    func isSelected(_ id: String) -> Bool {
-        selectedItemIDs.contains(id)
+    /// True when the item passes the Library filters.
+    func isVisible(_ id: String) -> Bool {
+        visibleItemIDs?.contains(id) ?? true
     }
 }

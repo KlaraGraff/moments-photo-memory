@@ -108,7 +108,7 @@ public enum DemoSeeder {
         if trip.modelContext == nil { context.insert(trip) }
 
         let baseDate = Date(timeIntervalSince1970: 946_684_800)
-        var inserted = 0
+        var newItems: [MediaItem] = []
         for index in 0..<count {
             let id = String(format: "stress-%05d", index)
             guard !existingIDs.contains(id) else { continue }
@@ -128,11 +128,12 @@ public enum DemoSeeder {
                 place: place
             )
             context.insert(item)
-            trip.items.append(item)
-            inserted += 1
+            newItems.append(item)
         }
-        if inserted > 0 { try context.save() }
-        return inserted
+        // One relationship update instead of 5,000 (each append re-observes the array).
+        trip.items.append(contentsOf: newItems)
+        if !newItems.isEmpty { try context.save() }
+        return newItems.count
     }
     #endif
 

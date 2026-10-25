@@ -62,6 +62,10 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(map.waitForExistence(timeout: launchTimeout))
         let firstMarker = element(in: app, identifier: "places.marker.D0001")
         XCTAssertTrue(firstMarker.waitForExistence(timeout: launchTimeout), "Route-start synthetic place marker was not exposed")
+        XCTAssertGreaterThanOrEqual(firstMarker.frame.width, 16, "Route-start marker is too narrow to be visible")
+        XCTAssertGreaterThanOrEqual(firstMarker.frame.height, 16, "Route-start marker is too short to be visible")
+        XCTAssertTrue(map.frame.contains(firstMarker.frame), "Route-start marker is outside the Places map")
+        XCTAssertTrue(firstMarker.isHittable, "Route-start marker is not hittable")
         let marker = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "places.marker."))
             .firstMatch

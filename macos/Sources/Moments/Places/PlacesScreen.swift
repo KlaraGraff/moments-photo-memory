@@ -140,6 +140,7 @@ struct PlacesScreen: View {
                         contourStyle: .geodesic
                     )
                     .stroke(.blue.opacity(0.75), lineWidth: 3)
+                    .mapOverlayLevel(level: .aboveRoads)
 
                     Annotation(coordinate: midpoint(from, to), anchor: .center) {
                         Image(systemName: "arrowtriangle.right.fill")
@@ -292,6 +293,8 @@ struct PlacesScreen: View {
             }
         }
         .buttonStyle(.plain)
+        .frame(width: 38, height: 38)
+        .contentShape(Circle())
         .accessibilityLabel(clusterDisplayName(cluster))
         .accessibilityValue(Text("\(cluster.stopIDs.count) photos"))
         .accessibilityIdentifier("places.marker.\(cluster.stopIDs.first ?? cluster.id)")

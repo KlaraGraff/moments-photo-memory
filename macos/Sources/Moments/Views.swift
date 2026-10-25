@@ -1,6 +1,8 @@
+import Foundation
 import SwiftUI
 import SwiftData
 import MapKit
+import UniformTypeIdentifiers
 
 private enum MomentsSection: Hashable {
     case library
@@ -8,6 +10,14 @@ private enum MomentsSection: Hashable {
     case places
     case footprints
     case timeline
+    case group(String)
+}
+
+enum GroupEditorKind: String, Equatable, Identifiable {
+    case newManual
+    case newSmart
+
+    var id: String { rawValue }
 }
 
 private enum MomentsPalette {
@@ -25,7 +35,16 @@ struct ContentView: View {
     @Environment(SelectionModel.self) private var shared
     @Environment(ImportController.self) private var importController
     @Query private var items: [MediaItem]
+    @Query(sort: \UserGroup.name) private var groups: [UserGroup]
+    @Query private var groupItems: [UserGroupItem]
+    @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
+    @Query private var mediaTags: [MediaTag]
+    @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
     @AppStorage(LibraryLaunchState.appStorageKey) private var firstLaunchCompleted = false
+    @State private var groupEditorKind: GroupEditorKind?
+    @State private var groupToEdit: UserGroup?
+    @State private var groupToDelete: UserGroup?
+    @State private var cachedGroupCounts: [String: Int] = [:]
 
     private var reviewCount: Int {
         items.reduce(into: 0) { count, item in
@@ -47,11 +66,52 @@ struct ContentView: View {
                     }
 
                     Section {
-                        Label(String(localized: "Manual groups"), systemImage: "folder")
-                        Label(String(localized: "Recent trips"), systemImage: "sparkles")
-                        Label(String(localized: "Create group"), systemImage: "plus")
-                            .foregroundStyle(MomentsPalette.muted.opacity(0.48))
-                            .disabled(true)
+                        ForEach(groups, id: \.id) { group in
+                            HStack(spacing: 8) {
+                                Image(systemName: group.kind == .smart ? "sparkles" : "folder")
+                                    .foregroundStyle(MomentsPalette.accent)
+                                Text(group.name)
+                                    .lineLimit(1)
+                                Spacer(minLength: 2)
+                                Text("\(groupItemCount(group))")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(MomentsPalette.muted)
+                                Text(group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
+                                    .font(.caption2)
+                                    .foregroundStyle(MomentsPalette.muted)
+                            }
+                            .tag(MomentsSection.group(group.id))
+                            .contentShape(Rectangle())
+                            .accessibilityIdentifier("sidebar.group.\(group.id)")
+                            .onDrop(of: [.text], isTargeted: nil) { providers in
+                                receiveDrop(providers, into: group)
+                            }
+                            .contextMenu {
+                                Button(String(localized: "Rename")) {
+                                    groupToEdit = group
+                                    groupEditorKind = group.kind == .smart ? .newSmart : .newManual
+                                }
+                                if UserGroupRuleEngine.canDelete(group) {
+                                    Button(String(localized: "Delete group"), role: .destructive) {
+                                        groupToDelete = group
+                                    }
+                                }
+                            }
+                        }
+
+                        Menu {
+                            Button(String(localized: "New manual group")) {
+                                groupToEdit = nil
+                                groupEditorKind = .newManual
+                            }
+                            Button(String(localized: "New smart group")) {
+                                groupToEdit = nil
+                                groupEditorKind = .newSmart
+                            }
+                        } label: {
+                            Label(String(localized: "+ New group"), systemImage: "plus")
+                        }
+                        .accessibilityIdentifier("sidebar.new-group")
                     } header: {
                         Text(String(localized: "My groups"))
                             .font(.caption2.weight(.semibold))
@@ -95,6 +155,8 @@ struct ContentView: View {
                 FootprintsScreen()
             case .timeline:
                 TimelineScreen()
+            case .group(let groupID):
+                GroupDetailView(groupID: groupID, state: libraryState)
             }
         }
         .frame(minWidth: 900, minHeight: 600)
@@ -111,6 +173,106 @@ struct ContentView: View {
         .onAppear {
             if !items.isEmpty { firstLaunchCompleted = true }
         }
+        .onChange(of: groupCountsKey, initial: true) { _, _ in
+            refreshGroupCounts()
+        }
+        .sheet(item: $groupEditorKind) { kind in
+            GroupEditorSheet(kind: kind, group: groupToEdit, onDismiss: { groupToEdit = nil })
+        }
+        .alert(String(localized: "Delete group?"), isPresented: Binding(
+            get: { groupToDelete != nil },
+            set: { if !$0 { groupToDelete = nil } }
+        ), presenting: groupToDelete) { group in
+            Button(String(localized: "Delete"), role: .destructive) {
+                guard UserGroupRuleEngine.canDelete(group) else { return }
+                for membership in groupItems where membership.groupID == group.id {
+                    modelContext.delete(membership)
+                }
+                modelContext.delete(group)
+                try? modelContext.save()
+                if case .group(group.id) = selection { selection = .library }
+                groupToDelete = nil
+            }
+            Button(String(localized: "Cancel"), role: .cancel) { groupToDelete = nil }
+        } message: { group in
+            Text(String(format: String(localized: "Delete group message"), group.name))
+        }
+    }
+
+    @Environment(\.modelContext) private var modelContext
+
+    private func groupItemCount(_ group: UserGroup) -> Int {
+        cachedGroupCounts[group.id] ?? 0
+    }
+
+    private var groupCountsKey: Int {
+        var hasher = Hasher()
+        for item in items {
+            hasher.combine(item.id)
+            hasher.combine(item.updatedAt)
+            hasher.combine(item.captureDate)
+            hasher.combine(item.kindRaw)
+            hasher.combine(item.isScreenshot)
+            hasher.combine(item.tripID)
+            hasher.combine(item.place?.id)
+        }
+        // Place renames reach rules through overrides.
+        for override in placeOverrides {
+            hasher.combine(override.id)
+            hasher.combine(override.nameOverride)
+        }
+        for group in groups {
+            hasher.combine(group.id)
+            hasher.combine(group.kind.rawValue)
+            hasher.combine(group.updatedAt)
+            hasher.combine(group.rules.mode.rawValue)
+            for rule in group.rules.rules {
+                hasher.combine(rule.field.rawValue)
+                hasher.combine(rule.op.rawValue)
+                hasher.combine(rule.value)
+                hasher.combine(rule.secondaryValue)
+            }
+        }
+        for membership in groupItems {
+            hasher.combine(membership.groupID)
+            hasher.combine(membership.mediaID)
+            hasher.combine(membership.excluded)
+        }
+        for memory in memoryRecords {
+            hasher.combine(memory.id)
+            hasher.combine(memory.mediaID)
+            hasher.combine(memory.updatedAt)
+            hasher.combine(memory.revision)
+        }
+        for mediaTag in mediaTags {
+            hasher.combine(mediaTag.id)
+            hasher.combine(mediaTag.mediaID)
+            hasher.combine(mediaTag.tagID)
+            hasher.combine(mediaTag.updatedAt)
+        }
+        return hasher.finalize()
+    }
+
+    private func refreshGroupCounts() {
+        var counts: [String: Int] = [:]
+        for group in groups {
+            counts[group.id] = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: groupItems).count
+        }
+        cachedGroupCounts = counts
+    }
+
+    private func receiveDrop(_ providers: [NSItemProvider], into group: UserGroup) -> Bool {
+        for provider in providers {
+            provider.loadObject(ofClass: NSString.self) { object, _ in
+                guard let id = object as? String else { return }
+                DispatchQueue.main.async {
+                    guard let item = items.first(where: { $0.id == id }) else { return }
+                    UserGroupRuleEngine.add(item, to: group, memberships: groupItems, context: modelContext)
+                    try? modelContext.save()
+                }
+            }
+        }
+        return true
     }
 
     @ViewBuilder

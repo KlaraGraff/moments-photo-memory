@@ -290,4 +290,59 @@ final class PeopleEngineTests: XCTestCase {
         XCTAssertEqual(tensor[plane], 0, accuracy: 1)         // channel 1 is green
         XCTAssertEqual(tensor[2 * plane], 0, accuracy: 1)     // channel 2 is blue
     }
+
+    func testNearestNeighbourChainMatchesNaiveAverageLink() {
+        var generator = SyntheticRandom(seed: 7)
+        for _ in 0..<6 {
+            let centres = (0..<4).map { _ in (0..<16).map { _ in generator.next() * 2 - 1 } }
+            let vectors: [[Float]] = (0..<60).map { index in
+                centres[index % 4].map { $0 + (generator.next() - 0.5) * 0.6 }
+            }
+            let fast = FaceClustering.averageLink(vectors).map { $0.sorted() }.sorted { $0[0] < $1[0] }
+            XCTAssertEqual(fast, naiveAverageLink(vectors, threshold: FaceClustering.defaultThreshold))
+        }
+    }
+
+    func testNewPendingFaceJoinsExistingUnnamedCluster() {
+        let faces = [
+            PeopleFaceSnapshot(id: "member-a", personID: nil, clusterID: "cluster-member-a", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([1, 0])),
+            PeopleFaceSnapshot(id: "member-b", personID: nil, clusterID: "cluster-member-a", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([0.98, 0.05])),
+            PeopleFaceSnapshot(id: "newcomer", personID: nil, clusterID: "pending-newcomer", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([0.99, 0.02])),
+            PeopleFaceSnapshot(id: "stranger", personID: nil, clusterID: "pending-stranger", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([-1, 0]))
+        ]
+        let result = PeopleScanController.makeAssignmentsResult(faces: faces, people: [], shouldStop: { false })
+        let byID = Dictionary(uniqueKeysWithValues: result.assignments.map { ($0.id, $0.clusterID) })
+        XCTAssertEqual(byID["newcomer"], "cluster-member-a")
+        XCTAssertNotEqual(byID["stranger"], "cluster-member-a")
+        XCTAssertEqual(byID["member-a"], "cluster-member-a")
+    }
+
+    private func naiveAverageLink(_ vectors: [[Float]], threshold: Float) -> [[Int]] {
+        var clusters = vectors.indices.map { [$0] }
+        func average(_ a: [Int], _ b: [Int]) -> Float {
+            var total: Float = 0
+            for i in a { for j in b { total += FaceClustering.cosineDistance(vectors[i], vectors[j]) } }
+            return total / Float(a.count * b.count)
+        }
+        while clusters.count > 1 {
+            var best: (Int, Int, Float)?
+            for i in clusters.indices { for j in (i + 1)..<clusters.count {
+                let d = average(clusters[i], clusters[j])
+                if d < threshold, d < (best?.2 ?? .infinity) { best = (i, j, d) }
+            } }
+            guard let (i, j, _) = best else { break }
+            clusters[i] += clusters[j]; clusters.remove(at: j)
+        }
+        return clusters.map { $0.sorted() }.sorted { $0[0] < $1[0] }
+    }
+}
+
+/// Deterministic generator for synthetic test vectors.
+private struct SyntheticRandom {
+    private var state: UInt64
+    init(seed: UInt64) { state = seed }
+    mutating func next() -> Float {
+        state = state &* 6364136223846793005 &+ 1442695040888963407
+        return Float(state >> 40) / Float(1 << 24)
+    }
 }

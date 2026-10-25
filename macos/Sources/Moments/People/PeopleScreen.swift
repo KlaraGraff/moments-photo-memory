@@ -264,17 +264,38 @@ final class PeopleScanController {
         let existingClusters = Dictionary(grouping: assignments.indices.filter {
             assignments[$0].personID == nil && assignments[$0].clusterID?.hasPrefix("cluster-") == true
         }, by: { assignments[$0].clusterID! })
+        // Average cosine distance to a cluster equals 1 - v·mean(members) for
+        // unit vectors, so each cluster needs one mean vector, computed once.
+        func unit(_ vector: [Float]) -> [Float] {
+            let norm = sqrt(vector.reduce(Float.zero) { $0 + $1 * $1 })
+            return norm > 0 ? vector.map { $0 / norm } : vector
+        }
+        var clusterMeans: [(id: String, mean: [Float])] = []
+        for (clusterID, members) in existingClusters {
+            let vectors = members.compactMap { decode(faces[$0].embedding) }.map(unit)
+            guard let dimension = vectors.first?.count else { continue }
+            var sum = [Float](repeating: 0, count: dimension)
+            for vector in vectors where vector.count == dimension {
+                for d in 0..<dimension { sum[d] += vector[d] }
+            }
+            clusterMeans.append((clusterID, sum.map { $0 / Float(vectors.count) }))
+        }
+        let stop = shouldStop ?? { Task.isCancelled || FaceClustering.isPowerPaused }
         var clusteringIndices: [Int] = []
-        for index in pendingIndices {
-            guard let vector = decode(faces[index].embedding) else { continue }
-            let match = existingClusters.compactMap { clusterID, members -> (id: String, distance: Float)? in
-                let vectors = members.compactMap { decode(faces[$0].embedding) }
-                guard !vectors.isEmpty else { return nil }
-                let distance = vectors.map { FaceClustering.cosineDistance(vector, $0) }.reduce(0, +) / Float(vectors.count)
-                return distance < FaceClustering.defaultThreshold ? (clusterID, distance) : nil
-            }.min { $0.distance < $1.distance }
-            if let match {
-                assignments[index].clusterID = match.id
+        for (position, index) in pendingIndices.enumerated() {
+            if position % 64 == 0, stop() {
+                return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
+            }
+            guard let vector = decode(faces[index].embedding).map(unit) else { continue }
+            var best: (id: String, distance: Float)?
+            for cluster in clusterMeans where cluster.mean.count == vector.count {
+                let distance = 1 - zip(vector, cluster.mean).reduce(Float.zero) { $0 + $1.0 * $1.1 }
+                if distance < FaceClustering.defaultThreshold, distance < (best?.distance ?? .infinity) {
+                    best = (cluster.id, distance)
+                }
+            }
+            if let best {
+                assignments[index].clusterID = best.id
             } else {
                 clusteringIndices.append(index)
             }
@@ -282,7 +303,7 @@ final class PeopleScanController {
         let limitedIndices = Array(clusteringIndices.prefix(3_000))
         let vectors = limitedIndices.compactMap { decode(faces[$0].embedding) }
         guard vectors.count == limitedIndices.count else { return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false) }
-        let result = FaceClustering.averageLinkResult(vectors, shouldStop: shouldStop ?? { Task.isCancelled || FaceClustering.isPowerPaused })
+        let result = FaceClustering.averageLinkResult(vectors, shouldStop: stop)
         if result.stopped {
             return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
         }
@@ -476,13 +497,19 @@ actor PeopleScanStore {
                   face.assignmentSource == snapshot.assignmentSource,
                   face.rejectedPersonIDs == snapshot.rejectedPersonIDs else { continue }
             guard face.assignmentSource != "user", !face.confirmed else { continue }
+            // Touch only faces whose assignment actually changed, so a scan does
+            // not rewrite every face and force the People screen to recompute.
+            guard face.personID != assignment.personID
+                || face.clusterID != assignment.clusterID
+                || face.confirmed != assignment.confirmed
+                || face.assignmentSource != assignment.assignmentSource else { continue }
             face.personID = assignment.personID
             face.clusterID = assignment.clusterID
             face.confirmed = assignment.confirmed
             face.assignmentSource = assignment.assignmentSource
             face.updatedAt = .now
         }
-        try modelContext.save()
+        if modelContext.hasChanges { try modelContext.save() }
     }
 
     private static func key(mediaID: String, rect: (x: Double, y: Double, w: Double, h: Double)) -> String {

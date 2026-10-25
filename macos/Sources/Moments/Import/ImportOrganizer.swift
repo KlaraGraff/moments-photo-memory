@@ -406,13 +406,23 @@ struct ImportOrganizer {
     private func shouldSplit(previous: ImportedMediaMetadata, current: ImportedMediaMetadata) -> Bool {
         if current.captureDate.timeIntervalSince(previous.captureDate) > configuration.maximumTimeGap { return true }
         guard let lhs = coordinate(for: previous), let rhs = coordinate(for: current) else { return false }
-        if lhs.distance(to: rhs) > configuration.maximumTripDistanceMeters { return true }
+        return Self.tripCoordinatesCanJoin(lhs, rhs, configuration: configuration) == false
+    }
+
+    /// Shared with incremental import matching so refreshed assets follow the
+    /// same distance and home-boundary rules as initial organization.
+    static func tripCoordinatesCanJoin(
+        _ lhs: GeoPoint,
+        _ rhs: GeoPoint,
+        configuration: ImportConfiguration
+    ) -> Bool {
+        if lhs.distance(to: rhs) > configuration.maximumTripDistanceMeters { return false }
         if let home = configuration.homeCoordinate,
            (lhs.distance(to: home) <= configuration.maximumTripDistanceMeters)
                 != (rhs.distance(to: home) <= configuration.maximumTripDistanceMeters) {
-            return true
+            return false
         }
-        return false
+        return true
     }
 
     private func isGPSJump(item: ImportedMediaMetadata, in ordered: [ImportedMediaMetadata]) -> Bool {

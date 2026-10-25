@@ -3212,6 +3212,34 @@
           }
         }
       }
+    },
+    "Apple Photos access is denied. Allow photo access in System Settings to import." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Zugriff auf Apple Fotos wurde verweigert. Erlaube ihn in den Systemeinstellungen." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos access is denied. Allow photo access in System Settings to import." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos 访问被拒绝。请在系统设置中允许照片访问。" } }
+      }
+    },
+    "Apple Photos access is limited. Select more photos in System Settings or continue with the selected photos." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Zugriff auf Apple Fotos ist eingeschränkt. Wähle in den Systemeinstellungen weitere Fotos aus oder fahre mit der Auswahl fort." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos access is limited. Select more photos in System Settings or continue with the selected photos." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos 访问受限。请在系统设置中选择更多照片，或继续使用已选照片。" } }
+      }
+    },
+    "Apple Photos access is restricted by macOS." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Zugriff auf Apple Fotos ist durch macOS eingeschränkt." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos access is restricted by macOS." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos 访问受到 macOS 限制。" } }
+      }
+    },
+    "Apple Photos" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Apple Fotos" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos" } }
+      }
     }
   },
   "version" : "1.0"

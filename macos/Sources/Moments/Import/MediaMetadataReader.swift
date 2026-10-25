@@ -45,6 +45,16 @@ struct MediaMetadataReader {
             let properties = (CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any]) ?? [:]
             let pixelWidth = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue ?? 0
             let pixelHeight = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue ?? 0
+            let thumbnailOptions: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: 64,
+                kCGImageSourceCreateThumbnailWithTransform: true
+            ]
+            let perceptualHash = CGImageSourceCreateThumbnailAtIndex(
+                imageSource,
+                0,
+                thumbnailOptions as CFDictionary
+            ).flatMap(PerceptualHash.dHash)
             let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any]
             let gps = properties[kCGImagePropertyGPSDictionary] as? [CFString: Any]
             let parsedDate = Self.captureDate(from: exif)
@@ -74,7 +84,8 @@ struct MediaMetadataReader {
                 timeZoneIdentifier: parsedDate?.offsetMinutes.flatMap { TimeZone(secondsFromGMT: $0 * 60)?.identifier },
                 parentDirectoryKey: url.deletingLastPathComponent().standardizedFileURL.path,
                 appleContentIdentifier: Self.appleContentIdentifier(from: properties),
-                wallClockDate: parsedDate?.wallClockDate
+                wallClockDate: parsedDate?.wallClockDate,
+                perceptualHash: perceptualHash
             )
         case .video:
             let asset = AVURLAsset(url: url)

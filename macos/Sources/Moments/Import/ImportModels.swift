@@ -220,6 +220,7 @@ public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
     public let sourceReferences: [ImportedSourceReference]
     public let pairedVideoContentHash: String?
     public let pairedVideoBookmarkData: Data?
+    public let perceptualHash: String?
 
     public var baseName: String {
         URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
@@ -255,7 +256,8 @@ public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
         wallClockDate: Date? = nil,
         sourceReferences: [ImportedSourceReference]? = nil,
         pairedVideoContentHash: String? = nil,
-        pairedVideoBookmarkData: Data? = nil
+        pairedVideoBookmarkData: Data? = nil,
+        perceptualHash: String? = nil
     ) {
         self.id = id
         self.bookmarkData = bookmarkData
@@ -282,6 +284,7 @@ public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
         ]
         self.pairedVideoContentHash = pairedVideoContentHash
         self.pairedVideoBookmarkData = pairedVideoBookmarkData
+        self.perceptualHash = perceptualHash
     }
 
     public func replacing(
@@ -290,6 +293,7 @@ public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
         sourceReferences: [ImportedSourceReference]? = nil,
         pairedVideoContentHash: String? = nil,
         pairedVideoBookmarkData: Data? = nil,
+        perceptualHash: String? = nil,
         timeZoneIdentifier: String? = nil,
         parentDirectoryKey: String? = nil,
         appleContentIdentifier: String? = nil,
@@ -318,7 +322,8 @@ public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
             wallClockDate: wallClockDate ?? self.wallClockDate,
             sourceReferences: sourceReferences ?? self.sourceReferences,
             pairedVideoContentHash: pairedVideoContentHash ?? self.pairedVideoContentHash,
-            pairedVideoBookmarkData: pairedVideoBookmarkData ?? self.pairedVideoBookmarkData
+            pairedVideoBookmarkData: pairedVideoBookmarkData ?? self.pairedVideoBookmarkData,
+            perceptualHash: perceptualHash ?? self.perceptualHash
         )
     }
 
@@ -352,7 +357,8 @@ public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
             wallClockDate: nil,
             sourceReferences: sourceReferences,
             pairedVideoContentHash: pairedVideoContentHash,
-            pairedVideoBookmarkData: pairedVideoBookmarkData
+            pairedVideoBookmarkData: pairedVideoBookmarkData,
+            perceptualHash: perceptualHash
         )
     }
 }

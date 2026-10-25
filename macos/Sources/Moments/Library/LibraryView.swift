@@ -455,12 +455,14 @@ struct LibraryView: View {
                 .padding(.vertical, 24)
             }
             .scrollIndicators(.visible)
-            .onChange(of: selection.focusedItemID) { _, focus in
-                guard let focus,
-                      let target = cachedSections.first(where: { $0.itemIDs.contains(focus) }) else { return }
-                scroll(to: target.id, using: proxy)
+            .onChange(of: selection.focusedItemID) { _, _ in
+                revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
             }
-            .onChange(of: cachedSections.map(\.id), initial: true) { _, _ in
+            .onChange(of: selection.shouldRevealSelectionInLibrary) { _, shouldReveal in
+                guard shouldReveal else { return }
+                revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
+            }
+            .onChange(of: cachedSections, initial: true) { _, _ in
                 revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
             }
             .onAppear {
@@ -568,24 +570,34 @@ struct LibraryView: View {
         let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria).map(\.id))
         selection.visibleItemIDs = publishedVisible
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
-        if let focus = selection.focusedItemID, !filtered.contains(where: { $0.id == focus }) {
+        if let focus = selection.focusedItemID,
+           !filtered.contains(where: { $0.id == focus }),
+           !selection.shouldRevealSelectionInLibrary {
             selection.focusedItemID = selection.selectedItemIDs.first
         }
     }
 
     private func revealRequestedSelectionIfNeeded(in sections: [LibrarySection], using proxy: ScrollViewProxy) {
         guard selection.shouldRevealSelectionInLibrary,
-              let focus = selection.focusedItemID,
-              let target = sections.first(where: { $0.itemIDs.contains(focus) }) else { return }
-        scroll(to: target.id, using: proxy)
+              let focus = selection.focusedItemID else { return }
+
+        if typeRaw == LibraryMediaTypeFilter.screenshot.rawValue,
+           let focusedItem = allItems.first(where: { $0.id == focus }),
+           !focusedItem.isScreenshot {
+            typeRaw = LibraryMediaTypeFilter.all.rawValue
+            return
+        }
+
+        guard sections.contains(where: { $0.itemIDs.contains(focus) }) else { return }
+        scroll(to: focus, using: proxy)
         selection.shouldRevealSelectionInLibrary = false
     }
 
-    private func scroll(to sectionID: String, using proxy: ScrollViewProxy) {
+    private func scroll(to itemID: String, using proxy: ScrollViewProxy) {
         if reduceMotion {
-            proxy.scrollTo(sectionID, anchor: .center)
+            proxy.scrollTo(itemID, anchor: .center)
         } else {
-            withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(sectionID, anchor: .center) }
+            withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(itemID, anchor: .center) }
         }
     }
 }
@@ -691,6 +703,7 @@ private struct LibraryPhotoCell: View {
                 .accessibilityIdentifier("library.photo.\(item.id)")
                 .accessibilityValue(selection.isSelected(item.id) ? "Selected" : "Not selected")
                 .accessibilityAddTraits(selection.isSelected(item.id) ? .isSelected : [])
+                .id(item.id)
 
                 HStack(spacing: 6) {
                     Button {

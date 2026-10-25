@@ -1,0 +1,55 @@
+name: macOS UI tests
+
+# UI tests drive the app on a hosted Mac, never on a developer's screen.
+# Synthetic data only: demo seed plus generated fixture photos.
+on:
+  pull_request:
+    paths:
+      - 'macos/Sources/**'
+      - 'macos/Tests/MomentsUITests/**'
+      - 'macos/project.yml'
+      - 'scripts/make_synthetic_import_fixtures.swift'
+      - '.github/workflows/ui-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  ui:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate --spec macos/project.yml
+      - name: Generate synthetic import fixtures
+        run: swift scripts/make_synthetic_import_fixtures.swift "$RUNNER_TEMP/synthetic-trip-folder"
+      - name: Run UI smoke suite and import check
+        env:
+          TEST_RUNNER_MOMENTS_UI_IMPORT_FOLDER: ${{ runner.temp }}/synthetic-trip-folder
+        run: |
+          # Ad-hoc signing is enough for the test runner on the hosted Mac.
+          xcodebuild \
+            -project macos/Moments.xcodeproj \
+            -scheme MomentsUITests \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/MomentsUITests.xcresult" \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
+            test
+      - name: Export screenshots
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/ui-screenshots"
+          if [ -d "$RUNNER_TEMP/MomentsUITests.xcresult" ]; then
+            xcrun xcresulttool export attachments \
+              --path "$RUNNER_TEMP/MomentsUITests.xcresult" \
+              --output-path "$RUNNER_TEMP/ui-screenshots"
+          fi
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: ${{ runner.temp }}/ui-screenshots
+          retention-days: 14

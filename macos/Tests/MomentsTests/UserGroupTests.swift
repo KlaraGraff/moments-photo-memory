@@ -12,8 +12,8 @@ final class UserGroupTests: XCTestCase {
             id: "media-1",
             captureDate: Date(timeIntervalSince1970: 1_700_000_000),
             kind: .photo,
-            trip: trip,
-            place: place
+            place: place,
+            trip: trip
         )
         let tag = Tag(id: "tag-1", displayName: "blue")
         item.mediaTags = [MediaTag(id: "join-1", mediaID: item.id, tagID: tag.id, mediaItem: item, tag: tag)]

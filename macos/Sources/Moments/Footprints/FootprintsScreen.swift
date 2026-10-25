@@ -123,6 +123,8 @@ struct FootprintsScreen: View {
             MapScaleView()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("footprints.globe")
+        .accessibilityLabel("Footprints globe")
     }
 
     private var countryPanel: some View {

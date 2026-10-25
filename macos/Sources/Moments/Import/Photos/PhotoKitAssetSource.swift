@@ -175,7 +175,10 @@ public final class PhotoKitAssetSource: NSObject, PhotosAssetSource, PHPhotoLibr
             ?? PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject else { return nil }
         return await withCheckedContinuation { continuation in
             let options = PHImageRequestOptions()
-            options.deliveryMode = .fastFormat
+            // People scanning needs the final, non-degraded pixels. The
+            // callback can arrive more than once; the continuation below
+            // resumes only for the final result.
+            options.deliveryMode = .highQualityFormat
             options.resizeMode = .fast
             options.isNetworkAccessAllowed = networkAccessAllowed
             options.isSynchronous = false
@@ -187,7 +190,9 @@ public final class PhotoKitAssetSource: NSObject, PhotosAssetSource, PHPhotoLibr
                 let isCancelled = (info?[PHImageCancelledKey] as? Bool) == true
                 let hasError = info?[PHImageErrorKey] != nil
                 let isInCloud = (info?[PHImageResultIsInCloudKey] as? Bool) == true
-                guard image != nil || !isDegraded || isCancelled || hasError || isInCloud else { return }
+                // Ignore preview callbacks and resume only for the final
+                // high-quality image (or a terminal error/cancellation).
+                guard !isDegraded || isCancelled || hasError || isInCloud else { return }
 
                 lock.lock()
                 guard !resumed else {

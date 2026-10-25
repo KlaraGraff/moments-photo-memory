@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 private enum MomentsSection: Hashable {
     case library
     case review
+    case people
     case places
     case footprints
     case timeline
@@ -37,6 +38,7 @@ struct ContentView: View {
     @Query private var items: [MediaItem]
     @Query(sort: \UserGroup.name) private var groups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
+    @Query private var faceObservations: [FaceObservation]
     @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
     @Query private var mediaTags: [MediaTag]
     @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
@@ -59,7 +61,7 @@ struct ContentView: View {
                     Section {
                         sidebarRow("Library", icon: "photo.on.rectangle.angled", section: .library, identifier: "sidebar.library")
                         sidebarRow("To review", icon: "checkmark.circle", section: .review, identifier: "sidebar.review", badge: reviewCount)
-                        // People is intentionally absent until issue #31 lands.
+                        sidebarRow("People", icon: "person.2", section: .people, identifier: "sidebar.people")
                         sidebarRow("Places", icon: "map", section: .places, identifier: "sidebar.places")
                         sidebarRow("Footprints", icon: "globe.americas", section: .footprints, identifier: "sidebar.footprints")
                         sidebarRow("Timeline", icon: "calendar", section: .timeline, identifier: "sidebar.timeline")
@@ -149,6 +151,8 @@ struct ContentView: View {
                 LibraryView(state: libraryState, firstLaunchCompleted: $firstLaunchCompleted)
             case .review:
                 ReviewListView()
+            case .people:
+                PeopleScreen()
             case .places:
                 PlacesScreen()
             case .footprints:
@@ -238,6 +242,12 @@ struct ContentView: View {
             hasher.combine(membership.mediaID)
             hasher.combine(membership.excluded)
         }
+        for observation in faceObservations {
+            hasher.combine(observation.id)
+            hasher.combine(observation.mediaID)
+            hasher.combine(observation.personID)
+            hasher.combine(observation.confirmed)
+        }
         for memory in memoryRecords {
             hasher.combine(memory.id)
             hasher.combine(memory.mediaID)
@@ -255,8 +265,9 @@ struct ContentView: View {
 
     private func refreshGroupCounts() {
         var counts: [String: Int] = [:]
+        let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
         for group in groups {
-            counts[group.id] = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: groupItems).count
+            counts[group.id] = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: groupItems, observations: faceObservations, personIDsByMediaID: personIndex).count
         }
         cachedGroupCounts = counts
     }

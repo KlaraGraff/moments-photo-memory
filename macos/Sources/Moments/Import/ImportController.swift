@@ -57,6 +57,7 @@ final class ImportController {
                 self?.progress = ImportProgress(phase: .finished, completed: summary.importedCount, total: summary.importedCount, message: String(localized: "Import complete"))
                 self?.reviewSummary = summary
                 self?.state = .finished
+                NotificationCenter.default.post(name: .momentsPeopleScanRequested, object: nil)
             } catch is CancellationError {
                 self?.progress = ImportProgress(phase: .cancelled, completed: self?.progress.completed ?? 0, total: self?.progress.total ?? 0, message: String(localized: "Import cancelled"))
                 self?.state = .cancelled

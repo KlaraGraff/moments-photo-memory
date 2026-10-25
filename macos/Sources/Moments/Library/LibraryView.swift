@@ -34,6 +34,8 @@ struct LibraryView: View {
     @Query(sort: \UserGroup.name)
     private var allGroups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
+    @Query(sort: \Person.name) private var people: [Person]
+    @Query private var faceObservations: [FaceObservation]
 
     let state: LibraryViewState
     @Binding var firstLaunchCompleted: Bool
@@ -45,12 +47,14 @@ struct LibraryView: View {
     @AppStorage("moments.library.place") private var placeFilterID = ""
     @AppStorage("moments.library.trip") private var tripFilterKey = ""
     @AppStorage("moments.library.memory") private var memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+    @AppStorage("moments.library.person") private var personFilterID = ""
 
     @State private var cachedSections: [LibrarySection] = []
     @State private var cachedItemByID: [String: MediaItem] = [:]
     @State private var cachedVisibleCount = 0
     @State private var hasGrouped = false
     @State private var showingSmartGroupEditor = false
+    @State private var cachedPersonIndex: [String: Set<String>] = [:]
 
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
@@ -64,7 +68,8 @@ struct LibraryView: View {
             placeID: placeFilterID.isEmpty ? nil : placeFilterID,
             mediaType: LibraryMediaTypeFilter(rawValue: typeRaw) ?? .all,
             tripKey: tripFilterKey.isEmpty ? nil : tripFilterKey,
-            memoryFilter: LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all
+            memoryFilter: LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all,
+            personID: personFilterID.isEmpty ? nil : personFilterID
         )
     }
 
@@ -110,6 +115,16 @@ struct LibraryView: View {
         LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all
     }
 
+    private var visiblePeople: [Person] {
+        people.filter { !$0.hidden && ($0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) }
+    }
+
+    private var selectedPersonName: String? { people.first(where: { $0.id == personFilterID })?.name }
+
+    private var personIDsByMediaID: [String: Set<String>] {
+        cachedPersonIndex
+    }
+
     /// A lightweight query signature for the cached regroup. Memory presence,
     /// trip/place names, and overrides come from their own queries so this
     /// token never faults `item.memories` for every media item during a render.
@@ -122,6 +137,7 @@ struct LibraryView: View {
         hasher.combine(placeFilterID)
         hasher.combine(tripFilterKey)
         hasher.combine(memoryFilterRaw)
+        hasher.combine(personFilterID)
         hasher.combine(state.focusedMemoryItemID)
         for item in items {
             hasher.combine(item.id)
@@ -154,6 +170,13 @@ struct LibraryView: View {
             hasher.combine(memory.updatedAt)
             hasher.combine(memory.revision)
         }
+        for observation in faceObservations {
+            hasher.combine(observation.id)
+            hasher.combine(observation.mediaID)
+            hasher.combine(observation.personID)
+            hasher.combine(observation.confirmed)
+            hasher.combine(observation.assignmentSource)
+        }
         return hasher.finalize()
     }
 
@@ -170,6 +193,9 @@ struct LibraryView: View {
         .background(LibraryPalette.content)
         .onChange(of: allItems.count, initial: true) { _, count in
             if count > 0 { firstLaunchCompleted = true }
+        }
+        .onChange(of: people.map(\.id), initial: true) { _, ids in
+            if !personFilterID.isEmpty && !ids.contains(personFilterID) { personFilterID = "" }
         }
         .task(id: groupingKey) { regroup() }
         .sheet(
@@ -273,6 +299,7 @@ struct LibraryView: View {
 
                 dateFilterMenu
                 memoryFilterMenu
+                personFilterMenu
 
                 Button {
                     // The filter builder is intentionally a disabled stub until #30.
@@ -313,6 +340,9 @@ struct LibraryView: View {
                     }
                     if selectedMemoryFilter != .all {
                         filterChip(memoryFilterLabel(selectedMemoryFilter)) { memoryFilterRaw = LibraryMemoryFilter.all.rawValue }
+                    }
+                    if let selectedPersonName {
+                        filterChip("\(String(localized: "Person:")) \(selectedPersonName)") { personFilterID = "" }
                     }
                     Button(String(localized: "Clear filters")) { clearFilters() }
                         .buttonStyle(.link)
@@ -412,6 +442,27 @@ struct LibraryView: View {
             }
         } label: {
             filterMenuTitle(String(localized: "Memory"), selected: selectedMemoryFilter != .all)
+        }
+        .menuStyle(.borderlessButton)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.48), in: Capsule())
+        .overlay(Capsule().stroke(LibraryPalette.line, lineWidth: 1))
+    }
+
+    private var personFilterMenu: some View {
+        Menu {
+            Button { personFilterID = "" } label: {
+                filterMenuLabel(String(localized: "All people"), selected: personFilterID.isEmpty)
+            }
+            if !visiblePeople.isEmpty { Divider() }
+            ForEach(visiblePeople, id: \.id) { person in
+                Button { personFilterID = person.id } label: {
+                    filterMenuLabel(person.name ?? String(localized: "Unnamed person"), selected: person.id == personFilterID)
+                }
+            }
+        } label: {
+            filterMenuTitle(String(localized: "Person"), selected: !personFilterID.isEmpty)
         }
         .menuStyle(.borderlessButton)
         .padding(.horizontal, 10)
@@ -540,7 +591,7 @@ struct LibraryView: View {
     }
 
     private var hasActiveFilters: Bool {
-        placeFilterID.isEmpty == false || tripFilterKey.isEmpty == false || dateFilterLabel != nil || selectedMemoryFilter != .all
+        placeFilterID.isEmpty == false || tripFilterKey.isEmpty == false || dateFilterLabel != nil || selectedMemoryFilter != .all || personFilterID.isEmpty == false
     }
 
     private func memoryFilterLabel(_ filter: LibraryMemoryFilter) -> String {
@@ -561,21 +612,25 @@ struct LibraryView: View {
         placeFilterID = ""
         tripFilterKey = ""
         memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+        personFilterID = ""
         typeRaw = LibraryMediaTypeFilter.all.rawValue
     }
 
     private func regroup() {
-        let filtered = LibraryFilterEngine.filteredItems(items, by: criteria)
+        let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
+        cachedPersonIndex = personIndex
+        let filtered = LibraryFilterEngine.filteredItems(items, by: criteria, personIDsByMediaID: personIndex)
         let visible = LibraryFilterEngine.filteredItems(
             items,
             by: criteria,
-            preservingEditingItemID: state.focusedMemoryItemID
+            preservingEditingItemID: state.focusedMemoryItemID,
+            personIDsByMediaID: personIndex
         )
         cachedVisibleCount = visible.count
         cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
         cachedSections = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
         hasGrouped = true
-        let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria).map(\.id))
+        let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
         selection.visibleItemIDs = publishedVisible
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
         if let focus = selection.focusedItemID, !filtered.contains(where: { $0.id == focus }) {
@@ -978,10 +1033,12 @@ struct GroupDetailView: View {
     @Query private var memoryRecords: [Memory]
     @Query private var mediaTags: [MediaTag]
     @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
+    @Query private var faceObservations: [FaceObservation]
     @State private var showingEditor = false
     @State private var showingDeleteConfirmation = false
     @State private var cachedVisibleItemIDs: [String] = []
     @State private var cachedVisibleItemsByID: [String: MediaItem] = [:]
+    @State private var cachedPersonIndex: [String: Set<String>] = [:]
 
     init(groupID: String, state: LibraryViewState) {
         self.groupID = groupID
@@ -1027,6 +1084,12 @@ struct GroupDetailView: View {
             hasher.combine(membership.mediaID)
             hasher.combine(membership.excluded)
         }
+        for observation in faceObservations {
+            hasher.combine(observation.id)
+            hasher.combine(observation.mediaID)
+            hasher.combine(observation.personID)
+            hasher.combine(observation.confirmed)
+        }
         for memory in memoryRecords {
             hasher.combine(memory.id)
             hasher.combine(memory.mediaID)
@@ -1048,7 +1111,9 @@ struct GroupDetailView: View {
             cachedVisibleItemsByID = [:]
             return
         }
-        let sorted = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: memberships)
+        let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
+        cachedPersonIndex = personIndex
+        let sorted = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: memberships, observations: faceObservations, personIDsByMediaID: personIndex)
             .sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) > ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
         cachedVisibleItemIDs = sorted.map(\.id)
         cachedVisibleItemsByID = Dictionary(uniqueKeysWithValues: sorted.map { ($0.id, $0) })
@@ -1116,7 +1181,7 @@ struct GroupDetailView: View {
                         Button(String(localized: "Edit")) { showingEditor = true }
                         if group.kind == .smart {
                             Button(String(localized: "Convert to manual")) {
-                                UserGroupRuleEngine.convertToManual(group, items: items, memberships: memberships, context: modelContext)
+                                UserGroupRuleEngine.convertToManual(group, items: items, memberships: memberships, observations: faceObservations, context: modelContext)
                                 try? modelContext.save()
                             }
                         }
@@ -1161,6 +1226,8 @@ struct GroupEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query private var items: [MediaItem]
+    @Query(sort: \Person.name) private var people: [Person]
+    @Query private var faceObservations: [FaceObservation]
     @State private var name = ""
     @State private var mode: UserGroupRuleSet.MatchMode = .all
     @State private var rules: [UserGroupRule] = []
@@ -1179,7 +1246,7 @@ struct GroupEditorSheet: View {
 
     private var isSmart: Bool { kind == .newSmart || group?.kind == .smart }
     private var matchCount: Int {
-        UserGroupRuleEngine.matchingItems(items, ruleSet: UserGroupRuleSet(mode: mode, rules: rules)).count
+        UserGroupRuleEngine.matchingItems(items, ruleSet: UserGroupRuleSet(mode: mode, rules: rules), observations: faceObservations, personIDsByMediaID: UserGroupRuleEngine.makePersonIndex(faceObservations)).count
     }
 
     var body: some View {
@@ -1206,6 +1273,7 @@ struct GroupEditorSheet: View {
                                         Text(String(localized: "Date range")).tag(UserGroupRuleField.dateRange)
                                         Text(String(localized: "Has memory")).tag(UserGroupRuleField.hasMemory)
                                         Text(String(localized: "Tag")).tag(UserGroupRuleField.tag)
+                                        Text(String(localized: "Person")).tag(UserGroupRuleField.person)
                                     }
                                     Picker(String(localized: "Condition"), selection: $rule.op) {
                                         Text(String(localized: "is")).tag(UserGroupRuleOperator.equals)
@@ -1219,7 +1287,15 @@ struct GroupEditorSheet: View {
                                     .buttonStyle(.plain)
                                     .accessibilityLabel(String(localized: "Remove condition"))
                                 }
-                                TextField(rule.field == .dateRange ? String(localized: "From date (YYYY-MM-DD)") : String(localized: "Value"), text: $rule.value)
+                                if rule.field == .person {
+                                    Picker(String(localized: "Person"), selection: $rule.value) {
+                                        ForEach(people.filter { !$0.hidden && $0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }, id: \.id) { person in
+                                            Text(person.name ?? String(localized: "Unnamed person")).tag(person.id)
+                                        }
+                                    }
+                                } else {
+                                    TextField(rule.field == .dateRange ? String(localized: "From date (YYYY-MM-DD)") : String(localized: "Value"), text: $rule.value)
+                                }
                                 if rule.field == .dateRange {
                                     TextField(String(localized: "To date (YYYY-MM-DD)"), text: secondaryBinding(for: $rule))
                                 }
@@ -1304,6 +1380,7 @@ struct GroupEditorSheet: View {
             result.append(UserGroupRule(field: .hasMemory, value: criteria.memoryFilter == .hasMemory ? "true" : "false"))
         }
         if let tagID = criteria.tagID { result.append(UserGroupRule(field: .tag, value: tagID)) }
+        if let personID = criteria.personID { result.append(UserGroupRule(field: .person, value: personID)) }
         return result
     }
 }

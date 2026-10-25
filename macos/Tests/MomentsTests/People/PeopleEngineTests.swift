@@ -1,0 +1,220 @@
+import CoreGraphics
+import Foundation
+import SwiftData
+import XCTest
+@testable import Moments
+
+private actor TestEventLog {
+    private var events: [String] = []
+    func append(_ event: String) { events.append(event) }
+    func snapshot() -> [String] { events }
+}
+
+@MainActor
+final class PeopleEngineTests: XCTestCase {
+    private func embedding(_ values: [Float]) -> Data {
+        var data = Data()
+        values.withUnsafeBytes { data.append(contentsOf: $0) }
+        return data
+    }
+
+    func testAlignmentMapsFiveSyntheticPoints() {
+        let source = [
+            CGPoint(x: 110, y: 80), CGPoint(x: 170, y: 82), CGPoint(x: 140, y: 120),
+            CGPoint(x: 118, y: 154), CGPoint(x: 163, y: 153)
+        ]
+        let known = CGAffineTransform(a: 1.18, b: 0.12, c: -0.12, d: 1.18, tx: 4, ty: -8)
+        let target = source.map { $0.applying(known) }
+        guard let estimated = FaceAlignment.transform(from: source, to: target) else {
+            return XCTFail("A non-degenerate five-point set should produce a transform")
+        }
+        for (actual, expected) in zip(source.map { $0.applying(estimated) }, target) {
+            XCTAssertLessThan(hypot(actual.x - expected.x, actual.y - expected.y), 0.5)
+        }
+    }
+
+    func testAlignedCropUsesTopHalfOfYDownImage() {
+        let width = 400, height = 800
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        for y in 0..<height {
+            let red = y < height / 2 // The first row in CGImage memory is the top of the image.
+            for x in 0..<width {
+                let offset = (y * width + x) * 4
+                bytes[offset] = red ? 220 : 20
+                bytes[offset + 1] = 0
+                bytes[offset + 2] = red ? 20 : 220
+                bytes[offset + 3] = 255
+            }
+        }
+        let provider = CGDataProvider(data: Data(bytes) as CFData)!
+        let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+        let crop = FaceAlignment.alignedCrop(image, points: FaceAlignment.template)!
+        var pixel = [UInt8](repeating: 0, count: 4)
+        let context = CGContext(data: &pixel, width: 1, height: 1, bitsPerComponent: 8,
+                                bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(crop, in: CGRect(x: -55, y: -55, width: 112, height: 112))
+        XCTAssertGreaterThan(pixel[0], pixel[2])
+    }
+
+    func testAverageLinkSplitsTwoSyntheticClustersAndHonoursThreshold() {
+        let vectors: [[Float]] = [[1, 0], [0.98, 0.05], [-1, 0], [-0.98, -0.05]]
+        XCTAssertEqual(FaceClustering.averageLink(vectors, threshold: 0.65).count, 2)
+        XCTAssertEqual(FaceClustering.averageLink(vectors, threshold: 2.1).count, 1)
+        // The expected grouping is the result of the naive member-pair
+        // average-link calculation for this four-vector synthetic set.
+        XCTAssertEqual(FaceClustering.averageLink([[1, 0], [0.9, 0.1], [0, 1], [0, 0.9]], threshold: 0.2), [[0, 1], [2, 3]])
+    }
+
+    func testIncrementalAssignmentKeepsConfirmedPersonIDsStable() {
+        let confirmed: [(id: String, centroid: [Float])] = [
+            ("person-a", [1, 0, 0]), ("person-b", [0, 1, 0])
+        ]
+        XCTAssertEqual(FaceClustering.assignIncrementally([0.99, 0.02, 0], to: confirmed), "person-a")
+        XCTAssertNil(FaceClustering.assignIncrementally([-1, 0, 0], to: confirmed))
+    }
+
+    func testRejectedFaceIsNeverReassigned() {
+        let face = FaceObservation(
+            mediaID: "synthetic-media",
+            rect: (0, 0, 1, 1),
+            embedding: embedding([1, 0]),
+            cropData: Data([1]),
+            quality: 1,
+            personID: "synthetic-person",
+            confirmed: true,
+            assignmentSource: "user"
+        )
+        PeopleStoreActions.remove(face: face)
+        XCTAssertTrue(face.rejectedPersonIDSet.contains("synthetic-person"))
+        XCTAssertFalse(face.canAssign(to: "synthetic-person"))
+        XCTAssertNil(FaceClustering.assignIncrementally(
+            [1, 0],
+            to: [(id: "synthetic-person", centroid: [1, 0])],
+            rejecting: face.rejectedPersonIDSet
+        ))
+    }
+
+    func testAutoAssignedFacesDoNotMoveUserCentroid() {
+        let faces = [
+            PeopleFaceSnapshot(id: "user-face", personID: "synthetic-person", clusterID: nil, confirmed: true, assignmentSource: "user", rejectedPersonIDs: "", embedding: embedding([1, 0])),
+            PeopleFaceSnapshot(id: "auto-face", personID: "synthetic-person", clusterID: nil, confirmed: true, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([-1, 0])),
+            PeopleFaceSnapshot(id: "candidate", personID: nil, clusterID: "pending-candidate", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([1, 0]))
+        ]
+        let assignments = PeopleScanController.makeAssignments(faces: faces, people: [PeoplePersonSnapshot(id: "synthetic-person")])
+        let candidate = assignments.first { $0.id == "candidate" }
+        XCTAssertEqual(candidate?.personID, "synthetic-person")
+        XCTAssertEqual(candidate?.assignmentSource, "auto")
+        XCTAssertFalse(candidate?.confirmed ?? true)
+    }
+
+    func testZeroFaceItemIsMarkedScanned() async throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let store = PeopleScanStore(modelContainer: container)
+        try await store.save(
+            results: [PeopleScanResult(mediaID: "synthetic-zero-face", faces: [])],
+            scannedIDs: ["synthetic-zero-face"],
+            version: 1
+        )
+        let records = try container.mainContext.fetch(FetchDescriptor<FaceScanRecord>())
+        XCTAssertEqual(records.map(\.id), ["synthetic-zero-face"])
+        XCTAssertTrue(try container.mainContext.fetch(FetchDescriptor<FaceObservation>()).isEmpty)
+    }
+
+    func testScanCoordinatorWaitsForCancelledRunBeforeStartingNext() async {
+        let coordinator = PeopleScanCoordinator()
+        let log = TestEventLog()
+        let first = Task {
+            await coordinator.run {
+                await log.append("first-start")
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                await log.append("first-end")
+            }
+        }
+        try? await Task.sleep(nanoseconds: 5_000_000)
+        await coordinator.run {
+            await log.append("second-start")
+            await log.append("second-end")
+        }
+        _ = await first.value
+        let events = await log.snapshot()
+        XCTAssertEqual(events, ["first-start", "first-end", "second-start", "second-end"])
+    }
+
+    func testPersonFilterAndRuleUseFaceObservations() throws {
+        let item = MediaItem(id: "synthetic-item")
+        let other = MediaItem(id: "synthetic-other")
+        let person = Person(id: "synthetic-person", name: "Synthetic")
+        let observation = FaceObservation(
+            mediaID: item.id,
+            rect: (0.1, 0.1, 0.2, 0.2),
+            embedding: Data(repeating: 0, count: 128 * MemoryLayout<Float>.size),
+            cropData: Data([1, 2, 3]),
+            quality: 0.9,
+            personID: person.id,
+            confirmed: true
+        )
+        let criteria = LibraryFilterCriteria(personID: person.id)
+        XCTAssertEqual(LibraryFilterEngine.filteredItems([item, other], by: criteria, observations: [observation]).map(\.id), [item.id])
+        let rule = UserGroupRule(field: .person, value: person.id)
+        XCTAssertTrue(UserGroupRuleEngine.matches(item, ruleSet: UserGroupRuleSet(rules: [rule]), observations: [observation]))
+        XCTAssertFalse(UserGroupRuleEngine.matches(other, ruleSet: UserGroupRuleSet(rules: [rule]), observations: [observation]))
+    }
+
+    func testMergeRemoveAndHideMutations() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let source = Person(id: "source", name: "Source")
+        let target = Person(id: "target", name: "Target")
+        let group = UserGroup(name: "Synthetic group", kind: .smart, rules: UserGroupRuleSet(rules: [UserGroupRule(field: .person, value: source.id)]))
+        let observation = FaceObservation(
+            mediaID: "synthetic-item",
+            rect: (0, 0, 1, 1),
+            embedding: Data(repeating: 0, count: 128 * MemoryLayout<Float>.size),
+            cropData: Data([4, 5, 6]),
+            quality: 0.9,
+            personID: source.id,
+            confirmed: true
+        )
+        context.insert(source)
+        context.insert(target)
+        context.insert(group)
+        context.insert(observation)
+        UserDefaults.standard.set(source.id, forKey: "moments.library.person")
+        defer { UserDefaults.standard.removeObject(forKey: "moments.library.person") }
+        PeopleStoreActions.merge(sourceID: source.id, into: target.id, people: [source, target], observations: [observation], context: context)
+        XCTAssertEqual(observation.personID, target.id)
+        XCTAssertEqual(group.rules.rules.first?.value, target.id)
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "moments.library.person"), target.id)
+        PeopleStoreActions.remove(face: observation)
+        XCTAssertNil(observation.personID)
+        PeopleStoreActions.hide(person: target)
+        XCTAssertTrue(target.hidden)
+    }
+
+    func testUnavailableEmbedderDoesNoDetectionWork() async {
+        struct Unavailable: FaceEmbedder {
+            let isAvailable = false
+            func embedding(for crop: CGImage) throws -> [Float] { throw FaceEmbedderError.unavailable }
+        }
+        let pipeline = PeopleScanPipeline(embedder: Unavailable())
+        let values = await pipeline.scanDetailed([])
+        XCTAssertTrue(values.isEmpty)
+    }
+
+    func testSFaceInputTensorIsRGBPlanarRawValues() throws {
+        let context = try XCTUnwrap(CGContext(data: nil, width: 112, height: 112, bitsPerComponent: 8, bytesPerRow: 0,
+                                              space: try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB)), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.setFillColor(CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 112, height: 112))
+        let tensor = try XCTUnwrap(SFaceCoreMLEmbedder.inputTensor(from: try XCTUnwrap(context.makeImage())))
+        let plane = 112 * 112
+        XCTAssertEqual(tensor.count, 3 * plane)
+        XCTAssertEqual(tensor[0], 255, accuracy: 1)           // channel 0 is red
+        XCTAssertEqual(tensor[plane], 0, accuracy: 1)         // channel 1 is green
+        XCTAssertEqual(tensor[2 * plane], 0, accuracy: 1)     // channel 2 is blue
+    }
+}

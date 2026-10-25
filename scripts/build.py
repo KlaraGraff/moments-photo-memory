@@ -4,11 +4,14 @@ import argparse
 import base64
 import html
 import json
+from apple_web import integrate_apple
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_FIELDS = {'id', 'date', 'trip', 'place', 'scene', 'tags', 'width', 'height',
                 'geo', 'titleLabels', 'locationArea', 'locationSite',
-                'locationFullLabels', 'locationConfidenceText'}
+                'locationFullLabels', 'locationConfidenceText', 'type', 'previewURL',
+                'originalURL', 'livePhotoURL', 'duration', 'confirmedDateDay',
+                'confirmedDateLabel', 'timeConfidence', 'rawDate'}
 
 def illustration(index, width, height):
     """Original geometric artwork; no image files or personal photos are read."""
@@ -44,20 +47,41 @@ def build(private_path=None):
     assets, config = load_data(private_path)
     source = ROOT / 'src'
     page = (source / 'ui-template.html').read_text()
-    css = '\n'.join((source / name).read_text() for name in ['custom-places.css', 'motion.css'])
+    css = '\n'.join((source / name).read_text() for name in ['custom-places.css', 'motion.css', 'product-map.css', 'library-view.css', 'footprints.css', 'quality-polish.css'])
     modules = '\n'.join((source / name).read_text() for name in ['custom-places.js', 'motion.js'])
     page = page.replace('__ASSETS__', js_json(assets)).replace('__DEMO_CONFIG__', js_json(config))
     page = page.replace('</style>', '\n'+css+'</style>', 1)
     page = page.replace("'use strict';", "'use strict';\n"+modules, 1)
-    page = page.replace('window.demo={', (source/'prototype.js').read_text()+'\nwindow.demo={', 1)
+    integration = (source/'product-map.js').read_text()+'\n'+(source/'product-integration.js').read_text()
+    integration = integration.replace('__MAP_WORKSPACE_URL__', js_json('./map-workspace.html'))
+    library={'groups':config['groups'],'sourceNotes':config['sourceNotes'],'favoriteIds':[],'summary':{'records':len(assets)}}
+    integration+='\nconst LIBRARY='+js_json(library)+';\n'+(source/'library-view.js').read_text()+'\n'+(source/'globe-bridge.js').read_text()+'\n'+(source/'footprints.js').read_text()
+    page = page.replace('window.demo={', (source/'prototype.js').read_text()+'\n'+integration+'\nwindow.demo={', 1)
     page = page.replace('};renderFrame();\n</script>', '};renderFrame();Motion.start();\n</script>')
     page = page.replace('<div id="filter-panel"', '<section id="place-editor" hidden></section><div id="filter-panel"', 1)
+    page = integrate_apple(page,source)
     target = ROOT / 'dist';target.mkdir(exist_ok=True)
     (target/'index.html').write_text(page)
     map_page = (source/'map-template.html').read_text().replace('__ASSETS__', js_json(assets)).replace('__DEMO_CONFIG__', js_json(config))
+    map_page = map_page.replace('__MAP_WHEEL_JS__', (source/'map-wheel.js').read_text())
+    for marker,name in [('__ROAD_ROUTING_JS__','road-routing.js'),('__ROAD_PANEL_JS__','road-panel.js'),('__ROAD_PANEL_CSS__','road-panel.css')]:
+        map_page=map_page.replace(marker,(source/name).read_text())
     map_page = map_page.replace('__LEAFLET_CSS__', (ROOT/'vendor/leaflet/leaflet.css').read_text())
     map_page = map_page.replace('__LEAFLET_JS__', (ROOT/'vendor/leaflet/leaflet.js').read_text().replace('</script', r'<\/script'))
     (target/'map.html').write_text(map_page)
+    workspace = (source/'map-workspace.html').read_text()
+    for marker, file in [('__LEAFLET_CSS__', ROOT/'vendor/leaflet/leaflet.css'),
+                         ('__LEAFLET_JS__', ROOT/'vendor/leaflet/leaflet.js'),
+                         ('__MAP_WHEEL_JS__', source/'map-wheel.js'),
+                         ('__ROAD_ROUTING_JS__', source/'road-routing.js'),
+                         ('__ROAD_PANEL_JS__', source/'road-panel.js'),
+                         ('__ROAD_PANEL_CSS__', source/'road-panel.css'),
+                         ('__WORKSPACE_JS__', source/'map-workspace.js'),
+                         ('__WORKSPACE_CSS__', source/'map-workspace.css')]:
+        content = file.read_text()
+        workspace = workspace.replace(marker, content.replace('</script', r'<\/script') if file.suffix=='.js' else content)
+    (target/'map-workspace.html').write_text(workspace)
+    (target/'globe-workspace.html').write_text((source/'globe-workspace.html').read_text())
     (target/'docs').mkdir(exist_ok=True)
     (target/'docs/design-notes.html').write_bytes((ROOT/'docs/design-notes.html').read_bytes())
     return len(assets)

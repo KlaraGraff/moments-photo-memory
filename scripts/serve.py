@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 import argparse
 
 ROOT = Path(__file__).resolve().parents[1] / 'dist'
-ROUTES = {'/':'index.html', '/index.html':'index.html', '/map.html':'map.html',
+ROUTES = {'/':'index.html', '/index.html':'index.html', '/map.html':'map.html', '/map-workspace.html':'map-workspace.html',
           '/docs/design-notes.html':'docs/design-notes.html'}
 
 def serve(port):

@@ -14,4 +14,7 @@ const b=recovered.save({name:'<script>unsafe</script>',trip:'journeyB'});const m
 assert(recovered.remove(a.id));assert.equal(recovered.get(a.id),null);
 const broken={getItem:()=>'{bad',setItem:()=>{throw Error('must not overwrite');}};
 const memory=ctx.model.create({storage:broken,knownIds:['D0001']});memory.save({name:'Keep in memory',trip:'journeyA'});assert.equal(memory.storageStatus.code,'read-error');assert.equal(memory.list().length,1);
+const dynamicIds=new Set(['D0001']),dynamic=ctx.model.create({knownIds:id=>dynamicIds.has(id)}),imported='APL'+'a'.repeat(64);
+assert.throws(()=>dynamic.save({name:'Imported place',trip:'apple_demo',photoIds:[imported]}),/invalid-photo/);
+dynamicIds.add(imported);assert.equal(dynamic.save({name:'Imported place',trip:'apple_demo',photoIds:[imported]}).photoIds[0],imported);
 console.log('Custom place CRUD, isolation, persistence, safe markup and failed-storage checks passed.');

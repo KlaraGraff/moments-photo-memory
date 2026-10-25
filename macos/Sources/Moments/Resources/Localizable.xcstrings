@@ -64,6 +64,83 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Your shared travel path will appear here." } },
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "你们共同的旅行足迹会显示在这里。" } }
       }
+    },
+    "No timeline entries" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Noch keine Zeitleisteneinträge" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No timeline entries" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "暂无时间线条目" } }
+      }
+    },
+    "Photos without dates will appear after a date is added." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Fotos ohne Datum erscheinen, sobald ein Datum ergänzt wurde." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Photos without dates will appear after a date is added." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "补充日期后，没有日期的照片会显示在这里。" } }
+      }
+    },
+    "Date to add" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Datum ergänzen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Date to add" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "待补充日期" } }
+      }
+    },
+    "No photos in this trip" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Keine Fotos in dieser Reise" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No photos in this trip" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此行程暂无照片" } }
+      }
+    },
+    "Unknown place" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Unbekannter Ort" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown place" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未知地点" } }
+      }
+    },
+    "photo" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Foto" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "photo" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "张照片" } }
+      }
+    },
+    "photos" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Fotos" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "photos" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "张照片" } }
+      }
+    },
+    "memory" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Erinnerung" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "memory" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "条回忆" } }
+      }
+    },
+    "memories" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Erinnerungen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "memories" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "条回忆" } }
+      }
+    },
+    "Travel" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Reise" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Travel" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "移动" } }
+      }
+    },
+    "Unsorted memories" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Unsortierte Erinnerungen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unsorted memories" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未整理回忆" } }
+      }
     }
   }
 }

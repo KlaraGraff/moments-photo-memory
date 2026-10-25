@@ -3,6 +3,9 @@ import SwiftData
 
 @main
 struct MomentsApp: App {
+    #if DEBUG
+    @NSApplicationDelegateAdaptor(UnitTestHostDelegate.self) private var unitTestHostDelegate
+    #endif
     private let modelContainer: ModelContainer?
     private let storeError: MomentsStoreError?
     @State private var selection = SelectionModel()
@@ -38,7 +41,7 @@ struct MomentsApp: App {
             // uses an in-memory store, -MomentsUITestStoreDirectory a
             // throwaway on-disk store that survives relaunches.
             // A unit-test host must not open the user's store either.
-            let isUnitTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            let isUnitTestHost = UnitTestHostDelegate.isUnitTestHost
             let testStoreDirectory = Self.uiTestStoreDirectory
             let testStoreURL = testStoreDirectory?.appending(path: "Moments.store")
             let isUITesting = ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
@@ -67,37 +70,51 @@ struct MomentsApp: App {
         }
     }
 
+    @ViewBuilder
+    private var appContent: some View {
+        // The B1 paper design is light only; sheets inherit the window's appearance.
+        Group {
+            if let modelContainer {
+                ContentView(libraryState: libraryState)
+                    .environment(selection)
+                    .environment(importController)
+                    .modelContainer(modelContainer)
+                    .onAppear {
+                        importController.configure(container: modelContainer)
+                        photosImportController.configure(container: modelContainer)
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
+                        showingPhotosImport = true
+                    }
+                    .sheet(isPresented: $showingPhotosImport) {
+                        PhotosImportSheet(controller: photosImportController)
+                    }
+                    #if DEBUG
+                    .frame(width: isUITestSmallWindow ? 900 : nil, height: isUITestSmallWindow ? 600 : nil)
+                    .onAppear {
+                        // Simulates a Mac in Dark Mode; the window below must stay light.
+                        if isUITestDarkMode { NSApp.appearance = NSAppearance(named: .darkAqua) }
+                    }
+                    #endif
+            } else {
+                StoreUnavailableView(isProtectedLegacyStore: storeError != nil)
+            }
+        }
+        .preferredColorScheme(.light)
+    }
+
     var body: some Scene {
         WindowGroup {
-            // The B1 paper design is light only; sheets inherit the window's appearance.
-            Group {
-                if let modelContainer {
-                    ContentView(libraryState: libraryState)
-                        .environment(selection)
-                        .environment(importController)
-                        .modelContainer(modelContainer)
-                        .onAppear {
-                            importController.configure(container: modelContainer)
-                            photosImportController.configure(container: modelContainer)
-                        }
-                        .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
-                            showingPhotosImport = true
-                        }
-                        .sheet(isPresented: $showingPhotosImport) {
-                            PhotosImportSheet(controller: photosImportController)
-                        }
-                        #if DEBUG
-                        .frame(width: isUITestSmallWindow ? 900 : nil, height: isUITestSmallWindow ? 600 : nil)
-                        .onAppear {
-                            // Simulates a Mac in Dark Mode; the window below must stay light.
-                            if isUITestDarkMode { NSApp.appearance = NSAppearance(named: .darkAqua) }
-                        }
-                        #endif
-                } else {
-                    StoreUnavailableView(isProtectedLegacyStore: storeError != nil)
-                }
+            #if DEBUG
+            if UnitTestHostDelegate.isUnitTestHost {
+                // Unit tests only need the process; render nothing and keep the window hidden.
+                UnitTestHostWindowHider()
+            } else {
+                appContent
             }
-            .preferredColorScheme(.light)
+            #else
+            appContent
+            #endif
         }
         .commands {
             CommandGroup(after: .newItem) {

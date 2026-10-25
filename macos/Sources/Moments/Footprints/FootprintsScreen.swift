@@ -182,7 +182,7 @@ struct FootprintsScreen: View {
                 }
             }
         }
-        .background(.background)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     @MainActor

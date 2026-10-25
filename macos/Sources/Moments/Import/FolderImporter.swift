@@ -120,7 +120,7 @@ struct FolderImporter {
         }
 
         progress(ImportProgress(phase: .organizing, completed: 0, total: fresh.count, message: String(localized: "Organizing trips and places")))
-        let plan = try await organizer.organize(fresh)
+        let plan = try await organizer.organize(fresh, sourceFolderName: folderURL.lastPathComponent)
         try Task.checkCancellation()
 
         progress(ImportProgress(phase: .saving, completed: 0, total: fresh.count, message: String(localized: "Saving import")))

@@ -89,9 +89,11 @@ struct ImportStatusView: View {
                 if let fraction = controller.progress.fraction {
                     ProgressView(value: fraction)
                         .frame(width: 120)
+                        .accessibilityIdentifier("import.progress.indicator")
                 } else {
                     ProgressView()
                         .controlSize(.small)
+                        .accessibilityIdentifier("import.progress.indicator")
                 }
                 Text(controller.progress.message)
                     .lineLimit(1)
@@ -101,9 +103,11 @@ struct ImportStatusView: View {
                 if controller.isRunning {
                     Button("Cancel") { controller.cancel() }
                         .buttonStyle(.borderless)
+                        .accessibilityIdentifier("import.cancel")
                 } else if controller.state == .cancelled {
                     Button("Resume") { controller.resume() }
                         .buttonStyle(.borderless)
+                        .accessibilityIdentifier("import.resume")
                 } else if case .failed(let message) = controller.state {
                     Text(message)
                         .foregroundStyle(.red)
@@ -111,6 +115,8 @@ struct ImportStatusView: View {
                 }
             }
             .font(.caption)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("import.progress")
         }
     }
 }
@@ -143,11 +149,13 @@ struct ImportReviewView: View {
                 Spacer()
                 Button("Done") { controller.dismissReview() }
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("import.review.done")
             }
 
             if !summary.flags.isEmpty {
                 Text("Needs your confirmation")
                     .font(.headline)
+                    .accessibilityIdentifier("import.confirmationList")
                 List(summary.flags) { flag in
                     VStack(alignment: .leading, spacing: 3) {
                         HStack {
@@ -156,8 +164,10 @@ struct ImportReviewView: View {
                             Spacer()
                             Button("Accept") { apply(flag, decision: .accepted) }
                                 .buttonStyle(.borderless)
+                                .accessibilityIdentifier("import.confirmation.accept.\(flag.id)")
                             Button("Ignore") { apply(flag, decision: .ignored) }
                                 .buttonStyle(.borderless)
+                                .accessibilityIdentifier("import.confirmation.ignore.\(flag.id)")
                         }
                         Text(flag.reasons.map(\.label).joined(separator: " · "))
                             .font(.caption)
@@ -180,6 +190,7 @@ struct ImportReviewView: View {
                             )
                             .textFieldStyle(.roundedBorder)
                             .onSubmit { changePlace(for: flag) }
+                            .accessibilityIdentifier("import.confirmation.place.\(flag.id)")
                         }
                         TextField(
                             "Add a memory",
@@ -195,6 +206,7 @@ struct ImportReviewView: View {
                         )
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { saveMemory(for: flag) }
+                        .accessibilityIdentifier("import.confirmation.memory.\(flag.id)")
                         if flag.reasons.contains(.needsDate) {
                             HStack {
                                 DatePicker(
@@ -205,8 +217,10 @@ struct ImportReviewView: View {
                                     ),
                                     displayedComponents: [.date, .hourAndMinute]
                                 )
+                                .accessibilityIdentifier("import.confirmation.date.\(flag.id)")
                                 Button("Use date") { correctDate(for: flag) }
                                     .buttonStyle(.borderless)
+                                    .accessibilityIdentifier("import.confirmation.useDate.\(flag.id)")
                             }
                             .font(.caption)
                         }
@@ -230,23 +244,32 @@ struct ImportReviewView: View {
                             set: { renameValues[trip.id] = $0 }
                         )
                     )
+                    .accessibilityIdentifier("import.trip.name.\(trip.id)")
                     Text("\(trip.itemCount) \(String(localized: "items"))")
                         .foregroundStyle(.secondary)
                     Button("Save") { saveRename(for: trip) }
                         .buttonStyle(.borderless)
+                        .accessibilityIdentifier("import.trip.rename.\(trip.id)")
                     Button("Split at first day") { split(at: trip) }
                         .buttonStyle(.borderless)
+                        .accessibilityIdentifier("import.trip.split.\(trip.id)")
                     Button("Confirm") { confirm(trip) }
                         .buttonStyle(.borderless)
+                        .accessibilityIdentifier("import.trip.confirm.\(trip.id)")
                 }
             }
             .frame(minHeight: 100, maxHeight: 220)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("import.tripSuggestions")
 
             if summary.trips.count > 1 {
                 Button("Merge later trips into the first") { mergeTrips() }
                     .buttonStyle(.borderless)
+                    .accessibilityIdentifier("import.trip.merge")
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("import.review")
         .padding(24)
         .frame(width: 650, height: 560)
     }

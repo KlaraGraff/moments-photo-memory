@@ -10,11 +10,14 @@ final class UndatedTripNameTests: XCTestCase {
     func testUndatedTripUsesSpecificFolderName() {
         XCTAssertEqual(ImportOrganizer.undatedTripName(folderName: "Synthetic Coast Weekend"), "Synthetic Coast Weekend")
         XCTAssertEqual(ImportOrganizer.undatedTripName(folderName: "  Synthetic Hills  "), "Synthetic Hills")
+        for name in ["2025Rome", "2024Bali", "2023_ITA", "1000days", "2025 Rome", "100 days"] {
+            XCTAssertEqual(ImportOrganizer.undatedTripName(folderName: name), name)
+        }
     }
 
     func testUndatedTripFallsBackForGenericOrMissingFolderNames() {
         let fallback = String(localized: "Undated photos")
-        for name in [nil, "", "Downloads", "DCIM", "100APPLE", "101MSDCF", "Desktop", "下载", "New Folder"] {
+        for name in [nil, "", "Downloads", "DCIM", "100APPLE", "101MSDCF", "100_PANA", "Untitled", "NO NAME", "EOS_DIGITAL", "Desktop", "下载", "New Folder"] {
             XCTAssertEqual(ImportOrganizer.undatedTripName(folderName: name), fallback, "\(String(describing: name))")
         }
     }

@@ -25,7 +25,22 @@ guard arguments.count == 2 else {
 }
 let output = URL(fileURLWithPath: arguments[1]).standardizedFileURL
 let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().standardizedFileURL
-guard !output.path.hasPrefix(repoRoot.path + "/"), output.path != repoRoot.path else {
+// Resolve symlinks of the deepest existing ancestor and compare without case,
+// since macOS volumes are usually case-insensitive.
+func resolvedPath(_ url: URL) -> String {
+    var existing = url
+    var rest: [String] = []
+    while !FileManager.default.fileExists(atPath: existing.path), existing.pathComponents.count > 1 {
+        rest.insert(existing.lastPathComponent, at: 0)
+        existing.deleteLastPathComponent()
+    }
+    var resolved = existing.resolvingSymlinksInPath()
+    for component in rest { resolved.appendPathComponent(component) }
+    return resolved.path.lowercased()
+}
+let outputPath = resolvedPath(output)
+let repoPath = resolvedPath(repoRoot)
+guard !outputPath.hasPrefix(repoPath + "/"), outputPath != repoPath else {
     FileHandle.standardError.write("Refusing to write fixtures inside the repository.\n".data(using: .utf8)!)
     exit(2)
 }

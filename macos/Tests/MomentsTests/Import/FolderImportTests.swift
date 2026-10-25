@@ -38,6 +38,7 @@ final class FolderImportTests: XCTestCase {
         XCTAssertEqual(after, before)
         XCTAssertEqual(items.first?.localDayKey, "2026-01-01")
         XCTAssertNotNil(items.first?.originalBookmarkData)
+        XCTAssertNotNil(items.first?.perceptualHash)
         let bookmark = try XCTUnwrap(items.first?.originalBookmarkData)
         let resolved = try OriginalMediaBookmark.resolve(bookmark)
         XCTAssertEqual(resolved.url.standardizedFileURL, url.standardizedFileURL)

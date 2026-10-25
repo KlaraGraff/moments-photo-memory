@@ -751,16 +751,440 @@ public enum SchemaV2: VersionedSchema {
 public enum SchemaV3: VersionedSchema {
     public static let versionIdentifier = Schema.Version(3, 0, 0)
     public static let models: [any PersistentModel.Type] = [
-        MediaItem.self,
-        Memory.self,
-        MemoryRevision.self,
-        Place.self,
-        PlaceOverride.self,
-        Trip.self,
-        Tag.self,
-        MediaTag.self,
-        Favorite.self
+        SchemaV3.MediaItem.self,
+        SchemaV3.Memory.self,
+        SchemaV3.MemoryRevision.self,
+        SchemaV3.Place.self,
+        SchemaV3.PlaceOverride.self,
+        SchemaV3.Trip.self,
+        SchemaV3.Tag.self,
+        SchemaV3.MediaTag.self,
+        SchemaV3.Favorite.self
     ]
+
+    @Model
+    public final class MediaItem {
+        public var id: String
+        public var captureDate: Date?
+        public var latitude: Double?
+        public var longitude: Double?
+        public var kindRaw: String
+        public var width: Int
+        public var height: Int
+        public var isScreenshot: Bool
+        public var sourceRaw: String
+        public var title: String
+        public var tripID: String?
+        public var updatedAt: Date
+        public var updatedBy: String?
+        public var originalBookmarkData: Data?
+        public var originalFileName: String?
+        public var originalContentHash: String?
+        public var captureDateSourceRaw: String?
+        public var localTimeZoneOffsetMinutes: Int?
+        public var localDayKey: String?
+        public var duration: Double?
+        public var importReviewReasonsRaw: String?
+        public var importedAt: Date?
+        public var originalCaptureDateUTC: Date?
+        public var captureDateHintUTC: Date?
+        public var userCorrectedCaptureDateUTC: Date?
+        public var timeZoneIdentifier: String?
+        public var timeConfidenceRaw: String?
+        public var sourceReferencesRaw: String?
+        public var pairedVideoContentHash: String?
+        public var pairedVideoBookmarkData: Data?
+        public var reviewDecisionRaw: String?
+        public var reviewOverridePlaceID: String?
+        public var reviewOverrideDateUTC: Date?
+        public var reviewMemoryDraft: String?
+
+        @Relationship(inverse: \Place.items)
+        public var place: Place?
+        @Relationship(inverse: \Trip.items)
+        public var trip: Trip?
+        @Relationship(deleteRule: .cascade, inverse: \Memory.mediaItem)
+        public var memories: [Memory] = []
+        @Relationship(inverse: \MediaTag.mediaItem)
+        public var mediaTags: [MediaTag] = []
+        @Relationship(inverse: \Favorite.mediaItem)
+        public var favorites: [Favorite] = []
+        @Relationship(inverse: \PlaceOverride.mediaItem)
+        public var placeOverrides: [PlaceOverride] = []
+
+        public init(
+            id: String = UUID().uuidString,
+            captureDate: Date? = nil,
+            latitude: Double? = nil,
+            longitude: Double? = nil,
+            kind: MediaKind = .photo,
+            width: Int = 0,
+            height: Int = 0,
+            isScreenshot: Bool = false,
+            source: MediaSource = .file,
+            title: String = "",
+            tripID: String? = nil,
+            tripKey: String? = nil,
+            place: Place? = nil,
+            trip: Trip? = nil,
+            updatedAt: Date = .now,
+            updatedBy: String? = nil,
+            originalBookmarkData: Data? = nil,
+            originalFileName: String? = nil,
+            originalContentHash: String? = nil,
+            captureDateSourceRaw: String? = nil,
+            localTimeZoneOffsetMinutes: Int? = nil,
+            localDayKey: String? = nil,
+            duration: Double? = nil,
+            importReviewReasonsRaw: String? = nil,
+            importedAt: Date? = nil,
+            originalCaptureDateUTC: Date? = nil,
+            captureDateHintUTC: Date? = nil,
+            userCorrectedCaptureDateUTC: Date? = nil,
+            timeZoneIdentifier: String? = nil,
+            timeConfidenceRaw: String? = nil,
+            sourceReferencesRaw: String? = nil,
+            pairedVideoContentHash: String? = nil,
+            pairedVideoBookmarkData: Data? = nil,
+            reviewDecisionRaw: String? = nil,
+            reviewOverridePlaceID: String? = nil,
+            reviewOverrideDateUTC: Date? = nil,
+            reviewMemoryDraft: String? = nil
+        ) {
+            self.id = id
+            self.captureDate = captureDate
+            self.latitude = latitude
+            self.longitude = longitude
+            self.kindRaw = kind.rawValue
+            self.width = width
+            self.height = height
+            self.isScreenshot = isScreenshot
+            self.sourceRaw = source.rawValue
+            self.title = title
+            self.tripID = trip?.id ?? tripID ?? tripKey
+            self.updatedAt = updatedAt
+            self.updatedBy = updatedBy
+            self.originalBookmarkData = originalBookmarkData
+            self.originalFileName = originalFileName
+            self.originalContentHash = originalContentHash
+            self.captureDateSourceRaw = captureDateSourceRaw
+            self.localTimeZoneOffsetMinutes = localTimeZoneOffsetMinutes
+            self.localDayKey = localDayKey
+            self.duration = duration
+            self.importReviewReasonsRaw = importReviewReasonsRaw
+            self.importedAt = importedAt
+            self.originalCaptureDateUTC = originalCaptureDateUTC
+            self.captureDateHintUTC = captureDateHintUTC
+            self.userCorrectedCaptureDateUTC = userCorrectedCaptureDateUTC
+            self.timeZoneIdentifier = timeZoneIdentifier
+            self.timeConfidenceRaw = timeConfidenceRaw
+            self.sourceReferencesRaw = sourceReferencesRaw
+            self.pairedVideoContentHash = pairedVideoContentHash
+            self.pairedVideoBookmarkData = pairedVideoBookmarkData
+            self.reviewDecisionRaw = reviewDecisionRaw
+            self.reviewOverridePlaceID = reviewOverridePlaceID
+            self.reviewOverrideDateUTC = reviewOverrideDateUTC
+            self.reviewMemoryDraft = reviewMemoryDraft
+            self.place = place
+            self.trip = trip
+        }
+
+        public var kind: MediaKind {
+            get { MediaKind(rawValue: kindRaw) ?? .photo }
+            set { kindRaw = newValue.rawValue }
+        }
+
+        public var source: MediaSource {
+            get { MediaSource(rawValue: sourceRaw) ?? .file }
+            set { sourceRaw = newValue.rawValue }
+        }
+    }
+
+    @Model
+    public final class Memory {
+        public var id: String
+        public var mediaID: String?
+        public var text: String
+        public var authorRaw: String
+        public var authorAccountID: String?
+        public var createdAt: Date
+        public var updatedAt: Date
+        public var revision: Int
+        public var updatedBy: String?
+        public var mediaItem: MediaItem?
+        @Relationship(deleteRule: .cascade, inverse: \MemoryRevision.memory)
+        public var revisions: [MemoryRevision] = []
+
+        public init(
+            id: String = UUID().uuidString,
+            text: String,
+            author: MemoryAuthor = .me,
+            authorAccountID: String? = nil,
+            createdAt: Date = .now,
+            updatedAt: Date = .now,
+            revision: Int = 1,
+            updatedBy: String? = nil,
+            mediaItem: MediaItem? = nil,
+            mediaID: String? = nil
+        ) {
+            self.id = id
+            self.mediaID = mediaItem?.id ?? mediaID
+            self.text = text
+            self.authorRaw = author.rawValue
+            self.authorAccountID = authorAccountID
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+            self.revision = revision
+            self.updatedBy = updatedBy
+            self.mediaItem = mediaItem
+        }
+    }
+
+    @Model
+    public final class MemoryRevision {
+        public var id: String
+        public var memoryID: String?
+        public var text: String
+        public var editedBy: String?
+        public var editedAt: Date
+        public var baseRevision: Int
+        public var reason: String?
+        public var memory: Memory?
+
+        public init(
+            id: String = UUID().uuidString,
+            memoryID: String? = nil,
+            text: String,
+            editedBy: String? = nil,
+            editedAt: Date = .now,
+            baseRevision: Int,
+            reason: String? = nil,
+            memory: Memory? = nil
+        ) {
+            self.id = id
+            self.memoryID = memory?.id ?? memoryID
+            self.text = text
+            self.editedBy = editedBy
+            self.editedAt = editedAt
+            self.baseRevision = baseRevision
+            self.reason = reason
+            self.memory = memory
+        }
+    }
+
+    @Model
+    public final class Place {
+        public var id: String
+        public var name: String
+        public var kindRaw: String
+        public var latitude: Double?
+        public var longitude: Double?
+        public var mapLink: String?
+        public var updatedAt: Date
+        public var updatedBy: String?
+        public var parent: Place?
+        @Relationship(inverse: \Place.parent)
+        public var children: [Place] = []
+        public var items: [MediaItem] = []
+        public var overrides: [PlaceOverride] = []
+
+        public init(
+            id: String = UUID().uuidString,
+            name: String,
+            kind: PlaceKind = .spot,
+            latitude: Double? = nil,
+            longitude: Double? = nil,
+            mapLink: String? = nil,
+            parent: Place? = nil,
+            updatedAt: Date = .now,
+            updatedBy: String? = nil
+        ) {
+            self.id = id
+            self.name = name
+            self.kindRaw = kind.rawValue
+            self.latitude = latitude
+            self.longitude = longitude
+            self.mapLink = mapLink
+            self.updatedAt = updatedAt
+            self.updatedBy = updatedBy
+            self.parent = parent
+        }
+    }
+
+    @Model
+    public final class PlaceOverride {
+        public var id: String
+        public var placeID: String?
+        public var mediaID: String?
+        public var accountID: String
+        public var nameOverride: String?
+        public var mapLinkOverride: String?
+        public var latitude: Double?
+        public var longitude: Double?
+        public var updatedAt: Date
+        public var updatedBy: String?
+        @Relationship(inverse: \Place.overrides)
+        public var place: Place?
+        public var mediaItem: MediaItem?
+
+        public init(
+            id: String? = nil,
+            placeID: String? = nil,
+            mediaID: String? = nil,
+            accountID: String = MomentsAccount.localID,
+            nameOverride: String? = nil,
+            mapLinkOverride: String? = nil,
+            latitude: Double? = nil,
+            longitude: Double? = nil,
+            updatedAt: Date = .now,
+            updatedBy: String? = nil,
+            place: Place? = nil,
+            mediaItem: MediaItem? = nil
+        ) {
+            let ownerID = mediaItem?.id ?? mediaID ?? place?.id ?? placeID ?? UUID().uuidString
+            self.id = id ?? "\(ownerID):\(accountID)"
+            self.placeID = place?.id ?? placeID
+            self.mediaID = mediaItem?.id ?? mediaID
+            self.accountID = accountID
+            self.nameOverride = nameOverride
+            self.mapLinkOverride = mapLinkOverride
+            self.latitude = latitude
+            self.longitude = longitude
+            self.updatedAt = updatedAt
+            self.updatedBy = updatedBy
+            self.place = place
+            self.mediaItem = mediaItem
+        }
+    }
+
+    @Model
+    public final class Trip {
+        public var id: String
+        public var name: String
+        public var startDate: Date?
+        public var endDate: Date?
+        public var updatedAt: Date
+        public var updatedBy: String?
+        public var overrideName: String?
+        public var mergeOverrideID: String?
+        public var splitOverrideDayKeys: String?
+        public var suggestionStatusRaw: String?
+        public var confirmedAt: Date?
+        public var items: [MediaItem] = []
+
+        public init(
+            id: String = UUID().uuidString,
+            name: String,
+            startDate: Date? = nil,
+            endDate: Date? = nil,
+            items: [MediaItem] = [],
+            updatedAt: Date = .now,
+            updatedBy: String? = nil,
+            overrideName: String? = nil,
+            mergeOverrideID: String? = nil,
+            splitOverrideDayKeys: String? = nil,
+            suggestionStatusRaw: String? = nil,
+            confirmedAt: Date? = nil
+        ) {
+            self.id = id
+            self.name = name
+            self.startDate = startDate
+            self.endDate = endDate
+            self.updatedAt = updatedAt
+            self.updatedBy = updatedBy
+            self.overrideName = overrideName
+            self.mergeOverrideID = mergeOverrideID
+            self.splitOverrideDayKeys = splitOverrideDayKeys
+            self.suggestionStatusRaw = suggestionStatusRaw
+            self.confirmedAt = confirmedAt
+            self.items = items
+        }
+    }
+
+    @Model
+    public final class Tag {
+        public var id: String
+        public var normalizedName: String
+        public var displayName: String
+        public var updatedAt: Date
+        public var updatedBy: String?
+        public var mediaTags: [MediaTag] = []
+
+        public init(
+            id: String = UUID().uuidString,
+            displayName: String,
+            normalizedName: String? = nil,
+            updatedAt: Date = .now,
+            updatedBy: String? = nil
+        ) {
+            self.id = id
+            self.displayName = displayName
+            self.normalizedName = normalizedName ?? displayName
+            self.updatedAt = updatedAt
+            self.updatedBy = updatedBy
+        }
+    }
+
+    @Model
+    public final class MediaTag {
+        public var id: String
+        public var mediaID: String?
+        public var tagID: String?
+        public var updatedAt: Date
+        public var updatedBy: String?
+        public var mediaItem: MediaItem?
+        @Relationship(inverse: \Tag.mediaTags)
+        public var tag: Tag?
+
+        public init(
+            id: String = UUID().uuidString,
+            mediaID: String? = nil,
+            tagID: String? = nil,
+            updatedAt: Date = .now,
+            updatedBy: String? = nil,
+            mediaItem: MediaItem? = nil,
+            tag: Tag? = nil
+        ) {
+            self.id = id
+            self.mediaID = mediaItem?.id ?? mediaID
+            self.tagID = tag?.id ?? tagID
+            self.updatedAt = updatedAt
+            self.updatedBy = updatedBy
+            self.mediaItem = mediaItem
+            self.tag = tag
+        }
+    }
+
+    @Model
+    public final class Favorite {
+        public var id: String
+        public var mediaID: String?
+        public var accountID: String
+        public var isFavorite: Bool
+        public var changedAt: Date
+        public var mediaItem: MediaItem?
+
+        public init(
+            id: String? = nil,
+            mediaID: String? = nil,
+            accountID: String = MomentsAccount.localID,
+            isFavorite: Bool,
+            changedAt: Date = .now,
+            mediaItem: MediaItem? = nil
+        ) {
+            let resolvedMediaID = mediaItem?.id ?? mediaID ?? UUID().uuidString
+            self.id = id ?? Self.recordID(mediaID: resolvedMediaID, accountID: accountID)
+            self.mediaID = mediaItem?.id ?? mediaID
+            self.accountID = accountID
+            self.isFavorite = isFavorite
+            self.changedAt = changedAt
+            self.mediaItem = mediaItem
+        }
+
+        public static func recordID(mediaID: String, accountID: String) -> String {
+            "\(mediaID):\(accountID)"
+        }
+    }
 }
 
 @Model
@@ -799,6 +1223,14 @@ public final class MediaItem {
     public var sourceReferencesRaw: String?
     public var pairedVideoContentHash: String?
     public var pairedVideoBookmarkData: Data?
+    /// Apple Photos references. Originals stay in Photos; these values are
+    /// stable identifiers only and are optional for folder/demo media.
+    public var photosLocalIdentifier: String?
+    public var photosCloudIdentifier: String?
+    public var photosAlbumIdentifiersRaw: String?
+    public var photosMediaSubtypesRaw: Int?
+    public var photosAssetMissing: Bool?
+    public var perceptualHash: String?
     public var reviewDecisionRaw: String?
     public var reviewOverridePlaceID: String?
     public var reviewOverrideDateUTC: Date?
@@ -851,6 +1283,12 @@ public final class MediaItem {
         sourceReferencesRaw: String? = nil,
         pairedVideoContentHash: String? = nil,
         pairedVideoBookmarkData: Data? = nil,
+        photosLocalIdentifier: String? = nil,
+        photosCloudIdentifier: String? = nil,
+        photosAlbumIdentifiersRaw: String? = nil,
+        photosMediaSubtypesRaw: Int? = nil,
+        photosAssetMissing: Bool? = nil,
+        perceptualHash: String? = nil,
         reviewDecisionRaw: String? = nil,
         reviewOverridePlaceID: String? = nil,
         reviewOverrideDateUTC: Date? = nil,
@@ -886,6 +1324,12 @@ public final class MediaItem {
         self.sourceReferencesRaw = sourceReferencesRaw
         self.pairedVideoContentHash = pairedVideoContentHash
         self.pairedVideoBookmarkData = pairedVideoBookmarkData
+        self.photosLocalIdentifier = photosLocalIdentifier
+        self.photosCloudIdentifier = photosCloudIdentifier
+        self.photosAlbumIdentifiersRaw = photosAlbumIdentifiersRaw
+        self.photosMediaSubtypesRaw = photosMediaSubtypesRaw
+        self.photosAssetMissing = photosAssetMissing
+        self.perceptualHash = perceptualHash
         self.reviewDecisionRaw = reviewDecisionRaw
         self.reviewOverridePlaceID = reviewOverridePlaceID
         self.reviewOverrideDateUTC = reviewOverrideDateUTC
@@ -1355,13 +1799,34 @@ public final class Favorite {
     }
 }
 
+/// The Apple Photos schema: the V3 shape plus the Photos fields.
+public enum SchemaV4: VersionedSchema {
+    public static let versionIdentifier = Schema.Version(4, 0, 0)
+    // The live top-level models are the V4 shape. Do not add nested copies
+    // here: SwiftData resolves entities by name, and duplicate live-version
+    // classes make relationship getters return the wrong class at runtime.
+    public static let models: [any PersistentModel.Type] = [
+        MediaItem.self,
+        Memory.self,
+        MemoryRevision.self,
+        Place.self,
+        PlaceOverride.self,
+        Trip.self,
+        Tag.self,
+        MediaTag.self,
+        Favorite.self
+    ]
+}
+
 public enum MomentsMigrationPlan: SchemaMigrationPlan {
-    public static let schemas: [any VersionedSchema.Type] = [SchemaV1.self, SchemaV2.self, SchemaV3.self]
+    public static let schemas: [any VersionedSchema.Type] = [SchemaV1.self, SchemaV2.self, SchemaV3.self, SchemaV4.self]
 
     /// Legacy v1 stores are handled by the launch-time safety gate below.
-    /// Current v2 stores receive only the optional folder-import fields.
+    /// Current v2 stores receive the folder-import fields, then the Photos
+    /// references. Both stages are additive and therefore lightweight.
     public static let stages: [MigrationStage] = [
-        .lightweight(fromVersion: SchemaV2.self, toVersion: SchemaV3.self)
+        .lightweight(fromVersion: SchemaV2.self, toVersion: SchemaV3.self),
+        .lightweight(fromVersion: SchemaV3.self, toVersion: SchemaV4.self)
     ]
 }
 
@@ -1381,7 +1846,7 @@ public enum MomentsPersistence {
         if inMemory {
             let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
             return try ModelContainer(
-                for: Schema(versionedSchema: SchemaV3.self),
+                for: Schema(versionedSchema: SchemaV4.self),
                 migrationPlan: MomentsMigrationPlan.self,
                 configurations: configuration
             )
@@ -1405,12 +1870,12 @@ public enum MomentsPersistence {
 
         let configuration = ModelConfiguration(
             "Moments",
-            schema: Schema(versionedSchema: SchemaV3.self),
+            schema: Schema(versionedSchema: SchemaV4.self),
             url: storeURL,
             cloudKitDatabase: .none
         )
         return try ModelContainer(
-            for: Schema(versionedSchema: SchemaV3.self),
+            for: Schema(versionedSchema: SchemaV4.self),
             migrationPlan: MomentsMigrationPlan.self,
             configurations: configuration
         )
@@ -1448,6 +1913,25 @@ public enum MomentsPersistence {
         )
         return try ModelContainer(
             for: Schema(versionedSchema: SchemaV2.self),
+            configurations: configuration
+        )
+    }
+
+    /// Creates a V3 store for the V3 -> V4 migration test without opening the
+    /// live schema. Production stores are opened through ``makeContainer``.
+    public static func makeV3Container(url: URL) throws -> ModelContainer {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let configuration = ModelConfiguration(
+            "Moments-v3",
+            schema: Schema(versionedSchema: SchemaV3.self),
+            url: url,
+            cloudKitDatabase: .none
+        )
+        return try ModelContainer(
+            for: Schema(versionedSchema: SchemaV3.self),
             configurations: configuration
         )
     }

@@ -387,6 +387,9 @@ private struct CollectionCard: View {
                             .aspectRatio(1.36, contentMode: .fit)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("library.photo.\(cover.id)")
+                    .accessibilityValue(selection.isSelected(cover.id) ? "Selected" : "Not selected")
+                    .accessibilityAddTraits(selection.isSelected(cover.id) ? .isSelected : [])
 
                     HStack(spacing: 6) {
                         SelectionButton(item: cover)
@@ -549,6 +552,9 @@ private struct MemberPhotoCell: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("library.photo.\(item.id)")
+            .accessibilityValue(selection.isSelected(item.id) ? "Selected" : "Not selected")
+            .accessibilityAddTraits(selection.isSelected(item.id) ? .isSelected : [])
             Text(item.title.isEmpty ? item.id : item.title)
                 .font(.caption2)
                 .lineLimit(1)
@@ -608,6 +614,7 @@ private struct MemoryEditor: View {
                     .scrollContentBackground(.hidden)
                     .padding(6)
                     .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+                    .accessibilityIdentifier("library.memory.\(item.id)")
                 if text.isEmpty {
                     Text("Write a memory…")
                         .font(.body)

@@ -55,6 +55,19 @@ targets:
       - path: Tests/MomentsTests
     dependencies:
       - target: Moments
+  MomentsUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    configFiles:
+      Debug: Config/Signing.xcconfig
+      Release: Config/Signing.xcconfig
+    sources:
+      - path: Tests/MomentsUITests
+    dependencies:
+      - target: Moments
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.example.MomentsUITests
 
 schemes:
   Moments:
@@ -65,3 +78,11 @@ schemes:
     test:
       targets:
         - name: MomentsTests
+  MomentsUITests:
+    build:
+      targets:
+        Moments: all
+        MomentsUITests: [test]
+    test:
+      targets:
+        - name: MomentsUITests

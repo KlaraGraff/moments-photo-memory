@@ -8,9 +8,23 @@ struct MomentsApp: App {
     @State private var selection = SelectionModel()
     @State private var libraryState = LibraryViewState()
 
+    #if DEBUG
+    private var isUITestSmallWindow: Bool {
+        ProcessInfo.processInfo.arguments.contains("-MomentsUITestSmallWindow")
+    }
+    #endif
+
     init() {
         do {
+            #if DEBUG
+            // UI tests must never touch the user's persistent store. The
+            // launch argument selects a fresh in-memory container for each
+            // app launch; the normal path below remains unchanged.
+            let isUITesting = ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
+            let container = try MomentsPersistence.makeContainer(inMemory: isUITesting)
+            #else
             let container = try MomentsPersistence.makeContainer()
+            #endif
             #if DEBUG
             try? DemoSeeder.seedIfNeeded(context: container.mainContext)
             #endif
@@ -31,6 +45,9 @@ struct MomentsApp: App {
                 ContentView(libraryState: libraryState)
                     .environment(selection)
                     .modelContainer(modelContainer)
+                    #if DEBUG
+                    .frame(width: isUITestSmallWindow ? 900 : nil, height: isUITestSmallWindow ? 600 : nil)
+                    #endif
             } else {
                 StoreUnavailableView(isProtectedLegacyStore: storeError != nil)
             }

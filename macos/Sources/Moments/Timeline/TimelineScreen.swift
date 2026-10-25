@@ -305,6 +305,7 @@ private struct TimelinePlaceCard: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("timeline.place.\(place.id)")
                 .accessibilityLabel("Select \(place.photoCount) photos at \(place.name ?? String(localized: "Unknown place", locale: locale))")
 
                 Button(action: onToggle) {

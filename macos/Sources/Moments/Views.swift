@@ -21,12 +21,16 @@ struct ContentView: View {
                 Section("Moments") {
                     Label("Library", systemImage: "photo.on.rectangle.angled")
                         .tag(MomentsSection.library)
+                        .accessibilityIdentifier("sidebar.library")
                     Label("Places", systemImage: "map")
                         .tag(MomentsSection.places)
+                        .accessibilityIdentifier("sidebar.places")
                     Label("Footprints", systemImage: "globe.americas")
                         .tag(MomentsSection.footprints)
+                        .accessibilityIdentifier("sidebar.footprints")
                     Label("Timeline", systemImage: "calendar")
                         .tag(MomentsSection.timeline)
+                        .accessibilityIdentifier("sidebar.timeline")
                 }
             }
             .listStyle(.sidebar)

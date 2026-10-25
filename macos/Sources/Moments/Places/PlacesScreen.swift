@@ -168,6 +168,8 @@ struct PlacesScreen: View {
             MapCompass()
             MapScaleView()
         }
+        .accessibilityIdentifier("places.map")
+        .accessibilityLabel("Places map")
         .onMapCameraChange(frequency: .onEnd) { context in
             latitudeDelta = context.region.span.latitudeDelta
         }
@@ -292,6 +294,7 @@ struct PlacesScreen: View {
         .buttonStyle(.plain)
         .accessibilityLabel(clusterDisplayName(cluster))
         .accessibilityValue(Text("\(cluster.stopIDs.count) photos"))
+        .accessibilityIdentifier("places.annotation.\(cluster.id)")
     }
 
     private func photoThumbnail(for itemID: String, selected: Bool) -> some View {

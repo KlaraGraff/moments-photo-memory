@@ -621,6 +621,8 @@ private struct FirstLaunchImportView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("library.firstLaunch")
     }
 }
 

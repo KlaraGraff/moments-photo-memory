@@ -61,10 +61,13 @@ final class MomentsUITests: XCTestCase {
 
     func testFootprintsGlobeOpens() {
         let app = launch(language: "en")
-        element(in: app, identifier: "sidebar.footprints").click()
+        let footprints = element(in: app, identifier: "sidebar.footprints")
+        XCTAssertTrue(footprints.waitForExistence(timeout: launchTimeout))
+        footprints.click()
 
+        // The first MapKit globe of a test run can take longer to appear.
         let globe = element(in: app, identifier: "footprints.globe")
-        XCTAssertTrue(globe.waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(globe.waitForExistence(timeout: 30))
         Thread.sleep(forTimeInterval: 1.0)
         capture(app, named: "footprints-01-globe")
     }
@@ -105,14 +108,18 @@ final class MomentsUITests: XCTestCase {
         let timeline = element(in: app, identifier: "sidebar.timeline")
         XCTAssertTrue(timeline.waitForExistence(timeout: launchTimeout))
         timeline.click()
-        XCTAssertTrue(app.navigationBars["Timeline"].waitForExistence(timeout: 2) || app.staticTexts["Timeline"].waitForExistence(timeout: 2))
+        // Locale-independent: a timeline place row proves the screen rendered.
+        let placeRow = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.place."))
+            .firstMatch
+        XCTAssertTrue(placeRow.waitForExistence(timeout: launchTimeout))
         capture(app, named: "\(prefix)-04-timeline")
     }
 
     private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language]
-        if darkMode { app.launchArguments += ["-AppleInterfaceStyle", "Dark"] }
+        if darkMode { app.launchArguments += ["-MomentsUITestDarkMode"] }
         if smallWindow { app.launchArguments += ["-MomentsUITestSmallWindow"] }
         // Ignore saved window state so a previous run that closed its window
         // cannot leave the app running without one.

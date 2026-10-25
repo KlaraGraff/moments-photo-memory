@@ -12,6 +12,10 @@ struct MomentsApp: App {
     private var isUITestSmallWindow: Bool {
         ProcessInfo.processInfo.arguments.contains("-MomentsUITestSmallWindow")
     }
+
+    private var isUITestDarkMode: Bool {
+        ProcessInfo.processInfo.arguments.contains("-MomentsUITestDarkMode")
+    }
     #endif
 
     init() {
@@ -47,6 +51,7 @@ struct MomentsApp: App {
                     .modelContainer(modelContainer)
                     #if DEBUG
                     .frame(width: isUITestSmallWindow ? 900 : nil, height: isUITestSmallWindow ? 600 : nil)
+                    .preferredColorScheme(isUITestDarkMode ? .dark : nil)
                     #endif
             } else {
                 StoreUnavailableView(isProtectedLegacyStore: storeError != nil)

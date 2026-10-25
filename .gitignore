@@ -51,3 +51,4 @@ macos/.build/
 # SwiftPM build output
 macos/MomentsCore/.build/
 macos/MomentsCore/.swiftpm/
+macos/SharingSpike/.build/

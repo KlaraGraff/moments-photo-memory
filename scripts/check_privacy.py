@@ -12,7 +12,7 @@ IGNORED={'.git','dist','private-data','local-data','exports','backups','research
 EXACT={'.gitignore','README.md','AGENTS.md','demo/sample-data.json','docs/design-notes.html','docs/ui-quality-principles.md',
        'scripts/apple_photos_bridge.swift','scripts/apple_photos_host.swift',
        'vendor/leaflet/leaflet.js','vendor/leaflet/leaflet.css','vendor/leaflet/LICENSE',
-       'vendor/leaflet/manifest.json','docs/sharing-design.md'}
+       'vendor/leaflet/manifest.json','docs/sharing-design.md','macos/SharingSpike/README.md'}
 PATTERNS={
  'absolute-user-path':r'/(?:Users|home)/[^/\s]+/',
  'credential':r'\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{24,})',

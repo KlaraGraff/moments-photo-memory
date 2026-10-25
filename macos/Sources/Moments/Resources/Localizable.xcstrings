@@ -1,6 +1,28 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "A legacy store contains non-demo data. It was left untouched; back it up before migrating." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein älterer Speicher enthält Nicht-Demodaten. Er wurde unverändert gelassen; sichere ihn vor der Migration."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A legacy store contains non-demo data. It was left untouched; back it up before migrating."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "旧存储包含非演示数据，已保持不变；迁移前请先备份。"
+          }
+        }
+      }
+    },
     "Add a location to see places and routes." : {
       "localizations" : {
         "de" : {
@@ -965,6 +987,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "片刻"
+          }
+        }
+      }
+    },
+    "Moments could not open its local store. Your existing data was left untouched." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der lokale Moments-Speicher konnte nicht geöffnet werden. Deine vorhandenen Daten wurden nicht verändert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moments could not open its local store. Your existing data was left untouched."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moments 无法打开本地存储，现有数据未被修改。"
+          }
+        }
+      }
+    },
+    "Moments store unavailable" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moments-Speicher nicht verfügbar"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moments store unavailable"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moments 存储不可用"
           }
         }
       }

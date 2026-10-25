@@ -35,7 +35,7 @@ struct ContentView: View {
             switch selection ?? .library {
             case .library: LibraryView(state: libraryState)
             case .places: PlacesScreen()
-            case .footprints: FootprintsView()
+            case .footprints: FootprintsScreen()
             case .timeline: TimelineScreen()
             }
         }
@@ -50,12 +50,5 @@ struct ContentView: View {
             }
             shared.requestedDestination = nil
         }
-    }
-}
-
-struct FootprintsView: View {
-    var body: some View {
-        ContentUnavailableView("Footprints", systemImage: "globe.americas", description: Text("Your shared travel path will appear here."))
-            .navigationTitle("Footprints")
     }
 }

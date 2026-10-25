@@ -2,6 +2,13 @@ import AppKit
 import XCTest
 
 final class MomentsUITests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        // Stop at the first failure: a test must never keep clicking once Moments
+        // is not the frontmost app, or its clicks land in other apps.
+        continueAfterFailure = false
+    }
+
     private let launchTimeout: TimeInterval = 12
 
     func testNavigationScreenshotsEnglish() {
@@ -142,15 +149,20 @@ final class MomentsUITests: XCTestCase {
         if smallWindow { app.launchArguments += ["-MomentsUITestSmallWindow"] }
         // Ignore saved window state so a previous run that closed its window
         // cannot leave the app running without one.
-        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES", "-NSQuitAlwaysKeepsWindows", "NO"]
         app.launch()
         app.activate()
-        let window = app.windows.firstMatch
-        if !window.waitForExistence(timeout: launchTimeout) {
-            app.typeKey("n", modifierFlags: .command)
-            XCTAssertTrue(window.waitForExistence(timeout: launchTimeout), "Moments opened no window")
-        }
+        requireFrontmostWindow(app)
         return app
+    }
+
+    /// Fails the test (and, with continueAfterFailure off, stops it) unless
+    /// Moments is the frontmost app with a hittable window.
+    private func requireFrontmostWindow(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: launchTimeout), "Moments is not the frontmost app", file: file, line: line)
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: launchTimeout), "Moments opened no window", file: file, line: line)
+        XCTAssertTrue(window.isHittable, "The Moments window is covered or off screen", file: file, line: line)
     }
 
     private func assertWindowRendersLight(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
@@ -174,7 +186,8 @@ final class MomentsUITests: XCTestCase {
     }
 
     private func element(in app: XCUIApplication, identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        XCTAssertEqual(app.state, .runningForeground, "Moments lost focus; stopping before clicking another app")
+        return app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
     private func capture(_ app: XCUIApplication, named name: String) {

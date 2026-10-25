@@ -496,6 +496,13 @@ struct LibraryView: View {
             .onChange(of: selection.focusedItemID) { _, _ in
                 revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
             }
+            .onChange(of: state.appearedRevealItemID) { _, appeared in
+                guard let appeared, appeared == state.pendingRevealItemID else { return }
+                // Let the grid finish laying out the card before centring it.
+                DispatchQueue.main.async {
+                    finishReveal(of: appeared, using: proxy, selection: selection, state: state)
+                }
+            }
             .onChange(of: selection.shouldRevealSelectionInLibrary) { _, shouldReveal in
                 guard shouldReveal else { return }
                 revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
@@ -632,24 +639,31 @@ struct LibraryView: View {
         }
 
         guard let target = sections.first(where: { $0.itemIDs.contains(focus) }) else { return }
+        guard state.pendingRevealItemID != focus else { return }
+        state.pendingRevealItemID = focus
+        state.appearedRevealItemID = nil
+        // Bring the section start into view so the lazy grid builds its cards;
+        // the card's onAppear then triggers the final centring scroll.
+        proxy.scrollTo(LibraryScrollTarget.section(target.id), anchor: .top)
         let selectionModel = selection
-        let itemTarget = LibraryScrollTarget.item(focus)
-        // Materialize the lazy section before asking the next layout pass for
-        // the card inside it.
-        proxy.scrollTo(LibraryScrollTarget.section(target.id), anchor: .center)
-        let animated = !reduceMotion
-        DispatchQueue.main.async {
-            guard selectionModel.shouldRevealSelectionInLibrary,
-                  selectionModel.focusedItemID == focus else { return }
-            if animated {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    proxy.scrollTo(itemTarget, anchor: .center)
-                }
-            } else {
-                proxy.scrollTo(itemTarget, anchor: .center)
-            }
-            selectionModel.shouldRevealSelectionInLibrary = false
+        let viewState = state
+        // Fallback for a card that is already built and so never re-appears.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            guard viewState.pendingRevealItemID == focus else { return }
+            finishReveal(of: focus, using: proxy, selection: selectionModel, state: viewState)
         }
+    }
+
+    private func finishReveal(of itemID: String, using proxy: ScrollViewProxy, selection: SelectionModel, state: LibraryViewState) {
+        let target = LibraryScrollTarget.item(itemID)
+        if reduceMotion {
+            proxy.scrollTo(target, anchor: .center)
+        } else {
+            withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(target, anchor: .center) }
+        }
+        state.pendingRevealItemID = nil
+        state.appearedRevealItemID = nil
+        selection.shouldRevealSelectionInLibrary = false
     }
 
     private var revealTrigger: Int {
@@ -775,6 +789,9 @@ private struct LibraryPhotoCell: View {
                 .accessibilityValue(selection.isSelected(item.id) ? "Selected" : "Not selected")
                 .accessibilityAddTraits(selection.isSelected(item.id) ? .isSelected : [])
                 .id(LibraryScrollTarget.item(item.id))
+                .onAppear {
+                    if state.pendingRevealItemID == item.id { state.appearedRevealItemID = item.id }
+                }
 
                 HStack(spacing: 6) {
                     Button {

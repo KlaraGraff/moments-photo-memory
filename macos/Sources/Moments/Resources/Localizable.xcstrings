@@ -45,6 +45,28 @@
         }
       }
     },
+    "Accepted" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Akzeptiert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accepted"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已接受"
+          }
+        }
+      }
+    },
     "Add a location to see places and routes." : {
       "localizations" : {
         "de" : {
@@ -133,6 +155,28 @@
         }
       }
     },
+    "Add filter" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add filter"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "筛选条件"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filter hinzufügen"
+          }
+        }
+      }
+    },
     "Add photos with locations to see your footprint." : {
       "localizations" : {
         "de" : {
@@ -173,6 +217,72 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加标签"
+          }
+        }
+      }
+    },
+    "All" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle"
+          }
+        }
+      }
+    },
+    "All dates" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All dates"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所有日期"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle Daten"
+          }
+        }
+      }
+    },
+    "All memories" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All memories"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle Erinnerungen"
           }
         }
       }
@@ -265,6 +375,94 @@
         }
       }
     },
+    "Apple Photos" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Fotos"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Photos"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Photos"
+          }
+        }
+      }
+    },
+    "Apple Photos access is denied. Allow photo access in System Settings to import." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Zugriff auf Apple Fotos wurde verweigert. Erlaube ihn in den Systemeinstellungen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Photos access is denied. Allow photo access in System Settings to import."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Photos 访问被拒绝。请在系统设置中允许照片访问。"
+          }
+        }
+      }
+    },
+    "Apple Photos access is limited. Select more photos in System Settings or continue with the selected photos." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Zugriff auf Apple Fotos ist eingeschränkt. Wähle in den Systemeinstellungen weitere Fotos aus oder fahre mit der Auswahl fort."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Photos access is limited. Select more photos in System Settings or continue with the selected photos."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Photos 访问受限。请在系统设置中选择更多照片，或继续使用已选照片。"
+          }
+        }
+      }
+    },
+    "Apple Photos access is restricted by macOS." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Zugriff auf Apple Fotos ist durch macOS eingeschränkt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Photos access is restricted by macOS."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Photos 访问受到 macOS 限制。"
+          }
+        }
+      }
+    },
     "Area cluster" : {
       "localizations" : {
         "de" : {
@@ -283,6 +481,116 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "区域聚类"
+          }
+        }
+      }
+    },
+    "Bring your photos into Moments" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bring your photos into Moments"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把照片带进 Moments"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bringe deine Fotos in Moments"
+          }
+        }
+      }
+    },
+    "By month" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "By month"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按月份"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nach Monat"
+          }
+        }
+      }
+    },
+    "By place" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "By place"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按地点"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nach Ort"
+          }
+        }
+      }
+    },
+    "By trip" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "By trip"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按旅行"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nach Reise"
+          }
+        }
+      }
+    },
+    "By type" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "By type"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按类型"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nach Typ"
           }
         }
       }
@@ -393,6 +701,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "拍摄日期超出旅程范围"
+          }
+        }
+      }
+    },
+    "Changed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geändert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Changed"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已修改"
+          }
+        }
+      }
+    },
+    "Choose a folder and Moments will arrange your library by trips and places." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose a folder and Moments will arrange your library by trips and places."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个文件夹，Moments 会按旅行和地点整理你的图库。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle einen Ordner, und Moments ordnet deine Mediathek nach Reisen und Orten."
           }
         }
       }
@@ -639,6 +991,50 @@
         }
       }
     },
+    "Create group" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create group"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建分组"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gruppe erstellen"
+          }
+        }
+      }
+    },
+    "Date" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Date"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "日期"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datum"
+          }
+        }
+      }
+    },
     "Date to add" : {
       "localizations" : {
         "de" : {
@@ -657,6 +1053,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "待补充日期"
+          }
+        }
+      }
+    },
+    "Date:" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Date:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "日期："
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datum:"
           }
         }
       }
@@ -723,6 +1141,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "请输入有效坐标"
+          }
+        }
+      }
+    },
+    "Everything is confirmed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alles bestätigt"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Everything is confirmed"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部已确认"
           }
         }
       }
@@ -815,6 +1255,28 @@
         }
       }
     },
+    "Filtered count" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filtered %d"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "筛出 %d 张"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d gefiltert"
+          }
+        }
+      }
+    },
     "Fit all" : {
       "localizations" : {
         "de" : {
@@ -903,6 +1365,50 @@
         }
       }
     },
+    "From date" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From date"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始日期"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Startdatum"
+          }
+        }
+      }
+    },
+    "From:" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从："
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Von:"
+          }
+        }
+      }
+    },
     "GPS jump" : {
       "localizations" : {
         "de" : {
@@ -947,6 +1453,72 @@
         }
       }
     },
+    "Group by" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Group by"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分组"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gruppieren"
+          }
+        }
+      }
+    },
+    "Handled" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erledigt"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Handled"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已处理"
+          }
+        }
+      }
+    },
+    "Has memory" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Has memory"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有回忆"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit Erinnerung"
+          }
+        }
+      }
+    },
     "Hide filters" : {
       "localizations" : {
         "de" : {
@@ -987,6 +1559,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "忽略"
+          }
+        }
+      }
+    },
+    "Ignored" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ignoriert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ignored"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已忽略"
           }
         }
       }
@@ -1075,6 +1669,72 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "导入完成"
+          }
+        }
+      }
+    },
+    "Import from Apple Photos…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aus Apple Fotos importieren …"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import from Apple Photos…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从 Apple Photos 导入…"
+          }
+        }
+      }
+    },
+    "Import more photos…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import more photos…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入更多照片…"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weitere Fotos importieren …"
+          }
+        }
+      }
+    },
+    "Import review items will appear here." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import review items will appear here."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要确认的导入项目会显示在这里。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importe zur Prüfung erscheinen hier."
           }
         }
       }
@@ -1233,6 +1893,28 @@
         }
       }
     },
+    "Manual groups" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manual groups"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "手动分组"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manuelle Gruppen"
+          }
+        }
+      }
+    },
     "Map link" : {
       "localizations" : {
         "de" : {
@@ -1317,6 +1999,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "我"
+          }
+        }
+      }
+    },
+    "Media type" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Media type"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "媒体类型"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Medientyp"
           }
         }
       }
@@ -1449,6 +2153,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moments 存储不可用"
+          }
+        }
+      }
+    },
+    "My groups" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "My groups"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我的分组"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meine Gruppen"
           }
         }
       }
@@ -1673,6 +2399,28 @@
         }
       }
     },
+    "No memory" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No memory"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有回忆"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ohne Erinnerung"
+          }
+        }
+      }
+    },
     "No photos gap" : {
       "localizations" : {
         "de" : {
@@ -1801,6 +2549,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "暂无时间线条目"
+          }
+        }
+      }
+    },
+    "Nothing to review" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing to review"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无待确认内容"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nichts zu prüfen"
           }
         }
       }
@@ -2025,6 +2795,28 @@
         }
       }
     },
+    "Place:" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Place:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "地点："
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ort:"
+          }
+        }
+      }
+    },
     "Places" : {
       "localizations" : {
         "de" : {
@@ -2179,6 +2971,28 @@
         }
       }
     },
+    "Recent trips" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recent trips"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最近的旅行"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Letzte Reisen"
+          }
+        }
+      }
+    },
     "Resume" : {
       "localizations" : {
         "de" : {
@@ -2267,6 +3081,28 @@
         }
       }
     },
+    "Save this filter as a smart group" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save this filter as a smart group"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把这个筛选存成智能分组"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diesen Filter als intelligente Gruppe speichern"
+          }
+        }
+      }
+    },
     "Saved" : {
       "localizations" : {
         "de" : {
@@ -2351,6 +3187,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "截图筛选"
+          }
+        }
+      }
+    },
+    "Screenshots" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Screenshots"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "截图"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Screenshots"
           }
         }
       }
@@ -2619,6 +3477,72 @@
         }
       }
     },
+    "To date" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To date"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "结束日期"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enddatum"
+          }
+        }
+      }
+    },
+    "To review" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To review"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待确认"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zu prüfen"
+          }
+        }
+      }
+    },
+    "To:" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "到："
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bis:"
+          }
+        }
+      }
+    },
     "Travel" : {
       "localizations" : {
         "de" : {
@@ -2681,6 +3605,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "旅程名称"
+          }
+        }
+      }
+    },
+    "Trip:" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trip:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "旅行："
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reise:"
           }
         }
       }
@@ -2751,6 +3697,28 @@
         }
       }
     },
+    "Undated" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Undated"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未标日期"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ohne Datum"
+          }
+        }
+      }
+    },
     "Undated photos" : {
       "localizations" : {
         "de" : {
@@ -2769,6 +3737,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未标日期的照片"
+          }
+        }
+      }
+    },
+    "Undo" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Widerrufen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Undo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销"
           }
         }
       }
@@ -2879,6 +3869,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未知地点"
+          }
+        }
+      }
+    },
+    "Unsorted" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unsorted"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未分组"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unsortiert"
           }
         }
       }
@@ -3211,34 +4223,6 @@
             "value" : "张照片"
           }
         }
-      }
-    },
-    "Apple Photos access is denied. Allow photo access in System Settings to import." : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Zugriff auf Apple Fotos wurde verweigert. Erlaube ihn in den Systemeinstellungen." } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos access is denied. Allow photo access in System Settings to import." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos 访问被拒绝。请在系统设置中允许照片访问。" } }
-      }
-    },
-    "Apple Photos access is limited. Select more photos in System Settings or continue with the selected photos." : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Zugriff auf Apple Fotos ist eingeschränkt. Wähle in den Systemeinstellungen weitere Fotos aus oder fahre mit der Auswahl fort." } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos access is limited. Select more photos in System Settings or continue with the selected photos." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos 访问受限。请在系统设置中选择更多照片，或继续使用已选照片。" } }
-      }
-    },
-    "Apple Photos access is restricted by macOS." : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Zugriff auf Apple Fotos ist durch macOS eingeschränkt." } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos access is restricted by macOS." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos 访问受到 macOS 限制。" } }
-      }
-    },
-    "Apple Photos" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Apple Fotos" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Apple Photos" } }
       }
     }
   },

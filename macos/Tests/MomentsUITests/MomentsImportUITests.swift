@@ -71,7 +71,19 @@ final class MomentsImportUITests: XCTestCase {
             .firstMatch
         XCTAssertTrue(memory.waitForExistence(timeout: timeout), "An imported photo memory editor was not visible after relaunch")
         if memoryWasAdded {
-            XCTAssertTrue((memory.value as? String ?? "").contains("UI import memory"), "The quick memory was not persisted")
+            // The memory belongs to whichever photo was first in the review list,
+            // which need not be the first card in the Library.
+            let persistedMemory = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND value CONTAINS %@", "library.memory.", "UI import memory"))
+                .firstMatch
+            // The Library grid is lazy, so scroll until that photo's card is built.
+            var found = persistedMemory.waitForExistence(timeout: 3)
+            let grid = app.scrollViews.firstMatch
+            for _ in 0..<12 where !found && grid.exists {
+                grid.scroll(byDeltaX: 0, deltaY: -500)
+                found = persistedMemory.waitForExistence(timeout: 1)
+            }
+            XCTAssertTrue(found, "The quick memory was not persisted")
         } else {
             recordSkipped("The quick-memory field was unavailable, so persistence of that optional edit was not asserted.")
         }
@@ -215,16 +227,17 @@ final class MomentsImportUITests: XCTestCase {
             // locale-specific date string.
             changeDate.click()
             for _ in 0..<3 { app.typeKey(.downArrow, modifierFlags: []) }
+            // The date field opens a calendar popover that covers the rows
+            // below; Escape closes it (the review sheet has no cancel action).
+            app.typeKey(.escape, modifierFlags: [])
             if useDate.isHittable { useDate.click() }
             capture(app, named: "import-14-date-changed")
         } else {
             recordSkipped("No editable date was available in the confirmation list.")
         }
 
-        let changePlace = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "import.confirmation.place."))
-            .firstMatch
-        if changePlace.waitForExistence(timeout: 3), changePlace.isHittable {
+        let changePlace = firstHittable(in: app, prefix: "import.confirmation.place.")
+        if let changePlace {
             replaceText(in: changePlace, with: "UI import place")
             changePlace.typeKey(.return, modifierFlags: [])
             capture(app, named: "import-15-place-changed")
@@ -232,11 +245,9 @@ final class MomentsImportUITests: XCTestCase {
             recordSkipped("No suggested place was available to change.")
         }
 
-        let memory = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "import.confirmation.memory."))
-            .firstMatch
+        let memory = firstHittable(in: app, prefix: "import.confirmation.memory.")
         var memoryWasAdded = false
-        if memory.waitForExistence(timeout: 3), memory.isHittable {
+        if let memory {
             replaceText(in: memory, with: "UI import memory")
             memory.typeKey(.return, modifierFlags: [])
             memoryWasAdded = true
@@ -245,10 +256,8 @@ final class MomentsImportUITests: XCTestCase {
             recordSkipped("No quick-memory field was available in the confirmation list.")
         }
 
-        let ignore = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "import.confirmation.ignore."))
-            .firstMatch
-        if ignore.waitForExistence(timeout: 3), ignore.isHittable {
+        let ignore = firstHittable(in: app, prefix: "import.confirmation.ignore.")
+        if let ignore {
             ignore.click()
             capture(app, named: "import-17-ignored-item")
         } else {
@@ -256,6 +265,22 @@ final class MomentsImportUITests: XCTestCase {
         }
 
         return memoryWasAdded
+    }
+
+    /// Handled rows leave the confirmation list with an animation and other rows
+    /// may be scrolled away, so pick the first matching element that can be clicked.
+    private func firstHittable(in app: XCUIApplication, prefix: String) -> XCUIElement? {
+        let matches = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
+        guard matches.firstMatch.waitForExistence(timeout: 3) else { return nil }
+        let deadline = Date().addingTimeInterval(3)
+        repeat {
+            if let element = matches.allElementsBoundByIndex.first(where: { $0.exists && $0.isHittable }) {
+                return element
+            }
+            Thread.sleep(forTimeInterval: 0.2)
+        } while Date() < deadline
+        return nil
     }
 
     private func dismissReviewIfPresent(in app: XCUIApplication) {
@@ -270,7 +295,10 @@ final class MomentsImportUITests: XCTestCase {
 
     private func photoCount(in app: XCUIApplication) -> Int {
         let count = element(in: app, identifier: "library.photoCount")
-        guard count.waitForExistence(timeout: timeout) else { return -1 }
+        guard count.waitForExistence(timeout: timeout) else {
+            // An empty library shows the first-launch import screen instead of a count.
+            return element(in: app, identifier: "library.firstLaunch").exists ? 0 : -1
+        }
         let raw = count.value as? String ?? ""
         return Int(raw.filter { $0.isNumber }) ?? -1
     }

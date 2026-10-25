@@ -391,6 +391,105 @@ public struct ImportReviewFlag: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct ImportPlaceOverrideSnapshot: Equatable, Sendable {
+    public let id: String
+    public let placeID: String?
+    public let mediaID: String?
+    public let accountID: String
+    public let nameOverride: String?
+    public let mapLinkOverride: String?
+    public let latitude: Double?
+    public let longitude: Double?
+    public let updatedAt: Date
+    public let updatedBy: String?
+
+    public init(
+        id: String,
+        placeID: String?,
+        mediaID: String?,
+        accountID: String,
+        nameOverride: String?,
+        mapLinkOverride: String?,
+        latitude: Double?,
+        longitude: Double?,
+        updatedAt: Date,
+        updatedBy: String?
+    ) {
+        self.id = id
+        self.placeID = placeID
+        self.mediaID = mediaID
+        self.accountID = accountID
+        self.nameOverride = nameOverride
+        self.mapLinkOverride = mapLinkOverride
+        self.latitude = latitude
+        self.longitude = longitude
+        self.updatedAt = updatedAt
+        self.updatedBy = updatedBy
+    }
+}
+
+public enum ImportReviewPlaceAction: Equatable, Sendable {
+    case preserve
+    case set(String)
+}
+
+public enum ImportReviewDecisionLogic {
+    /// A typed value is authoritative for this review row. An existing
+    /// override without a review marker is also treated as a personal place
+    /// edit, so Accept cannot replace it with the import suggestion.
+    public static func placeAction(
+        suggestedPlaceName: String?,
+        typedPlaceName: String?,
+        existingOverrideName: String?,
+        existingReviewOverridePlaceID: String?
+    ) -> ImportReviewPlaceAction {
+        if let typedPlaceName {
+            let trimmed = typedPlaceName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? .preserve : .set(trimmed)
+        }
+
+        if let existingOverrideName,
+           !existingOverrideName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           existingReviewOverridePlaceID == nil {
+            return .preserve
+        }
+
+        guard let suggestedPlaceName else { return .preserve }
+        let trimmed = suggestedPlaceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? .preserve : .set(trimmed)
+    }
+}
+
+public struct ImportReviewPartition: Equatable, Sendable {
+    public let pending: [ImportReviewFlag]
+    public let handled: [ImportReviewFlag]
+
+    public init(pending: [ImportReviewFlag], handled: [ImportReviewFlag]) {
+        self.pending = pending
+        self.handled = handled
+    }
+}
+
+/// Splits review flags without mutating the source flags or their decisions.
+public func partitionImportReviewFlags(
+    _ flags: [ImportReviewFlag],
+    decisionOverrides: [String: ImportReviewDecision] = [:]
+) -> ImportReviewPartition {
+    var pending: [ImportReviewFlag] = []
+    var handled: [ImportReviewFlag] = []
+
+    for flag in flags {
+        let decision = decisionOverrides[flag.id] ?? flag.decision
+        if decision == .pending {
+            pending.append(flag)
+        } else {
+            handled.append(flag)
+        }
+    }
+
+    return ImportReviewPartition(pending: pending, handled: handled)
+}
+
 public struct ImportTripSummary: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String

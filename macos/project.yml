@@ -16,7 +16,9 @@ settings:
     CODE_SIGNING_REQUIRED: "NO"
     CODE_SIGN_IDENTITY: ""
 
-packages: {}
+packages:
+  MomentsCore:
+    path: MomentsCore
 
 targets:
   Moments:
@@ -24,6 +26,8 @@ targets:
     platform: macOS
     sources:
       - path: Sources/Moments
+    dependencies:
+      - package: MomentsCore
     resources:
       - path: Sources/Moments/Resources/Localizable.xcstrings
     settings:

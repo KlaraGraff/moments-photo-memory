@@ -201,12 +201,18 @@ struct LibraryView: View {
     private var libraryHeader: some View {
         HStack(alignment: .bottom, spacing: 22) {
             HStack(alignment: .firstTextBaseline, spacing: 9) {
+                // Keep the title and count on one line in narrow windows; the
+                // segment control and group-by picker give way instead.
                 Text(String(localized: "Library"))
                     .font(.system(size: 34, weight: .medium, design: .serif))
                     .foregroundStyle(LibraryPalette.ink)
+                    .lineLimit(1)
+                    .fixedSize()
                 Text("\(cachedVisibleCount) \(String(localized: "photos"))")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(LibraryPalette.muted)
+                    .lineLimit(1)
+                    .fixedSize()
                     .accessibilityIdentifier("library.photoCount")
                     .accessibilityValue(String(cachedVisibleCount))
             }

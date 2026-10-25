@@ -92,6 +92,14 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(selectedPhoto.waitForExistence(timeout: launchTimeout))
         XCTAssertEqual(selectedPhoto.value as? String, "Selected")
         XCTAssertTrue(selectedPhoto.isHittable, "Timeline jump should scroll the selected Library card into view")
+        // A sliver at the edge counts as hittable; the whole card must be visible
+        // below the filter bar and inside the window.
+        let window = app.windows.firstMatch.frame
+        let filterBar = element(in: app, identifier: "library.add-filter")
+        let visibleTop = filterBar.exists ? filterBar.frame.maxY : window.minY
+        let card = selectedPhoto.frame
+        XCTAssertGreaterThanOrEqual(card.minY, visibleTop - 1, "The selected card is cut off at the top (card \(card), visible top \(visibleTop))")
+        XCTAssertLessThanOrEqual(card.maxY, window.maxY + 1, "The selected card is cut off at the bottom (card \(card), window \(window))")
         capture(app, named: "timeline-01-place-selected-in-library")
     }
 

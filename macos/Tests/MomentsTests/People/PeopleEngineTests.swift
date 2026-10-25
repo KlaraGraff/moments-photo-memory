@@ -10,6 +10,10 @@ private actor TestEventLog {
     func snapshot() -> [String] { events }
 }
 
+private final class TestCounter: @unchecked Sendable {
+    var value = 0
+}
+
 @MainActor
 final class PeopleEngineTests: XCTestCase {
     private func embedding(_ values: [Float]) -> Data {
@@ -69,6 +73,22 @@ final class PeopleEngineTests: XCTestCase {
         XCTAssertEqual(FaceClustering.averageLink([[1, 0], [0.9, 0.1], [0, 1], [0, 0.9]], threshold: 0.2), [[0, 1], [2, 3]])
     }
 
+    func testStoppedClusteringLeavesEveryPendingFaceUnassigned() {
+        let faces = [
+            PeopleFaceSnapshot(id: "pending-a", personID: nil, clusterID: "pending-pending-a", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([1, 0])),
+            PeopleFaceSnapshot(id: "pending-b", personID: nil, clusterID: "pending-pending-b", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([0.99, 0.01])),
+            PeopleFaceSnapshot(id: "pending-c", personID: nil, clusterID: "pending-pending-c", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([-1, 0]))
+        ]
+        let checks = TestCounter()
+        let result = PeopleScanController.makeAssignmentsResult(faces: faces, people: [], shouldStop: {
+            // Stop at the first check: an interrupted run must persist no cluster ids.
+            checks.value += 1
+            return true
+        })
+        XCTAssertTrue(result.clusteringStopped)
+        XCTAssertEqual(result.assignments.map(\.clusterID), faces.map(\.clusterID))
+    }
+
     func testIncrementalAssignmentKeepsConfirmedPersonIDsStable() {
         let confirmed: [(id: String, centroid: [Float])] = [
             ("person-a", [1, 0, 0]), ("person-b", [0, 1, 0])
@@ -124,6 +144,22 @@ final class PeopleEngineTests: XCTestCase {
         XCTAssertTrue(try container.mainContext.fetch(FetchDescriptor<FaceObservation>()).isEmpty)
     }
 
+    func testUnavailableMediaIsLeftUnscanned() async throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let store = PeopleScanStore(modelContainer: container)
+        let unavailable = PeopleMediaDescriptor(id: "synthetic-unavailable", bookmarkData: nil, photosLocalIdentifier: nil)
+        let loaded = await PeopleImageLoader.load(unavailable)
+        XCTAssertNil(loaded)
+        try await store.save(
+            results: [PeopleScanResult(mediaID: "synthetic-available", faces: [])],
+            scannedIDs: ["synthetic-available"],
+            version: 1
+        )
+        let records = try container.mainContext.fetch(FetchDescriptor<FaceScanRecord>())
+        XCTAssertEqual(records.map(\.id), ["synthetic-available"])
+        XCTAssertFalse(records.contains { $0.id == "synthetic-unavailable" })
+    }
+
     func testScanCoordinatorWaitsForCancelledRunBeforeStartingNext() async {
         let coordinator = PeopleScanCoordinator()
         let log = TestEventLog()
@@ -177,7 +213,8 @@ final class PeopleEngineTests: XCTestCase {
             cropData: Data([4, 5, 6]),
             quality: 0.9,
             personID: source.id,
-            confirmed: true
+            confirmed: true,
+            rejectedPersonIDs: source.id
         )
         context.insert(source)
         context.insert(target)
@@ -187,12 +224,48 @@ final class PeopleEngineTests: XCTestCase {
         defer { UserDefaults.standard.removeObject(forKey: "moments.library.person") }
         PeopleStoreActions.merge(sourceID: source.id, into: target.id, people: [source, target], observations: [observation], context: context)
         XCTAssertEqual(observation.personID, target.id)
+        XCTAssertEqual(observation.rejectedPersonIDs, target.id)
         XCTAssertEqual(group.rules.rules.first?.value, target.id)
         XCTAssertEqual(UserDefaults.standard.string(forKey: "moments.library.person"), target.id)
         PeopleStoreActions.remove(face: observation)
         XCTAssertNil(observation.personID)
         PeopleStoreActions.hide(person: target)
         XCTAssertTrue(target.hidden)
+    }
+
+    func testBackgroundWriteBackPreservesConcurrentUserConfirmation() async throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let person = Person(id: "synthetic-person", name: "Synthetic")
+        let observation = FaceObservation(
+            mediaID: "synthetic-item",
+            rect: (0, 0, 1, 1),
+            embedding: embedding([1, 0]),
+            cropData: Data([1]),
+            quality: 1,
+            clusterID: "pending-face"
+        )
+        context.insert(person)
+        context.insert(observation)
+        try context.save()
+
+        let store = PeopleScanStore(modelContainer: container)
+        let snapshot = try await store.assignmentSnapshot()
+        observation.personID = person.id
+        observation.clusterID = nil
+        observation.confirmed = true
+        observation.assignmentSource = "user"
+        observation.updatedAt = .now
+        try context.save()
+
+        try await store.apply(
+            assignments: [PeopleFaceAssignment(id: observation.id, personID: nil, clusterID: "cluster-machine", confirmed: false, assignmentSource: "auto")],
+            snapshots: snapshot.faces
+        )
+        XCTAssertEqual(observation.personID, person.id)
+        XCTAssertNil(observation.clusterID)
+        XCTAssertTrue(observation.confirmed)
+        XCTAssertEqual(observation.assignmentSource, "user")
     }
 
     func testUnavailableEmbedderDoesNoDetectionWork() async {

@@ -3256,6 +3256,8 @@ public final class FaceObservation {
     /// "user" for an explicit confirmation, "auto" for a machine suggestion.
     public var assignmentSource: String
     public var createdAt: Date
+    /// Changes whenever a user-facing assignment or rejection is edited.
+    public var updatedAt: Date
 
     public init(
         id: String = UUID().uuidString,
@@ -3269,7 +3271,8 @@ public final class FaceObservation {
         confirmed: Bool = false,
         rejectedPersonIDs: String = "",
         assignmentSource: String? = nil,
-        createdAt: Date = .now
+        createdAt: Date = .now,
+        updatedAt: Date = .now
     ) {
         self.id = id
         self.mediaID = mediaID
@@ -3286,6 +3289,7 @@ public final class FaceObservation {
         self.rejectedPersonIDs = rejectedPersonIDs
         self.assignmentSource = assignmentSource ?? (confirmed ? "user" : "auto")
         self.createdAt = createdAt
+        self.updatedAt = updatedAt
     }
 
     public var rejectedPersonIDSet: Set<String> {
@@ -3301,6 +3305,7 @@ public final class FaceObservation {
             self.confirmed = false
             self.assignmentSource = "auto"
         }
+        updatedAt = .now
     }
 
     public func canAssign(to personID: String) -> Bool {

@@ -12,6 +12,7 @@ extension Notification.Name {
 struct PeopleScanDisplayProgress: Equatable {
     let completed: Int
     let total: Int
+    let skippedUnavailable: Int
     let isPaused: Bool
 }
 
@@ -24,6 +25,7 @@ struct PeopleFaceSnapshot: Sendable {
     let rejectedPersonIDs: String
     let embedding: Data
     var createdAt: Date = .distantPast
+    var updatedAt: Date = .distantPast
 }
 
 struct PeoplePersonSnapshot: Sendable {
@@ -36,6 +38,16 @@ struct PeopleFaceAssignment: Sendable {
     var clusterID: String?
     var confirmed: Bool
     var assignmentSource: String
+}
+
+struct PeopleAssignmentResult: Sendable {
+    let assignments: [PeopleFaceAssignment]
+    let clusteringStopped: Bool
+}
+
+struct PeopleStoreAssignmentSnapshot: Sendable {
+    let faces: [PeopleFaceSnapshot]
+    let people: [PeoplePersonSnapshot]
 }
 
 private struct PeopleClusterSnapshot: Identifiable {
@@ -78,7 +90,7 @@ final class PeopleScanController {
     }
 
     private(set) var state: State = .idle
-    private(set) var progress = PeopleScanDisplayProgress(completed: 0, total: 0, isPaused: false)
+    private(set) var progress = PeopleScanDisplayProgress(completed: 0, total: 0, skippedUnavailable: 0, isPaused: false)
     private let embedder: any FaceEmbedder
     private var container: ModelContainer?
     private var task: Task<Void, Never>?
@@ -100,15 +112,14 @@ final class PeopleScanController {
 
     func scanIfNeeded() {
         guard isAvailable, let container, task == nil else { return }
-        let context = ModelContext(container)
-        guard let items = try? context.fetch(FetchDescriptor<MediaItem>()),
-              let records = try? context.fetch(FetchDescriptor<FaceScanRecord>()),
-              let faces = try? context.fetch(FetchDescriptor<FaceObservation>()) else { return }
-        let completedIDs = Set(records.map(\.id))
-        let needsFaceScan = items.contains { $0.kind != .video && !completedIDs.contains($0.id) }
-        let needsClustering = faces.contains { $0.personID == nil && $0.clusterID?.hasPrefix("pending-") == true }
-        guard needsFaceScan || needsClustering else { return }
-        start()
+        let store = PeopleScanStore(modelContainer: container)
+        Task { @MainActor [weak self] in
+            let hasWork = (try? await Task.detached(priority: .utility) {
+                try await store.hasWork()
+            }.value) ?? false
+            guard hasWork, let self, self.task == nil else { return }
+            self.start()
+        }
     }
 
     func start() {
@@ -119,7 +130,7 @@ final class PeopleScanController {
         let scanID = UUID()
         activeScanID = scanID
         state = .scanning
-        progress = PeopleScanDisplayProgress(completed: 0, total: 0, isPaused: false)
+        progress = PeopleScanDisplayProgress(completed: 0, total: 0, skippedUnavailable: 0, isPaused: false)
         let embedder = self.embedder
         let coordinator = self.coordinator
         task = Task { @MainActor [weak self] in
@@ -134,48 +145,54 @@ final class PeopleScanController {
     private func runScan(container: ModelContainer, embedder: any FaceEmbedder, scanID: UUID) async {
         do {
             guard activeScanID == scanID else { return }
-            let context = ModelContext(container)
-            let items = try context.fetch(FetchDescriptor<MediaItem>())
-            let records = try context.fetch(FetchDescriptor<FaceScanRecord>())
-            let existingIDs = Set(records.map(\.id))
-            let pending = items.filter { !existingIDs.contains($0.id) && $0.kind != .video }
-            let descriptors = pending.map(PeopleMediaDescriptor.init)
-            let total = descriptors.count
-            progress = PeopleScanDisplayProgress(completed: 0, total: total, isPaused: false)
             let store = PeopleScanStore(modelContainer: container)
+            let descriptors = try await Task.detached(priority: .utility) {
+                try await store.pendingDescriptors()
+            }.value
+            let total = descriptors.count
+            progress = PeopleScanDisplayProgress(completed: 0, total: total, skippedUnavailable: 0, isPaused: false)
             let pipeline = PeopleScanPipeline(embedder: embedder)
             activePipeline = pipeline
             var completed = 0
+            var skippedUnavailable = 0
             for batch in stride(from: 0, to: descriptors.count, by: 16) {
                 try Task.checkCancellation()
                 let end = min(batch + 16, descriptors.count)
                 var batchResults: [PeopleScanResult] = []
+                var batchScannedIDs: [String] = []
                 for (offset, descriptor) in descriptors[batch..<end].enumerated() {
                     try Task.checkCancellation()
                     if let image = await PeopleImageLoader.load(descriptor) {
                         try Task.checkCancellation()
                         let batchBase = completed + offset
+                        let skippedBeforeImage = skippedUnavailable
                         let results = await pipeline.scanDetailed([PeopleScanItem(id: descriptor.id, image: image)]) { [weak self] scanProgress in
                             Task { @MainActor [weak self] in
                                 guard let self, self.activeScanID == scanID, self.state == .scanning else { return }
-                                self.progress = PeopleScanDisplayProgress(completed: batchBase + scanProgress.completed, total: total, isPaused: scanProgress.isPaused)
+                                self.progress = PeopleScanDisplayProgress(completed: batchBase + scanProgress.completed, total: total, skippedUnavailable: skippedBeforeImage, isPaused: scanProgress.isPaused)
                             }
                         }
                         batchResults.append(contentsOf: results)
+                        batchScannedIDs.append(descriptor.id)
+                    } else {
+                        skippedUnavailable += 1
+                        progress = PeopleScanDisplayProgress(completed: completed + offset + 1, total: total, skippedUnavailable: skippedUnavailable, isPaused: false)
                     }
                 }
-                try await store.save(results: batchResults, scannedIDs: descriptors[batch..<end].map(\.id), version: 1)
+                try Task.checkCancellation()
+                try await Task.detached(priority: .utility) {
+                    try await store.save(results: batchResults, scannedIDs: batchScannedIDs, version: 1)
+                }.value
                 completed += end - batch
-                progress = PeopleScanDisplayProgress(completed: completed, total: total, isPaused: false)
+                progress = PeopleScanDisplayProgress(completed: completed, total: total, skippedUnavailable: skippedUnavailable, isPaused: false)
             }
             guard !Task.isCancelled else { throw CancellationError() }
-            let storedPeople = try context.fetch(FetchDescriptor<Person>())
-            let storedFaces = try context.fetch(FetchDescriptor<FaceObservation>()).sorted { $0.createdAt > $1.createdAt }
-            let faceSnapshots = storedFaces.map { PeopleFaceSnapshot(id: $0.id, personID: $0.personID, clusterID: $0.clusterID, confirmed: $0.confirmed, assignmentSource: $0.assignmentSource, rejectedPersonIDs: $0.rejectedPersonIDs, embedding: $0.embedding, createdAt: $0.createdAt) }
-            let personSnapshots = storedPeople.map { PeoplePersonSnapshot(id: $0.id) }
+            let snapshot = try await Task.detached(priority: .utility) {
+                try await store.assignmentSnapshot()
+            }.value
             let assignmentTask = Task.detached(priority: .utility) {
-                guard !Task.isCancelled else { return [] as [PeopleFaceAssignment] }
-                return PeopleScanController.makeAssignments(faces: faceSnapshots, people: personSnapshots)
+                guard !Task.isCancelled else { return PeopleAssignmentResult(assignments: [], clusteringStopped: true) }
+                return PeopleScanController.makeAssignmentsResult(faces: snapshot.faces, people: snapshot.people)
             }
             let assignments = await withTaskCancellationHandler(operation: {
                 await assignmentTask.value
@@ -183,15 +200,15 @@ final class PeopleScanController {
                 assignmentTask.cancel()
             })
             try Task.checkCancellation()
-            let observationsByID = Dictionary(uniqueKeysWithValues: storedFaces.map { ($0.id, $0) })
-            for assignment in assignments {
-                guard let face = observationsByID[assignment.id] else { continue }
-                face.personID = assignment.personID
-                face.clusterID = assignment.clusterID
-                face.confirmed = assignment.confirmed
-                face.assignmentSource = assignment.assignmentSource
+            guard !assignments.clusteringStopped else {
+                guard activeScanID == scanID else { return }
+                activePipeline = nil
+                state = .idle
+                return
             }
-            try context.save()
+            try await Task.detached(priority: .utility) {
+                try await store.apply(assignments: assignments.assignments, snapshots: snapshot.faces)
+            }.value
             guard activeScanID == scanID else { return }
             activePipeline = nil
             state = .finished
@@ -219,13 +236,18 @@ final class PeopleScanController {
         Task { await coordinator.cancel() }
     }
 
-    nonisolated static func makeAssignments(faces: [PeopleFaceSnapshot], people: [PeoplePersonSnapshot]) -> [PeopleFaceAssignment] {
+    nonisolated static func makeAssignmentsResult(
+        faces: [PeopleFaceSnapshot],
+        people: [PeoplePersonSnapshot],
+        shouldStop: (@Sendable () -> Bool)? = nil
+    ) -> PeopleAssignmentResult {
         let confirmed = people.compactMap { person -> (id: String, centroid: [Float])? in
             let vectors = faces.filter { $0.personID == person.id && $0.confirmed && $0.assignmentSource == "user" }.compactMap { decode($0.embedding) }
             guard !vectors.isEmpty else { return nil }
             return (person.id, FaceClustering.centroid(of: vectors))
         }
-        var assignments = faces.map { PeopleFaceAssignment(id: $0.id, personID: $0.personID, clusterID: $0.clusterID, confirmed: $0.confirmed, assignmentSource: $0.assignmentSource) }
+        let originalAssignments = faces.map { PeopleFaceAssignment(id: $0.id, personID: $0.personID, clusterID: $0.clusterID, confirmed: $0.confirmed, assignmentSource: $0.assignmentSource) }
+        var assignments = originalAssignments
         for index in assignments.indices where assignments[index].personID == nil {
             guard let vector = decode(faces[index].embedding) else { continue }
             let rejected = Set(faces[index].rejectedPersonIDs.split(separator: ",").map(String.init))
@@ -236,19 +258,45 @@ final class PeopleScanController {
                 assignments[index].assignmentSource = "auto"
             }
         }
-        let unnamedIndices = assignments.indices
+        let pendingIndices = assignments.indices
             .filter { assignments[$0].personID == nil && assignments[$0].clusterID?.hasPrefix("pending-") == true && decode(faces[$0].embedding) != nil }
             .sorted { faces[$0].createdAt > faces[$1].createdAt }
-            .prefix(3_000)
-        let vectors = unnamedIndices.compactMap { decode(faces[$0].embedding) }
-        guard vectors.count == unnamedIndices.count else { return assignments }
-        for cluster in FaceClustering.averageLink(vectors, shouldStop: { Task.isCancelled || FaceClustering.isPowerPaused }) {
-            guard let first = cluster.first else { continue }
-            let firstIndex = unnamedIndices[first]
-            let clusterID = "cluster-\(assignments[firstIndex].id)"
-            for member in cluster { assignments[unnamedIndices[member]].clusterID = clusterID }
+        let existingClusters = Dictionary(grouping: assignments.indices.filter {
+            assignments[$0].personID == nil && assignments[$0].clusterID?.hasPrefix("cluster-") == true
+        }, by: { assignments[$0].clusterID! })
+        var clusteringIndices: [Int] = []
+        for index in pendingIndices {
+            guard let vector = decode(faces[index].embedding) else { continue }
+            let match = existingClusters.compactMap { clusterID, members -> (id: String, distance: Float)? in
+                let vectors = members.compactMap { decode(faces[$0].embedding) }
+                guard !vectors.isEmpty else { return nil }
+                let distance = vectors.map { FaceClustering.cosineDistance(vector, $0) }.reduce(0, +) / Float(vectors.count)
+                return distance < FaceClustering.defaultThreshold ? (clusterID, distance) : nil
+            }.min { $0.distance < $1.distance }
+            if let match {
+                assignments[index].clusterID = match.id
+            } else {
+                clusteringIndices.append(index)
+            }
         }
-        return assignments
+        let limitedIndices = Array(clusteringIndices.prefix(3_000))
+        let vectors = limitedIndices.compactMap { decode(faces[$0].embedding) }
+        guard vectors.count == limitedIndices.count else { return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false) }
+        let result = FaceClustering.averageLinkResult(vectors, shouldStop: shouldStop ?? { Task.isCancelled || FaceClustering.isPowerPaused })
+        if result.stopped {
+            return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
+        }
+        for cluster in result.clusters {
+            guard let first = cluster.first else { continue }
+            let firstIndex = limitedIndices[first]
+            let clusterID = "cluster-\(assignments[firstIndex].id)"
+            for member in cluster { assignments[limitedIndices[member]].clusterID = clusterID }
+        }
+        return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false)
+    }
+
+    nonisolated static func makeAssignments(faces: [PeopleFaceSnapshot], people: [PeoplePersonSnapshot]) -> [PeopleFaceAssignment] {
+        makeAssignmentsResult(faces: faces, people: people).assignments
     }
 
     nonisolated private static func decode(_ data: Data) -> [Float]? {
@@ -263,6 +311,17 @@ enum PeopleStoreActions {
         guard sourceID != targetID else { return }
         for face in observations where face.personID == sourceID {
             face.personID = targetID
+            var rejected = face.rejectedPersonIDSet
+            if rejected.remove(sourceID) != nil { rejected.insert(targetID) }
+            face.rejectedPersonIDs = rejected.sorted().joined(separator: ",")
+            face.updatedAt = .now
+        }
+        for face in observations {
+            var rejected = face.rejectedPersonIDSet
+            guard rejected.remove(sourceID) != nil else { continue }
+            rejected.insert(targetID)
+            face.rejectedPersonIDs = rejected.sorted().joined(separator: ",")
+            face.updatedAt = .now
         }
         for group in (try? context.fetch(FetchDescriptor<UserGroup>())) ?? [] {
             var rules = group.rules
@@ -288,6 +347,7 @@ enum PeopleStoreActions {
         face.confirmed = false
         face.assignmentSource = "user"
         face.clusterID = nil
+        face.updatedAt = .now
     }
 
     static func hide(person: Person) {
@@ -296,10 +356,16 @@ enum PeopleStoreActions {
     }
 }
 
-private struct PeopleMediaDescriptor: Sendable {
+struct PeopleMediaDescriptor: Sendable {
     let id: String
     let bookmarkData: Data?
     let photosLocalIdentifier: String?
+
+    init(id: String, bookmarkData: Data?, photosLocalIdentifier: String?) {
+        self.id = id
+        self.bookmarkData = bookmarkData
+        self.photosLocalIdentifier = photosLocalIdentifier
+    }
 
     init(_ item: MediaItem) {
         id = item.id
@@ -312,9 +378,41 @@ private struct PeopleMediaDescriptor: Sendable {
 /// is committed independently so cancellation can resume at the next item.
 @ModelActor
 actor PeopleScanStore {
+    func hasWork() throws -> Bool {
+        var recordsDescriptor = FetchDescriptor<FaceScanRecord>()
+        recordsDescriptor.propertiesToFetch = [\.id]
+        let completedIDs = Set(try modelContext.fetch(recordsDescriptor).map(\.id))
+        var itemsDescriptor = FetchDescriptor<MediaItem>()
+        itemsDescriptor.propertiesToFetch = [\.id, \.kindRaw]
+        let needsFaceScan = try modelContext.fetch(itemsDescriptor).contains { $0.kind != .video && !completedIDs.contains($0.id) }
+        var facesDescriptor = FetchDescriptor<FaceObservation>()
+        facesDescriptor.propertiesToFetch = [\.personID, \.clusterID]
+        let needsClustering = try modelContext.fetch(facesDescriptor).contains { $0.personID == nil && $0.clusterID?.hasPrefix("pending-") == true }
+        return needsFaceScan || needsClustering
+    }
+
+    func pendingDescriptors() throws -> [PeopleMediaDescriptor] {
+        var recordsDescriptor = FetchDescriptor<FaceScanRecord>()
+        recordsDescriptor.propertiesToFetch = [\.id]
+        let records = try modelContext.fetch(recordsDescriptor)
+        let completedIDs = Set(records.map(\.id))
+        var itemsDescriptor = FetchDescriptor<MediaItem>()
+        itemsDescriptor.propertiesToFetch = [\.id, \.kindRaw, \.originalBookmarkData, \.photosLocalIdentifier]
+        let items = try modelContext.fetch(itemsDescriptor)
+        return items.compactMap { item in
+            guard item.kind != .video, !completedIDs.contains(item.id) else { return nil }
+            return PeopleMediaDescriptor(item)
+        }
+    }
+
     func save(results: [PeopleScanResult], scannedIDs: [String], version: Int) throws {
-        let existing = try modelContext.fetch(FetchDescriptor<FaceObservation>())
-        var keys = Set(existing.map { Self.key(mediaID: $0.mediaID, rect: $0.rect) })
+        var keys = Set<String>()
+        for mediaID in Set(results.map(\.mediaID)) {
+            let predicate = #Predicate<FaceObservation> { $0.mediaID == mediaID }
+            var descriptor = FetchDescriptor<FaceObservation>(predicate: predicate)
+            descriptor.propertiesToFetch = [\.mediaID, \.rectX, \.rectY, \.rectWidth, \.rectHeight]
+            keys.formUnion(try modelContext.fetch(descriptor).map { Self.key(mediaID: $0.mediaID, rect: ($0.rectX, $0.rectY, $0.rectWidth, $0.rectHeight)) })
+        }
         for result in results {
             for draft in result.faces {
                 let key = Self.key(mediaID: result.mediaID, rect: draft.rect)
@@ -340,17 +438,64 @@ actor PeopleScanStore {
         try modelContext.save()
     }
 
+    func assignmentSnapshot() throws -> PeopleStoreAssignmentSnapshot {
+        var descriptor = FetchDescriptor<FaceObservation>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
+        descriptor.propertiesToFetch = [\.id, \.mediaID, \.embedding, \.personID, \.clusterID, \.confirmed, \.rejectedPersonIDs, \.assignmentSource, \.createdAt, \.updatedAt]
+        let faces = try modelContext.fetch(descriptor).map {
+            PeopleFaceSnapshot(
+                id: $0.id,
+                personID: $0.personID,
+                clusterID: $0.clusterID,
+                confirmed: $0.confirmed,
+                assignmentSource: $0.assignmentSource,
+                rejectedPersonIDs: $0.rejectedPersonIDs,
+                embedding: $0.embedding,
+                createdAt: $0.createdAt,
+                updatedAt: $0.updatedAt
+            )
+        }
+        var peopleDescriptor = FetchDescriptor<Person>()
+        peopleDescriptor.propertiesToFetch = [\.id]
+        let people = try modelContext.fetch(peopleDescriptor).map { PeoplePersonSnapshot(id: $0.id) }
+        return PeopleStoreAssignmentSnapshot(faces: faces, people: people)
+    }
+
+    func apply(assignments: [PeopleFaceAssignment], snapshots: [PeopleFaceSnapshot]) throws {
+        let snapshotsByID = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.id, $0) })
+        // One fetch for every face in this write-back instead of one per face.
+        let faceIDs = assignments.map(\.id)
+        var descriptor = FetchDescriptor<FaceObservation>(predicate: #Predicate { faceIDs.contains($0.id) })
+        descriptor.propertiesToFetch = [\.id, \.personID, \.clusterID, \.confirmed, \.assignmentSource, \.updatedAt, \.rejectedPersonIDs]
+        let facesByID = Dictionary(try modelContext.fetch(descriptor).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for assignment in assignments {
+            guard let snapshot = snapshotsByID[assignment.id] else { continue }
+            guard let face = facesByID[assignment.id],
+                  face.updatedAt == snapshot.updatedAt,
+                  face.personID == snapshot.personID,
+                  face.confirmed == snapshot.confirmed,
+                  face.assignmentSource == snapshot.assignmentSource,
+                  face.rejectedPersonIDs == snapshot.rejectedPersonIDs else { continue }
+            guard face.assignmentSource != "user", !face.confirmed else { continue }
+            face.personID = assignment.personID
+            face.clusterID = assignment.clusterID
+            face.confirmed = assignment.confirmed
+            face.assignmentSource = assignment.assignmentSource
+            face.updatedAt = .now
+        }
+        try modelContext.save()
+    }
+
     private static func key(mediaID: String, rect: (x: Double, y: Double, w: Double, h: Double)) -> String {
         let values = [rect.x, rect.y, rect.w, rect.h].map { String(format: "%.4f", $0) }.joined(separator: ",")
         return "\(mediaID)|\(values)"
     }
 }
 
-private enum PeopleImageLoader {
+enum PeopleImageLoader {
     static func load(_ descriptor: PeopleMediaDescriptor) async -> CGImage? {
         let photoSource = PhotoKitAssetSource()
         if let localIdentifier = descriptor.photosLocalIdentifier,
-           let image = await photoSource.thumbnailImage(forLocalIdentifier: localIdentifier, targetSize: CGSize(width: 2_000, height: 2_000), networkAccessAllowed: false) {
+           let image = await photoSource.thumbnailImage(forLocalIdentifier: localIdentifier, targetSize: CGSize(width: 2_000, height: 2_000), networkAccessAllowed: true) {
             return image
         }
         guard let bookmark = descriptor.bookmarkData,
@@ -392,6 +537,8 @@ struct PeopleScreen: View {
             hasher.combine(observation.personID)
             hasher.combine(observation.clusterID)
             hasher.combine(observation.confirmed)
+            hasher.combine(observation.assignmentSource)
+            hasher.combine(observation.updatedAt)
         }
         return hasher.finalize()
     }
@@ -428,6 +575,11 @@ struct PeopleScreen: View {
                     Text(String(format: String(localized: "Finding faces progress"), scanner.progress.completed, scanner.progress.total))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
+                    if scanner.progress.skippedUnavailable > 0 {
+                        Text(String(format: String(localized: "Skipped unavailable"), scanner.progress.skippedUnavailable))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                     if scanner.progress.isPaused { Text(String(localized: "Paused to save battery")).font(.caption).foregroundStyle(.secondary) }
                     Button(String(localized: "Cancel")) { scanner.cancel() }.buttonStyle(.borderless)
                 }
@@ -498,6 +650,7 @@ struct PeopleScreen: View {
                                             Button {
                                                 face.confirmed = true
                                                 face.assignmentSource = "user"
+                                                face.updatedAt = .now
                                                 try? modelContext.save()
                                             } label: {
                                                 Image(systemName: "checkmark.circle.fill").font(.caption)
@@ -533,7 +686,7 @@ struct PeopleScreen: View {
                                 VStack(spacing: 4) {
                                     FaceCropView(data: face.cropData, size: 72)
                                     HStack(spacing: 6) {
-                                        Button { face.confirmed = true; face.assignmentSource = "user"; try? modelContext.save() } label: { Image(systemName: "checkmark") }.buttonStyle(.borderless).foregroundStyle(.green)
+                                        Button { face.confirmed = true; face.assignmentSource = "user"; face.updatedAt = .now; try? modelContext.save() } label: { Image(systemName: "checkmark") }.buttonStyle(.borderless).foregroundStyle(.green)
                                         Button { remove(face) } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).foregroundStyle(.red)
                                     }
                                 }
@@ -557,13 +710,20 @@ struct PeopleScreen: View {
             face.clusterID = nil
             face.confirmed = true
             face.assignmentSource = "user"
+            face.updatedAt = .now
         }
         try? modelContext.save()
         clusterNames[cluster.id] = nil
     }
 
     private func remove(_ face: FaceObservation) {
+        let personID = face.personID
         PeopleStoreActions.remove(face: face)
+        if let personID,
+           !observations.contains(where: { $0 !== face && $0.personID == personID }),
+           let person = people.first(where: { $0.id == personID }) {
+            PeopleStoreActions.hide(person: person)
+        }
         try? modelContext.save()
     }
 

@@ -227,51 +227,71 @@ public final class SFaceCoreMLEmbedder: FaceEmbedder, @unchecked Sendable {
 
 public enum FaceClustering {
     public static let defaultThreshold: Float = 0.65
+
+    public struct AverageLinkResult: Sendable, Equatable {
+        public let clusters: [[Int]]
+        public let stopped: Bool
+        public init(clusters: [[Int]], stopped: Bool) {
+            self.clusters = clusters
+            self.stopped = stopped
+        }
+    }
+
     private struct HeapEntry {
-        let left: Int
-        let right: Int
+        let left: Int32
+        let right: Int32
         let distance: Float
     }
 
-    public static func averageLink(_ vectors: [[Float]], threshold: Float = defaultThreshold, shouldStop: (@Sendable () -> Bool)? = nil) -> [[Int]] {
-        guard !vectors.isEmpty else { return [] }
+    /// The flat triangular Float32 matrix uses about 18 MB at 3,000 faces;
+    /// avoiding nested arrays keeps the clustering working set below 100 MB.
+    public static func averageLinkResult(_ vectors: [[Float]], threshold: Float = defaultThreshold, shouldStop: (@Sendable () -> Bool)? = nil) -> AverageLinkResult {
+        guard !vectors.isEmpty else { return AverageLinkResult(clusters: [], stopped: false) }
         let stop = shouldStop ?? { Task.isCancelled }
         let normalizedVectors = vectors.map(normalize)
         var clusters = vectors.indices.map { [$0] }
         var sizes = vectors.indices.map { _ in 1 }
         var active = Array(repeating: true, count: vectors.count)
-        var distances: [[Float]] = Array(repeating: Array(repeating: .infinity, count: vectors.count), count: vectors.count)
+        let pairCount = vectors.count * max(vectors.count - 1, 0) / 2
+        var distances = Array(repeating: Float.infinity, count: pairCount)
+        func offset(_ a: Int, _ b: Int) -> Int {
+            let i = min(a, b), j = max(a, b)
+            return i * vectors.count - i * (i + 1) / 2 + j - i - 1
+        }
+        func distance(_ a: Int, _ b: Int) -> Float { distances[offset(a, b)] }
+        func setDistance(_ a: Int, _ b: Int, _ value: Float) { distances[offset(a, b)] = value }
         var heap: [HeapEntry] = []
         for i in vectors.indices {
             for j in (i + 1)..<vectors.count {
                 let d = normalizedDistance(normalizedVectors[i], normalizedVectors[j])
-                distances[i][j] = d; distances[j][i] = d
-                heapPush(&heap, HeapEntry(left: i, right: j, distance: d))
+                setDistance(i, j, d)
+                if d < threshold { heapPush(&heap, HeapEntry(left: Int32(i), right: Int32(j), distance: d)) }
             }
         }
-        var mergeCount = 0
+        var stopped = false
         while let best = heapPop(&heap) {
-            if mergeCount % 32 == 0 && stop() { break }
-            let i = best.left, j = best.right
-            let current = distances[i][j]
-            guard active[i], active[j], abs(best.distance - current) < 0.000001, best.distance < threshold else {
-                if best.distance >= threshold { break }
-                continue
-            }
+            if stop() { stopped = true; break }
+            let i = Int(best.left), j = Int(best.right)
+            let current = distance(i, j)
+            guard active[i], active[j], abs(best.distance - current) < 0.000001 else { continue }
             let leftSize = sizes[i], rightSize = sizes[j]
             clusters[i].append(contentsOf: clusters[j]); sizes[i] += sizes[j]; active[j] = false
-            mergeCount += 1
             // Lance–Williams average-link update. Distances are held by the
             // stable representative index of each cluster. A lazy min heap
             // avoids rescanning every pair after each merge.
             for k in vectors.indices where active[k] && k != i {
-                let updated = (Float(leftSize) * distances[i][k] + Float(rightSize) * distances[j][k]) / Float(leftSize + rightSize)
-                distances[i][k] = updated; distances[k][i] = updated
-                heapPush(&heap, HeapEntry(left: min(i, k), right: max(i, k), distance: updated))
+                let updated = (Float(leftSize) * distance(i, k) + Float(rightSize) * distance(j, k)) / Float(leftSize + rightSize)
+                setDistance(i, k, updated)
+                if updated < threshold { heapPush(&heap, HeapEntry(left: Int32(min(i, k)), right: Int32(max(i, k)), distance: updated)) }
             }
         }
-        return clusters.indices.compactMap { active[$0] ? clusters[$0] : nil }
+        return AverageLinkResult(clusters: clusters.indices.compactMap { active[$0] ? clusters[$0] : nil }, stopped: stopped)
     }
+
+    public static func averageLink(_ vectors: [[Float]], threshold: Float = defaultThreshold, shouldStop: (@Sendable () -> Bool)? = nil) -> [[Int]] {
+        averageLinkResult(vectors, threshold: threshold, shouldStop: shouldStop).clusters
+    }
+
     public static func cosineDistance(_ lhs: [Float], _ rhs: [Float]) -> Float {
         guard !lhs.isEmpty, lhs.count == rhs.count else { return 1 }
         let dot = zip(lhs, rhs).reduce(Float.zero) { $0 + $1.0 * $1.1 }
@@ -338,6 +358,7 @@ public enum FaceClustering {
         }
         return result
     }
+
     public static func assignIncrementally(
         _ vector: [Float],
         to confirmed: [(id: String, centroid: [Float])],

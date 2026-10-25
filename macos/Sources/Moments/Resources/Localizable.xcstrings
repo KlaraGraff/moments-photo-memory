@@ -5178,6 +5178,13 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Hide a person" } },
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "隐藏人物" } }
       }
+    },
+    "Skipped unavailable": {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nicht verfügbar, übersprungen: %d" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Skipped (unavailable): %d" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已跳过（不可用）：%d" } }
+      }
     }
   },
   "version" : "1.0"

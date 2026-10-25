@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import SwiftData
 
 public enum MediaKind: String, Codable, CaseIterable, Sendable {
@@ -103,6 +104,39 @@ public enum SchemaV1: VersionedSchema {
             self.placeOverrideLatitude = placeOverrideLatitude
             self.placeOverrideLongitude = placeOverrideLongitude
         }
+
+        public var kind: MediaKind {
+            get { MediaKind(rawValue: kindRaw) ?? .photo }
+            set { kindRaw = newValue.rawValue }
+        }
+
+        public var source: MediaSource {
+            get { MediaSource(rawValue: sourceRaw) ?? .file }
+            set { sourceRaw = newValue.rawValue }
+        }
+
+        public var effectivePlaceName: String? {
+            let override = placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return override?.isEmpty == false ? override : place?.name
+        }
+
+        public var effectiveMapLink: String? {
+            let override = placeOverrideMapLink?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return override?.isEmpty == false ? override : place?.mapLink
+        }
+
+        public var effectiveCoordinate: (latitude: Double, longitude: Double)? {
+            if let latitude = placeOverrideLatitude, let longitude = placeOverrideLongitude {
+                return (latitude, longitude)
+            }
+            if let latitude = place?.latitude, let longitude = place?.longitude {
+                return (latitude, longitude)
+            }
+            if let latitude, let longitude {
+                return (latitude, longitude)
+            }
+            return nil
+        }
     }
 
     @Model
@@ -125,6 +159,11 @@ public enum SchemaV1: VersionedSchema {
             self.createdAt = createdAt
             self.updatedAt = updatedAt
             self.mediaItem = mediaItem
+        }
+
+        public var author: MemoryAuthor {
+            get { MemoryAuthor(rawValue: authorRaw) ?? .me }
+            set { authorRaw = newValue.rawValue }
         }
     }
 
@@ -158,6 +197,11 @@ public enum SchemaV1: VersionedSchema {
             self.mapLink = mapLink
             self.parent = parent
         }
+
+        public var kind: PlaceKind {
+            get { PlaceKind(rawValue: kindRaw) ?? .spot }
+            set { kindRaw = newValue.rawValue }
+        }
     }
 
     @Model
@@ -180,6 +224,10 @@ public enum SchemaV1: VersionedSchema {
             self.startDate = startDate
             self.endDate = endDate
             self.items = items
+        }
+
+        public var orderedItems: [MediaItem] {
+            items.sorted { ($0.captureDate ?? .distantPast, $0.id) < ($1.captureDate ?? .distantPast, $1.id) }
         }
     }
 
@@ -250,6 +298,7 @@ public final class MediaItem {
         isScreenshot: Bool = false,
         source: MediaSource = .file,
         title: String = "",
+        tripID: String? = nil,
         tripKey: String? = nil,
         place: Place? = nil,
         trip: Trip? = nil,
@@ -266,7 +315,7 @@ public final class MediaItem {
         self.isScreenshot = isScreenshot
         self.sourceRaw = source.rawValue
         self.title = title
-        self.tripID = trip?.id ?? tripKey
+        self.tripID = trip?.id ?? tripID ?? tripKey
         self.updatedAt = updatedAt
         self.updatedBy = updatedBy
         self.place = place
@@ -333,7 +382,13 @@ public final class MediaItem {
     }
 
     public func setFavorite(_ value: Bool, accountID: String = MomentsAccount.localID, context: ModelContext) {
-        if let favorite = favorites.first(where: { $0.accountID == accountID }) {
+        let existingFavorite: Favorite?
+        do {
+            existingFavorite = try Favorite.lookup(mediaID: id, accountID: accountID, in: context)
+        } catch {
+            existingFavorite = nil
+        }
+        if let favorite = existingFavorite {
             favorite.isFavorite = value
             favorite.changedAt = .now
         } else {
@@ -367,7 +422,6 @@ public final class Memory {
     public var updatedAt: Date
     public var revision: Int
     public var updatedBy: String?
-    @Relationship(inverse: \MediaItem.memories)
     public var mediaItem: MediaItem?
     @Relationship(deleteRule: .cascade, inverse: \MemoryRevision.memory)
     public var revisions: [MemoryRevision] = []
@@ -411,7 +465,6 @@ public final class MemoryRevision {
     public var editedAt: Date
     public var baseRevision: Int
     public var reason: String?
-    @Relationship(inverse: \Memory.revisions)
     public var memory: Memory?
 
     public init(
@@ -445,13 +498,10 @@ public final class Place {
     public var mapLink: String?
     public var updatedAt: Date
     public var updatedBy: String?
-    @Relationship(inverse: \Place.children)
     public var parent: Place?
     @Relationship(inverse: \Place.parent)
     public var children: [Place] = []
-    @Relationship(inverse: \MediaItem.place)
     public var items: [MediaItem] = []
-    @Relationship(inverse: \PlaceOverride.place)
     public var overrides: [PlaceOverride] = []
 
     public init(
@@ -493,9 +543,9 @@ public final class PlaceOverride {
     public var latitude: Double?
     public var longitude: Double?
     public var updatedAt: Date
+    public var updatedBy: String?
     @Relationship(inverse: \Place.overrides)
     public var place: Place?
-    @Relationship(inverse: \MediaItem.placeOverrides)
     public var mediaItem: MediaItem?
 
     public init(
@@ -508,6 +558,7 @@ public final class PlaceOverride {
         latitude: Double? = nil,
         longitude: Double? = nil,
         updatedAt: Date = .now,
+        updatedBy: String? = nil,
         place: Place? = nil,
         mediaItem: MediaItem? = nil
     ) {
@@ -521,8 +572,14 @@ public final class PlaceOverride {
         self.latitude = latitude
         self.longitude = longitude
         self.updatedAt = updatedAt
+        self.updatedBy = updatedBy
         self.place = place
         self.mediaItem = mediaItem
+    }
+
+    public var coordinate: (latitude: Double, longitude: Double)? {
+        guard let latitude, let longitude else { return nil }
+        return (latitude, longitude)
     }
 }
 
@@ -534,7 +591,6 @@ public final class Trip {
     public var endDate: Date?
     public var updatedAt: Date
     public var updatedBy: String?
-    @Relationship(inverse: \MediaItem.trip)
     public var items: [MediaItem] = []
 
     public init(
@@ -566,13 +622,16 @@ public final class Tag {
     public var id: String
     public var normalizedName: String
     public var displayName: String
-    @Relationship(inverse: \MediaTag.tag)
+    public var updatedAt: Date
+    public var updatedBy: String?
     public var mediaTags: [MediaTag] = []
 
-    public init(id: String = UUID().uuidString, displayName: String, normalizedName: String? = nil) {
+    public init(id: String = UUID().uuidString, displayName: String, normalizedName: String? = nil, updatedAt: Date = .now, updatedBy: String? = nil) {
         self.id = id
         self.displayName = displayName
         self.normalizedName = normalizedName ?? Self.normalize(displayName)
+        self.updatedAt = updatedAt
+        self.updatedBy = updatedBy
     }
 
     /// Compatibility spelling for the pre-sharing UI.
@@ -585,6 +644,7 @@ public final class Tag {
         set {
             displayName = newValue
             normalizedName = Self.normalize(newValue)
+            updatedAt = .now
         }
     }
 
@@ -598,6 +658,25 @@ public final class Tag {
             .precomposedStringWithCanonicalMapping
             .folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
     }
+
+    public static func lookup(normalizedName: String, in context: ModelContext) throws -> Tag? {
+        let normalized = normalize(normalizedName)
+        return try context.fetch(FetchDescriptor<Tag>())
+            .first(where: { $0.normalizedName == normalized })
+    }
+
+    public static func lookupOrCreate(displayName: String, in context: ModelContext) throws -> Tag {
+        if let existing = try lookup(normalizedName: displayName, in: context) {
+            return existing
+        }
+        let tag = Tag(displayName: displayName)
+        context.insert(tag)
+        return tag
+    }
+
+    public static func findOrCreate(name: String, in context: ModelContext) throws -> Tag {
+        try lookupOrCreate(displayName: name, in: context)
+    }
 }
 
 @Model
@@ -605,7 +684,8 @@ public final class MediaTag {
     public var id: String
     public var mediaID: String?
     public var tagID: String?
-    @Relationship(inverse: \MediaItem.mediaTags)
+    public var updatedAt: Date
+    public var updatedBy: String?
     public var mediaItem: MediaItem?
     @Relationship(inverse: \Tag.mediaTags)
     public var tag: Tag?
@@ -614,12 +694,16 @@ public final class MediaTag {
         id: String = UUID().uuidString,
         mediaID: String? = nil,
         tagID: String? = nil,
+        updatedAt: Date = .now,
+        updatedBy: String? = nil,
         mediaItem: MediaItem? = nil,
         tag: Tag? = nil
     ) {
         self.id = id
         self.mediaID = mediaItem?.id ?? mediaID
         self.tagID = tag?.id ?? tagID
+        self.updatedAt = updatedAt
+        self.updatedBy = updatedBy
         self.mediaItem = mediaItem
         self.tag = tag
     }
@@ -632,7 +716,6 @@ public final class Favorite {
     public var accountID: String
     public var isFavorite: Bool
     public var changedAt: Date
-    @Relationship(inverse: \MediaItem.favorites)
     public var mediaItem: MediaItem?
 
     public init(
@@ -644,12 +727,22 @@ public final class Favorite {
         mediaItem: MediaItem? = nil
     ) {
         let resolvedMediaID = mediaItem?.id ?? mediaID ?? UUID().uuidString
-        self.id = id ?? "\(resolvedMediaID):\(accountID)"
+        self.id = id ?? Self.recordID(mediaID: resolvedMediaID, accountID: accountID)
         self.mediaID = mediaItem?.id ?? mediaID
         self.accountID = accountID
         self.isFavorite = isFavorite
         self.changedAt = changedAt
         self.mediaItem = mediaItem
+    }
+
+    public static func recordID(mediaID: String, accountID: String) -> String {
+        "\(mediaID):\(accountID)"
+    }
+
+    public static func lookup(mediaID: String, accountID: String, in context: ModelContext) throws -> Favorite? {
+        let id = recordID(mediaID: mediaID, accountID: accountID)
+        return try context.fetch(FetchDescriptor<Favorite>())
+            .first(where: { $0.id == id })
     }
 }
 
@@ -662,7 +755,7 @@ public enum MomentsMigrationPlan: SchemaMigrationPlan {
     public static let stages: [MigrationStage] = []
 }
 
-public enum MomentsStoreError: LocalizedError {
+public enum MomentsStoreError: LocalizedError, Equatable {
     case protectedLegacyStore
 
     public var errorDescription: String? {
@@ -685,6 +778,10 @@ public enum MomentsPersistence {
         }
 
         let storeURL = try url ?? defaultStoreURL()
+        try FileManager.default.createDirectory(
+            at: storeURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
         if FileManager.default.fileExists(atPath: storeURL.path) {
             switch try inspectLegacyStore(at: storeURL) {
             case .demoOnly:
@@ -718,6 +815,10 @@ public enum MomentsPersistence {
             )
         }
         guard let url else { throw CocoaError(.fileNoSuchFile) }
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
         let configuration = ModelConfiguration("Moments-v1", schema: Schema(versionedSchema: SchemaV1.self), url: url, cloudKitDatabase: .none)
         return try ModelContainer(for: Schema(versionedSchema: SchemaV1.self), configurations: configuration)
     }
@@ -735,21 +836,35 @@ public enum MomentsPersistence {
         case notLegacy
     }
 
+    /// Reads the SQLite file directly and read-only. Opening it through SwiftData
+    /// with the v1 schema would make Core Data try to migrate a current store in
+    /// place, so the probe never goes through Core Data.
+    /// v1 stores have a ZMEDIAITEM table but no ZFAVORITE table (added in v2).
     private static func inspectLegacyStore(at url: URL) throws -> LegacyInspection {
-        do {
-            let configuration = ModelConfiguration(
-                "Moments-v1-read-only",
-                schema: Schema(versionedSchema: SchemaV1.self),
-                url: url,
-                allowsSave: false,
-                cloudKitDatabase: .none
-            )
-            let container = try ModelContainer(for: Schema(versionedSchema: SchemaV1.self), configurations: configuration)
-            let items = try container.mainContext.fetch(FetchDescriptor<SchemaV1.MediaItem>())
-            return items.allSatisfy { $0.sourceRaw == MediaSource.demo.rawValue } ? .demoOnly : .containsNonDemo
-        } catch {
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(database)
             return .notLegacy
         }
+        defer { sqlite3_close(database) }
+
+        func tableExists(_ name: String) -> Bool {
+            scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '\(name)'") ?? 0 > 0
+        }
+        func scalar(_ sql: String) -> Int? {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { return nil }
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+            return Int(sqlite3_column_int64(statement, 0))
+        }
+
+        guard tableExists("ZMEDIAITEM"), !tableExists("ZFAVORITE") else { return .notLegacy }
+        guard let nonDemo = scalar("SELECT COUNT(*) FROM ZMEDIAITEM WHERE ZSOURCERAW IS NOT 'demo'") else {
+            // Unreadable legacy store: treat as precious, never delete it.
+            return .containsNonDemo
+        }
+        return nonDemo == 0 ? .demoOnly : .containsNonDemo
     }
 
     private static func removeStoreFiles(at url: URL) throws {

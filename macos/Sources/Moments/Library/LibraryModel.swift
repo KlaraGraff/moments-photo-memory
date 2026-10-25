@@ -98,7 +98,7 @@ enum LibraryFilterEngine {
             }
             if criteria.mediaType != .all, item.kind.rawValue != criteria.mediaType.rawValue { return false }
             if criteria.favoritesOnly && !item.isFavorite { return false }
-            if let tripKey = criteria.tripKey, item.tripKey != tripKey { return false }
+            if let tripKey = criteria.tripKey, item.tripID != tripKey { return false }
             return true
         }
     }

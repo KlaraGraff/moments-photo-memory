@@ -43,19 +43,24 @@ final class MomentsTests: XCTestCase {
     }
 
     func testPlaceOverridesKeepOriginalPlaceAndGPS() throws {
-        let storeURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("moments-place-\(UUID().uuidString).store")
-        defer { try? FileManager.default.removeItem(at: storeURL) }
+        let storeURL = temporaryStoreURL("place")
+        defer { removeStore(at: storeURL) }
         let container = try MomentsPersistence.makeContainer(url: storeURL)
         let context = container.mainContext
         let place = Place(id: "original-place", name: "Original place", latitude: 0.001, longitude: 0.002)
         let item = MediaItem(id: "override-demo", latitude: 0.003, longitude: 0.004, place: place)
         context.insert(place)
         context.insert(item)
-        item.placeOverrideName = "Edited place"
-        item.placeOverrideMapLink = "https://maps.example.invalid/edited"
-        item.placeOverrideLatitude = 0.005
-        item.placeOverrideLongitude = 0.006
+        context.insert(PlaceOverride(
+            placeID: place.id,
+            mediaID: item.id,
+            nameOverride: "Edited place",
+            mapLinkOverride: "https://maps.example.invalid/edited",
+            latitude: 0.005,
+            longitude: 0.006,
+            place: place,
+            mediaItem: item
+        ))
         try context.save()
 
         let reopened = try MomentsPersistence.makeContainer(url: storeURL)
@@ -111,10 +116,12 @@ final class MomentsTests: XCTestCase {
         let container = try MomentsPersistence.makeContainer(inMemory: true)
         let context = container.mainContext
         let place = Place(id: "filter-place", name: "Filter place")
-        let first = MediaItem(id: "first", captureDate: Date(timeIntervalSince1970: 1_700_000_000), kind: .photo, isFavorite: true, tripKey: "trip-a", place: place)
-        let second = MediaItem(id: "second", captureDate: Date(timeIntervalSince1970: 1_700_100_000), kind: .video, isFavorite: false, tripKey: "trip-b", place: place)
+        let first = MediaItem(id: "first", captureDate: Date(timeIntervalSince1970: 1_700_000_000), kind: .photo, tripID: "trip-a", place: place)
+        let second = MediaItem(id: "second", captureDate: Date(timeIntervalSince1970: 1_700_100_000), kind: .video, tripID: "trip-b", place: place)
         context.insert(place)
         [first, second].forEach(context.insert)
+        first.setFavorite(true, context: context)
+        try context.save()
 
         var criteria = LibraryFilterCriteria.default
         criteria.placeID = place.id
@@ -125,7 +132,8 @@ final class MomentsTests: XCTestCase {
         criteria.toDate = Date(timeIntervalSince1970: 1_700_010_000)
         XCTAssertEqual(LibraryFilterEngine.filteredItems([first, second], by: criteria).map(\.id), ["first"])
 
-        first.placeOverrideName = "Edited filter place"
+        context.insert(PlaceOverride(mediaID: first.id, nameOverride: "Edited filter place", mediaItem: first))
+        try context.save()
         criteria.placeID = "override:Edited filter place"
         criteria.mediaType = .all
         criteria.favoritesOnly = false
@@ -148,9 +156,8 @@ final class MomentsTests: XCTestCase {
     }
 
     func testMemorySurvivesModelContainerReopen() throws {
-        let storeURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("moments-model-\(UUID().uuidString).store")
-        defer { try? FileManager.default.removeItem(at: storeURL) }
+        let storeURL = temporaryStoreURL("model")
+        defer { removeStore(at: storeURL) }
         do {
             let container = try MomentsPersistence.makeContainer(url: storeURL)
             let context = container.mainContext
@@ -163,15 +170,131 @@ final class MomentsTests: XCTestCase {
             let reopened = try MomentsPersistence.makeContainer(url: storeURL)
             let memories = try reopened.mainContext.fetch(FetchDescriptor<Memory>())
             XCTAssertEqual(memories.count, 1)
+            XCTAssertEqual(memories.first?.id.count, 36)
             XCTAssertEqual(memories.first?.text, "Persisted across a reopen")
             XCTAssertEqual(memories.first?.author, .me)
             XCTAssertEqual(memories.first?.mediaItem?.id, "reopen-demo")
         }
     }
 
+    func testStableIDsAndRevisionSurviveReopen() throws {
+        let storeURL = temporaryStoreURL("stable-ids")
+        defer { removeStore(at: storeURL) }
+        let memoryID = "memory-stable"
+        let revisionID = "revision-stable"
+        do {
+            let container = try MomentsPersistence.makeContainer(url: storeURL)
+            let context = container.mainContext
+            let item = MediaItem(id: "media-stable")
+            let memory = Memory(id: memoryID, text: "first", revision: 2, mediaItem: item)
+            let revision = MemoryRevision(id: revisionID, text: "losing text", baseRevision: 1, memory: memory)
+            context.insert(item)
+            context.insert(memory)
+            context.insert(revision)
+            try context.save()
+        }
+        let reopened = try MomentsPersistence.makeContainer(url: storeURL)
+        let memory = try reopened.mainContext.fetch(FetchDescriptor<Memory>()).first
+        let revision = try reopened.mainContext.fetch(FetchDescriptor<MemoryRevision>()).first
+        XCTAssertEqual(memory?.id, memoryID)
+        XCTAssertEqual(memory?.revision, 2)
+        XCTAssertEqual(revision?.id, revisionID)
+        XCTAssertEqual(revision?.memoryID, memoryID)
+    }
+
+    func testTagNormalizationDeduplicatesDisplayVariants() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let first = try Tag.lookupOrCreate(displayName: "Beach", in: context)
+        let second = try Tag.lookupOrCreate(displayName: " beach ", in: context)
+        XCTAssertTrue(first === second)
+        XCTAssertEqual(first.displayName, "Beach")
+        XCTAssertEqual(first.normalizedName, "beach")
+    }
+
+    func testFavoriteIDsArePerPersonAndDoNotCollide() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let item = MediaItem(id: "shared-media")
+        let me = Favorite(mediaID: item.id, accountID: "local-me", isFavorite: true, mediaItem: item)
+        let partner = Favorite(mediaID: item.id, accountID: "partner-account", isFavorite: false, mediaItem: item)
+        context.insert(item)
+        context.insert(me)
+        context.insert(partner)
+        try context.save()
+        XCTAssertEqual(me.id, "shared-media:local-me")
+        XCTAssertEqual(partner.id, "shared-media:partner-account")
+        XCTAssertNotEqual(me.id, partner.id)
+        XCTAssertTrue(item.isFavorite)
+    }
+
+    func testDemoOnlyV1StoreIsReplaced() throws {
+        let storeURL = temporaryStoreURL("legacy-demo")
+        defer { removeStore(at: storeURL) }
+        do {
+            let legacy = try MomentsPersistence.makeV1Container(url: storeURL)
+            let context = legacy.mainContext
+            context.insert(SchemaV1.MediaItem(id: "legacy-demo", source: .demo))
+            try context.save()
+        }
+        let container = try MomentsPersistence.makeContainer(url: storeURL)
+        XCTAssertTrue(try container.mainContext.fetch(FetchDescriptor<MediaItem>()).isEmpty)
+        let sampleData = try Data(contentsOf: repositoryRoot().appendingPathComponent("demo/sample-data.json"))
+        try DemoSeeder.seedIfNeeded(context: container.mainContext, data: sampleData)
+        XCTAssertFalse(try container.mainContext.fetch(FetchDescriptor<MediaItem>()).isEmpty)
+    }
+
+    /// Guards against the v1 probe misreading a current store: a v2 store that
+    /// holds only demo items must survive relaunches instead of being wiped.
+    func testDemoOnlyV2StoreIsNotWipedOnRelaunch() throws {
+        let storeURL = temporaryStoreURL("current-demo")
+        defer { removeStore(at: storeURL) }
+        do {
+            let container = try MomentsPersistence.makeContainer(url: storeURL)
+            let context = container.mainContext
+            let item = MediaItem(id: "current-demo", source: .demo)
+            context.insert(item)
+            context.insert(Memory(text: "Written after the schema change", mediaItem: item))
+            try context.save()
+        }
+        for _ in 0..<2 {
+            let reopened = try MomentsPersistence.makeContainer(url: storeURL)
+            XCTAssertEqual(try reopened.mainContext.fetch(FetchDescriptor<Memory>()).first?.text, "Written after the schema change")
+        }
+    }
+
+    func testNonDemoV1StoreIsUntouchedAndRejected() throws {
+        let storeURL = temporaryStoreURL("legacy-real")
+        defer { removeStore(at: storeURL) }
+        do {
+            let legacy = try MomentsPersistence.makeV1Container(url: storeURL)
+            let context = legacy.mainContext
+            context.insert(SchemaV1.MediaItem(id: "legacy-real", source: .file))
+            try context.save()
+        }
+        let before = try Data(contentsOf: storeURL)
+        XCTAssertThrowsError(try MomentsPersistence.makeContainer(url: storeURL)) { error in
+            XCTAssertEqual(error as? MomentsStoreError, MomentsStoreError.protectedLegacyStore)
+        }
+        XCTAssertEqual(try Data(contentsOf: storeURL), before)
+    }
+
     private func repositoryRoot() -> URL {
         var url = URL(fileURLWithPath: #filePath)
         for _ in 0..<4 { url.deleteLastPathComponent() }
         return url
+    }
+
+    private func temporaryStoreURL(_ name: String) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("moments-\(name)-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("Moments.store")
+    }
+
+    private func removeStore(at url: URL) {
+        try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.removeItem(atPath: url.path + "-shm")
+        try? FileManager.default.removeItem(atPath: url.path + "-wal")
     }
 }

@@ -260,12 +260,26 @@ public struct PhotosImporter {
         let newTripIDs = Set(plan.media.compactMap { media in
             newMetadataIDs.contains(media.metadata.id) ? media.tripID : nil
         })
+        let newMediaByTripID = Dictionary(grouping: plan.media.filter { newMetadataIDs.contains($0.metadata.id) }, by: \.tripID)
         for trip in plan.trips {
+            let newMedia = newMediaByTripID[trip.id] ?? []
             if newTripIDs.contains(trip.id) {
                 if let existing = existingTripsByID[trip.id] {
                     tripModels[trip.id] = existing
                 } else if reuseExistingClusters,
-                          let existing = existingTripsByID.values.first(where: { tripOverlapsOrIsWithinGap($0, trip: trip) }) {
+                          let existing = (existingTripsByID.values
+                            .filter {
+                                canReuseExistingTrip(
+                                    $0,
+                                    trip: trip,
+                                    newMedia: newMedia
+                                )
+                            }
+                            .min { lhs, rhs in
+                                tripTimeDistance(lhs, trip: trip) == tripTimeDistance(rhs, trip: trip)
+                                    ? (lhs.startDate ?? .distantFuture, lhs.id) < (rhs.startDate ?? .distantFuture, rhs.id)
+                                    : tripTimeDistance(lhs, trip: trip) < tripTimeDistance(rhs, trip: trip)
+                            }) {
                     tripModels[trip.id] = existing
                 } else {
                     let model = Trip(id: trip.id, name: trip.name, startDate: trip.startDate, endDate: trip.endDate, suggestionStatusRaw: "suggestion")
@@ -275,6 +289,9 @@ public struct PhotosImporter {
                 }
             } else if let existing = existingTripsByID[trip.id] {
                 tripModels[trip.id] = existing
+            }
+            if let existing = tripModels[trip.id], !insertedTripIDs.contains(trip.id) {
+                widenTripDates(existing, to: newMedia)
             }
         }
         var placeModels: [String: Place] = [:]
@@ -398,17 +415,59 @@ public struct PhotosImporter {
         return SaveResult(insertedTripIDs: insertedTripIDs, insertedPlaceIDs: insertedPlaceIDs)
     }
 
-    private func tripOverlapsOrIsWithinGap(_ existing: Trip, trip: OrganizedTrip) -> Bool {
+    private func canReuseExistingTrip(_ existing: Trip, trip: OrganizedTrip, newMedia: [OrganizedMedia]) -> Bool {
+        guard tripOverlapsOrIsWithinGap(existing, trip: trip) else { return false }
+
+        let existingLocations = existing.items.compactMap { item -> (date: Date, id: String, coordinate: GeoPoint)? in
+            guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
+            return (item.captureDate ?? .distantPast, item.id, GeoPoint(latitude: latitude, longitude: longitude))
+        }
+        for media in newMedia {
+            guard let latitude = media.metadata.latitude,
+                  let longitude = media.metadata.longitude else {
+                guard existing.isSuggestion else { return false }
+                continue
+            }
+            guard let nearest = existingLocations.min(by: { lhs, rhs in
+                let lhsDistance = lhs.coordinate.distance(to: GeoPoint(latitude: latitude, longitude: longitude))
+                let rhsDistance = rhs.coordinate.distance(to: GeoPoint(latitude: latitude, longitude: longitude))
+                return lhsDistance == rhsDistance
+                    ? (lhs.date, lhs.id) < (rhs.date, rhs.id)
+                    : lhsDistance < rhsDistance
+            }) else {
+                guard existing.isSuggestion else { return false }
+                continue
+            }
+            guard ImportOrganizer.tripCoordinatesCanJoin(
+                nearest.coordinate,
+                GeoPoint(latitude: latitude, longitude: longitude),
+                configuration: configuration
+            ) else { return false }
+        }
+        return true
+    }
+
+    private func tripTimeDistance(_ existing: Trip, trip: OrganizedTrip) -> TimeInterval {
         guard let candidateStart = trip.startDate ?? trip.endDate,
               let candidateEnd = trip.endDate ?? trip.startDate,
               let existingStart = existing.startDate ?? existing.endDate,
-              let existingEnd = existing.endDate ?? existing.startDate else { return false }
+              let existingEnd = existing.endDate ?? existing.startDate else { return .infinity }
         let start = min(candidateStart, candidateEnd)
         let end = max(candidateStart, candidateEnd)
         let oldStart = min(existingStart, existingEnd)
         let oldEnd = max(existingStart, existingEnd)
-        return start.timeIntervalSince(oldEnd) <= configuration.maximumTimeGap
-            && oldStart.timeIntervalSince(end) <= configuration.maximumTimeGap
+        return max(0, max(start.timeIntervalSince(oldEnd), oldStart.timeIntervalSince(end)))
+    }
+
+    private func tripOverlapsOrIsWithinGap(_ existing: Trip, trip: OrganizedTrip) -> Bool {
+        tripTimeDistance(existing, trip: trip) <= configuration.maximumTimeGap
+    }
+
+    private func widenTripDates(_ existing: Trip, to media: [OrganizedMedia]) {
+        let dates = media.compactMap(\.metadata.exactCaptureDate)
+        guard let start = dates.min(), let end = dates.max() else { return }
+        existing.startDate = min(existing.startDate ?? start, start)
+        existing.endDate = max(existing.endDate ?? end, end)
     }
 
     private func matchingPlace(_ existing: Place, organized: OrganizedPlace, clusterer: PlaceClusterer) -> Bool {

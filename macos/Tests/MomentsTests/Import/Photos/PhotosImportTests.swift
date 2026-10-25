@@ -121,10 +121,55 @@ final class PhotosImportTests: XCTestCase {
         let newItem = try XCTUnwrap(refreshedContext.fetch(FetchDescriptor<MediaItem>()).first { $0.photosLocalIdentifier == "synthetic-refresh-new" })
         XCTAssertEqual(trips.count, 1)
         XCTAssertEqual(newItem.tripID, originalTrip.id)
+        XCTAssertEqual(trips.first?.endDate, date.addingTimeInterval(120))
         XCTAssertEqual(places.filter { $0.kind == .city }.count, originalCityCount)
         XCTAssertEqual(places.filter { $0.kind == .area }.count, originalAreaCount)
         XCTAssertEqual(places.count, originalPlaceCount)
         XCTAssertEqual(summary.tripCount, 0)
+    }
+
+    func testIncrementalRefreshDoesNotAttachDistantAssetToConfirmedTrip() async throws {
+        let date = Date(timeIntervalSince1970: 1_767_225_600)
+        let source = SyntheticPhotosSource(assets: [
+            PhotosAssetDescriptor(
+                localIdentifier: "synthetic-confirmed-old",
+                creationDate: date,
+                location: GeoPoint(latitude: 0.01, longitude: 0.02),
+                mediaType: .image,
+                pixelWidth: 100,
+                pixelHeight: 80
+            )
+        ])
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let importer = PhotosImporter(source: source, geocoder: SyntheticPhotosGeocoder(), geocodeCache: ImportGeocodeCache())
+
+        _ = try await importer.importPhotos(selection: .all, container: container)
+        let context = ModelContext(container)
+        let confirmed = try XCTUnwrap(context.fetch(FetchDescriptor<Trip>()).first)
+        confirmed.name = "Synthetic Paris"
+        confirmed.suggestionStatusRaw = "confirmed"
+        try context.save()
+
+        source.assets = [
+            PhotosAssetDescriptor(
+                localIdentifier: "synthetic-confirmed-new",
+                creationDate: date.addingTimeInterval(60 * 60),
+                location: GeoPoint(latitude: 0.01, longitude: 3.5),
+                mediaType: .image,
+                pixelWidth: 100,
+                pixelHeight: 80
+            )
+        ]
+        _ = try await importer.importPhotos(selection: .identifiers(["synthetic-confirmed-new"]), container: container)
+
+        let refreshed = ModelContext(container)
+        let trips = try refreshed.fetch(FetchDescriptor<Trip>())
+        let newItem = try XCTUnwrap(refreshed.fetch(FetchDescriptor<MediaItem>()).first { $0.photosLocalIdentifier == "synthetic-confirmed-new" })
+        let original = try XCTUnwrap(trips.first { $0.id == confirmed.id })
+        XCTAssertEqual(trips.count, 2)
+        XCTAssertNotEqual(newItem.tripID, original.id)
+        XCTAssertEqual(original.name, "Synthetic Paris")
+        XCTAssertEqual(original.suggestionStatusRaw, "confirmed")
     }
 
     func testIncrementalRefreshPreservesUserOwnedFields() async throws {
@@ -216,6 +261,32 @@ final class PhotosImportTests: XCTestCase {
         dateSource.emit(PhotosChangeEvent(insertedLocalIdentifiers: ["synthetic-date-in-scope", "synthetic-date-out-of-scope"]))
         try await waitForController(dateController) { !$0.pendingNewAssetIdentifiers.isEmpty }
         XCTAssertEqual(dateController.pendingNewAssetIdentifiers, ["synthetic-date-in-scope"])
+    }
+
+    func testPhotosChangesKeepBatchWhenAnotherEventArrivesDuringScopeCheck() async throws {
+        let date = Date(timeIntervalSince1970: 1_767_225_600)
+        let source = SyntheticPhotosSource(assets: [
+            PhotosAssetDescriptor(localIdentifier: "synthetic-scope-existing", creationDate: date, mediaType: .image, pixelWidth: 10, pixelHeight: 10, albumIdentifiers: ["synthetic-scope-album"])
+        ])
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let importer = PhotosImporter(source: source, geocoder: SyntheticPhotosGeocoder(), geocodeCache: ImportGeocodeCache())
+        let controller = PhotosImportController(importer: importer)
+        controller.configure(container: container)
+        controller.start(selection: .albums(["synthetic-scope-album"]))
+        try await waitForController(controller) { $0.state == .finished }
+
+        source.assets += [
+            PhotosAssetDescriptor(localIdentifier: "synthetic-scope-first", creationDate: date.addingTimeInterval(60), mediaType: .image, pixelWidth: 10, pixelHeight: 10, albumIdentifiers: ["synthetic-scope-album"]),
+            PhotosAssetDescriptor(localIdentifier: "synthetic-scope-second", creationDate: date.addingTimeInterval(120), mediaType: .image, pixelWidth: 10, pixelHeight: 10, albumIdentifiers: ["synthetic-scope-album"])
+        ]
+        source.identifierFetchDelayNanoseconds = 300_000_000
+        source.emit(PhotosChangeEvent(insertedLocalIdentifiers: ["synthetic-scope-first"]))
+        try await waitForController(controller) { _ in source.identifierFetchStarted }
+        source.emit(PhotosChangeEvent(insertedLocalIdentifiers: ["synthetic-scope-second"]))
+
+        try await waitForController(controller) {
+            $0.pendingNewAssetIdentifiers == ["synthetic-scope-first", "synthetic-scope-second"]
+        }
     }
 
     func testLastImportScopeRestoresWithoutPersistingAssetIdentifiers() async throws {
@@ -355,6 +426,8 @@ private final class SyntheticPhotosSource: PhotosAssetSource {
     var assets: [PhotosAssetDescriptor]
     var status: PhotosAuthorizationStatus
     var failIdentifierFetch = false
+    var identifierFetchDelayNanoseconds: UInt64 = 0
+    var identifierFetchStarted = false
     private var changeHandler: (@Sendable (PhotosChangeEvent) -> Void)?
 
     init(assets: [PhotosAssetDescriptor], status: PhotosAuthorizationStatus = .authorized) {
@@ -373,6 +446,10 @@ private final class SyntheticPhotosSource: PhotosAssetSource {
         case .all: return assets
         case .identifiers(let ids):
             if failIdentifierFetch { throw SyntheticPhotosSourceError.failed }
+            identifierFetchStarted = true
+            if identifierFetchDelayNanoseconds > 0 {
+                try await Task.sleep(nanoseconds: identifierFetchDelayNanoseconds)
+            }
             return assets.filter { ids.contains($0.localIdentifier) }
         case .albums(let ids): return assets.filter { !$0.albumIdentifiers.filter(ids.contains).isEmpty }
         case .dateRange(let start, let end): return assets.filter { asset in

@@ -69,28 +69,35 @@ struct MomentsApp: App {
 
     var body: some Scene {
         WindowGroup {
-            if let modelContainer {
-                ContentView(libraryState: libraryState)
-                    .environment(selection)
-                    .environment(importController)
-                    .modelContainer(modelContainer)
-                    .onAppear {
-                        importController.configure(container: modelContainer)
-                        photosImportController.configure(container: modelContainer)
-                    }
-                    .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
-                        showingPhotosImport = true
-                    }
-                    .sheet(isPresented: $showingPhotosImport) {
-                        PhotosImportSheet(controller: photosImportController)
-                    }
-                    #if DEBUG
-                    .frame(width: isUITestSmallWindow ? 900 : nil, height: isUITestSmallWindow ? 600 : nil)
-                    .preferredColorScheme(isUITestDarkMode ? .dark : nil)
-                    #endif
-            } else {
-                StoreUnavailableView(isProtectedLegacyStore: storeError != nil)
+            // The B1 paper design is light only; sheets inherit the window's appearance.
+            Group {
+                if let modelContainer {
+                    ContentView(libraryState: libraryState)
+                        .environment(selection)
+                        .environment(importController)
+                        .modelContainer(modelContainer)
+                        .onAppear {
+                            importController.configure(container: modelContainer)
+                            photosImportController.configure(container: modelContainer)
+                        }
+                        .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
+                            showingPhotosImport = true
+                        }
+                        .sheet(isPresented: $showingPhotosImport) {
+                            PhotosImportSheet(controller: photosImportController)
+                        }
+                        #if DEBUG
+                        .frame(width: isUITestSmallWindow ? 900 : nil, height: isUITestSmallWindow ? 600 : nil)
+                        .onAppear {
+                            // Simulates a Mac in Dark Mode; the window below must stay light.
+                            if isUITestDarkMode { NSApp.appearance = NSAppearance(named: .darkAqua) }
+                        }
+                        #endif
+                } else {
+                    StoreUnavailableView(isProtectedLegacyStore: storeError != nil)
+                }
             }
+            .preferredColorScheme(.light)
         }
         .commands {
             CommandGroup(after: .newItem) {

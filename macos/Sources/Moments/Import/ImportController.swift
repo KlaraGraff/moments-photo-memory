@@ -164,7 +164,10 @@ struct ImportReviewView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Done") { controller.dismissReview() }
+                Button("Done") {
+                    saveTypedMemories()
+                    controller.dismissReview()
+                }
                     .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("import.review.done")
             }
@@ -252,6 +255,7 @@ struct ImportReviewView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("import.review")
+        .onDisappear { saveTypedMemories() }
         .padding(24)
         .frame(width: 650, height: 560)
     }
@@ -457,6 +461,18 @@ struct ImportReviewView: View {
     private func saveMemory(for flag: ImportReviewFlag) {
         guard let item = (try? modelContext.fetch(FetchDescriptor<MediaItem>()))?.first(where: { $0.id == flag.id }) else { return }
         saveMemory(for: flag, item: item)
+        try? modelContext.save()
+    }
+
+    /// Memories typed without pressing Return are saved when the review closes.
+    private func saveTypedMemories() {
+        let typedIDs = memoryValues.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.map(\.key)
+        guard !typedIDs.isEmpty,
+              let items = try? modelContext.fetch(FetchDescriptor<MediaItem>()) else { return }
+        let itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for flag in summary.flags where typedIDs.contains(flag.id) {
+            if let item = itemsByID[flag.id] { saveMemory(for: flag, item: item) }
+        }
         try? modelContext.save()
     }
 

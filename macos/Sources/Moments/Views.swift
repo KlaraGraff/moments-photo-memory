@@ -34,7 +34,7 @@ struct ContentView: View {
             case .library: LibraryView()
             case .places: PlacesScreen()
             case .footprints: FootprintsView()
-            case .timeline: TimelineView()
+            case .timeline: TimelineScreen()
             }
         }
         .frame(minWidth: 760, minHeight: 500)
@@ -97,30 +97,5 @@ struct FootprintsView: View {
     var body: some View {
         ContentUnavailableView("Footprints", systemImage: "globe.americas", description: Text("Your shared travel path will appear here."))
             .navigationTitle("Footprints")
-    }
-}
-
-struct TimelineView: View {
-    @Query private var items: [MediaItem]
-
-    private var groupedItems: [(Date, [MediaItem])] {
-        let calendar = Calendar.current
-        let groups = Dictionary(grouping: items) { item in
-            calendar.startOfDay(for: item.captureDate ?? .distantPast)
-        }
-        return groups.sorted { $0.key < $1.key }
-    }
-
-    var body: some View {
-        List(groupedItems, id: \.0) { date, dayItems in
-            Section {
-                ForEach(dayItems) { item in
-                    Label(item.title.isEmpty ? item.id : item.title, systemImage: "circle.fill")
-                }
-            } header: {
-                Text(date, format: .dateTime.year().month().day())
-            }
-        }
-        .navigationTitle("Timeline")
     }
 }

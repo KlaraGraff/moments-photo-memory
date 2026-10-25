@@ -66,19 +66,21 @@ public enum DemoSeeder {
                 height: asset.height,
                 source: .demo,
                 title: title,
-                tripKey: asset.trip
+                tripKey: asset.trip,
+                trip: trip
             )
             context.insert(item)
             items[asset.id] = item
             item.place = place
             trip.items.append(item)
             for tagName in asset.tags {
-                let tag = tags[tagName] ?? Tag(name: tagName)
-                if tags[tagName] == nil {
-                    tags[tagName] = tag
+                let normalizedName = Tag.normalize(tagName)
+                let tag = tags[normalizedName] ?? Tag(displayName: tagName)
+                if tags[normalizedName] == nil {
+                    tags[normalizedName] = tag
                     context.insert(tag)
                 }
-                item.tags.append(tag)
+                item.addTag(tag, context: context)
             }
         }
 

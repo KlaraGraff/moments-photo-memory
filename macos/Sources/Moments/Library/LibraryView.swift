@@ -514,7 +514,7 @@ private struct FavoriteButton: View {
 
     var body: some View {
         Button {
-            item.isFavorite.toggle()
+            item.setFavorite(!item.isFavorite, context: modelContext)
             try? modelContext.save()
         } label: {
             Image(systemName: item.isFavorite ? "star.fill" : "star")
@@ -557,7 +557,7 @@ private struct MemberPhotoCell: View {
         .background(selection.isSelected(item.id) ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 7))
         .contextMenu {
             Button {
-                item.isFavorite.toggle()
+                item.setFavorite(!item.isFavorite, context: modelContext)
                 try? modelContext.save()
             } label: {
                 Text(LocalizedStringKey(item.isFavorite ? "Unfavorite" : "Favorite"))
@@ -732,14 +732,33 @@ private struct PlaceEditor: View {
                 errorMessage = "Enter valid coordinates"
                 return
             }
-            item.placeOverrideLatitude = lat
-            item.placeOverrideLongitude = lon
-        } else {
-            item.placeOverrideLatitude = nil
-            item.placeOverrideLongitude = nil
         }
-        item.placeOverrideName = trimmedName.isEmpty ? nil : trimmedName
-        item.placeOverrideMapLink = trimmedLink.isEmpty ? nil : trimmedLink
+        let existing = item.localPlaceOverride
+        if let existing {
+            existing.nameOverride = trimmedName.isEmpty ? nil : trimmedName
+            existing.mapLinkOverride = trimmedLink.isEmpty ? nil : trimmedLink
+            if !latText.isEmpty, let lat = Double(latText), let lon = Double(lonText) {
+                existing.latitude = lat
+                existing.longitude = lon
+            } else {
+                existing.latitude = nil
+                existing.longitude = nil
+            }
+            existing.updatedAt = .now
+        } else if !trimmedName.isEmpty || !trimmedLink.isEmpty || !latText.isEmpty || !lonText.isEmpty {
+            let override = PlaceOverride(
+                placeID: item.place?.id,
+                mediaID: item.id,
+                accountID: MomentsAccount.localID,
+                nameOverride: trimmedName.isEmpty ? nil : trimmedName,
+                mapLinkOverride: trimmedLink.isEmpty ? nil : trimmedLink,
+                latitude: latText.isEmpty ? nil : Double(latText),
+                longitude: lonText.isEmpty ? nil : Double(lonText),
+                mediaItem: item,
+                place: item.place
+            )
+            modelContext.insert(override)
+        }
         try? modelContext.save()
         isEditing = false
     }
@@ -752,11 +771,11 @@ private struct TagEditor: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            ForEach(item.tags.sorted { $0.name < $1.name }, id: \.name) { tag in
+            ForEach(item.tags.sorted { $0.displayName < $1.displayName }, id: \.id) { tag in
                 HStack(spacing: 3) {
-                    Text(tag.name)
+                    Text(tag.displayName)
                     Button {
-                        item.tags.removeAll { $0.name == tag.name }
+                        item.removeTag(tag, context: modelContext)
                         try? modelContext.save()
                     } label: {
                         Image(systemName: "xmark.circle.fill")
@@ -778,16 +797,17 @@ private struct TagEditor: View {
 
     private func addTag() {
         let name = tagDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !item.tags.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { return }
+        let normalizedName = Tag.normalize(name)
+        guard !normalizedName.isEmpty, !item.tags.contains(where: { $0.normalizedName == normalizedName }) else { return }
         let tag: Tag
-        let existing = (try? modelContext.fetch(FetchDescriptor<Tag>()))?.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame })
+        let existing = (try? modelContext.fetch(FetchDescriptor<Tag>()))?.first(where: { $0.normalizedName == normalizedName })
         if let existing {
             tag = existing
         } else {
-            tag = Tag(name: name)
+            tag = Tag(displayName: name)
             modelContext.insert(tag)
         }
-        item.tags.append(tag)
+        item.addTag(tag, context: modelContext)
         tagDraft = ""
         try? modelContext.save()
     }

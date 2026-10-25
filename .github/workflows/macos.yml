@@ -1,0 +1,24 @@
+name: macOS
+
+on:
+  pull_request:
+
+jobs:
+  native:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate --spec macos/project.yml
+      - name: Build and test native app
+        run: xcodebuild -project macos/Moments.xcodeproj -scheme Moments -destination 'platform=macOS' -derivedDataPath macos/.derivedData build test
+      - name: Run repository checks
+        run: |
+          python3 -m unittest discover -s tests
+          for f in tests/check-*.mjs; do node "$f" || exit 1; done
+          python3 tests/check-apple-host.py
+          python3 tests/check-apple-bridge.py
+          python3 scripts/check_privacy.py
+          git diff --check

@@ -1,0 +1,69 @@
+{
+  "version" : "1.0",
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Footprints" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Spuren" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Footprints" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "足迹" } }
+      }
+    },
+    "Library" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Bibliothek" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Library" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "图库" } }
+      }
+    },
+    "Moments" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Momente" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Moments" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "片刻" } }
+      }
+    },
+    "Places" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Orte" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Places" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "地点" } }
+      }
+    },
+    "Timeline" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Zeitachse" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Timeline" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "时间线" } }
+      }
+    },
+    "Synthetic demo" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Synthetische Demo" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Synthetic demo" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "合成演示" } }
+      }
+    },
+    "No memories yet" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Noch keine Erinnerungen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No memories yet" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "还没有回忆" } }
+      }
+    },
+    "Add a photo or import a synthetic demo to begin." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Füge ein Foto hinzu oder importiere eine synthetische Demo." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add a photo or import a synthetic demo to begin." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加照片或导入合成演示即可开始。" } }
+      }
+    },
+    "Your shared travel path will appear here." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Euer gemeinsamer Reiseweg erscheint hier." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your shared travel path will appear here." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "你们共同的旅行足迹会显示在这里。" } }
+      }
+    }
+  }
+}

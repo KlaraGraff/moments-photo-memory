@@ -61,6 +61,8 @@ struct LibraryFilterCriteria: Equatable, Sendable {
     var tripKey: String?
     var screenshotFilter: LibraryScreenshotFilter
     var memoryFilter: LibraryMemoryFilter
+    /// Optional tag identifier or normalized/display name used by smart groups.
+    var tagID: String?
 
     init(
         fromDate: Date? = nil,
@@ -70,7 +72,8 @@ struct LibraryFilterCriteria: Equatable, Sendable {
         favoritesOnly: Bool = false,
         tripKey: String? = nil,
         screenshotFilter: LibraryScreenshotFilter = .all,
-        memoryFilter: LibraryMemoryFilter = .all
+        memoryFilter: LibraryMemoryFilter = .all,
+        tagID: String? = nil
     ) {
         self.fromDate = fromDate
         self.toDate = toDate
@@ -80,6 +83,7 @@ struct LibraryFilterCriteria: Equatable, Sendable {
         self.tripKey = tripKey
         self.screenshotFilter = screenshotFilter
         self.memoryFilter = memoryFilter
+        self.tagID = tagID
     }
 
     static let `default` = LibraryFilterCriteria()
@@ -244,7 +248,7 @@ enum LibraryFilterEngine {
                 if placeID.hasPrefix("override:") {
                     let overrideName = String(placeID.dropFirst("override:".count))
                     if item.effectivePlaceName != overrideName { return false }
-                } else if item.place?.id != placeID {
+                } else if item.place?.id != placeID && item.effectivePlaceName != placeID {
                     return false
                 }
             }
@@ -254,7 +258,11 @@ enum LibraryFilterEngine {
                 return false
             }
             if criteria.favoritesOnly && !item.isFavorite { return false }
-            if let tripKey = criteria.tripKey, item.tripID != tripKey { return false }
+            if let tripKey = criteria.tripKey, item.tripID != tripKey, item.trip?.name != tripKey, item.trip?.effectiveName != tripKey { return false }
+            if let tagID = criteria.tagID,
+               !item.tags.contains(where: { $0.id == tagID || $0.normalizedName == tagID || $0.displayName == tagID }) {
+                return false
+            }
             switch criteria.memoryFilter {
             case .all:
                 break

@@ -4224,7 +4224,799 @@
           }
         }
       }
+    },
+  "+ New group": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "+ Neue Gruppe"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "+ New group"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "＋ 新建分组"
+        }
+      }
     }
+  },
+  "Delete": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Löschen"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Delete"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "删除"
+        }
+      }
+    }
+  },
+  "Delete group": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Gruppe löschen"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Delete group"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "删除分组"
+        }
+      }
+    }
+  },
+  "Delete group message": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "„%@“ löschen? Dies kann nicht rückgängig gemacht werden."
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Delete “%@”? This cannot be undone."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "确定删除“%@”？此操作无法撤销。"
+        }
+      }
+    }
+  },
+  "Delete group?": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Gruppe löschen?"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Delete group?"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "删除分组？"
+        }
+      }
+    }
+  },
+  "Manual": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Manuell"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Manual"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "手动"
+        }
+      }
+    }
+  },
+  "New manual group": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Neue manuelle Gruppe"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "New manual group"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "新建手动分组"
+        }
+      }
+    }
+  },
+  "New smart group": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Neue intelligente Gruppe"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "New smart group"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "新建智能分组"
+        }
+      }
+    }
+  },
+  "Rename": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Umbenennen"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Rename"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "重命名"
+        }
+      }
+    }
+  },
+  "Smart": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Intelligent"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Smart"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "智能"
+        }
+      }
+    }
+  },
+  "+ Add condition": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "+ Bedingung hinzufügen"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "+ Add condition"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "＋ 添加条件"
+        }
+      }
+    }
+  },
+  "Add photos from the Library context menu or drag them onto this group.": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Füge Fotos über das Kontextmenü der Mediathek hinzu oder ziehe sie auf diese Gruppe."
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Add photos from the Library context menu or drag them onto this group."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "可从图库的右键菜单添加照片，或将照片拖到此分组。"
+        }
+      }
+    }
+  },
+  "Add to group": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Zu Gruppe hinzufügen"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Add to group"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "添加到分组"
+        }
+      }
+    }
+  },
+  "All conditions": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Alle Bedingungen"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "All conditions"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "全部条件"
+        }
+      }
+    }
+  },
+  "Any condition": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Beliebige Bedingung"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Any condition"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "任一条件"
+        }
+      }
+    }
+  },
+  "Condition": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Bedingung"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Condition"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "条件"
+        }
+      }
+    }
+  },
+  "Convert to manual": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "In manuelle Gruppe umwandeln"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Convert to manual"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "转换为手动分组"
+        }
+      }
+    }
+  },
+  "Date range": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Datumsbereich"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Date range"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "日期范围"
+        }
+      }
+    }
+  },
+  "Edit": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Bearbeiten"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Edit"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "编辑"
+        }
+      }
+    }
+  },
+  "Edit group": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Gruppe bearbeiten"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Edit group"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "编辑分组"
+        }
+      }
+    }
+  },
+  "Edit smart group": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Intelligente Gruppe bearbeiten"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Edit smart group"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "编辑智能分组"
+        }
+      }
+    }
+  },
+  "Field": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Feld"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Field"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "字段"
+        }
+      }
+    }
+  },
+  "From date (YYYY-MM-DD)": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Startdatum (JJJJ-MM-TT)"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "From date (YYYY-MM-DD)"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "起始日期（YYYY-MM-DD）"
+        }
+      }
+    }
+  },
+  "Group name": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Gruppenname"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Group name"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "分组名称"
+        }
+      }
+    }
+  },
+  "Group unavailable": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Gruppe nicht verfügbar"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Group unavailable"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "分组不可用"
+        }
+      }
+    }
+  },
+  "Match": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Übereinstimmung"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Match"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "匹配"
+        }
+      }
+    }
+  },
+  "Matches now message": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Jetzt passend: %d Elemente. Neue passende Importe werden automatisch hinzugefügt."
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Matches now: %d items. New imports that match are added automatically."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "当前匹配：%d 项。符合条件的新导入内容会自动加入。"
+        }
+      }
+    }
+  },
+  "Matching items will appear here automatically.": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Passende Elemente erscheinen hier automatisch."
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Matching items will appear here automatically."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "符合条件的内容会自动显示在这里。"
+        }
+      }
+    }
+  },
+  "Remove condition": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Bedingung entfernen"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Remove condition"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "移除条件"
+        }
+      }
+    }
+  },
+  "Remove from this group": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Aus dieser Gruppe entfernen"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Remove from this group"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "从此分组移除"
+        }
+      }
+    }
+  },
+  "Tag": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Tag"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Tag"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "标签"
+        }
+      }
+    }
+  },
+  "This group is empty": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Diese Gruppe ist leer"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "This group is empty"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "此分组为空"
+        }
+      }
+    }
+  },
+  "To date (YYYY-MM-DD)": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Enddatum (JJJJ-MM-TT)"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "To date (YYYY-MM-DD)"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "结束日期（YYYY-MM-DD）"
+        }
+      }
+    }
+  },
+  "Value": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Wert"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Value"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "值"
+        }
+      }
+    }
+  },
+  "is": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "ist"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "is"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "是"
+        }
+      }
+    }
+  },
+  "is not": {
+    "localizations": {
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "ist nicht"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "is not"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "不是"
+        }
+      }
+    }
+  }
   },
   "version" : "1.0"
 }

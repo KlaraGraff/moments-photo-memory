@@ -44,7 +44,7 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
             latitude: item.latitude,
             longitude: item.longitude,
             kindRaw: item.kind.rawValue,
-            tripID: item.tripKey,
+            tripID: item.tripID,
             placeHint: placeHint,
             memories: item.memories
                 .sorted { ($0.createdAt, $0.text) < ($1.createdAt, $1.text) }

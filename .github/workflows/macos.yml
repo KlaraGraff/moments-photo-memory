@@ -14,6 +14,8 @@ jobs:
         run: xcodegen generate --spec macos/project.yml
       - name: Build and test native app
         run: xcodebuild -project macos/Moments.xcodeproj -scheme Moments -destination 'platform=macOS' -derivedDataPath macos/.derivedData build test
+      - name: Test MomentsCore package
+        run: swift test --package-path macos/MomentsCore
       - name: Run repository checks
         run: |
           python3 -m unittest discover -s tests

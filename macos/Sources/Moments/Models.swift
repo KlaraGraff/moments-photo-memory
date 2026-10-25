@@ -1473,7 +1473,8 @@ public enum MomentsPersistence {
         var database: OpaquePointer?
         guard sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
             sqlite3_close(database)
-            return .notLegacy
+            // An existing store we cannot even open is treated as precious, never migrated.
+            return .containsNonDemo
         }
         defer { sqlite3_close(database) }
         // Another connection may still be checkpointing; wait briefly instead of failing.

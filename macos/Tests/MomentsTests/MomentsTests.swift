@@ -1,6 +1,7 @@
 import Foundation
 import SwiftData
 import XCTest
+import SQLite3
 @testable import Moments
 
 @MainActor
@@ -272,11 +273,29 @@ final class MomentsTests: XCTestCase {
             context.insert(SchemaV1.MediaItem(id: "legacy-real", source: .file))
             try context.save()
         }
-        let before = try Data(contentsOf: storeURL)
-        XCTAssertThrowsError(try MomentsPersistence.makeContainer(url: storeURL)) { error in
+        // The v1 container is released on its own schedule and may still checkpoint
+        // into `storeURL` later. Fold its WAL into the main file, then probe a private
+        // copy that no other connection can touch, so any change is the probe's fault.
+        Self.checkpoint(storeURL)
+        let probeURL = temporaryStoreURL("legacy-real-copy")
+        defer { removeStore(at: probeURL) }
+        try FileManager.default.createDirectory(at: probeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: storeURL, to: probeURL)
+        let before = try Data(contentsOf: probeURL)
+        let beforeDate = try FileManager.default.attributesOfItem(atPath: probeURL.path)[.modificationDate] as? Date
+        XCTAssertThrowsError(try MomentsPersistence.makeContainer(url: probeURL)) { error in
             XCTAssertEqual(error as? MomentsStoreError, MomentsStoreError.protectedLegacyStore)
         }
-        XCTAssertEqual(try Data(contentsOf: storeURL), before)
+        XCTAssertEqual(try Data(contentsOf: probeURL), before)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: probeURL.path)[.modificationDate] as? Date, beforeDate)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: probeURL.path + "-wal"))
+    }
+
+    private static func checkpoint(_ url: URL) {
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else { return }
+        sqlite3_exec(database, "PRAGMA wal_checkpoint(TRUNCATE)", nil, nil, nil)
+        sqlite3_close(database)
     }
 
     private func repositoryRoot() -> URL {

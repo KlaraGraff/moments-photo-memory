@@ -66,16 +66,22 @@ struct MediaMetadataReader {
                 height: pixelHeight,
                 kind: kind,
                 duration: nil,
-                exactCaptureDate: parsedDate?.date,
+                exactCaptureDate: parsedDate?.wallClockDate == nil ? parsedDate?.date : nil,
                 dateHintUTC: parsedDate == nil ? captureDate : nil,
-                timeConfidence: parsedDate == nil ? .low : .exact,
-                timeZoneIdentifier: parsedDate?.offsetMinutes.flatMap { TimeZone(secondsFromGMT: $0 * 60)?.identifier }
+                timeConfidence: parsedDate?.wallClockDate == nil
+                    ? (parsedDate == nil ? .low : .exact)
+                    : .zoneUnknown,
+                timeZoneIdentifier: parsedDate?.offsetMinutes.flatMap { TimeZone(secondsFromGMT: $0 * 60)?.identifier },
+                parentDirectoryKey: url.deletingLastPathComponent().standardizedFileURL.path,
+                appleContentIdentifier: Self.appleContentIdentifier(from: properties),
+                wallClockDate: parsedDate?.wallClockDate
             )
         case .video:
             let asset = AVURLAsset(url: url)
             let durationTime = try? await asset.load(.duration)
             let duration = durationTime?.seconds
             let creationDate = try? await asset.load(.creationDate)
+            let assetMetadata = try? await asset.load(.metadata)
             let captureDate = creationDate?.dateValue ?? values?.contentModificationDate ?? values?.creationDate ?? .now
             let tracks = try? await asset.load(.tracks)
             let videoTrack = tracks?.first(where: { $0.mediaType == .video })
@@ -99,7 +105,9 @@ struct MediaMetadataReader {
                 exactCaptureDate: creationDate?.dateValue,
                 dateHintUTC: creationDate == nil ? captureDate : nil,
                 timeConfidence: creationDate == nil ? .low : .exact,
-                timeZoneIdentifier: nil
+                timeZoneIdentifier: nil,
+                parentDirectoryKey: url.deletingLastPathComponent().standardizedFileURL.path,
+                appleContentIdentifier: Self.appleContentIdentifier(from: assetMetadata ?? [])
             )
         }
     }
@@ -110,7 +118,7 @@ struct MediaMetadataReader {
         return .photo
     }
 
-    private static func captureDate(from exif: [CFString: Any]?) -> (date: Date, offsetMinutes: Int?)? {
+    private static func captureDate(from exif: [CFString: Any]?) -> (date: Date, offsetMinutes: Int?, wallClockDate: Date?)? {
         guard let exif,
               let value = (exif[kCGImagePropertyExifDateTimeOriginal] as? String)
                 ?? (exif[kCGImagePropertyExifDateTimeDigitized] as? String) else { return nil }
@@ -124,11 +132,34 @@ struct MediaMetadataReader {
         let offsetString = exif[kCGImagePropertyExifOffsetTimeOriginal] as? String
             ?? exif[kCGImagePropertyExifOffsetTimeDigitized] as? String
         guard let offsetString, let offsetMinutes = parseOffset(offsetString) else {
-            return (parsed, nil)
+            // DateFormatter deliberately used UTC here: this preserves the
+            // wall-clock components without claiming that they are UTC.
+            return (parsed, nil, parsed)
         }
         // The EXIF wall-clock value is interpreted in the declared offset.
         let utcDate = parsed.addingTimeInterval(TimeInterval(-offsetMinutes * 60))
-        return (utcDate, offsetMinutes)
+        return (utcDate, offsetMinutes, nil)
+    }
+
+    private static func appleContentIdentifier(from properties: [CFString: Any]) -> String? {
+        if let makerApple = properties[kCGImagePropertyMakerAppleDictionary] as? [CFString: Any],
+           let value = makerApple.first(where: { String(describing: $0.key) == "17" })?.value as? String {
+            return value
+        }
+        if let makerApple = properties[kCGImagePropertyMakerAppleDictionary] as? [String: Any],
+           let value = makerApple["17"] as? String {
+            return value
+        }
+        return nil
+    }
+
+    private static func appleContentIdentifier(from metadata: [AVMetadataItem]) -> String? {
+        metadata.first { item in
+            let identifier = String(describing: item.identifier)
+            let key = String(describing: item.key)
+            return identifier.contains("com.apple.quicktime.content.identifier")
+                || key.contains("com.apple.quicktime.content.identifier")
+        }?.stringValue
     }
 
     private static func parseOffset(_ value: String) -> Int? {

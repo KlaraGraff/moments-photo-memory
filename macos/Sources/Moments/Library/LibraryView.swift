@@ -31,6 +31,9 @@ struct LibraryView: View {
     private var allPlaces: [Place]
     @Query(sort: \PlaceOverride.id)
     private var placeOverrides: [PlaceOverride]
+    @Query(sort: \UserGroup.name)
+    private var allGroups: [UserGroup]
+    @Query private var groupItems: [UserGroupItem]
 
     let state: LibraryViewState
     @Binding var firstLaunchCompleted: Bool
@@ -47,6 +50,7 @@ struct LibraryView: View {
     @State private var cachedItemByID: [String: MediaItem] = [:]
     @State private var cachedVisibleCount = 0
     @State private var hasGrouped = false
+    @State private var showingSmartGroupEditor = false
 
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
@@ -284,11 +288,12 @@ struct LibraryView: View {
 
                 Spacer(minLength: 12)
 
-                Button(String(localized: "Save this filter as a smart group")) {}
+                Button(String(localized: "Save this filter as a smart group")) {
+                    showingSmartGroupEditor = true
+                }
                     .buttonStyle(.link)
                     .font(.caption)
-                    .foregroundStyle(LibraryPalette.accent.opacity(0.55))
-                    .disabled(true)
+                    .foregroundStyle(LibraryPalette.accent)
                     .accessibilityIdentifier("library.save-smart-group")
             }
 
@@ -326,6 +331,9 @@ struct LibraryView: View {
         .padding(.horizontal, 34)
         .padding(.vertical, 13)
         .overlay(alignment: .bottom) { Rectangle().fill(LibraryPalette.line).frame(height: 1) }
+        .sheet(isPresented: $showingSmartGroupEditor) {
+            GroupEditorSheet(kind: .newSmart, group: nil, initialCriteria: criteria)
+        }
     }
 
     private func filterMenu<Content: View>(label: String, selected: String?, @ViewBuilder content: () -> Content) -> some View {
@@ -445,7 +453,9 @@ struct LibraryView: View {
                         LibrarySectionView(
                             section: section,
                             items: section.itemIDs.compactMap { cachedItemByID[$0] },
-                            state: state
+                            state: state,
+                            allGroups: allGroups,
+                            groupItems: groupItems
                         )
                         .id(section.id)
                         .onAppear { state.lastVisibleSectionID = section.id }
@@ -630,6 +640,9 @@ private struct LibrarySectionView: View {
     let section: LibrarySection
     let items: [MediaItem]
     let state: LibraryViewState
+    var allGroups: [UserGroup] = []
+    var groupItems: [UserGroupItem] = []
+    var group: UserGroup? = nil
 
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: 175, maximum: 300), spacing: 24, alignment: .top)]
@@ -652,7 +665,7 @@ private struct LibrarySectionView: View {
 
             LazyVGrid(columns: columns, alignment: .leading, spacing: 28) {
                 ForEach(items, id: \.id) { item in
-                    LibraryPhotoCell(item: item, state: state)
+                    LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group)
                 }
             }
         }
@@ -674,6 +687,9 @@ private struct LibraryPhotoCell: View {
     @Environment(\.modelContext) private var modelContext
     let item: MediaItem
     let state: LibraryViewState
+    let allGroups: [UserGroup]
+    let groupItems: [UserGroupItem]
+    var group: UserGroup? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -726,7 +742,26 @@ private struct LibraryPhotoCell: View {
         }
         .contextMenu {
             Button(String(localized: "Select")) { selection.select(item.id) }
+            if let group {
+                Button(String(localized: "Remove from this group")) {
+                    UserGroupRuleEngine.remove(item, from: group, memberships: groupItems, context: modelContext)
+                    try? modelContext.save()
+                }
+            }
+            if !allGroups.isEmpty {
+                Menu(String(localized: "Add to group")) {
+                    ForEach(allGroups, id: \.id) { target in
+                        Button {
+                            UserGroupRuleEngine.add(item, to: target, memberships: groupItems, context: modelContext)
+                            try? modelContext.save()
+                        } label: {
+                            Label(target.name, systemImage: target.kind == .smart ? "sparkles" : "folder")
+                        }
+                    }
+                }
+            }
         }
+        .onDrag { NSItemProvider(object: item.id as NSString) }
     }
 }
 
@@ -929,5 +964,346 @@ struct ReviewListView: View {
         }
         .padding(34)
         .background(LibraryPalette.content)
+    }
+}
+
+struct GroupDetailView: View {
+    let groupID: String
+    let state: LibraryViewState
+
+    @Environment(\.modelContext) private var modelContext
+    @Query private var groups: [UserGroup]
+    @Query private var items: [MediaItem]
+    @Query private var memberships: [UserGroupItem]
+    @Query private var memoryRecords: [Memory]
+    @Query private var mediaTags: [MediaTag]
+    @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
+    @State private var showingEditor = false
+    @State private var showingDeleteConfirmation = false
+    @State private var cachedVisibleItemIDs: [String] = []
+    @State private var cachedVisibleItemsByID: [String: MediaItem] = [:]
+
+    init(groupID: String, state: LibraryViewState) {
+        self.groupID = groupID
+        self.state = state
+    }
+
+    private var group: UserGroup? { groups.first(where: { $0.id == groupID }) }
+
+    private var visibleItems: [MediaItem] {
+        cachedVisibleItemIDs.compactMap { cachedVisibleItemsByID[$0] }
+    }
+
+    private var visibleItemsKey: Int {
+        var hasher = Hasher()
+        hasher.combine(groupID)
+        if let group {
+            hasher.combine(group.updatedAt)
+            hasher.combine(group.kind.rawValue)
+            hasher.combine(group.rules.mode.rawValue)
+            for rule in group.rules.rules {
+                hasher.combine(rule.field.rawValue)
+                hasher.combine(rule.op.rawValue)
+                hasher.combine(rule.value)
+                hasher.combine(rule.secondaryValue)
+            }
+        }
+        for item in items {
+            hasher.combine(item.id)
+            hasher.combine(item.updatedAt)
+            hasher.combine(item.captureDate)
+            hasher.combine(item.kindRaw)
+            hasher.combine(item.isScreenshot)
+            hasher.combine(item.tripID)
+            hasher.combine(item.place?.id)
+        }
+        // Place renames reach rules through overrides.
+        for override in placeOverrides {
+            hasher.combine(override.id)
+            hasher.combine(override.nameOverride)
+        }
+        for membership in memberships {
+            hasher.combine(membership.groupID)
+            hasher.combine(membership.mediaID)
+            hasher.combine(membership.excluded)
+        }
+        for memory in memoryRecords {
+            hasher.combine(memory.id)
+            hasher.combine(memory.mediaID)
+            hasher.combine(memory.updatedAt)
+            hasher.combine(memory.revision)
+        }
+        for mediaTag in mediaTags {
+            hasher.combine(mediaTag.id)
+            hasher.combine(mediaTag.mediaID)
+            hasher.combine(mediaTag.tagID)
+            hasher.combine(mediaTag.updatedAt)
+        }
+        return hasher.finalize()
+    }
+
+    private func refreshVisibleItems() {
+        guard let group else {
+            cachedVisibleItemIDs = []
+            cachedVisibleItemsByID = [:]
+            return
+        }
+        let sorted = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: memberships)
+            .sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) > ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
+        cachedVisibleItemIDs = sorted.map(\.id)
+        cachedVisibleItemsByID = Dictionary(uniqueKeysWithValues: sorted.map { ($0.id, $0) })
+    }
+
+    private var sections: [LibrarySection] {
+        LibraryFilterEngine.sections(forVisibleItems: visibleItems, by: .month, sortOrder: .newestFirst)
+    }
+
+    var body: some View {
+        Group {
+            if let group {
+                VStack(spacing: 0) {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(group.name)
+                            .font(.system(size: 34, weight: .medium, design: .serif))
+                            .foregroundStyle(LibraryPalette.ink)
+                        Text("\(visibleItems.count) \(String(localized: "photos"))")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(LibraryPalette.muted)
+                        Spacer()
+                        Text(group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
+                            .font(.caption)
+                            .foregroundStyle(LibraryPalette.muted)
+                    }
+                    .padding(.horizontal, 34)
+                    .padding(.top, 28)
+                    .padding(.bottom, 18)
+                    .overlay(alignment: .bottom) { Rectangle().fill(LibraryPalette.line).frame(height: 1) }
+
+                    if sections.isEmpty {
+                        ContentUnavailableView(
+                            String(localized: "This group is empty"),
+                            systemImage: group.kind == .smart ? "sparkles" : "folder",
+                            description: Text(
+                                group.kind == .smart
+                                    ? (group.rules.rules.isEmpty
+                                        ? String(localized: "Add a condition to collect photos")
+                                        : String(localized: "Matching items will appear here automatically."))
+                                    : String(localized: "Add photos from the Library context menu or drag them onto this group.")
+                            )
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 34) {
+                                ForEach(sections) { section in
+                                    LibrarySectionView(
+                                        section: section,
+                                        items: section.itemIDs.compactMap { cachedVisibleItemsByID[$0] },
+                                        state: state,
+                                        allGroups: groups,
+                                        groupItems: memberships,
+                                        group: group
+                                    )
+                                }
+                            }
+                            .padding(34)
+                        }
+                    }
+                }
+                .background(LibraryPalette.content)
+                .toolbar {
+                    ToolbarItemGroup {
+                        Button(String(localized: "Edit")) { showingEditor = true }
+                        if group.kind == .smart {
+                            Button(String(localized: "Convert to manual")) {
+                                UserGroupRuleEngine.convertToManual(group, items: items, memberships: memberships, context: modelContext)
+                                try? modelContext.save()
+                            }
+                        }
+                        if UserGroupRuleEngine.canDelete(group) {
+                            Button(String(localized: "Delete group"), role: .destructive) {
+                                showingDeleteConfirmation = true
+                            }
+                        }
+                    }
+                }
+                .sheet(isPresented: $showingEditor) {
+                    GroupEditorSheet(
+                        kind: group.kind == .smart ? .newSmart : .newManual,
+                        group: group
+                    )
+                }
+                .confirmationDialog(String(localized: "Delete group?"), isPresented: $showingDeleteConfirmation, titleVisibility: .visible) {
+                    Button(String(localized: "Delete"), role: .destructive) {
+                        guard UserGroupRuleEngine.canDelete(group) else { return }
+                        for membership in memberships where membership.groupID == group.id { modelContext.delete(membership) }
+                        modelContext.delete(group)
+                        try? modelContext.save()
+                    }
+                    Button(String(localized: "Cancel"), role: .cancel) {}
+                }
+            } else {
+                ContentUnavailableView(String(localized: "Group unavailable"), systemImage: "folder")
+            }
+        }
+        .onChange(of: visibleItemsKey, initial: true) { _, _ in
+            refreshVisibleItems()
+        }
+    }
+}
+
+struct GroupEditorSheet: View {
+    let kind: GroupEditorKind
+    let group: UserGroup?
+    var initialCriteria: LibraryFilterCriteria? = nil
+    var onDismiss: () -> Void = {}
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Query private var items: [MediaItem]
+    @State private var name = ""
+    @State private var mode: UserGroupRuleSet.MatchMode = .all
+    @State private var rules: [UserGroupRule] = []
+
+    init(
+        kind: GroupEditorKind,
+        group: UserGroup? = nil,
+        initialCriteria: LibraryFilterCriteria? = nil,
+        onDismiss: @escaping () -> Void = {}
+    ) {
+        self.kind = kind
+        self.group = group
+        self.initialCriteria = initialCriteria
+        self.onDismiss = onDismiss
+    }
+
+    private var isSmart: Bool { kind == .newSmart || group?.kind == .smart }
+    private var matchCount: Int {
+        UserGroupRuleEngine.matchingItems(items, ruleSet: UserGroupRuleSet(mode: mode, rules: rules)).count
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField(String(localized: "Group name"), text: $name)
+                }
+                if isSmart {
+                    Section {
+                        Picker(String(localized: "Match"), selection: $mode) {
+                            Text(String(localized: "All conditions")).tag(UserGroupRuleSet.MatchMode.all)
+                            Text(String(localized: "Any condition")).tag(UserGroupRuleSet.MatchMode.any)
+                        }
+                        .pickerStyle(.segmented)
+
+                        ForEach($rules) { $rule in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Picker(String(localized: "Field"), selection: $rule.field) {
+                                        Text(String(localized: "Place")).tag(UserGroupRuleField.place)
+                                        Text(String(localized: "Trip")).tag(UserGroupRuleField.trip)
+                                        Text(String(localized: "Type")).tag(UserGroupRuleField.type)
+                                        Text(String(localized: "Date range")).tag(UserGroupRuleField.dateRange)
+                                        Text(String(localized: "Has memory")).tag(UserGroupRuleField.hasMemory)
+                                        Text(String(localized: "Tag")).tag(UserGroupRuleField.tag)
+                                    }
+                                    Picker(String(localized: "Condition"), selection: $rule.op) {
+                                        Text(String(localized: "is")).tag(UserGroupRuleOperator.equals)
+                                        Text(String(localized: "is not")).tag(UserGroupRuleOperator.isNot)
+                                    }
+                                    Button(role: .destructive) {
+                                        rules.removeAll { $0.id == rule.id }
+                                    } label: {
+                                        Image(systemName: "minus.circle")
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel(String(localized: "Remove condition"))
+                                }
+                                TextField(rule.field == .dateRange ? String(localized: "From date (YYYY-MM-DD)") : String(localized: "Value"), text: $rule.value)
+                                if rule.field == .dateRange {
+                                    TextField(String(localized: "To date (YYYY-MM-DD)"), text: secondaryBinding(for: $rule))
+                                }
+                            }
+                        }
+
+                        Button {
+                            rules.append(UserGroupRule(field: .place, value: ""))
+                        } label: {
+                            Label(String(localized: "+ Add condition"), systemImage: "plus")
+                        }
+                        Text(String(format: String(localized: "Matches now message"), matchCount))
+                            .font(.caption)
+                            .foregroundStyle(LibraryPalette.muted)
+                    }
+                }
+            }
+            .navigationTitle(isSmart ? String(localized: "Edit smart group") : String(localized: "Edit group"))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(String(localized: "Cancel")) { dismissEditor() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(String(localized: "Save")) { save() }
+                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .onAppear {
+                guard name.isEmpty else { return }
+                if let group {
+                    name = group.name
+                    mode = group.rules.mode
+                    rules = group.rules.rules
+                } else if let initialCriteria {
+                    name = String(localized: "New smart group")
+                    rules = Self.rules(from: initialCriteria)
+                }
+            }
+        }
+        .frame(minWidth: 560, minHeight: 440)
+    }
+
+    private func dismissEditor() {
+        onDismiss()
+        dismiss()
+    }
+
+    private func save() {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let ruleSet = UserGroupRuleSet(mode: mode, rules: isSmart ? rules : [])
+        if let group {
+            group.name = trimmed
+            group.kind = isSmart ? .smart : .manual
+            group.rules = ruleSet
+            group.updatedAt = .now
+        } else {
+            modelContext.insert(UserGroup(name: trimmed, kind: isSmart ? .smart : .manual, rules: ruleSet))
+        }
+        try? modelContext.save()
+        dismissEditor()
+    }
+
+    private func secondaryBinding(for rule: Binding<UserGroupRule>) -> Binding<String> {
+        Binding(
+            get: { rule.wrappedValue.secondaryValue ?? "" },
+            set: { rule.wrappedValue.secondaryValue = $0.isEmpty ? nil : $0 }
+        )
+    }
+
+    private static func rules(from criteria: LibraryFilterCriteria) -> [UserGroupRule] {
+        var result: [UserGroupRule] = []
+        if let placeID = criteria.placeID { result.append(UserGroupRule(field: .place, value: placeID)) }
+        if let tripKey = criteria.tripKey { result.append(UserGroupRule(field: .trip, value: tripKey)) }
+        if criteria.mediaType != .all { result.append(UserGroupRule(field: .type, value: criteria.mediaType.rawValue)) }
+        if criteria.fromDate != nil || criteria.toDate != nil {
+            let from = criteria.fromDate.map { UserGroupRuleSet.localDayKey(for: $0) } ?? "0001-01-01"
+            let to = criteria.toDate.map { UserGroupRuleSet.localDayKey(for: $0) }
+            result.append(UserGroupRule(field: .dateRange, value: from, secondaryValue: to))
+        }
+        if criteria.memoryFilter != .all {
+            result.append(UserGroupRule(field: .hasMemory, value: criteria.memoryFilter == .hasMemory ? "true" : "false"))
+        }
+        if let tagID = criteria.tagID { result.append(UserGroupRule(field: .tag, value: tagID)) }
+        return result
     }
 }

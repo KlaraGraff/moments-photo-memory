@@ -51,9 +51,11 @@ final class FootprintsGeocodeCache {
             .appending(path: "footprints-geocoding.json")
     }
 
+    /// Rounded to 0.1° (about 11 km): a city's centre moves slightly whenever a
+    /// photo is added, and the country does not change at that scale.
     static func key(for coordinate: GeoPoint) -> String {
         String(
-            format: "%.5f,%.5f",
+            format: "%.1f,%.1f",
             locale: Locale(identifier: "en_US_POSIX"),
             coordinate.latitude,
             coordinate.longitude

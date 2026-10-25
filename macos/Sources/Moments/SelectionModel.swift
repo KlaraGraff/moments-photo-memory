@@ -36,6 +36,26 @@ final class SelectionModel {
         focusedItemID = focus ?? set.sorted().first
     }
 
+    /// Selects one item and makes it the cross-screen focus.
+    func select(_ id: String) {
+        select([id], focus: id)
+    }
+
+    /// Adds or removes one item; focus moves only when the focused item is removed.
+    func toggle(_ id: String) {
+        if selectedItemIDs.contains(id) {
+            selectedItemIDs.remove(id)
+            if focusedItemID == id { focusedItemID = selectedItemIDs.sorted().first }
+        } else {
+            selectedItemIDs.insert(id)
+            focusedItemID = id
+        }
+    }
+
+    func isSelected(_ id: String) -> Bool {
+        selectedItemIDs.contains(id)
+    }
+
     func clear() {
         selectedItemIDs = []
         focusedItemID = nil

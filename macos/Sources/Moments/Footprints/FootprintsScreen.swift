@@ -18,7 +18,9 @@ struct FootprintsScreen: View {
     )
     @State private var cameraInputSignature: String?
 
-    private let geocodeResolver = FootprintsGeocodeResolver()
+    /// Created once per screen; a stored `let` would re-read the cache file
+    /// from disk every time SwiftUI re-creates this view value.
+    @State private var geocodeResolver: FootprintsGeocodeResolver?
 
     private var input: FootprintsInput {
         FootprintsCalculator.input(from: items, visibleItemIDs: selection.visibleItemIDs)
@@ -196,7 +198,9 @@ struct FootprintsScreen: View {
         }
         guard !snapshot.cityClusters.isEmpty else { return }
 
-        let batch = await geocodeResolver.resolve(clusters: snapshot.cityClusters)
+        let resolver = geocodeResolver ?? FootprintsGeocodeResolver()
+        geocodeResolver = resolver
+        let batch = await resolver.resolve(clusters: snapshot.cityClusters)
         guard !Task.isCancelled else { return }
         screenState.geocoding = batch.results
         screenState.isGeocoding = false

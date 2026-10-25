@@ -171,7 +171,9 @@ enum FootprintsCalculator {
     static func snapshot(for input: FootprintsInput) -> FootprintsSnapshot {
         let clusterer = PlaceClusterer()
         let clusters = clusterer.clusters(for: input.stops, level: .city)
-        let routes = RouteBuilder(stops: input.stops, clusterer: clusterer).overview(level: .city)
+        // Undated photos still count as visited cities but have no place in the route order.
+        let routes = RouteBuilder(stops: input.stops.filter { $0.date != .distantPast }, clusterer: clusterer)
+            .overview(level: .city)
         return FootprintsSnapshot(
             cityClusters: clusters,
             overviewSegments: routes,

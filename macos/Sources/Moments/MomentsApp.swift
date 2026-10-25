@@ -4,6 +4,8 @@ import SwiftData
 @main
 struct MomentsApp: App {
     private let modelContainer: ModelContainer
+    @State private var selection = SelectionModel()
+    @State private var libraryState = LibraryViewState()
 
     init() {
         do {
@@ -19,7 +21,8 @@ struct MomentsApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(libraryState: libraryState)
+                .environment(selection)
         }
         .modelContainer(modelContainer)
     }

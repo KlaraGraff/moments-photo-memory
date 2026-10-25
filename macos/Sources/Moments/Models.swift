@@ -38,6 +38,14 @@ public final class MediaItem {
     public var sourceRaw: String
     public var title: String
     public var tripKey: String?
+    /// The original place inferred for this media item.
+    @Relationship(inverse: \Place.items)
+    public var place: Place?
+    /// User corrections are stored independently so the original GPS/place data remains intact.
+    public var placeOverrideName: String?
+    public var placeOverrideMapLink: String?
+    public var placeOverrideLatitude: Double?
+    public var placeOverrideLongitude: Double?
 
     @Relationship(deleteRule: .cascade, inverse: \Memory.mediaItem)
     public var memories: [Memory] = []
@@ -56,7 +64,12 @@ public final class MediaItem {
         isScreenshot: Bool = false,
         source: MediaSource = .file,
         title: String = "",
-        tripKey: String? = nil
+        tripKey: String? = nil,
+        place: Place? = nil,
+        placeOverrideName: String? = nil,
+        placeOverrideMapLink: String? = nil,
+        placeOverrideLatitude: Double? = nil,
+        placeOverrideLongitude: Double? = nil
     ) {
         self.id = id
         self.captureDate = captureDate
@@ -70,6 +83,11 @@ public final class MediaItem {
         self.sourceRaw = source.rawValue
         self.title = title
         self.tripKey = tripKey
+        self.place = place
+        self.placeOverrideName = placeOverrideName
+        self.placeOverrideMapLink = placeOverrideMapLink
+        self.placeOverrideLatitude = placeOverrideLatitude
+        self.placeOverrideLongitude = placeOverrideLongitude
     }
 
     public var kind: MediaKind {
@@ -80,6 +98,32 @@ public final class MediaItem {
     public var source: MediaSource {
         get { MediaSource(rawValue: sourceRaw) ?? .file }
         set { sourceRaw = newValue.rawValue }
+    }
+
+    /// The place name shown by the app, preferring a user correction.
+    public var effectivePlaceName: String? {
+        let override = placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return override?.isEmpty == false ? override : place?.name
+    }
+
+    /// The map link shown by the app, preferring a user correction.
+    public var effectiveMapLink: String? {
+        let override = placeOverrideMapLink?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return override?.isEmpty == false ? override : place?.mapLink
+    }
+
+    /// The coordinate shown by the app, preferring a user correction and then the original place/GPS.
+    public var effectiveCoordinate: (latitude: Double, longitude: Double)? {
+        if let latitude = placeOverrideLatitude, let longitude = placeOverrideLongitude {
+            return (latitude, longitude)
+        }
+        if let latitude = place?.latitude, let longitude = place?.longitude {
+            return (latitude, longitude)
+        }
+        if let latitude, let longitude {
+            return (latitude, longitude)
+        }
+        return nil
     }
 }
 
@@ -120,6 +164,7 @@ public final class Place {
     public var longitude: Double?
     public var mapLink: String?
     public var parent: Place?
+    public var items: [MediaItem] = []
     @Relationship(inverse: \Place.parent)
     public var children: [Place] = []
 

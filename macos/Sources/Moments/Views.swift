@@ -11,6 +11,9 @@ private enum MomentsSection: Hashable {
 
 struct ContentView: View {
     @State private var selection: MomentsSection? = .library
+    /// Owned by the app so Library filters, density and scroll survive sidebar switches.
+    let libraryState: LibraryViewState
+    @Environment(SelectionModel.self) private var shared
 
     var body: some View {
         NavigationSplitView {
@@ -30,93 +33,22 @@ struct ContentView: View {
             .navigationTitle("Moments")
         } detail: {
             switch selection ?? .library {
-            case .library: LibraryView()
-            case .places: PlacesView()
-            case .footprints: FootprintsView()
-            case .timeline: TimelineView()
+            case .library: LibraryView(state: libraryState)
+            case .places: PlacesScreen()
+            case .footprints: FootprintsScreen()
+            case .timeline: TimelineScreen()
             }
         }
         .frame(minWidth: 760, minHeight: 500)
-    }
-}
-
-struct LibraryView: View {
-    @Query private var items: [MediaItem]
-
-    var body: some View {
-        Group {
-            if items.isEmpty {
-                ContentUnavailableView("No memories yet", systemImage: "photo.on.rectangle", description: Text("Add a photo or import a synthetic demo to begin."))
-            } else {
-                List(items.sorted { ($0.captureDate ?? .distantPast) < ($1.captureDate ?? .distantPast) }) { item in
-                    HStack(spacing: 12) {
-                        Image(systemName: item.kind == .video ? "video" : "photo")
-                            .font(.title2)
-                            .foregroundStyle(.tint)
-                            .frame(width: 32)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(item.title.isEmpty ? item.id : item.title)
-                                .font(.headline)
-                            Text(item.id)
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                            if let date = item.captureDate {
-                                Text(date, format: .dateTime.year().month().day())
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-                        if item.source == .demo {
-                            Text("Synthetic demo")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-                .listStyle(.inset)
+        .onChange(of: shared.requestedDestination) { _, destination in
+            guard let destination else { return }
+            switch destination {
+            case .library: selection = .library
+            case .places: selection = .places
+            case .footprints: selection = .footprints
+            case .timeline: selection = .timeline
             }
+            shared.requestedDestination = nil
         }
-        .navigationTitle("Library")
-    }
-}
-
-struct PlacesView: View {
-    var body: some View {
-        Map(initialPosition: .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0.005, longitude: 0.003), span: MKCoordinateSpan(latitudeDelta: 0.03, longitudeDelta: 0.03))))
-            .navigationTitle("Places")
-    }
-}
-
-struct FootprintsView: View {
-    var body: some View {
-        ContentUnavailableView("Footprints", systemImage: "globe.americas", description: Text("Your shared travel path will appear here."))
-            .navigationTitle("Footprints")
-    }
-}
-
-struct TimelineView: View {
-    @Query private var items: [MediaItem]
-
-    private var groupedItems: [(Date, [MediaItem])] {
-        let calendar = Calendar.current
-        let groups = Dictionary(grouping: items) { item in
-            calendar.startOfDay(for: item.captureDate ?? .distantPast)
-        }
-        return groups.sorted { $0.key < $1.key }
-    }
-
-    var body: some View {
-        List(groupedItems, id: \.0) { date, dayItems in
-            Section {
-                ForEach(dayItems) { item in
-                    Label(item.title.isEmpty ? item.id : item.title, systemImage: "circle.fill")
-                }
-            } header: {
-                Text(date, format: .dateTime.year().month().day())
-            }
-        }
-        .navigationTitle("Timeline")
     }
 }

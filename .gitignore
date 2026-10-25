@@ -47,3 +47,7 @@ macos/.derivedData/
 macos/DerivedData/
 macos/build/
 macos/.build/
+
+# SwiftPM build output
+macos/MomentsCore/.build/
+macos/MomentsCore/.swiftpm/

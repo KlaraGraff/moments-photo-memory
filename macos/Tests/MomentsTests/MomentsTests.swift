@@ -144,6 +144,193 @@ final class MomentsTests: XCTestCase {
         XCTAssertEqual(LibraryFilterEngine.filteredItems([first, second], by: criteria).map(\.id), ["first"])
     }
 
+    func testLibraryFilterLogicCombinesMemoryWithOtherFilters() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let place = Place(id: "memory-place", name: "Memory place")
+        let trip = Trip(id: "memory-trip", name: "Memory trip")
+        let remembered = MediaItem(id: "remembered", kind: .photo, place: place, trip: trip)
+        let blank = MediaItem(id: "blank", kind: .photo, place: place, trip: trip)
+        context.insert(place)
+        context.insert(trip)
+        context.insert(remembered)
+        context.insert(blank)
+        context.insert(Memory(text: "A synthetic memory", mediaItem: remembered))
+        try context.save()
+
+        var hasMemory = LibraryFilterCriteria.default
+        hasMemory.tripKey = trip.id
+        hasMemory.placeID = place.id
+        hasMemory.memoryFilter = .hasMemory
+        XCTAssertEqual(LibraryFilterEngine.filteredItems([remembered, blank], by: hasMemory).map(\.id), ["remembered"])
+
+        hasMemory.memoryFilter = .noMemory
+        XCTAssertEqual(LibraryFilterEngine.filteredItems([remembered, blank], by: hasMemory).map(\.id), ["blank"])
+    }
+
+    func testLibraryEditingItemStaysVisibleWhileMemoryFilterChanges() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let remembered = MediaItem(id: "remembered", kind: .photo)
+        let blank = MediaItem(id: "blank", kind: .photo)
+        context.insert(remembered)
+        context.insert(blank)
+        context.insert(Memory(text: "existing", mediaItem: remembered))
+        try context.save()
+        var criteria = LibraryFilterCriteria.default
+        criteria.memoryFilter = .noMemory
+
+        XCTAssertEqual(
+            Set(LibraryFilterEngine.filteredItems([remembered, blank], by: criteria, preservingEditingItemID: "remembered").map(\.id)),
+            Set(["remembered", "blank"])
+        )
+        XCTAssertEqual(
+            LibraryFilterEngine.filteredItems([remembered, blank], by: criteria, preservingEditingItemID: "missing").map(\.id),
+            ["blank"]
+        )
+
+        criteria.memoryFilter = .hasMemory
+        XCTAssertEqual(
+            Set(LibraryFilterEngine.filteredItems([remembered, blank], by: criteria, preservingEditingItemID: "blank").map(\.id)),
+            Set(["remembered", "blank"])
+        )
+    }
+
+    func testLibraryMemoryPersistenceSkipsUntouchedAndNoOpDrafts() {
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        let memory = Memory(id: "memory-no-op", text: "same", updatedAt: timestamp, revision: 4)
+        let snapshot = LibraryMemorySnapshot(memory: memory)
+
+        XCTAssertEqual(
+            LibraryMemoryPersistence.decision(
+                draft: "same",
+                wasEdited: false,
+                baseline: snapshot,
+                stored: snapshot
+            ),
+            .noChange
+        )
+        XCTAssertEqual(
+            LibraryMemoryPersistence.decision(
+                draft: "same",
+                wasEdited: true,
+                baseline: snapshot,
+                stored: snapshot
+            ),
+            .noChange
+        )
+    }
+
+    func testLibraryMemoryPersistenceRejectsNewerStoredMemory() {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let newer = Date(timeIntervalSince1970: 1_700_000_100)
+        let baseline = LibraryMemorySnapshot(
+            id: "memory-conflict",
+            text: "before",
+            updatedAt: start,
+            revision: 2
+        )
+        let stored = LibraryMemorySnapshot(
+            id: "memory-conflict",
+            text: "partner edit",
+            updatedAt: newer,
+            revision: 3
+        )
+
+        XCTAssertEqual(
+            LibraryMemoryPersistence.decision(
+                draft: "local edit",
+                wasEdited: true,
+                baseline: baseline,
+                stored: stored
+            ),
+            .conflict
+        )
+    }
+
+    func testLibraryMemoryPersistenceMergesMemoryThatArrivesAfterFirstEdit() {
+        let stored = LibraryMemorySnapshot(
+            id: "memory-late",
+            text: "import review text",
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_100),
+            revision: 1,
+            author: .me,
+            authorAccountID: MomentsAccount.localID
+        )
+
+        XCTAssertEqual(
+            LibraryMemoryPersistence.decision(
+                draft: "library draft",
+                wasEdited: true,
+                baseline: nil,
+                stored: stored
+            ),
+            .update
+        )
+    }
+
+    func testLibraryMemoryPersistenceDoesNotWriteOverPartnerMemory() {
+        let stored = LibraryMemorySnapshot(
+            id: "memory-partner",
+            text: "partner text",
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_100),
+            revision: 1,
+            author: .partner,
+            authorAccountID: "partner-account"
+        )
+
+        XCTAssertEqual(
+            LibraryMemoryPersistence.decision(
+                draft: "library draft",
+                wasEdited: true,
+                baseline: nil,
+                stored: stored
+            ),
+            .conflict
+        )
+    }
+
+    func testLibrarySectionsFollowSelectedGroupingAndExposeDateSpan() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let tripA = Trip(id: "trip-a", name: "Synthetic trip A")
+        let tripB = Trip(id: "trip-b", name: "Synthetic trip B")
+        let place = Place(id: "section-place", name: "Synthetic place")
+        let first = MediaItem(id: "section-first", captureDate: Date(timeIntervalSince1970: 1_700_000_000), kind: .photo, place: place, trip: tripA)
+        let second = MediaItem(id: "section-second", captureDate: Date(timeIntervalSince1970: 1_700_100_000), kind: .video, place: place, trip: tripB)
+        context.insert(tripA)
+        context.insert(tripB)
+        context.insert(place)
+        [first, second].forEach(context.insert)
+        try context.save()
+
+        let tripSections = LibraryFilterEngine.sections([first, second], by: .trip, sortOrder: .oldestFirst)
+        XCTAssertEqual(tripSections.map(\.id), ["trip:trip-a", "trip:trip-b"])
+        XCTAssertEqual(tripSections.first?.title, "Synthetic trip A")
+        XCTAssertEqual(tripSections.first?.itemIDs, ["section-first"])
+        XCTAssertEqual(tripSections.first?.startDate, first.captureDate)
+        XCTAssertEqual(tripSections.first?.endDate, first.captureDate)
+
+        let typeSections = LibraryFilterEngine.sections([first, second], by: .type, sortOrder: .oldestFirst)
+        XCTAssertEqual(typeSections.map(\.id), ["type:photo", "type:video"])
+    }
+
+    func testLibraryScreenshotSegmentShowsOnlyExplicitScreenshots() throws {
+        let screenshot = MediaItem(id: "synthetic-screenshot", isScreenshot: true)
+        let ordinary = MediaItem(id: "synthetic-photo")
+
+        var criteria = LibraryFilterCriteria.default
+        criteria.mediaType = .screenshot
+        XCTAssertEqual(LibraryFilterEngine.filteredItems([screenshot, ordinary], by: criteria).map(\.id), ["synthetic-screenshot"])
+        XCTAssertEqual(LibraryFilterEngine.publishedItems([screenshot, ordinary], by: criteria).map(\.id), ["synthetic-photo"])
+    }
+
+    func testLibraryFirstLaunchFlagControlsImportFlowOnlyForEmptyLibrary() {
+        XCTAssertTrue(LibraryLaunchState.shouldShowImportFlow(hasCompletedFirstLaunch: false, itemCount: 0))
+        XCTAssertFalse(LibraryLaunchState.shouldShowImportFlow(hasCompletedFirstLaunch: true, itemCount: 0))
+        XCTAssertFalse(LibraryLaunchState.shouldShowImportFlow(hasCompletedFirstLaunch: false, itemCount: 1))
+    }
+
     func testSelectionModelSharesFocusedSelection() {
         let selection = SelectionModel()
         selection.select(["b", "a"], focus: "b")

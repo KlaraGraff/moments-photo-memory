@@ -1,36 +1,56 @@
 import Foundation
 import SwiftUI
 import SwiftData
-import MomentsCore
+
+private enum LibraryPalette {
+    static let sidebar = Color(red: 0.969, green: 0.906, blue: 0.863)
+    static let content = Color(red: 0.984, green: 0.945, blue: 0.918)
+    static let ink = Color(red: 0.227, green: 0.165, blue: 0.141)
+    static let muted = Color(red: 0.478, green: 0.365, blue: 0.314)
+    static let accent = Color(red: 0.690, green: 0.290, blue: 0.184)
+    static let line = Color(red: 0.937, green: 0.855, blue: 0.796)
+    static let rule = Color(red: 0.902, green: 0.804, blue: 0.741)
+}
 
 struct LibraryView: View {
     @Environment(SelectionModel.self) private var selection
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(ImportController.self) private var importController
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    // Keep the common Library query free of explicit screenshots in SwiftData.
+    // The screenshot segment switches to the second descriptor without making
+    // the normal 5k-item browsing path carry those models through filtering.
+    @Query(filter: #Predicate<MediaItem> { $0.isScreenshot == false }, sort: \MediaItem.captureDate)
+    private var regularItems: [MediaItem]
+    @Query(filter: #Predicate<MediaItem> { $0.isScreenshot == true }, sort: \MediaItem.captureDate)
+    private var screenshotItems: [MediaItem]
+    @Query(sort: \Memory.updatedAt)
+    private var memoryRecords: [Memory]
+    @Query(sort: \Trip.id)
+    private var allTrips: [Trip]
+    @Query(sort: \Place.id)
+    private var allPlaces: [Place]
+    @Query(sort: \PlaceOverride.id)
+    private var placeOverrides: [PlaceOverride]
 
-    @Query private var items: [MediaItem]
     let state: LibraryViewState
+    @Binding var firstLaunchCompleted: Bool
 
-    @AppStorage("moments.library.density") private var density = 3
-    @AppStorage("moments.library.sort") private var sortRaw = LibrarySortOrder.oldestFirst.rawValue
+    @AppStorage("moments.library.type") private var typeRaw = LibraryMediaTypeFilter.all.rawValue
+    @AppStorage("moments.library.grouping") private var groupingRaw = LibraryGrouping.trip.rawValue
     @AppStorage("moments.library.fromDate") private var fromDateInterval = 0.0
     @AppStorage("moments.library.toDate") private var toDateInterval = 0.0
     @AppStorage("moments.library.place") private var placeFilterID = ""
-    @AppStorage("moments.library.type") private var typeRaw = LibraryMediaTypeFilter.all.rawValue
-    @AppStorage("moments.library.favoritesOnly") private var favoritesOnly = false
     @AppStorage("moments.library.trip") private var tripFilterKey = ""
-    @AppStorage("moments.library.screenshotFilter") private var screenshotFilterRaw = LibraryScreenshotFilter.all.rawValue
+    @AppStorage("moments.library.memory") private var memoryFilterRaw = LibraryMemoryFilter.all.rawValue
 
-    @State private var filtersAreVisible = false
-    /// Grouping 5,000 items is too slow to redo on every render or selection
-    /// change, so collections are rebuilt only when `groupingKey` changes.
-    @State private var cachedCollections: [LibraryCollection] = []
+    @State private var cachedSections: [LibrarySection] = []
+    @State private var cachedItemByID: [String: MediaItem] = [:]
     @State private var cachedVisibleCount = 0
     @State private var hasGrouped = false
 
-    init(state: LibraryViewState) {
+    init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
+        self._firstLaunchCompleted = firstLaunchCompleted
     }
 
     private var criteria: LibraryFilterCriteria {
@@ -39,31 +59,26 @@ struct LibraryView: View {
             toDate: toDateInterval == 0 ? nil : Date(timeIntervalSince1970: toDateInterval),
             placeID: placeFilterID.isEmpty ? nil : placeFilterID,
             mediaType: LibraryMediaTypeFilter(rawValue: typeRaw) ?? .all,
-            favoritesOnly: favoritesOnly,
             tripKey: tripFilterKey.isEmpty ? nil : tripFilterKey,
-            screenshotFilter: LibraryScreenshotFilter(rawValue: screenshotFilterRaw) ?? .all
+            memoryFilter: LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all
         )
     }
 
-    private var filteredItems: [MediaItem] {
-        LibraryFilterEngine.filteredItems(items, by: criteria)
+    private var items: [MediaItem] {
+        typeRaw == LibraryMediaTypeFilter.screenshot.rawValue ? screenshotItems : regularItems
     }
 
-    private var collections: [LibraryCollection] {
-        let candidates = filteredItems
-        let itemByID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, $0) })
-        return LibraryFilterEngine.groupedItems(candidates, by: criteria, sortOrder: sortOrder)
-            .map { LibraryCollection(core: $0, itemsByID: itemByID) }
-            .filter { $0.cover != nil }
+    private var allItems: [MediaItem] {
+        regularItems + screenshotItems
     }
 
-    private var sortOrder: LibrarySortOrder {
-        LibrarySortOrder(rawValue: sortRaw) ?? .oldestFirst
+    private var grouping: LibraryGrouping {
+        LibraryGrouping(rawValue: groupingRaw) ?? .trip
     }
 
     private var places: [LibraryPlaceOption] {
         var options: [String: LibraryPlaceOption] = [:]
-        for item in items {
+        for item in allItems {
             if let place = item.place {
                 options[place.id] = LibraryPlaceOption(id: place.id, name: place.name)
             }
@@ -75,42 +90,416 @@ struct LibraryView: View {
     }
 
     private var trips: [String] {
-        Array(Set(items.compactMap(\.tripID))).sorted()
+        Array(Set(allItems.compactMap(\.tripID))).sorted()
     }
 
+    private var selectedPlaceName: String? {
+        places.first(where: { $0.id == placeFilterID })?.name
+    }
+
+    private var selectedTripName: String? {
+        guard !tripFilterKey.isEmpty else { return nil }
+        return allItems.first(where: { $0.tripID == tripFilterKey })?.trip?.effectiveName ?? tripFilterKey
+    }
+
+    private var selectedMemoryFilter: LibraryMemoryFilter {
+        LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all
+    }
+
+    /// A lightweight query signature for the cached regroup. Memory presence,
+    /// trip/place names, and overrides come from their own queries so this
+    /// token never faults `item.memories` for every media item during a render.
     private var groupingKey: Int {
         var hasher = Hasher()
-        hasher.combine(filterSignature)
-        hasher.combine(sortRaw)
+        hasher.combine(typeRaw)
+        hasher.combine(groupingRaw)
+        hasher.combine(fromDateInterval)
+        hasher.combine(toDateInterval)
+        hasher.combine(placeFilterID)
+        hasher.combine(tripFilterKey)
+        hasher.combine(memoryFilterRaw)
+        hasher.combine(state.focusedMemoryItemID)
         for item in items {
             hasher.combine(item.id)
             hasher.combine(item.captureDate)
-            hasher.combine(item.isFavorite)
+            hasher.combine(item.userCorrectedCaptureDateUTC)
             hasher.combine(item.isScreenshot)
-            hasher.combine(item.width)
-            hasher.combine(item.height)
+            hasher.combine(item.kindRaw)
+            hasher.combine(item.tripID)
             hasher.combine(item.place?.id)
-            hasher.combine(item.placeOverrideName)
-            hasher.combine(item.placeOverrideLatitude)
-            hasher.combine(item.placeOverrideLongitude)
+            hasher.combine(item.updatedAt)
+        }
+        for trip in allTrips {
+            hasher.combine(trip.id)
+            hasher.combine(trip.name)
+            hasher.combine(trip.overrideName)
+        }
+        for place in allPlaces {
+            hasher.combine(place.id)
+            hasher.combine(place.name)
+        }
+        for override in placeOverrides {
+            hasher.combine(override.id)
+            hasher.combine(override.mediaID)
+            hasher.combine(override.nameOverride)
+            hasher.combine(override.updatedAt)
+        }
+        for memory in memoryRecords {
+            hasher.combine(memory.id)
+            hasher.combine(memory.mediaID)
+            hasher.combine(memory.updatedAt)
+            hasher.combine(memory.revision)
         }
         return hasher.finalize()
     }
 
-    private func regroup() {
-        let visible = filteredItems
-        cachedVisibleCount = visible.count
-        cachedCollections = collections
-        hasGrouped = true
-        selection.visibleItemIDs = Set(visible.map(\.id))
-        synchronizeSelection(visible: Set(visible.map(\.id)))
+    var body: some View {
+        Group {
+            if LibraryLaunchState.shouldShowImportFlow(hasCompletedFirstLaunch: firstLaunchCompleted, itemCount: allItems.count) {
+                FirstLaunchImportView {
+                    importController.chooseFolder()
+                }
+            } else {
+                libraryContent
+            }
+        }
+        .background(LibraryPalette.content)
+        .onChange(of: allItems.count, initial: true) { _, count in
+            if count > 0 { firstLaunchCompleted = true }
+        }
+        .task(id: groupingKey) { regroup() }
+        .sheet(
+            isPresented: Binding(
+                get: { importController.reviewSummary != nil },
+                set: { if !$0 { importController.dismissReview() } }
+            )
+        ) {
+            if let summary = importController.reviewSummary {
+                ImportReviewView(summary: summary)
+            }
+        }
     }
 
-    private var filterSignature: String {
-        [
-            String(fromDateInterval), String(toDateInterval), placeFilterID, typeRaw,
-            String(favoritesOnly), tripFilterKey, screenshotFilterRaw, sortRaw, String(density)
-        ].joined(separator: "|")
+    private var libraryContent: some View {
+        VStack(spacing: 0) {
+            libraryHeader
+            filterBar
+            ImportStatusView()
+                .padding(.horizontal, 34)
+                .padding(.vertical, 7)
+
+            if !hasGrouped {
+                Spacer()
+            } else if cachedSections.isEmpty {
+                emptyState
+            } else {
+                results
+            }
+        }
+    }
+
+    private var libraryHeader: some View {
+        HStack(alignment: .bottom, spacing: 22) {
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                Text(String(localized: "Library"))
+                    .font(.system(size: 34, weight: .medium, design: .serif))
+                    .foregroundStyle(LibraryPalette.ink)
+                Text("\(cachedVisibleCount) \(String(localized: "photos"))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(LibraryPalette.muted)
+                    .accessibilityIdentifier("library.photoCount")
+                    .accessibilityValue(String(cachedVisibleCount))
+            }
+
+            Picker(String(localized: "Media type"), selection: $typeRaw) {
+                Text(String(localized: "All")).tag(LibraryMediaTypeFilter.all.rawValue)
+                Text(String(localized: "Photos")).tag(LibraryMediaTypeFilter.photo.rawValue)
+                Text(String(localized: "Videos")).tag(LibraryMediaTypeFilter.video.rawValue)
+                Text(String(localized: "Live Photos")).tag(LibraryMediaTypeFilter.live.rawValue)
+                Text(String(localized: "Screenshots")).tag(LibraryMediaTypeFilter.screenshot.rawValue)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 410)
+            .accessibilityIdentifier("library.type-filter")
+
+            Spacer(minLength: 8)
+
+            Picker(String(localized: "Group by"), selection: $groupingRaw) {
+                Text(String(localized: "By trip")).tag(LibraryGrouping.trip.rawValue)
+                Text(String(localized: "By place")).tag(LibraryGrouping.place.rawValue)
+                Text(String(localized: "By type")).tag(LibraryGrouping.type.rawValue)
+                Text(String(localized: "By month")).tag(LibraryGrouping.month.rawValue)
+            }
+            .pickerStyle(.menu)
+            .frame(width: 150)
+            .accessibilityIdentifier("library.grouping")
+        }
+        .padding(.horizontal, 34)
+        .padding(.top, 28)
+        .padding(.bottom, 18)
+        .overlay(alignment: .bottom) { Rectangle().fill(LibraryPalette.line).frame(height: 1) }
+    }
+
+    private var filterBar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                filterMenu(label: String(localized: "Place"), selected: selectedPlaceName) {
+                    Button(String(localized: "All places")) { placeFilterID = "" }
+                    if !places.isEmpty { Divider() }
+                    ForEach(places) { place in
+                        Button {
+                            placeFilterID = place.id
+                        } label: {
+                            filterMenuLabel(place.name, selected: place.id == placeFilterID)
+                        }
+                    }
+                }
+
+                filterMenu(label: String(localized: "Trip"), selected: selectedTripName) {
+                    Button(String(localized: "All trips")) { tripFilterKey = "" }
+                    if !trips.isEmpty { Divider() }
+                    ForEach(trips, id: \.self) { trip in
+                        Button {
+                            tripFilterKey = trip
+                        } label: {
+                            filterMenuLabel(selectedTripName(for: trip), selected: trip == tripFilterKey)
+                        }
+                    }
+                }
+
+                dateFilterMenu
+                memoryFilterMenu
+
+                Button {
+                    // The filter builder is intentionally a disabled stub until #30.
+                } label: {
+                    Label(String(localized: "Add filter"), systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(LibraryPalette.muted)
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 3])).foregroundStyle(LibraryPalette.muted.opacity(0.5)))
+                .disabled(true)
+                .accessibilityIdentifier("library.add-filter")
+
+                Spacer(minLength: 12)
+
+                Button(String(localized: "Save this filter as a smart group")) {}
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .foregroundStyle(LibraryPalette.accent.opacity(0.55))
+                    .disabled(true)
+                    .accessibilityIdentifier("library.save-smart-group")
+            }
+
+            if hasActiveFilters {
+                HStack(spacing: 7) {
+                    if let selectedPlaceName {
+                        filterChip("\(String(localized: "Place:")) \(selectedPlaceName)") { placeFilterID = "" }
+                    }
+                    if let selectedTripName {
+                        filterChip("\(String(localized: "Trip:")) \(selectedTripName)") { tripFilterKey = "" }
+                    }
+                    if let dateLabel = dateFilterLabel {
+                        filterChip(dateLabel) {
+                            fromDateInterval = 0
+                            toDateInterval = 0
+                        }
+                    }
+                    if selectedMemoryFilter != .all {
+                        filterChip(memoryFilterLabel(selectedMemoryFilter)) { memoryFilterRaw = LibraryMemoryFilter.all.rawValue }
+                    }
+                    Button(String(localized: "Clear filters")) { clearFilters() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                        .foregroundStyle(LibraryPalette.muted)
+                }
+            }
+
+            HStack {
+                Text(String(format: String(localized: "Filtered count"), cachedVisibleCount))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(LibraryPalette.muted)
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 34)
+        .padding(.vertical, 13)
+        .overlay(alignment: .bottom) { Rectangle().fill(LibraryPalette.line).frame(height: 1) }
+    }
+
+    private func filterMenu<Content: View>(label: String, selected: String?, @ViewBuilder content: () -> Content) -> some View {
+        Menu {
+            content()
+        } label: {
+            HStack(spacing: 5) {
+                Text(selected ?? label)
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.48), in: Capsule())
+        .overlay(Capsule().stroke(LibraryPalette.line, lineWidth: 1))
+        .foregroundStyle(LibraryPalette.ink)
+    }
+
+    private func filterMenuLabel(_ text: String, selected: Bool) -> some View {
+        Label(text, systemImage: selected ? "checkmark" : "circle")
+    }
+
+    private var dateFilterMenu: some View {
+        Menu {
+            Toggle(String(localized: "From date"), isOn: Binding(
+                get: { fromDateInterval != 0 },
+                set: { enabled in
+                    fromDateInterval = enabled ? (fromDateInterval == 0 ? Date.now.timeIntervalSince1970 : fromDateInterval) : 0
+                }
+            ))
+            if fromDateInterval != 0 {
+                DatePicker(String(localized: "From date"), selection: fromDateBinding, displayedComponents: .date)
+            }
+            Toggle(String(localized: "To date"), isOn: Binding(
+                get: { toDateInterval != 0 },
+                set: { enabled in
+                    toDateInterval = enabled ? (toDateInterval == 0 ? Date.now.timeIntervalSince1970 : toDateInterval) : 0
+                }
+            ))
+            if toDateInterval != 0 {
+                DatePicker(String(localized: "To date"), selection: toDateBinding, displayedComponents: .date)
+            }
+            Divider()
+            Button(String(localized: "All dates")) {
+                fromDateInterval = 0
+                toDateInterval = 0
+            }
+        } label: {
+            filterMenuTitle(String(localized: "Date"), selected: dateFilterLabel != nil)
+        }
+        .menuStyle(.borderlessButton)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.48), in: Capsule())
+        .overlay(Capsule().stroke(LibraryPalette.line, lineWidth: 1))
+    }
+
+    private var memoryFilterMenu: some View {
+        Menu {
+            Button {
+                memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+            } label: {
+                filterMenuLabel(String(localized: "All memories"), selected: selectedMemoryFilter == .all)
+            }
+            Button {
+                memoryFilterRaw = LibraryMemoryFilter.hasMemory.rawValue
+            } label: {
+                filterMenuLabel(String(localized: "Has memory"), selected: selectedMemoryFilter == .hasMemory)
+            }
+            Button {
+                memoryFilterRaw = LibraryMemoryFilter.noMemory.rawValue
+            } label: {
+                filterMenuLabel(String(localized: "No memory"), selected: selectedMemoryFilter == .noMemory)
+            }
+        } label: {
+            filterMenuTitle(String(localized: "Memory"), selected: selectedMemoryFilter != .all)
+        }
+        .menuStyle(.borderlessButton)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.48), in: Capsule())
+        .overlay(Capsule().stroke(LibraryPalette.line, lineWidth: 1))
+    }
+
+    private func filterMenuTitle(_ label: String, selected: Bool) -> some View {
+        HStack(spacing: 5) {
+            Text(label)
+                .fontWeight(selected ? .semibold : .regular)
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+        }
+        .foregroundStyle(selected ? LibraryPalette.accent : LibraryPalette.ink)
+    }
+
+    private func filterChip(_ text: String, remove: @escaping () -> Void) -> some View {
+        Button(action: remove) {
+            HStack(spacing: 5) {
+                Text(text)
+                Image(systemName: "xmark")
+                    .font(.caption2.weight(.bold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(LibraryPalette.accent, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var results: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 34) {
+                    ForEach(cachedSections) { section in
+                        LibrarySectionView(
+                            section: section,
+                            items: section.itemIDs.compactMap { cachedItemByID[$0] },
+                            state: state
+                        )
+                        .id(section.id)
+                        .onAppear { state.lastVisibleSectionID = section.id }
+                    }
+                }
+                .padding(.horizontal, 34)
+                .padding(.vertical, 24)
+            }
+            .scrollIndicators(.visible)
+            .onChange(of: selection.focusedItemID) { _, focus in
+                guard let focus,
+                      let target = cachedSections.first(where: { $0.itemIDs.contains(focus) }) else { return }
+                scroll(to: target.id, using: proxy)
+            }
+            .onChange(of: cachedSections.map(\.id), initial: true) { _, _ in
+                revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
+            }
+            .onAppear {
+                if selection.shouldRevealSelectionInLibrary {
+                    revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
+                } else if let anchor = state.lastVisibleSectionID,
+                          cachedSections.contains(where: { $0.id == anchor }) {
+                    DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .center) }
+                }
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 13) {
+            ContentUnavailableView(
+                criteria.isFiltered ? String(localized: "No matching photos") : String(localized: "No photos yet"),
+                systemImage: criteria.isFiltered ? "line.3.horizontal.decrease.circle" : "photo.on.rectangle",
+                description: Text(criteria.isFiltered ? String(localized: "Try changing your filters.") : String(localized: "Add a photo or import a folder to begin."))
+            )
+            if !criteria.isFiltered {
+                Button {
+                    importController.chooseFolder()
+                } label: {
+                    Label(String(localized: "Import Folder…"), systemImage: "folder.badge.plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(LibraryPalette.accent)
+                .accessibilityIdentifier("library.importFolder")
+                Button {
+                    NotificationCenter.default.post(name: .momentsShowPhotosImport, object: nil)
+                } label: {
+                    Label(String(localized: "Import from Apple Photos…"), systemImage: "photo.on.rectangle")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("library.importPhotos")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var fromDateBinding: Binding<Date> {
@@ -127,497 +516,214 @@ struct LibraryView: View {
         )
     }
 
-    private var densityBinding: Binding<Double> {
-        Binding(
-            get: { Double(density) },
-            set: { density = Int($0.rounded()) }
-        )
-    }
-
-    private var columns: [GridItem] {
-        Array(repeating: GridItem(.flexible(minimum: 160), spacing: 20, alignment: .top), count: max(2, min(6, density)))
-    }
-
-    var body: some View {
-        let displayedCollections = cachedCollections
-        VStack(spacing: 0) {
-            header(for: displayedCollections)
-            toolbar
-            ImportStatusView()
-            if filtersAreVisible { filterPanel }
-
-            if !hasGrouped {
-                Spacer()
-            } else if displayedCollections.isEmpty {
-                emptyState
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: 28) {
-                            ForEach(displayedCollections) { collection in
-                                CollectionCard(collection: collection, state: state)
-                                    .id(collection.id)
-                                    .onAppear {
-                                        if state.lastVisibleCollectionID != collection.id {
-                                            state.lastVisibleCollectionID = collection.id
-                                        }
-                                        if !state.initializedCollectionIDs.contains(collection.id) {
-                                            state.initializedCollectionIDs.insert(collection.id)
-                                            if collection.items.contains(where: { $0.latestMemory != nil }) {
-                                                state.expandedCollectionIDs.insert(collection.id)
-                                            }
-                                        }
-                                    }
-                            }
-                        }
-                        .padding(.horizontal, 28)
-                        .padding(.vertical, 24)
-                    }
-                    .scrollIndicators(.visible)
-                    .onChange(of: selection.focusedItemID) { _, focus in
-                        guard let focus,
-                              let target = displayedCollections.first(where: { $0.core.itemIDs.contains(focus) }) else { return }
-                        scroll(to: target.id, using: proxy)
-                    }
-                    .onChange(of: displayedCollections.map(\.id), initial: true) { _, _ in
-                        revealRequestedSelectionIfNeeded(in: displayedCollections, using: proxy)
-                    }
-                    .onAppear {
-                        if selection.shouldRevealSelectionInLibrary {
-                            revealRequestedSelectionIfNeeded(in: displayedCollections, using: proxy)
-                        } else if let anchor = state.lastVisibleCollectionID,
-                           displayedCollections.contains(where: { $0.id == anchor }) {
-                            DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .center) }
-                        }
-                    }
-                }
-            }
+    private var dateFilterLabel: String? {
+        guard fromDateInterval != 0 || toDateInterval != 0 else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        if fromDateInterval != 0, toDateInterval != 0 {
+            return "\(String(localized: "Date:")) \(formatter.string(from: Date(timeIntervalSince1970: fromDateInterval))) – \(formatter.string(from: Date(timeIntervalSince1970: toDateInterval)))"
         }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .navigationTitle("Library")
-        .task(id: groupingKey) { regroup() }
-        .sheet(
-            isPresented: Binding(
-                get: { importController.reviewSummary != nil },
-                set: { if !$0 { importController.dismissReview() } }
-            )
-        ) {
-            if let summary = importController.reviewSummary {
-                ImportReviewView(summary: summary)
-            }
+        if fromDateInterval != 0 {
+            return "\(String(localized: "From:")) \(formatter.string(from: Date(timeIntervalSince1970: fromDateInterval)))"
+        }
+        return "\(String(localized: "To:")) \(formatter.string(from: Date(timeIntervalSince1970: toDateInterval)))"
+    }
+
+    private var hasActiveFilters: Bool {
+        placeFilterID.isEmpty == false || tripFilterKey.isEmpty == false || dateFilterLabel != nil || selectedMemoryFilter != .all
+    }
+
+    private func memoryFilterLabel(_ filter: LibraryMemoryFilter) -> String {
+        switch filter {
+        case .all: return String(localized: "All memories")
+        case .hasMemory: return String(localized: "Has memory")
+        case .noMemory: return String(localized: "No memory")
         }
     }
 
-    private func revealRequestedSelectionIfNeeded(in collections: [LibraryCollection], using proxy: ScrollViewProxy) {
-        guard selection.shouldRevealSelectionInLibrary,
-              let focus = selection.focusedItemID,
-              let target = collections.first(where: { $0.core.itemIDs.contains(focus) }) else { return }
-        scroll(to: target.id, using: proxy)
-        selection.shouldRevealSelectionInLibrary = false
-    }
-
-    private func scroll(to collectionID: String, using proxy: ScrollViewProxy) {
-        if reduceMotion {
-            proxy.scrollTo(collectionID, anchor: .center)
-        } else {
-            withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(collectionID, anchor: .center) }
-        }
-    }
-
-    private func header(for collections: [LibraryCollection]) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Library")
-                    .font(.system(.largeTitle, design: .serif).weight(.medium))
-                HStack(spacing: 4) {
-                    Text(cachedVisibleCount, format: .number)
-                        .font(.caption.monospacedDigit())
-                    Text("photos")
-                        .font(.caption)
-                }
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("library.photoCount")
-                .accessibilityValue(String(cachedVisibleCount))
-            }
-            Spacer()
-            if !selection.selectedItemIDs.isEmpty {
-                Button {
-                    selection.clear()
-                } label: {
-                    Label("Selected", systemImage: "checkmark.circle.fill")
-                }
-                .buttonStyle(.borderless)
-            }
-            HStack(spacing: 4) {
-                Text(collections.count, format: .number)
-                    .font(.caption.monospacedDigit())
-                Text("collections")
-                    .font(.caption)
-            }
-            .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 28)
-        .padding(.top, 22)
-        .padding(.bottom, 14)
-    }
-
-    private var toolbar: some View {
-        HStack(spacing: 14) {
-            Button {
-                filtersAreVisible.toggle()
-            } label: {
-                Label(filtersAreVisible ? "Hide filters" : "Show filters", systemImage: "line.3.horizontal.decrease.circle")
-            }
-            .buttonStyle(.borderless)
-
-            Menu {
-                Picker("Sort", selection: $sortRaw) {
-                    Text("Oldest first").tag(LibrarySortOrder.oldestFirst.rawValue)
-                    Text("Newest first").tag(LibrarySortOrder.newestFirst.rawValue)
-                }
-            } label: {
-                Label("Sort", systemImage: "arrow.up.arrow.down")
-            }
-            .menuStyle(.borderlessButton)
-
-            Spacer(minLength: 8)
-            Label("Columns", systemImage: "square.grid.2x2")
-                .foregroundStyle(.secondary)
-            Slider(value: densityBinding, in: 2...6, step: 1)
-                .frame(width: 110)
-                .accessibilityValue(Text("\(density)"))
-
-            #if DEBUG
-            Button {
-                _ = try? DemoSeeder.generateSyntheticLibrary(context: modelContext)
-            } label: {
-                Label("Generate 5,000 synthetic items", systemImage: "speedometer")
-            }
-            .buttonStyle(.borderless)
-            #endif
-        }
-        .font(.caption)
-        .padding(.horizontal, 28)
-        .padding(.vertical, 10)
-        .overlay(alignment: .bottom) { Divider() }
-    }
-
-    private var filterPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 18) {
-                Toggle("From", isOn: Binding(
-                    get: { fromDateInterval != 0 },
-                    set: { if !$0 { fromDateInterval = 0 } else if fromDateInterval == 0 { fromDateInterval = Date.now.timeIntervalSince1970 } }
-                ))
-                .toggleStyle(.checkbox)
-                DatePicker("", selection: fromDateBinding, displayedComponents: .date)
-                    .labelsHidden()
-                    .disabled(fromDateInterval == 0)
-
-                Toggle("To", isOn: Binding(
-                    get: { toDateInterval != 0 },
-                    set: { if !$0 { toDateInterval = 0 } else if toDateInterval == 0 { toDateInterval = Date.now.timeIntervalSince1970 } }
-                ))
-                .toggleStyle(.checkbox)
-                DatePicker("", selection: toDateBinding, displayedComponents: .date)
-                    .labelsHidden()
-                    .disabled(toDateInterval == 0)
-            }
-
-            HStack(spacing: 16) {
-                Picker("Place", selection: $placeFilterID) {
-                    Text("All places").tag("")
-                    ForEach(places) { place in
-                        Text(place.name).tag(place.id)
-                    }
-                }
-                .frame(maxWidth: 220)
-
-                Picker("Type", selection: $typeRaw) {
-                    Text("All types").tag(LibraryMediaTypeFilter.all.rawValue)
-                    Text("Photos").tag(LibraryMediaTypeFilter.photo.rawValue)
-                    Text("Videos").tag(LibraryMediaTypeFilter.video.rawValue)
-                    Text("Live Photos").tag(LibraryMediaTypeFilter.live.rawValue)
-                }
-                .frame(maxWidth: 170)
-
-                Picker("Trip", selection: $tripFilterKey) {
-                    Text("All trips").tag("")
-                    ForEach(trips, id: \.self) { trip in Text(trip).tag(trip) }
-                }
-                .frame(maxWidth: 190)
-
-                Picker("Screenshot filter", selection: $screenshotFilterRaw) {
-                    Text("All visible media").tag(LibraryScreenshotFilter.all.rawValue)
-                    Text("Possible screenshots").tag(LibraryScreenshotFilter.possibleOnly.rawValue)
-                }
-                .frame(maxWidth: 230)
-            }
-
-            HStack(spacing: 16) {
-                Toggle("Favorites only", isOn: $favoritesOnly)
-                    .toggleStyle(.checkbox)
-                Spacer()
-                Button("Clear filters") { clearFilters() }
-                    .buttonStyle(.link)
-            }
-        }
-        .font(.caption)
-        .padding(.horizontal, 28)
-        .padding(.vertical, 14)
-        .background(.quaternary.opacity(0.25))
-    }
-
-    private var emptyState: some View {
-        let isFiltered = criteria != .default
-        return VStack(spacing: 14) {
-            ContentUnavailableView(
-                isFiltered ? "No matching photos" : "No photos yet",
-                systemImage: isFiltered ? "line.3.horizontal.decrease.circle" : "photo.on.rectangle",
-                description: Text(isFiltered ? "Try changing your filters." : "Add a photo or import a folder to begin.")
-            )
-            if !isFiltered {
-                Button {
-                    importController.chooseFolder()
-                } label: {
-                    Label("Import Folder…", systemImage: "folder.badge.plus")
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("library.importFolder")
-                Button {
-                    NotificationCenter.default.post(name: .momentsShowPhotosImport, object: nil)
-                } label: {
-                    Label("Import from Apple Photos…", systemImage: "photo.on.rectangle")
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("library.importPhotos")
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private func selectedTripName(for tripID: String) -> String {
+        allItems.first(where: { $0.tripID == tripID })?.trip?.effectiveName ?? tripID
     }
 
     private func clearFilters() {
         fromDateInterval = 0
         toDateInterval = 0
         placeFilterID = ""
-        typeRaw = LibraryMediaTypeFilter.all.rawValue
-        favoritesOnly = false
         tripFilterKey = ""
-        screenshotFilterRaw = LibraryScreenshotFilter.all.rawValue
+        memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+        typeRaw = LibraryMediaTypeFilter.all.rawValue
     }
 
-    private func synchronizeSelection(visible: Set<String>) {
-        selection.selectedItemIDs.formIntersection(visible)
-        if let focus = selection.focusedItemID, !visible.contains(focus) {
+    private func regroup() {
+        let filtered = LibraryFilterEngine.filteredItems(items, by: criteria)
+        let visible = LibraryFilterEngine.filteredItems(
+            items,
+            by: criteria,
+            preservingEditingItemID: state.focusedMemoryItemID
+        )
+        cachedVisibleCount = visible.count
+        cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
+        cachedSections = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
+        hasGrouped = true
+        let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria).map(\.id))
+        selection.visibleItemIDs = publishedVisible
+        selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
+        if let focus = selection.focusedItemID, !filtered.contains(where: { $0.id == focus }) {
             selection.focusedItemID = selection.selectedItemIDs.first
         }
     }
+
+    private func revealRequestedSelectionIfNeeded(in sections: [LibrarySection], using proxy: ScrollViewProxy) {
+        guard selection.shouldRevealSelectionInLibrary,
+              let focus = selection.focusedItemID,
+              let target = sections.first(where: { $0.itemIDs.contains(focus) }) else { return }
+        scroll(to: target.id, using: proxy)
+        selection.shouldRevealSelectionInLibrary = false
+    }
+
+    private func scroll(to sectionID: String, using proxy: ScrollViewProxy) {
+        if reduceMotion {
+            proxy.scrollTo(sectionID, anchor: .center)
+        } else {
+            withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(sectionID, anchor: .center) }
+        }
+    }
 }
 
-private struct CollectionCard: View {
-    @Environment(SelectionModel.self) private var selection
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+private struct FirstLaunchImportView: View {
+    let importAction: () -> Void
 
-    let collection: LibraryCollection
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 42, weight: .light))
+                .foregroundStyle(LibraryPalette.accent)
+            Text(String(localized: "Bring your photos into Moments"))
+                .font(.system(size: 30, weight: .medium, design: .serif))
+                .foregroundStyle(LibraryPalette.ink)
+            Text(String(localized: "Choose a folder and Moments will arrange your library by trips and places."))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(LibraryPalette.muted)
+                .frame(maxWidth: 400)
+            Button(action: importAction) {
+                Label(String(localized: "Import Folder…"), systemImage: "folder.badge.plus")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(LibraryPalette.accent)
+            .accessibilityIdentifier("library.importFolder")
+            Button {
+                NotificationCenter.default.post(name: .momentsShowPhotosImport, object: nil)
+            } label: {
+                Label(String(localized: "Import from Apple Photos…"), systemImage: "photo.on.rectangle")
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("library.importPhotos")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(40)
+    }
+}
+
+private struct LibrarySectionView: View {
+    let section: LibrarySection
+    let items: [MediaItem]
     let state: LibraryViewState
 
-    private var cover: MediaItem? { collection.cover }
-    private var isExpanded: Bool { state.expandedCollectionIDs.contains(collection.id) }
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: 175, maximum: 300), spacing: 24, alignment: .top)]
+    }
 
     var body: some View {
-        if let cover {
-            VStack(alignment: .leading, spacing: 10) {
-                ZStack(alignment: .topLeading) {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(section.title)
+                    .font(.system(size: 21, weight: .medium, design: .serif))
+                    .foregroundStyle(LibraryPalette.ink)
+                Text(dateSpan)
+                    .font(.caption)
+                    .foregroundStyle(LibraryPalette.muted)
+                Spacer()
+                Text("\(section.count) \(String(localized: "photos"))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(LibraryPalette.muted)
+            }
+
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 28) {
+                ForEach(items, id: \.id) { item in
+                    LibraryPhotoCell(item: item, state: state)
+                }
+            }
+        }
+    }
+
+    private var dateSpan: String {
+        guard let start = section.startDate else { return String(localized: "Undated") }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        guard let end = section.endDate, !Calendar.current.isDate(start, inSameDayAs: end) else {
+            return formatter.string(from: start)
+        }
+        return "\(formatter.string(from: start)) – \(formatter.string(from: end))"
+    }
+}
+
+private struct LibraryPhotoCell: View {
+    @Environment(SelectionModel.self) private var selection
+    @Environment(\.modelContext) private var modelContext
+    let item: MediaItem
+    let state: LibraryViewState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            ZStack(alignment: .topLeading) {
+                Button {
+                    selection.select(item.id)
+                } label: {
+                    ThumbnailView(item: item, width: 560, height: 420)
+                        .aspectRatio(1.33, contentMode: .fit)
+                        .padding(5)
+                        .background(Color.white)
+                        .shadow(color: .black.opacity(0.12), radius: 8, y: 5)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("library.photo.\(item.id)")
+                .accessibilityValue(selection.isSelected(item.id) ? "Selected" : "Not selected")
+                .accessibilityAddTraits(selection.isSelected(item.id) ? .isSelected : [])
+
+                HStack(spacing: 6) {
                     Button {
-                        selection.select(cover.id)
+                        selection.toggle(item.id)
                     } label: {
-                        ThumbnailView(item: cover, width: 520, height: 360)
-                            .frame(maxWidth: .infinity)
-                            .aspectRatio(1.36, contentMode: .fit)
+                        Image(systemName: selection.isSelected(item.id) ? "checkmark.circle.fill" : "circle")
+                            .font(.title3)
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, .black.opacity(0.42))
+                            .shadow(radius: 2)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityIdentifier("library.photo.\(cover.id)")
-                    .accessibilityValue(selection.isSelected(cover.id) ? "Selected" : "Not selected")
-                    .accessibilityAddTraits(selection.isSelected(cover.id) ? .isSelected : [])
+                    .accessibilityLabel(String(localized: "Select"))
 
-                    HStack(spacing: 6) {
-                        SelectionButton(item: cover)
-                        Spacer()
-                        FavoriteButton(item: cover)
-                    }
-                    .padding(10)
+                    Spacer()
 
-                    VStack {
-                        Spacer()
-                        HStack(spacing: 6) {
-                            if collection.count > 1 {
-                                Label {
-                                    HStack(spacing: 3) {
-                                        Text(collection.count, format: .number)
-                                        Text("photos")
-                                    }
-                                } icon: {
-                                    Image(systemName: "square.stack.3d.up")
-                                }
-                                    .font(.caption2.monospacedDigit())
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 5)
-                                    .background(.black.opacity(0.52), in: Capsule())
-                            }
-                            if LibraryFilterEngine.isPossibleScreenshot(cover) {
-                                Text("Possible screenshot")
-                                    .font(.caption2)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 5)
-                                    .background(.black.opacity(0.52), in: Capsule())
-                            }
-                            Spacer()
-                        }
-                        .foregroundStyle(.white)
-                        .padding(10)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(selection.isSelected(cover.id) ? Color.accentColor : .clear, lineWidth: 2)
-                }
-
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(cover.title.isEmpty ? cover.id : cover.title)
-                        .font(.headline)
-                        .lineLimit(2)
-                    Spacer(minLength: 4)
-                    if let date = cover.captureDate {
-                        Text(date, format: .dateTime.year().month().day())
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                PlaceEditor(item: cover)
-                MemoryEditor(item: cover, state: state)
-                TagEditor(item: cover)
-
-                if collection.count > 1 {
                     Button {
-                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
-                            state.toggleExpanded(collection.id)
-                        }
+                        item.setFavorite(!item.isFavorite, context: modelContext)
+                        try? modelContext.save()
                     } label: {
-                        Label(
-                            isExpanded ? "Collapse collection" : "Expand collection",
-                            systemImage: isExpanded ? "chevron.up" : "chevron.down"
-                        )
-                        .font(.caption)
+                        Image(systemName: item.isFavorite ? "star.fill" : "star")
+                            .font(.title3)
+                            .foregroundStyle(item.isFavorite ? .yellow : .white)
+                            .shadow(radius: 2)
                     }
-                    .buttonStyle(.borderless)
-
-                    if isExpanded {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 82), spacing: 8)], spacing: 8) {
-                            ForEach(collection.items.dropFirst(), id: \.id) { item in
-                                MemberPhotoCell(item: item)
-                            }
-                        }
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(String(localized: "Favorite"))
                 }
+                .padding(11)
             }
-            .padding(12)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(.quaternary, lineWidth: 1)
-            }
-            .onAppear {
-                if !state.initializedCollectionIDs.contains(collection.id) {
-                    state.initializedCollectionIDs.insert(collection.id)
-                    if collection.items.contains(where: { $0.latestMemory != nil }) {
-                        state.expandedCollectionIDs.insert(collection.id)
-                    }
-                }
-            }
+
+            MemoryEditor(item: item, state: state)
         }
-    }
-}
-
-private struct SelectionButton: View {
-    @Environment(SelectionModel.self) private var selection
-    let item: MediaItem
-
-    var body: some View {
-        Button {
-            selection.toggle(item.id)
-        } label: {
-            Image(systemName: selection.isSelected(item.id) ? "checkmark.circle.fill" : "circle")
-                .font(.title3)
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(.white, .black.opacity(0.4))
-                .shadow(radius: 2)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Select")
-    }
-}
-
-private struct FavoriteButton: View {
-    @Environment(\.modelContext) private var modelContext
-    let item: MediaItem
-
-    var body: some View {
-        Button {
-            item.setFavorite(!item.isFavorite, context: modelContext)
-            try? modelContext.save()
-        } label: {
-            Image(systemName: item.isFavorite ? "star.fill" : "star")
-                .font(.title3)
-                .foregroundStyle(item.isFavorite ? .yellow : .white)
-                .shadow(radius: 2)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Favorite")
-    }
-}
-
-private struct MemberPhotoCell: View {
-    @Environment(SelectionModel.self) private var selection
-    @Environment(\.modelContext) private var modelContext
-    let item: MediaItem
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                selection.select(item.id)
-            } label: {
-                ZStack(alignment: .topTrailing) {
-                    ThumbnailView(item: item, width: 220, height: 150)
-                        .aspectRatio(1.4, contentMode: .fit)
-                    if item.isFavorite {
-                        Image(systemName: "star.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.yellow)
-                            .padding(5)
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("library.photo.\(item.id)")
-            .accessibilityValue(selection.isSelected(item.id) ? "Selected" : "Not selected")
-            .accessibilityAddTraits(selection.isSelected(item.id) ? .isSelected : [])
-            Text(item.title.isEmpty ? item.id : item.title)
-                .font(.caption2)
-                .lineLimit(1)
-        }
-        .padding(4)
-        .background(selection.isSelected(item.id) ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 7))
         .contextMenu {
-            Button {
-                item.setFavorite(!item.isFavorite, context: modelContext)
-                try? modelContext.save()
-            } label: {
-                Text(LocalizedStringKey(item.isFavorite ? "Unfavorite" : "Favorite"))
-            }
+            Button(String(localized: "Select")) { selection.select(item.id) }
         }
     }
 }
@@ -627,65 +733,79 @@ private struct MemoryEditor: View {
 
     let item: MediaItem
     let state: LibraryViewState
-
     @State private var saveTask: Task<Void, Never>?
-    @State private var didSave = false
+    @State private var baseline: LibraryMemorySnapshot?
+    @State private var wasEdited = false
+    @FocusState private var isFocused: Bool
 
-    private var text: String { state.draft(for: item) }
+    private var storedMemory: Memory? {
+        item.latestMemory
+    }
+
+    private var isPartnerMemory: Bool {
+        guard let memory = storedMemory else { return false }
+        if let authorAccountID = memory.authorAccountID {
+            return authorAccountID != MomentsAccount.localID
+        }
+        return memory.author == .partner
+    }
+
+    private var hasMemory: Bool {
+        storedMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
     private var textBinding: Binding<String> {
         Binding(
             get: { state.draft(for: item) },
-            set: {
-                state.setDraft($0, for: item)
-                didSave = false
-                scheduleSave($0)
+            set: { newValue in
+                guard !isPartnerMemory else { return }
+                guard newValue != state.draft(for: item) else { return }
+                if !wasEdited {
+                    baseline = storedMemory.map(LibraryMemorySnapshot.init(memory:))
+                    wasEdited = true
+                }
+                state.setDraft(newValue, for: item)
+                scheduleSave(newValue)
             }
         )
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label("Memory", systemImage: "pencil.and.scribble")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if let memory = item.latestMemory {
-                    Text(LocalizedStringKey(authorLabel(memory.author)))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    if didSave { Text("Saved").font(.caption2).foregroundStyle(.green) }
+        TextEditor(text: textBinding)
+            .font(.system(.body, design: hasMemory ? .serif : .default))
+            .foregroundStyle(LibraryPalette.ink)
+            .frame(minHeight: hasMemory ? 42 : 24, maxHeight: hasMemory ? 110 : 28)
+            .scrollContentBackground(.hidden)
+            .padding(.horizontal, 0)
+            .padding(.vertical, 0)
+            .background(Color.clear)
+            .focused($isFocused)
+            .disabled(isPartnerMemory)
+            .overlay(alignment: .bottom) {
+                if !hasMemory {
+                    Rectangle()
+                        .fill(LibraryPalette.rule)
+                        .frame(height: 1)
                 }
             }
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: textBinding)
-                    .font(.body)
-                    .frame(minHeight: 68, maxHeight: 150)
-                    .scrollContentBackground(.hidden)
-                    .padding(6)
-                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-                    .accessibilityIdentifier("library.memory.\(item.id)")
-                if text.isEmpty {
-                    Text("Write a memory…")
-                        .font(.body)
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 14)
-                        .allowsHitTesting(false)
+            .accessibilityIdentifier("library.memory.\(item.id)")
+            .onAppear {
+                if state.focusedMemoryItemID == item.id { isFocused = true }
+            }
+            .onChange(of: isFocused) { _, focused in
+                if focused {
+                    state.focusedMemoryItemID = item.id
+                } else if state.focusedMemoryItemID == item.id {
+                    state.focusedMemoryItemID = nil
                 }
             }
-        }
-        .onDisappear {
-            saveTask?.cancel()
-            persist(text)
-        }
-    }
-
-    private func authorLabel(_ author: MemoryAuthor) -> String {
-        switch author {
-        case .me: return "Me"
-        case .partner: return "Partner"
-        }
+            .onDisappear {
+                saveTask?.cancel()
+                if !isPartnerMemory {
+                    persist(state.draft(for: item))
+                }
+                if state.focusedMemoryItemID == item.id { state.focusedMemoryItemID = nil }
+            }
     }
 
     private func scheduleSave(_ newText: String) {
@@ -698,195 +818,114 @@ private struct MemoryEditor: View {
     }
 
     private func persist(_ newText: String) {
-        let hasText = !newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if let memory = item.latestMemory {
-            if hasText {
-                memory.text = newText
-                memory.updatedAt = .now
-                memory.updatedBy = MomentsAccount.localID
-                memory.revision += 1
-            } else {
-                modelContext.delete(memory)
+        let memory = storedMemory
+        let stored = memory.map(LibraryMemorySnapshot.init(memory:))
+        if let stored, !stored.isAuthoredByCurrentUser { return }
+        let decision = LibraryMemoryPersistence.decision(
+            draft: newText,
+            wasEdited: wasEdited,
+            baseline: baseline,
+            stored: stored
+        )
+
+        var savedMemory: Memory?
+        switch decision {
+        case .noChange:
+            state.clearDraft(for: item)
+            return
+        case .conflict:
+            guard let memory, stored?.isAuthoredByCurrentUser == true else { return }
+            // Keep the version that arrived while this editor was open. The
+            // current user's draft becomes the live text, while the losing
+            // text remains available through the revision history.
+            modelContext.insert(MemoryRevision(
+                text: memory.text,
+                editedBy: memory.updatedBy ?? MomentsAccount.localID,
+                baseRevision: memory.revision,
+                reason: "conflict",
+                memory: memory
+            ))
+            memory.text = newText
+            memory.updatedAt = .now
+            memory.updatedBy = MomentsAccount.localID
+            memory.revision += 1
+            savedMemory = memory
+        case .delete:
+            guard let memory else { return }
+            modelContext.delete(memory)
+        case .update:
+            guard let memory else { return }
+            if baseline == nil, memory.text != newText {
+                modelContext.insert(MemoryRevision(
+                    text: memory.text,
+                    editedBy: memory.updatedBy ?? MomentsAccount.localID,
+                    baseRevision: memory.revision,
+                    reason: "late-arriving-memory",
+                    memory: memory
+                ))
             }
-        } else if hasText {
-            modelContext.insert(Memory(
+            memory.text = newText
+            memory.updatedAt = .now
+            memory.updatedBy = MomentsAccount.localID
+            memory.revision += 1
+            savedMemory = memory
+        case .insert:
+            let newMemory = Memory(
                 text: newText,
                 author: .me,
                 authorAccountID: MomentsAccount.localID,
                 updatedBy: MomentsAccount.localID,
                 mediaItem: item
-            ))
-        }
-        try? modelContext.save()
-        didSave = hasText || item.latestMemory != nil
-    }
-}
-
-private struct PlaceEditor: View {
-    @Environment(\.modelContext) private var modelContext
-    let item: MediaItem
-
-    @State private var isEditing = false
-    @State private var name = ""
-    @State private var mapLink = ""
-    @State private var latitude = ""
-    @State private var longitude = ""
-    @State private var errorMessage: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            if isEditing {
-                TextField("Place name", text: $name)
-                TextField("Map link", text: $mapLink)
-                HStack {
-                    TextField("Latitude", text: $latitude)
-                    TextField("Longitude", text: $longitude)
-                }
-                if let errorMessage {
-                    Text(LocalizedStringKey(errorMessage)).font(.caption2).foregroundStyle(.red)
-                }
-                HStack {
-                    Button("Save place") { save() }
-                    Button("Cancel") { load() }
-                        .buttonStyle(.borderless)
-                }
-                .font(.caption)
-            } else {
-                HStack(spacing: 6) {
-                    Image(systemName: "mappin.and.ellipse")
-                        .foregroundStyle(.secondary)
-                    if let placeName = item.effectivePlaceName, !placeName.isEmpty {
-                        Text(placeName)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    } else {
-                        Text("No place")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button {
-                        load()
-                        isEditing = true
-                    } label: {
-                        Image(systemName: "pencil")
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.caption2)
-                    .help("Edit place")
-                    .accessibilityLabel("Edit place")
-                }
-            }
-        }
-        .onAppear { load() }
-    }
-
-    private func load() {
-        name = item.placeOverrideName ?? item.place?.name ?? ""
-        mapLink = item.placeOverrideMapLink ?? item.place?.mapLink ?? ""
-        latitude = item.placeOverrideLatitude.map { String(describing: $0) } ?? ""
-        longitude = item.placeOverrideLongitude.map { String(describing: $0) } ?? ""
-        errorMessage = nil
-        isEditing = false
-    }
-
-    private func save() {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedLink = mapLink.trimmingCharacters(in: .whitespacesAndNewlines)
-        let latText = latitude.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lonText = longitude.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !latText.isEmpty || !lonText.isEmpty {
-            guard let lat = Double(latText), let lon = Double(lonText), (-90...90).contains(lat), (-180...180).contains(lon) else {
-                errorMessage = "Enter valid coordinates"
-                return
-            }
-        }
-        let existing = item.localPlaceOverride
-        if let existing {
-            if trimmedName.isEmpty && trimmedLink.isEmpty && latText.isEmpty && lonText.isEmpty {
-                modelContext.delete(existing)
-            } else {
-                existing.nameOverride = trimmedName.isEmpty ? nil : trimmedName
-                existing.mapLinkOverride = trimmedLink.isEmpty ? nil : trimmedLink
-                if !latText.isEmpty, let lat = Double(latText), let lon = Double(lonText) {
-                    existing.latitude = lat
-                    existing.longitude = lon
-                } else {
-                    existing.latitude = nil
-                    existing.longitude = nil
-                }
-                existing.updatedAt = .now
-                existing.updatedBy = MomentsAccount.localID
-            }
-        } else if !trimmedName.isEmpty || !trimmedLink.isEmpty || !latText.isEmpty || !lonText.isEmpty {
-            let override = PlaceOverride(
-                placeID: item.place?.id,
-                mediaID: item.id,
-                accountID: MomentsAccount.localID,
-                nameOverride: trimmedName.isEmpty ? nil : trimmedName,
-                mapLinkOverride: trimmedLink.isEmpty ? nil : trimmedLink,
-                latitude: latText.isEmpty ? nil : Double(latText),
-                longitude: lonText.isEmpty ? nil : Double(lonText),
-                updatedBy: MomentsAccount.localID,
-                place: item.place,
-                mediaItem: item
             )
-            modelContext.insert(override)
+            modelContext.insert(newMemory)
+            savedMemory = newMemory
         }
-        try? modelContext.save()
-        isEditing = false
+
+        do {
+            try modelContext.save()
+            baseline = savedMemory.map(LibraryMemorySnapshot.init(memory:))
+            state.clearDraft(for: item)
+        } catch {
+            // Keep the draft in LibraryViewState so a transient save failure does not lose input.
+        }
     }
 }
 
-private struct TagEditor: View {
-    @Environment(\.modelContext) private var modelContext
-    let item: MediaItem
-    @State private var tagDraft = ""
+struct ReviewListView: View {
+    @Query private var items: [MediaItem]
 
-    var body: some View {
-        HStack(spacing: 6) {
-            ForEach(item.tags.sorted { $0.displayName < $1.displayName }, id: \.id) { tag in
-                HStack(spacing: 3) {
-                    Text(tag.displayName)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                    Button {
-                        item.removeTag(tag, context: modelContext)
-                        try? modelContext.save()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                }
-                .font(.caption2)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(.quaternary, in: Capsule())
+    private var pending: [MediaItem] {
+        items
+            .filter { $0.needsImportReview }
+            .sorted {
+                ($0.effectiveCaptureDate ?? .distantPast) < ($1.effectiveCaptureDate ?? .distantPast)
             }
-            TextField("Add tag", text: $tagDraft)
-                .textFieldStyle(.roundedBorder)
-                .font(.caption2)
-                .frame(minWidth: 108)
-                .onSubmit(addTag)
-        }
     }
 
-    private func addTag() {
-        let name = tagDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedName = Tag.normalize(name)
-        guard !normalizedName.isEmpty, !item.tags.contains(where: { $0.normalizedName == normalizedName }) else { return }
-        let tag: Tag
-        do {
-            tag = try Tag.lookupOrCreate(displayName: name, in: modelContext)
-        } catch {
-            return
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(String(localized: "To review"))
+                .font(.system(size: 30, weight: .medium, design: .serif))
+                .foregroundStyle(LibraryPalette.ink)
+            if pending.isEmpty {
+                ContentUnavailableView(String(localized: "Nothing to review"), systemImage: "checkmark.circle", description: Text(String(localized: "Import review items will appear here.")))
+            } else {
+                List(pending, id: \.id) { item in
+                    HStack(spacing: 12) {
+                        ThumbnailView(item: item, width: 90, height: 70)
+                            .frame(width: 90, height: 70)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.title.isEmpty ? item.id : item.title)
+                            Text(item.importReviewReasons.map(\.label).joined(separator: " · "))
+                                .font(.caption)
+                                .foregroundStyle(LibraryPalette.muted)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
         }
-        item.addTag(tag, context: modelContext)
-        tagDraft = ""
-        try? modelContext.save()
+        .padding(34)
+        .background(LibraryPalette.content)
     }
 }

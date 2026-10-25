@@ -35,11 +35,15 @@ struct FolderImporter {
     let configuration: ImportConfiguration
     let geocoder: any ImportGeocoder
     let geocodeCache: ImportGeocodeCache
+    let geocodeDelay: @Sendable () async -> Void
 
     init(
         configuration: ImportConfiguration = ImportConfiguration(),
         geocoder: any ImportGeocoder = CoreLocationImportGeocoder(),
-        geocodeCache: ImportGeocodeCache? = nil
+        geocodeCache: ImportGeocodeCache? = nil,
+        geocodeDelay: @escaping @Sendable () async -> Void = {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
     ) {
         self.configuration = configuration
         self.geocoder = geocoder
@@ -48,6 +52,7 @@ struct FolderImporter {
                 .appending(path: "Moments", directoryHint: .isDirectory)
                 .appending(path: "import-geocoding.json")
         )
+        self.geocodeDelay = geocodeDelay
     }
 
     func importFolder(
@@ -79,7 +84,14 @@ struct FolderImporter {
             progress(ImportProgress(phase: .readingMetadata, completed: index + 1, total: urls.count, message: String(localized: "Reading metadata")))
         }
         guard !metadata.isEmpty else { throw FolderImportError.noSupportedMedia }
-        let organizedMetadata = coalesceDuplicatesAndLivePairs(metadata)
+        let organizer = ImportOrganizer(
+            configuration: configuration,
+            geocoder: geocoder,
+            geocodeCache: geocodeCache,
+            geocodeDelay: geocodeDelay
+        )
+        let resolvedMetadata = try await organizer.resolveCaptureDates(metadata)
+        let organizedMetadata = coalesceDuplicatesAndLivePairs(resolvedMetadata)
         let sourceFileCount = organizedMetadata.reduce(into: 0) { $0 += $1.sourceReferences.count }
 
         let context = ModelContext(container)
@@ -108,11 +120,7 @@ struct FolderImporter {
         }
 
         progress(ImportProgress(phase: .organizing, completed: 0, total: fresh.count, message: String(localized: "Organizing trips and places")))
-        let plan = try await ImportOrganizer(
-            configuration: configuration,
-            geocoder: geocoder,
-            geocodeCache: geocodeCache
-        ).organize(fresh)
+        let plan = try await organizer.organize(fresh)
         try Task.checkCancellation()
 
         progress(ImportProgress(phase: .saving, completed: 0, total: fresh.count, message: String(localized: "Saving import")))
@@ -228,15 +236,29 @@ struct FolderImporter {
             }
         }
         let unique = order.compactMap { byHash[$0] }
-        var photoByBase: [String: ImportedMediaMetadata] = [:]
-        for item in unique where item.kind == .photo || item.kind == .live {
-            photoByBase[item.baseName.lowercased()] = item
-        }
         var liveByPhotoID: [String: ImportedMediaMetadata] = [:]
         var consumedVideoIDs = Set<String>()
+        var consumedPhotoIDs = Set<String>()
         for video in unique where video.kind == .video {
-            guard let photo = photoByBase[video.baseName.lowercased()] else { continue }
+            let candidates = unique.filter { photo in
+                guard (photo.kind == .photo || photo.kind == .live),
+                      !consumedPhotoIDs.contains(photo.id),
+                      photo.baseName.caseInsensitiveCompare(video.baseName) == .orderedSame,
+                      photo.parentDirectoryKey == video.parentDirectoryKey else { return false }
+                guard abs(photo.captureDate.timeIntervalSince(video.captureDate)) <= 3 else { return false }
+                if let photoIdentifier = photo.appleContentIdentifier,
+                   let videoIdentifier = video.appleContentIdentifier {
+                    return photoIdentifier == videoIdentifier
+                }
+                return true
+            }
+            guard let photo = candidates.min(by: { lhs, rhs in
+                let leftGap = abs(lhs.captureDate.timeIntervalSince(video.captureDate))
+                let rightGap = abs(rhs.captureDate.timeIntervalSince(video.captureDate))
+                return leftGap == rightGap ? lhs.id < rhs.id : leftGap < rightGap
+            }) else { continue }
             consumedVideoIDs.insert(video.id)
+            consumedPhotoIDs.insert(photo.id)
             liveByPhotoID[photo.id] = photo.replacing(
                 kind: .live,
                 duration: video.duration,

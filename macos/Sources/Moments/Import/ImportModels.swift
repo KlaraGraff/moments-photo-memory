@@ -10,6 +10,8 @@ public enum ImportReviewReason: String, CaseIterable, Codable, Hashable, Sendabl
     case airDropReceived = "airdrop-received"
     case nearDuplicate = "near-duplicate"
     case needsDate = "needs-date"
+    case timeZoneUnknown = "time-zone-unknown"
+    case geocodingRetry = "geocoding-retry"
     case noPhotosGap = "no-photos-gap"
     case transportCandidate = "transport-candidate"
 
@@ -25,6 +27,8 @@ public enum ImportReviewReason: String, CaseIterable, Codable, Hashable, Sendabl
         case .airDropReceived: return String(localized: "Possible AirDrop receive time")
         case .nearDuplicate: return String(localized: "Possible near-duplicate")
         case .needsDate: return String(localized: "Needs a date")
+        case .timeZoneUnknown: return String(localized: "Time zone needs review")
+        case .geocodingRetry: return String(localized: "Place lookup needs retry")
         case .noPhotosGap: return String(localized: "No photos gap")
         case .transportCandidate: return String(localized: "Possible transport")
         }
@@ -40,6 +44,7 @@ public enum ImportReviewDecision: String, Codable, Equatable, Sendable {
 
 public enum ImportTimeConfidence: String, Codable, Equatable, Sendable {
     case exact
+    case zoneUnknown
     case low
     case missing
     case userCorrected
@@ -205,6 +210,13 @@ public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
     public let dateHintUTC: Date?
     public let timeConfidence: ImportTimeConfidence
     public let timeZoneIdentifier: String?
+    /// The source directory is kept only while an import is being organized.
+    /// It is intentionally not part of any persisted model or source reference.
+    public let parentDirectoryKey: String?
+    /// Apple Live Photo content identifier, used only for pairing in memory.
+    public let appleContentIdentifier: String?
+    /// EXIF local wall-clock components encoded as UTC until a zone is resolved.
+    public let wallClockDate: Date?
     public let sourceReferences: [ImportedSourceReference]
     public let pairedVideoContentHash: String?
     public let pairedVideoBookmarkData: Data?
@@ -238,6 +250,9 @@ public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
         dateHintUTC: Date? = nil,
         timeConfidence: ImportTimeConfidence = .exact,
         timeZoneIdentifier: String? = nil,
+        parentDirectoryKey: String? = nil,
+        appleContentIdentifier: String? = nil,
+        wallClockDate: Date? = nil,
         sourceReferences: [ImportedSourceReference]? = nil,
         pairedVideoContentHash: String? = nil,
         pairedVideoBookmarkData: Data? = nil
@@ -259,6 +274,9 @@ public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
         self.dateHintUTC = dateHintUTC ?? (timeConfidence == .low ? captureDate : nil)
         self.timeConfidence = timeConfidence
         self.timeZoneIdentifier = timeZoneIdentifier
+        self.parentDirectoryKey = parentDirectoryKey
+        self.appleContentIdentifier = appleContentIdentifier
+        self.wallClockDate = wallClockDate
         self.sourceReferences = sourceReferences ?? [
             ImportedSourceReference(contentHash: contentHash, fileName: fileName, bookmarkData: bookmarkData)
         ]
@@ -272,7 +290,10 @@ public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
         sourceReferences: [ImportedSourceReference]? = nil,
         pairedVideoContentHash: String? = nil,
         pairedVideoBookmarkData: Data? = nil,
-        timeZoneIdentifier: String? = nil
+        timeZoneIdentifier: String? = nil,
+        parentDirectoryKey: String? = nil,
+        appleContentIdentifier: String? = nil,
+        wallClockDate: Date? = nil
     ) -> ImportedMediaMetadata {
         ImportedMediaMetadata(
             id: id,
@@ -292,9 +313,46 @@ public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
             dateHintUTC: dateHintUTC,
             timeConfidence: timeConfidence,
             timeZoneIdentifier: timeZoneIdentifier ?? self.timeZoneIdentifier,
+            parentDirectoryKey: parentDirectoryKey ?? self.parentDirectoryKey,
+            appleContentIdentifier: appleContentIdentifier ?? self.appleContentIdentifier,
+            wallClockDate: wallClockDate ?? self.wallClockDate,
             sourceReferences: sourceReferences ?? self.sourceReferences,
             pairedVideoContentHash: pairedVideoContentHash ?? self.pairedVideoContentHash,
             pairedVideoBookmarkData: pairedVideoBookmarkData ?? self.pairedVideoBookmarkData
+        )
+    }
+
+    func resolving(
+        captureDate: Date,
+        exactCaptureDate: Date,
+        dateHintUTC: Date?,
+        timeConfidence: ImportTimeConfidence,
+        timeZoneIdentifier: String
+    ) -> ImportedMediaMetadata {
+        ImportedMediaMetadata(
+            id: id,
+            bookmarkData: bookmarkData,
+            fileName: fileName,
+            contentHash: contentHash,
+            captureDate: captureDate,
+            captureDateSource: captureDateSource,
+            timeZoneOffsetMinutes: timeZoneOffsetMinutes,
+            latitude: latitude,
+            longitude: longitude,
+            width: width,
+            height: height,
+            kind: kind,
+            duration: duration,
+            exactCaptureDate: exactCaptureDate,
+            dateHintUTC: dateHintUTC,
+            timeConfidence: timeConfidence,
+            timeZoneIdentifier: timeZoneIdentifier,
+            parentDirectoryKey: parentDirectoryKey,
+            appleContentIdentifier: appleContentIdentifier,
+            wallClockDate: nil,
+            sourceReferences: sourceReferences,
+            pairedVideoContentHash: pairedVideoContentHash,
+            pairedVideoBookmarkData: pairedVideoBookmarkData
         )
     }
 }

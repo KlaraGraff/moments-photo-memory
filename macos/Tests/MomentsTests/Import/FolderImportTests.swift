@@ -133,6 +133,81 @@ final class FolderImportTests: XCTestCase {
         XCTAssertEqual(Set(items.compactMap(\.localTimeZoneOffsetMinutes)), [120, -300])
     }
 
+    func testOffsetlessExifResolvesUsingCoordinateTimeZoneBeforeOrdering() async throws {
+        let folder = try SyntheticMediaFixture.makeFolder()
+        defer { SyntheticMediaFixture.removeFolder(folder) }
+        // The first file stores 22:30 as a local wall-clock value with no
+        // offset. Shanghai resolves that to 14:30 UTC, before the 14:45 file.
+        try SyntheticMediaFixture.writeJPEG(
+            at: folder.appendingPathComponent("wall-clock.jpg"),
+            date: Date(timeIntervalSince1970: 1_767_306_600),
+            offset: nil,
+            latitude: 31.2,
+            longitude: 121.5,
+            marker: 41
+        )
+        try SyntheticMediaFixture.writeJPEG(
+            at: folder.appendingPathComponent("offset.jpg"),
+            date: Date(timeIntervalSince1970: 1_767_278_700),
+            offset: "+00:00",
+            latitude: 31.2,
+            longitude: 121.5,
+            marker: 42
+        )
+
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let importer = FolderImporter(
+            geocoder: SyntheticGeocoder(result: ImportGeocodeResult(city: "Shanghai", timeZoneIdentifier: "Asia/Shanghai")),
+            geocodeCache: ImportGeocodeCache(),
+            geocodeDelay: {}
+        )
+        let summary = try await importer.importFolder(folder, container: container)
+        let items = try container.mainContext.fetch(FetchDescriptor<MediaItem>()).sorted { $0.captureDate! < $1.captureDate! }
+        let wallClock = try XCTUnwrap(items.first(where: { $0.title == "wall-clock.jpg" }))
+        XCTAssertEqual(items.map(\.title), ["wall-clock.jpg", "offset.jpg"])
+        XCTAssertEqual(wallClock.localDayKey, "2026-01-01")
+        XCTAssertEqual(wallClock.timeConfidence, .exact)
+        XCTAssertTrue(summary.flags.allSatisfy { !$0.reasons.contains(.timeZoneUnknown) })
+    }
+
+    func testOffsetlessExifWithoutZoneUsesLowConfidenceAndReviewReason() async throws {
+        let folder = try SyntheticMediaFixture.makeFolder()
+        defer { SyntheticMediaFixture.removeFolder(folder) }
+        try SyntheticMediaFixture.writeJPEG(
+            at: folder.appendingPathComponent("unknown-zone.jpg"),
+            date: Date(timeIntervalSince1970: 1_767_306_600),
+            offset: nil,
+            marker: 43
+        )
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let importer = FolderImporter(geocoder: SyntheticGeocoder(result: ImportGeocodeResult()), geocodeCache: ImportGeocodeCache(), geocodeDelay: {})
+        let summary = try await importer.importFolder(folder, container: container)
+        let item = try XCTUnwrap(try container.mainContext.fetch(FetchDescriptor<MediaItem>()).first)
+        XCTAssertEqual(item.timeConfidence, .zoneUnknown)
+        XCTAssertTrue(summary.flags.first?.reasons.contains(.timeZoneUnknown) == true)
+        XCTAssertNotNil(item.captureDate)
+    }
+
+    func testGeocodingFailureLeavesPlaceUnnamedAndContinuesImport() async throws {
+        let folder = try SyntheticMediaFixture.makeFolder()
+        defer { SyntheticMediaFixture.removeFolder(folder) }
+        let date = Date(timeIntervalSince1970: 1_767_225_600)
+        try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("named.jpg"), date: date, latitude: 0, longitude: 0, marker: 44)
+        try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("retry.jpg"), date: date.addingTimeInterval(60), latitude: 5, longitude: 5, marker: 45)
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let importer = FolderImporter(
+            geocoder: ThrowingSyntheticGeocoder(),
+            geocodeCache: ImportGeocodeCache(),
+            geocodeDelay: {}
+        )
+        let summary = try await importer.importFolder(folder, container: container)
+        let places = try container.mainContext.fetch(FetchDescriptor<Place>())
+        XCTAssertEqual(summary.importedCount, 2)
+        XCTAssertTrue(places.contains { $0.name == "Synthetic City" })
+        XCTAssertTrue(places.contains { $0.name.isEmpty })
+        XCTAssertTrue(summary.flags.contains { $0.reasons.contains(.geocodingRetry) })
+    }
+
     func testOneThousandFiveHundredSyntheticFilesFinishUnderSixtySeconds() async throws {
         let folder = try SyntheticMediaFixture.makeFolder()
         defer { SyntheticMediaFixture.removeFolder(folder) }
@@ -180,5 +255,14 @@ private struct SyntheticGeocoder: ImportGeocoder {
 
     func reverseGeocode(coordinate: MomentsCore.GeoPoint) async throws -> ImportGeocodeResult {
         result
+    }
+}
+
+private struct ThrowingSyntheticGeocoder: ImportGeocoder {
+    enum Failure: Error { case unavailable }
+
+    func reverseGeocode(coordinate: MomentsCore.GeoPoint) async throws -> ImportGeocodeResult {
+        if coordinate.longitude > 1 { throw Failure.unavailable }
+        return ImportGeocodeResult(city: "Synthetic City", timeZoneIdentifier: "UTC")
     }
 }

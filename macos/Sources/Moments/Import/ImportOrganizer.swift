@@ -77,8 +77,24 @@ struct ImportOrganizer {
     let configuration: ImportConfiguration
     let geocoder: any ImportGeocoder
     let geocodeCache: ImportGeocodeCache
+    let geocodeDelay: @Sendable () async -> Void
 
-    func organize(_ metadata: [ImportedMediaMetadata]) async throws -> OrganizedImportPlan {
+    init(
+        configuration: ImportConfiguration,
+        geocoder: any ImportGeocoder,
+        geocodeCache: ImportGeocodeCache,
+        geocodeDelay: @escaping @Sendable () async -> Void = {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+    ) {
+        self.configuration = configuration
+        self.geocoder = geocoder
+        self.geocodeCache = geocodeCache
+        self.geocodeDelay = geocodeDelay
+    }
+
+    func organize(_ inputMetadata: [ImportedMediaMetadata]) async throws -> OrganizedImportPlan {
+        let metadata = try await resolveCaptureDates(inputMetadata)
         guard !metadata.isEmpty else {
             return OrganizedImportPlan(media: [], trips: [], places: [], collectionCount: 0, routeCount: 0, flags: [], conflicts: [])
         }
@@ -117,14 +133,17 @@ struct ImportOrganizer {
             let spotClusters = clusterer.clusters(for: stops, level: .spot)
             let areaClusters = clusterer.clusters(for: stops, level: .area)
             let cityClusters = clusterer.clusters(for: stops, level: .city)
-            let cityNames = try await cityNames(for: cityClusters)
+            let cityLookup = try await cityNames(for: cityClusters)
+            let cityNames = cityLookup.values
 
             let cityByStop = clusterMap(cityClusters)
             let areaByStop = clusterMap(areaClusters)
             let spotByStop = clusterMap(spotClusters)
             var placeByID: [String: OrganizedPlace] = [:]
             for cluster in cityClusters {
-                let name = cityNames[cluster.id]?.city ?? String(localized: "Unknown city")
+                let name = cityLookup.failed.contains(cluster.id)
+                    ? ""
+                    : cityNames[cluster.id]?.city ?? String(localized: "Unknown city")
                 placeByID[cluster.id] = OrganizedPlace(
                     id: cluster.id,
                     name: name,
@@ -138,7 +157,9 @@ struct ImportOrganizer {
                 let parent = cluster.stopIDs.compactMap { cityByStop[$0]?.id }.first
                 placeByID[cluster.id] = OrganizedPlace(
                     id: cluster.id,
-                    name: cityNames[parent ?? ""]?.area ?? String(localized: "Unknown area"),
+                    name: cityLookup.failed.contains(parent ?? "")
+                        ? ""
+                        : cityNames[parent ?? ""]?.area ?? String(localized: "Unknown area"),
                     kind: .area,
                     latitude: cluster.center?.latitude,
                     longitude: cluster.center?.longitude,
@@ -165,6 +186,7 @@ struct ImportOrganizer {
                 var reasons: [ImportReviewReason] = []
                 var detailParts: [String] = []
                 if coordinate == nil { reasons.append(.missingLocation) }
+                if item.timeConfidence == .zoneUnknown { reasons.append(.timeZoneUnknown) }
                 if item.captureDateSource == .fileDateFallback {
                     reasons.append(.fileDateFallback)
                     reasons.append(.needsDate)
@@ -178,6 +200,9 @@ struct ImportOrganizer {
                     reasons.append(.captureDateOutsideTrip)
                 }
                 if nearDuplicateIDs.contains(item.id) { reasons.append(.nearDuplicate) }
+                if let cityID = cityByStop[item.id]?.id, cityLookup.failed.contains(cityID) {
+                    reasons.append(.geocodingRetry)
+                }
                 for event in conflictsByItemID[item.id] ?? [] {
                     switch event.kind {
                     case .transport:
@@ -260,6 +285,97 @@ struct ImportOrganizer {
         )
     }
 
+    /// Resolve offset-less EXIF wall-clock values before any ordering,
+    /// grouping, conflict detection, or Live Photo pairing uses them.
+    func resolveCaptureDates(_ metadata: [ImportedMediaMetadata]) async throws -> [ImportedMediaMetadata] {
+        let unresolved = metadata.filter { wallClockDate(for: $0) != nil }
+        guard !unresolved.isEmpty else { return metadata }
+
+        var timeZones: [String: String] = [:]
+        for item in metadata {
+            if let identifier = item.timeZoneIdentifier {
+                timeZones[item.id] = identifier
+            }
+        }
+
+        // A coordinate's own geocode is the strongest source for an
+        // offset-less EXIF value. Failures are deliberately ignored here so a
+        // neighbouring known zone or the device zone can still be used.
+        for item in unresolved where timeZones[item.id] == nil {
+            guard let coordinate = coordinate(for: item) else { continue }
+            if let result = try await lookupGeocode(coordinate: coordinate),
+               let identifier = result.timeZoneIdentifier {
+                timeZones[item.id] = identifier
+            }
+        }
+
+        let candidates = metadata.compactMap { item -> (date: Date, identifier: String)? in
+            guard let identifier = timeZones[item.id] else { return nil }
+            return (item.captureDate, identifier)
+        }
+
+        return metadata.map { item in
+            guard let wallClockDate = wallClockDate(for: item) else { return item }
+            let identifier = timeZones[item.id]
+                ?? candidates.min { lhs, rhs in
+                    let leftGap = abs(lhs.date.timeIntervalSince(item.captureDate))
+                    let rightGap = abs(rhs.date.timeIntervalSince(item.captureDate))
+                    return leftGap == rightGap ? lhs.identifier < rhs.identifier : leftGap < rightGap
+                }?.identifier
+            let zoneUnknown = identifier == nil
+            let resolvedIdentifier = identifier ?? TimeZone.autoupdatingCurrent.identifier
+            let resolvedDate = resolveWallClockDate(
+                wallClockDate,
+                in: TimeZone(identifier: resolvedIdentifier) ?? .autoupdatingCurrent
+            )
+            return item.resolving(
+                captureDate: resolvedDate,
+                exactCaptureDate: resolvedDate,
+                dateHintUTC: zoneUnknown ? wallClockDate : nil,
+                timeConfidence: zoneUnknown ? .zoneUnknown : .exact,
+                timeZoneIdentifier: resolvedIdentifier
+            )
+        }
+    }
+
+    private func resolveWallClockDate(_ wallClockDate: Date, in timeZone: TimeZone) -> Date {
+        var sourceCalendar = Calendar(identifier: .gregorian)
+        sourceCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let components = sourceCalendar.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second],
+            from: wallClockDate
+        )
+        var targetCalendar = Calendar(identifier: .gregorian)
+        targetCalendar.timeZone = timeZone
+        return targetCalendar.date(from: components) ?? wallClockDate
+    }
+
+    /// Only items that still carry raw EXIF wall-clock time need resolving.
+    /// `resolving(...)` clears it, so running this twice (importer, then
+    /// organizer) never re-resolves an item against the zone it was given.
+    private func wallClockDate(for item: ImportedMediaMetadata) -> Date? {
+        item.wallClockDate
+    }
+
+    private func coordinate(for item: ImportedMediaMetadata) -> GeoPoint? {
+        guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
+        return GeoPoint(latitude: latitude, longitude: longitude)
+    }
+
+    private func lookupGeocode(coordinate: GeoPoint) async throws -> ImportGeocodeResult? {
+        if let cached = await geocodeCache.result(for: coordinate) { return cached }
+        await geocodeDelay()
+        do {
+            let result = try await geocoder.reverseGeocode(coordinate: coordinate)
+            await geocodeCache.insert(result, for: coordinate)
+            return result
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return nil
+        }
+    }
+
     private func splitTrips(_ ordered: [ImportedMediaMetadata]) -> [[ImportedMediaMetadata]] {
         var groups: [[ImportedMediaMetadata]] = []
         var current: [ImportedMediaMetadata] = []
@@ -307,11 +423,6 @@ struct ImportOrganizer {
         return neighbours.contains { abs(item.captureDate.timeIntervalSince($0.captureDate)) > configuration.captureDateConflictThreshold }
     }
 
-    private func coordinate(for item: ImportedMediaMetadata) -> GeoPoint? {
-        guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
-        return GeoPoint(latitude: latitude, longitude: longitude)
-    }
-
     private func localDayKey(for item: ImportedMediaMetadata, timeZoneIdentifier: String?) -> String {
         var calendar = Calendar(identifier: .gregorian)
         if let offset = item.timeZoneOffsetMinutes,
@@ -327,8 +438,9 @@ struct ImportOrganizer {
         return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
     }
 
-    private func cityNames(for clusters: [PlaceCluster]) async throws -> [String: ImportGeocodeResult] {
+    private func cityNames(for clusters: [PlaceCluster]) async throws -> (values: [String: ImportGeocodeResult], failed: Set<String>) {
         var values: [String: ImportGeocodeResult] = [:]
+        var failed = Set<String>()
         for cluster in clusters {
             try Task.checkCancellation()
             guard let center = cluster.center else { continue }
@@ -336,11 +448,17 @@ struct ImportOrganizer {
                 values[cluster.id] = cached
                 continue
             }
-            let result = try await geocoder.reverseGeocode(coordinate: center)
-            await geocodeCache.insert(result, for: center)
-            values[cluster.id] = result
+            do {
+                if let result = try await lookupGeocode(coordinate: center) {
+                    values[cluster.id] = result
+                } else {
+                    failed.insert(cluster.id)
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            }
         }
-        return values
+        return (values, failed)
     }
 
     private func clusterMap(_ clusters: [PlaceCluster]) -> [String: PlaceCluster] {

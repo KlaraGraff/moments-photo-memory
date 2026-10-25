@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 final class MomentsUITests: XCTestCase {
@@ -15,6 +16,9 @@ final class MomentsUITests: XCTestCase {
 
     func testNavigationScreenshotsGermanDarkSmallWindow() {
         let app = launch(language: "de", darkMode: true, smallWindow: true)
+        // The app is light only: with the Mac in Dark Mode the window must still
+        // render the light paper palette, not light text on a light background.
+        assertWindowRendersLight(app)
         navigateAndCapture(app, prefix: "de-dark-small", settleMap: true)
     }
 
@@ -23,11 +27,15 @@ final class MomentsUITests: XCTestCase {
         let library = element(in: app, identifier: "sidebar.library")
         XCTAssertTrue(library.waitForExistence(timeout: launchTimeout))
 
-        let photo = element(in: app, identifier: "library.photo.D0001")
+        // Sections run newest first, so use the first visible demo photo.
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+            .firstMatch
         XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
+        let photoID = String(photo.identifier.dropFirst("library.photo.".count))
         photo.click()
 
-        let memory = element(in: app, identifier: "library.memory.D0001")
+        let memory = element(in: app, identifier: "library.memory.\(photoID)")
         XCTAssertTrue(memory.waitForExistence(timeout: launchTimeout))
         let text = "UI smoke memory \(UUID().uuidString)"
         memory.click()
@@ -133,6 +141,26 @@ final class MomentsUITests: XCTestCase {
             XCTAssertTrue(window.waitForExistence(timeout: launchTimeout), "Moments opened no window")
         }
         return app
+    }
+
+    private func assertWindowRendersLight(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let image = app.windows.firstMatch.screenshot().image
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            XCTFail("Could not read the window screenshot", file: file, line: line)
+            return
+        }
+        // Average luminance on a 32x32 downsample; the light paper design sits well above 0.6.
+        let size = 32
+        var pixels = [UInt8](repeating: 0, count: size * size * 4)
+        let context = CGContext(data: &pixels, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size * 4,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        context?.draw(cgImage, in: CGRect(x: 0, y: 0, width: size, height: size))
+        var total = 0.0
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            total += 0.2126 * Double(pixels[index]) + 0.7152 * Double(pixels[index + 1]) + 0.0722 * Double(pixels[index + 2])
+        }
+        let luminance = total / Double(size * size) / 255
+        XCTAssertGreaterThan(luminance, 0.6, "The window rendered dark (luminance \(luminance)) while the app is light only", file: file, line: line)
     }
 
     private func element(in app: XCUIApplication, identifier: String) -> XCUIElement {

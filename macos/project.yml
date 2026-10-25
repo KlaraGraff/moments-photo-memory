@@ -1,0 +1,60 @@
+name: Moments
+
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    SWIFT_VERSION: "5.0"
+    PRODUCT_BUNDLE_IDENTIFIER: "org.example.Moments"
+    GENERATE_INFOPLIST_FILE: "YES"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGN_IDENTITY: ""
+
+packages: {}
+
+targets:
+  Moments:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/Moments
+    resources:
+      - path: Sources/Moments/Resources/Localizable.xcstrings
+    settings:
+      base:
+        INFOPLIST_KEY_CFBundleDisplayName: Moments
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
+    postBuildScripts:
+      - name: Copy synthetic demo seed
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "${CONFIGURATION}" = "Debug" ]; then
+            mkdir -p "${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+            cp "${SRCROOT}/../demo/sample-data.json" "${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/sample-data.json"
+          fi
+    scheme:
+      testTargets:
+        - MomentsTests
+  MomentsTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/MomentsTests
+    dependencies:
+      - target: Moments
+
+schemes:
+  Moments:
+    build:
+      targets:
+        Moments: all
+        MomentsTests: [test]
+    test:
+      targets:
+        - name: MomentsTests

@@ -40,3 +40,10 @@ __pycache__/
 .DS_Store
 node_modules/
 .venv/
+# Generated native project and build output.
+macos/*.xcodeproj/
+macos/*.xcworkspace/
+macos/.derivedData/
+macos/DerivedData/
+macos/build/
+macos/.build/

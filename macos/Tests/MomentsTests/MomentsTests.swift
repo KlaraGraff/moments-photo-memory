@@ -89,6 +89,24 @@ final class MomentsTests: XCTestCase {
         XCTAssertEqual(Set(candidates.map { $0.id }), ["possible", "named"])
     }
 
+    /// Measures the work Library redoes when its inputs change (filter + group) on
+    /// the 5,000-item debug library. Scrolling itself does not regroup.
+    func testFiveThousandItemFilterAndGroupStaysUnderFrameBudgetTimesTen() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        XCTAssertEqual(try DemoSeeder.generateSyntheticLibrary(count: 5_000, context: context), 5_000)
+        let items = try context.fetch(FetchDescriptor<MediaItem>())
+
+        let start = Date()
+        let visible = LibraryFilterEngine.filteredItems(items, by: .default)
+        let groups = LibraryFilterEngine.groupedItems(visible, by: .default, sortOrder: .oldestFirst)
+        let elapsed = Date().timeIntervalSince(start)
+        print("Library 5k filter+group: \(Int(elapsed * 1_000)) ms, \(groups.count) collections")
+
+        XCTAssertFalse(groups.isEmpty)
+        XCTAssertLessThan(elapsed, 0.5)
+    }
+
     func testLibraryFilterLogicCombinesDatePlaceTypeFavoriteAndTrip() throws {
         let container = try MomentsPersistence.makeContainer(inMemory: true)
         let context = container.mainContext

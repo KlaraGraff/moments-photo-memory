@@ -21,6 +21,11 @@ struct LibraryView: View {
     @AppStorage("moments.library.screenshotFilter") private var screenshotFilterRaw = LibraryScreenshotFilter.all.rawValue
 
     @State private var filtersAreVisible = false
+    /// Grouping 5,000 items is too slow to redo on every render or selection
+    /// change, so collections are rebuilt only when `groupingKey` changes.
+    @State private var cachedCollections: [LibraryCollection] = []
+    @State private var cachedVisibleCount = 0
+    @State private var hasGrouped = false
 
     init(state: LibraryViewState) {
         self.state = state
@@ -71,6 +76,34 @@ struct LibraryView: View {
         Array(Set(items.compactMap(\.tripKey))).sorted()
     }
 
+    private var groupingKey: Int {
+        var hasher = Hasher()
+        hasher.combine(filterSignature)
+        hasher.combine(sortRaw)
+        for item in items {
+            hasher.combine(item.id)
+            hasher.combine(item.captureDate)
+            hasher.combine(item.isFavorite)
+            hasher.combine(item.isScreenshot)
+            hasher.combine(item.width)
+            hasher.combine(item.height)
+            hasher.combine(item.place?.id)
+            hasher.combine(item.placeOverrideName)
+            hasher.combine(item.placeOverrideLatitude)
+            hasher.combine(item.placeOverrideLongitude)
+        }
+        return hasher.finalize()
+    }
+
+    private func regroup() {
+        let visible = filteredItems
+        cachedVisibleCount = visible.count
+        cachedCollections = collections
+        hasGrouped = true
+        selection.visibleItemIDs = Set(visible.map(\.id))
+        synchronizeSelection(visible: Set(visible.map(\.id)))
+    }
+
     private var filterSignature: String {
         [
             String(fromDateInterval), String(toDateInterval), placeFilterID, typeRaw,
@@ -104,13 +137,15 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        let displayedCollections = collections
+        let displayedCollections = cachedCollections
         VStack(spacing: 0) {
             header(for: displayedCollections)
             toolbar
             if filtersAreVisible { filterPanel }
 
-            if displayedCollections.isEmpty {
+            if !hasGrouped {
+                Spacer()
+            } else if displayedCollections.isEmpty {
                 emptyState
             } else {
                 ScrollViewReader { proxy in
@@ -136,6 +171,15 @@ struct LibraryView: View {
                         .padding(.vertical, 24)
                     }
                     .scrollIndicators(.visible)
+                    .onChange(of: selection.focusedItemID, initial: true) { _, focus in
+                        guard let focus,
+                              let target = displayedCollections.first(where: { $0.core.itemIDs.contains(focus) }) else { return }
+                        if reduceMotion {
+                            proxy.scrollTo(target.id, anchor: .center)
+                        } else {
+                            withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(target.id, anchor: .center) }
+                        }
+                    }
                     .onAppear {
                         if let anchor = state.lastVisibleCollectionID,
                            displayedCollections.contains(where: { $0.id == anchor }) {
@@ -147,8 +191,7 @@ struct LibraryView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle("Library")
-        .onChange(of: filterSignature) { _, _ in synchronizeSelection() }
-        .onAppear { synchronizeSelection() }
+        .task(id: groupingKey) { regroup() }
     }
 
     private func header(for collections: [LibraryCollection]) -> some View {
@@ -157,7 +200,7 @@ struct LibraryView: View {
                 Text("Library")
                     .font(.system(.largeTitle, design: .serif).weight(.medium))
                 HStack(spacing: 4) {
-                    Text(filteredItems.count, format: .number)
+                    Text(cachedVisibleCount, format: .number)
                         .font(.caption.monospacedDigit())
                     Text("photos")
                         .font(.caption)
@@ -313,8 +356,7 @@ struct LibraryView: View {
         screenshotFilterRaw = LibraryScreenshotFilter.all.rawValue
     }
 
-    private func synchronizeSelection() {
-        let visible = Set(filteredItems.map(\.id))
+    private func synchronizeSelection(visible: Set<String>) {
         selection.selectedItemIDs.formIntersection(visible)
         if let focus = selection.focusedItemID, !visible.contains(focus) {
             selection.focusedItemID = selection.selectedItemIDs.first

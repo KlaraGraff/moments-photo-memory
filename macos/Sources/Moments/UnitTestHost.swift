@@ -23,6 +23,15 @@ final class UnitTestHostDelegate: NSObject, NSApplicationDelegate {
         guard Self.isUnitTestHost else { return }
         NSApp.windows.forEach { $0.orderOut(nil) }
     }
+
+    /// UI tests start from a clean slate without the -ApplePersistenceIgnoreState
+    /// launch argument: combined with -MomentsUITesting that argument left
+    /// SwiftUI's WindowGroup without its initial window.
+    func application(_ application: NSApplication, shouldRestoreSecureApplicationState coder: NSCoder) -> Bool {
+        !ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
+    }
+
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 }
 
 /// Placed as the only content of the unit-test host's window; hides that

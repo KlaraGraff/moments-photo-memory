@@ -147,9 +147,9 @@ final class MomentsUITests: XCTestCase {
         app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language]
         if darkMode { app.launchArguments += ["-MomentsUITestDarkMode"] }
         if smallWindow { app.launchArguments += ["-MomentsUITestSmallWindow"] }
-        // Ignore saved window state so a previous run that closed its window
-        // cannot leave the app running without one.
-        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES", "-NSQuitAlwaysKeepsWindows", "NO"]
+        // The app declines saved window state in UI-test mode itself; passing
+        // -ApplePersistenceIgnoreState here left it without a window.
+        app.launchArguments += ["-NSQuitAlwaysKeepsWindows", "NO"]
         app.launch()
         app.activate()
         requireFrontmostWindow(app)
@@ -161,16 +161,7 @@ final class MomentsUITests: XCTestCase {
     private func requireFrontmostWindow(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: launchTimeout), "Moments is not the frontmost app", file: file, line: line)
         let window = app.windows.firstMatch
-        let started = Date()
-        if !window.waitForExistence(timeout: 30), app.state == .runningForeground {
-            // Moments is frontmost, so this shortcut can only reach Moments.
-            app.typeKey("n", modifierFlags: .command)
-        }
         XCTAssertTrue(window.waitForExistence(timeout: launchTimeout), "Moments opened no window", file: file, line: line)
-        let note = XCTAttachment(string: "first window after \(String(format: "%.1f", Date().timeIntervalSince(started))) s")
-        note.name = "launch-window-timing"
-        note.lifetime = .keepAlways
-        add(note)
         XCTAssertTrue(window.isHittable, "The Moments window is covered or off screen", file: file, line: line)
     }
 

@@ -9,7 +9,7 @@ import subprocess
 ROOT=Path(__file__).resolve().parents[1]
 IGNORED={'.git','dist','private-data','local-data','exports','backups','research','qa',
          '__pycache__','node_modules','.venv'}
-EXACT={'.gitignore','README.md','demo/sample-data.json','docs/design-notes.html','docs/ui-quality-principles.md',
+EXACT={'.gitignore','README.md','AGENTS.md','demo/sample-data.json','docs/design-notes.html','docs/ui-quality-principles.md',
        'scripts/apple_photos_bridge.swift','scripts/apple_photos_host.swift',
        'vendor/leaflet/leaflet.js','vendor/leaflet/leaflet.css','vendor/leaflet/LICENSE',
        'vendor/leaflet/manifest.json'}

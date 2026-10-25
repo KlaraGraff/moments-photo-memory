@@ -99,3 +99,5 @@ python3 scripts/build_apple_helper.py
 | `vendor/leaflet/` | Leaflet 1.9.4 与原许可证 |
 
 Leaflet 的版权与许可见 `vendor/leaflet/LICENSE`。OpenStreetMap 地图保留归属标识，使用须遵循其[图块政策](https://operations.osmfoundation.org/policies/tiles/)。
+
+人物归类使用的人脸特征模型来自 OpenCV Zoo 的 SFace（Apache-2.0，作者 Yaoyao Zhong），许可证见 `macos/Sources/Moments/People/SFace-LICENSE.txt`。`SFace.mlpackage` 由 `scripts/convert_sface_coreml.py` 从官方 ONNX 文件转换并做 int8 权重量化，不含任何照片或人脸数据；文件哈希固定在 `scripts/check_privacy.py` 里。

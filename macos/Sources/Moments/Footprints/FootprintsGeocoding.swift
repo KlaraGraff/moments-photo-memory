@@ -111,6 +111,9 @@ final class FootprintsGeocodeResolver {
         var didEncounterError = false
 
         for cluster in clusters {
+            // .task(id:) cancels the previous refresh when the input changes;
+            // stop here so two batches never mutate the cache at once.
+            if Task.isCancelled { break }
             guard let center = cluster.center else { continue }
             if let cached = cache.result(for: center) {
                 results[cluster.id] = cached

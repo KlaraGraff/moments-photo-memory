@@ -11,6 +11,7 @@ private enum MomentsSection: Hashable {
 
 struct ContentView: View {
     @State private var selection: MomentsSection? = .library
+    @Environment(SelectionModel.self) private var shared
 
     var body: some View {
         NavigationSplitView {
@@ -31,12 +32,22 @@ struct ContentView: View {
         } detail: {
             switch selection ?? .library {
             case .library: LibraryView()
-            case .places: PlacesView()
+            case .places: PlacesScreen()
             case .footprints: FootprintsView()
             case .timeline: TimelineView()
             }
         }
         .frame(minWidth: 760, minHeight: 500)
+        .onChange(of: shared.requestedDestination) { _, destination in
+            guard let destination else { return }
+            switch destination {
+            case .library: selection = .library
+            case .places: selection = .places
+            case .footprints: selection = .footprints
+            case .timeline: selection = .timeline
+            }
+            shared.requestedDestination = nil
+        }
     }
 }
 
@@ -79,13 +90,6 @@ struct LibraryView: View {
             }
         }
         .navigationTitle("Library")
-    }
-}
-
-struct PlacesView: View {
-    var body: some View {
-        Map(initialPosition: .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0.005, longitude: 0.003), span: MKCoordinateSpan(latitudeDelta: 0.03, longitudeDelta: 0.03))))
-            .navigationTitle("Places")
     }
 }
 

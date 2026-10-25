@@ -1,0 +1,8 @@
+// Copy to Local.xcconfig (gitignored) to build a signed app on your Mac.
+// Find your Team ID in Xcode > Settings > Accounts, or on developer.apple.com.
+
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+MOMENTS_BUNDLE_ID = org.example.Moments
+CODE_SIGNING_ALLOWED = YES
+CODE_SIGNING_REQUIRED = YES
+CODE_SIGN_IDENTITY = Apple Development

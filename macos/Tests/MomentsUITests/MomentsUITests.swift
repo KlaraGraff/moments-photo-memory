@@ -83,6 +83,7 @@ final class MomentsUITests: XCTestCase {
         let selectedPhoto = element(in: app, identifier: "library.photo.D0001")
         XCTAssertTrue(selectedPhoto.waitForExistence(timeout: launchTimeout))
         XCTAssertEqual(selectedPhoto.value as? String, "Selected")
+        XCTAssertTrue(selectedPhoto.isHittable, "Timeline jump should scroll the selected Library card into view")
         capture(app, named: "timeline-01-place-selected-in-library")
     }
 

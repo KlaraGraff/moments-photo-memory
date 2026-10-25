@@ -173,7 +173,6 @@ struct PlacesScreen: View {
         .onMapCameraChange(frequency: .onEnd) { context in
             latitudeDelta = context.region.span.latitudeDelta
         }
-        .ignoresSafeArea(edges: .bottom)
     }
 
     private var mapToolbar: some View {
@@ -278,7 +277,7 @@ struct PlacesScreen: View {
             select(cluster: cluster)
         } label: {
             ZStack {
-                if cluster.level == .spot, let stopID = cluster.stopIDs.first {
+                if cluster.level == .spot, cluster.stopIDs.count == 1, let stopID = cluster.stopIDs.first {
                     photoThumbnail(for: stopID, selected: isSelected)
                 } else {
                     Text("\(cluster.stopIDs.count)")
@@ -335,6 +334,9 @@ struct PlacesScreen: View {
     }
 
     private func clusterDisplayName(_ cluster: PlaceCluster) -> String {
+        if let name = cluster.name, !name.isEmpty {
+            return name
+        }
         let nearestPlace = places
             .filter { $0.latitude != nil && $0.longitude != nil }
             .compactMap { place -> (Place, Double)? in

@@ -25,7 +25,18 @@ final class SelectionModel {
     /// Ids that pass the Library filters; `nil` means no filter is active.
     var visibleItemIDs: Set<String>?
     /// A screen asks to switch the sidebar; the window clears it after switching.
-    var requestedDestination: SidebarDestination?
+    /// Opening Library is a reveal request because it is used by Timeline's
+    /// place jump action.
+    var requestedDestination: SidebarDestination? {
+        didSet {
+            if requestedDestination == .library {
+                shouldRevealSelectionInLibrary = true
+            }
+        }
+    }
+    /// Library consumes this after its collections have been built so the
+    /// focused item wins over the previously remembered scroll anchor.
+    var shouldRevealSelectionInLibrary = false
 
     init() {}
 
@@ -59,6 +70,7 @@ final class SelectionModel {
     func clear() {
         selectedItemIDs = []
         focusedItemID = nil
+        shouldRevealSelectionInLibrary = false
     }
 
     /// True when the item passes the Library filters.

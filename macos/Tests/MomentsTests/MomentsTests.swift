@@ -152,8 +152,11 @@ final class MomentsTests: XCTestCase {
         selection.toggle("b")
         XCTAssertEqual(selection.selectedItemIDs, ["a"])
         XCTAssertEqual(selection.focusedItemID, "a")
+        selection.requestedDestination = .library
+        XCTAssertTrue(selection.shouldRevealSelectionInLibrary)
         selection.clear()
         XCTAssertTrue(selection.selectedItemIDs.isEmpty)
+        XCTAssertFalse(selection.shouldRevealSelectionInLibrary)
     }
 
     func testMemorySurvivesModelContainerReopen() throws {

@@ -11,7 +11,7 @@ struct LibraryView: View {
     @Query private var items: [MediaItem]
     let state: LibraryViewState
 
-    @AppStorage("moments.library.density") private var density = 4
+    @AppStorage("moments.library.density") private var density = 3
     @AppStorage("moments.library.sort") private var sortRaw = LibrarySortOrder.oldestFirst.rawValue
     @AppStorage("moments.library.fromDate") private var fromDateInterval = 0.0
     @AppStorage("moments.library.toDate") private var toDateInterval = 0.0
@@ -134,7 +134,7 @@ struct LibraryView: View {
     }
 
     private var columns: [GridItem] {
-        Array(repeating: GridItem(.flexible(minimum: 150), spacing: 20, alignment: .top), count: max(2, min(6, density)))
+        Array(repeating: GridItem(.flexible(minimum: 160), spacing: 20, alignment: .top), count: max(2, min(6, density)))
     }
 
     var body: some View {
@@ -173,17 +173,18 @@ struct LibraryView: View {
                         .padding(.vertical, 24)
                     }
                     .scrollIndicators(.visible)
-                    .onChange(of: selection.focusedItemID, initial: true) { _, focus in
+                    .onChange(of: selection.focusedItemID) { _, focus in
                         guard let focus,
                               let target = displayedCollections.first(where: { $0.core.itemIDs.contains(focus) }) else { return }
-                        if reduceMotion {
-                            proxy.scrollTo(target.id, anchor: .center)
-                        } else {
-                            withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(target.id, anchor: .center) }
-                        }
+                        scroll(to: target.id, using: proxy)
+                    }
+                    .onChange(of: displayedCollections.map(\.id), initial: true) { _, _ in
+                        revealRequestedSelectionIfNeeded(in: displayedCollections, using: proxy)
                     }
                     .onAppear {
-                        if let anchor = state.lastVisibleCollectionID,
+                        if selection.shouldRevealSelectionInLibrary {
+                            revealRequestedSelectionIfNeeded(in: displayedCollections, using: proxy)
+                        } else if let anchor = state.lastVisibleCollectionID,
                            displayedCollections.contains(where: { $0.id == anchor }) {
                             DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .center) }
                         }
@@ -203,6 +204,22 @@ struct LibraryView: View {
             if let summary = importController.reviewSummary {
                 ImportReviewView(summary: summary)
             }
+        }
+    }
+
+    private func revealRequestedSelectionIfNeeded(in collections: [LibraryCollection], using proxy: ScrollViewProxy) {
+        guard selection.shouldRevealSelectionInLibrary,
+              let focus = selection.focusedItemID,
+              let target = collections.first(where: { $0.core.itemIDs.contains(focus) }) else { return }
+        scroll(to: target.id, using: proxy)
+        selection.shouldRevealSelectionInLibrary = false
+    }
+
+    private func scroll(to collectionID: String, using proxy: ScrollViewProxy) {
+        if reduceMotion {
+            proxy.scrollTo(collectionID, anchor: .center)
+        } else {
+            withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(collectionID, anchor: .center) }
         }
     }
 
@@ -732,18 +749,23 @@ private struct PlaceEditor: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                     } else {
                         Text("No place")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Edit place") {
+                    Button {
                         load()
                         isEditing = true
+                    } label: {
+                        Image(systemName: "pencil")
                     }
                     .buttonStyle(.borderless)
                     .font(.caption2)
+                    .help("Edit place")
+                    .accessibilityLabel("Edit place")
                 }
             }
         }
@@ -817,6 +839,8 @@ private struct TagEditor: View {
             ForEach(item.tags.sorted { $0.displayName < $1.displayName }, id: \.id) { tag in
                 HStack(spacing: 3) {
                     Text(tag.displayName)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                     Button {
                         item.removeTag(tag, context: modelContext)
                         try? modelContext.save()
@@ -827,6 +851,7 @@ private struct TagEditor: View {
                     .foregroundStyle(.secondary)
                 }
                 .font(.caption2)
+                .fixedSize(horizontal: true, vertical: false)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
                 .background(.quaternary, in: Capsule())
@@ -834,6 +859,7 @@ private struct TagEditor: View {
             TextField("Add tag", text: $tagDraft)
                 .textFieldStyle(.roundedBorder)
                 .font(.caption2)
+                .frame(minWidth: 108)
                 .onSubmit(addTag)
         }
     }

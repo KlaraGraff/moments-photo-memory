@@ -205,13 +205,6 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "张照片" } }
       }
     },
-    "photos" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Fotos" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "photos" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "张照片" } }
-      }
-    },
     "memory" : {
       "localizations" : {
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Erinnerung" } },

@@ -3,7 +3,8 @@ import SwiftData
 
 @main
 struct MomentsApp: App {
-    private let modelContainer: ModelContainer
+    private let modelContainer: ModelContainer?
+    private let storeError: MomentsStoreError?
     @State private var selection = SelectionModel()
     @State private var libraryState = LibraryViewState()
 
@@ -14,16 +15,43 @@ struct MomentsApp: App {
             try? DemoSeeder.seedIfNeeded(context: container.mainContext)
             #endif
             modelContainer = container
+            storeError = nil
+        } catch let error as MomentsStoreError {
+            modelContainer = nil
+            storeError = error
         } catch {
-            fatalError("Unable to create the Moments model container: \(error)")
+            modelContainer = nil
+            storeError = nil
         }
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView(libraryState: libraryState)
-                .environment(selection)
+            if let modelContainer {
+                ContentView(libraryState: libraryState)
+                    .environment(selection)
+                    .modelContainer(modelContainer)
+            } else {
+                StoreUnavailableView(isProtectedLegacyStore: storeError != nil)
+            }
         }
-        .modelContainer(modelContainer)
+    }
+}
+
+private struct StoreUnavailableView: View {
+    let isProtectedLegacyStore: Bool
+
+    var body: some View {
+        ContentUnavailableView(
+            "Moments store unavailable",
+            systemImage: "externaldrive.badge.exclamationmark",
+            description: Text(
+                isProtectedLegacyStore
+                    ? "A legacy store contains non-demo data. It was left untouched; back it up before migrating."
+                    : "Moments could not open its local store. Your existing data was left untouched."
+            )
+        )
+        .frame(minWidth: 520, minHeight: 280)
+        .padding(32)
     }
 }

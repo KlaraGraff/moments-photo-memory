@@ -33,10 +33,13 @@ targets:
       - package: MomentsCore
     resources:
       - path: Sources/Moments/Resources/Localizable.xcstrings
+      - path: Sources/Moments/Resources/InfoPlist.xcstrings
+      - path: Sources/Moments/Resources/PhotosLocalizable.xcstrings
     settings:
       base:
         INFOPLIST_KEY_CFBundleDisplayName: Moments
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Moments needs access to your photo library to import photos without copying originals."
     postBuildScripts:
       - name: Copy synthetic demo seed
         basedOnDependencyAnalysis: false

@@ -27,7 +27,7 @@ struct TimelineScreen: View {
         }
         for trip in trips {
             hasher.combine(trip.id)
-            hasher.combine(trip.name)
+            hasher.combine(trip.effectiveName)
             hasher.combine(trip.items.count)
         }
         hasher.combine(places.count)
@@ -45,7 +45,7 @@ struct TimelineScreen: View {
         let sourceTrips = trips.map { trip in
             TimelineSourceTrip(
                 id: trip.id,
-                name: trip.name,
+                name: trip.effectiveName,
                 itemIDs: trip.items.map(\.id),
                 startDate: trip.startDate,
                 endDate: trip.endDate

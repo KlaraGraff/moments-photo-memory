@@ -7,6 +7,7 @@ struct MomentsApp: App {
     private let storeError: MomentsStoreError?
     @State private var selection = SelectionModel()
     @State private var libraryState = LibraryViewState()
+    @State private var importController = ImportController()
 
     init() {
         do {
@@ -30,9 +31,17 @@ struct MomentsApp: App {
             if let modelContainer {
                 ContentView(libraryState: libraryState)
                     .environment(selection)
+                    .environment(importController)
                     .modelContainer(modelContainer)
+                    .onAppear { importController.configure(container: modelContainer) }
             } else {
                 StoreUnavailableView(isProtectedLegacyStore: storeError != nil)
+            }
+        }
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("Import Folder…") { importController.chooseFolder() }
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
             }
         }
     }

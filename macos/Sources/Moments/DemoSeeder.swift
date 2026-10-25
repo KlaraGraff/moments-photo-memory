@@ -70,6 +70,7 @@ public enum DemoSeeder {
             )
             context.insert(item)
             items[asset.id] = item
+            item.place = place
             trip.items.append(item)
             for tagName in asset.tags {
                 let tag = tags[tagName] ?? Tag(name: tagName)
@@ -88,6 +89,52 @@ public enum DemoSeeder {
         }
         try context.save()
     }
+
+    #if DEBUG
+    /// Inserts a deterministic, local-only stress fixture for scrolling checks.
+    /// The generator never reads files or Photos and keeps all coordinates near 0,0.
+    @discardableResult
+    public static func generateSyntheticLibrary(count: Int = 5_000, context: ModelContext) throws -> Int {
+        guard count > 0 else { return 0 }
+        let existingItems = try context.fetch(FetchDescriptor<MediaItem>())
+        let existingIDs = Set(existingItems.map(\.id))
+        let placeID = "stress-demo-place"
+        let tripID = "stress-demo-trip"
+        let place = try context.fetch(FetchDescriptor<Place>()).first(where: { $0.id == placeID })
+            ?? Place(id: placeID, name: "Synthetic stress place", kind: .spot, latitude: 0.01, longitude: 0.01)
+        if place.modelContext == nil { context.insert(place) }
+        let trip = try context.fetch(FetchDescriptor<Trip>()).first(where: { $0.id == tripID })
+            ?? Trip(id: tripID, name: "Synthetic stress trip")
+        if trip.modelContext == nil { context.insert(trip) }
+
+        let baseDate = Date(timeIntervalSince1970: 946_684_800)
+        var inserted = 0
+        for index in 0..<count {
+            let id = String(format: "stress-%05d", index)
+            guard !existingIDs.contains(id) else { continue }
+            let isPossibleScreenshot = index % 43 == 0
+            let item = MediaItem(
+                id: id,
+                captureDate: baseDate.addingTimeInterval(Double(index) * 120),
+                latitude: Double(index % 20) / 1_000,
+                longitude: Double((index * 7) % 20) / 1_000,
+                kind: index % 19 == 0 ? .video : .photo,
+                width: isPossibleScreenshot ? 1_170 : 1_600 + (index % 5) * 100,
+                height: isPossibleScreenshot ? 2_532 : 1_000 + (index % 4) * 100,
+                isScreenshot: index % 97 == 0,
+                source: .demo,
+                title: "Synthetic stress item \(index + 1)",
+                tripKey: tripID,
+                place: place
+            )
+            context.insert(item)
+            trip.items.append(item)
+            inserted += 1
+        }
+        if inserted > 0 { try context.save() }
+        return inserted
+    }
+    #endif
 
     public static func seedIfNeeded(context: ModelContext, bundle: Bundle = .main) throws {
         guard let url = bundle.url(forResource: "sample-data", withExtension: "json") else { return }

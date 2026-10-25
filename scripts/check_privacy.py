@@ -43,6 +43,7 @@ def candidates(staged=False):
         for folder,dirs,files in os.walk(ROOT):
             dirs[:]=[d for d in dirs if d not in IGNORED and not d.endswith(('.xcodeproj','.xcworkspace'))]
             for name in files:
+                if name in IGNORED:continue  # a worktree's .git is a file
                 path=Path(folder)/name
                 yield path.relative_to(ROOT).as_posix(),path.read_bytes() if not path.is_symlink() else b'\0'
 

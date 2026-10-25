@@ -12,6 +12,11 @@ private enum LibraryPalette {
     static let rule = Color(red: 0.902, green: 0.804, blue: 0.741)
 }
 
+private enum LibraryScrollTarget {
+    static func section(_ id: String) -> String { "section:\(id)" }
+    static func item(_ id: String) -> String { "item:\(id)" }
+}
+
 struct LibraryView: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(ImportController.self) private var importController
@@ -199,51 +204,68 @@ struct LibraryView: View {
     }
 
     private var libraryHeader: some View {
-        HStack(alignment: .bottom, spacing: 22) {
-            HStack(alignment: .firstTextBaseline, spacing: 9) {
-                // Keep the title and count on one line in narrow windows; the
-                // segment control and group-by picker give way instead.
-                Text(String(localized: "Library"))
-                    .font(.system(size: 34, weight: .medium, design: .serif))
-                    .foregroundStyle(LibraryPalette.ink)
-                    .lineLimit(1)
-                    .fixedSize()
-                Text("\(cachedVisibleCount) \(String(localized: "photos"))")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(LibraryPalette.muted)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .accessibilityIdentifier("library.photoCount")
-                    .accessibilityValue(String(cachedVisibleCount))
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .bottom, spacing: 22) {
+                libraryHeaderTitle
+                libraryTypePicker
+                Spacer(minLength: 8)
+                libraryGroupingPicker
             }
-
-            Picker(String(localized: "Media type"), selection: $typeRaw) {
-                Text(String(localized: "All")).tag(LibraryMediaTypeFilter.all.rawValue)
-                Text(String(localized: "Photos")).tag(LibraryMediaTypeFilter.photo.rawValue)
-                Text(String(localized: "Videos")).tag(LibraryMediaTypeFilter.video.rawValue)
-                Text(String(localized: "Live Photos")).tag(LibraryMediaTypeFilter.live.rawValue)
-                Text(String(localized: "Screenshots")).tag(LibraryMediaTypeFilter.screenshot.rawValue)
+            VStack(alignment: .leading, spacing: 12) {
+                libraryHeaderTitle
+                HStack(alignment: .center, spacing: 22) {
+                    libraryTypePicker
+                    Spacer(minLength: 8)
+                    libraryGroupingPicker
+                }
             }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 410)
-            .accessibilityIdentifier("library.type-filter")
-
-            Spacer(minLength: 8)
-
-            Picker(String(localized: "Group by"), selection: $groupingRaw) {
-                Text(String(localized: "By trip")).tag(LibraryGrouping.trip.rawValue)
-                Text(String(localized: "By place")).tag(LibraryGrouping.place.rawValue)
-                Text(String(localized: "By type")).tag(LibraryGrouping.type.rawValue)
-                Text(String(localized: "By month")).tag(LibraryGrouping.month.rawValue)
-            }
-            .pickerStyle(.menu)
-            .frame(width: 150)
-            .accessibilityIdentifier("library.grouping")
         }
         .padding(.horizontal, 34)
         .padding(.top, 28)
         .padding(.bottom, 18)
         .overlay(alignment: .bottom) { Rectangle().fill(LibraryPalette.line).frame(height: 1) }
+    }
+
+    private var libraryHeaderTitle: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Text(String(localized: "Library"))
+                .font(.system(size: 34, weight: .medium, design: .serif))
+                .foregroundStyle(LibraryPalette.ink)
+                .lineLimit(1)
+                .layoutPriority(1)
+                .minimumScaleFactor(0.7)
+            Text("\(cachedVisibleCount) \(String(localized: "photos"))")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(LibraryPalette.muted)
+                .lineLimit(1)
+                .accessibilityIdentifier("library.photoCount")
+                .accessibilityValue(String(cachedVisibleCount))
+        }
+    }
+
+    private var libraryTypePicker: some View {
+        Picker(String(localized: "Media type"), selection: $typeRaw) {
+            Text(String(localized: "All")).tag(LibraryMediaTypeFilter.all.rawValue)
+            Text(String(localized: "Photos")).tag(LibraryMediaTypeFilter.photo.rawValue)
+            Text(String(localized: "Videos")).tag(LibraryMediaTypeFilter.video.rawValue)
+            Text(String(localized: "Live Photos")).tag(LibraryMediaTypeFilter.live.rawValue)
+            Text(String(localized: "Screenshots")).tag(LibraryMediaTypeFilter.screenshot.rawValue)
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 410)
+        .accessibilityIdentifier("library.type-filter")
+    }
+
+    private var libraryGroupingPicker: some View {
+        Picker(String(localized: "Group by"), selection: $groupingRaw) {
+            Text(String(localized: "By trip")).tag(LibraryGrouping.trip.rawValue)
+            Text(String(localized: "By place")).tag(LibraryGrouping.place.rawValue)
+            Text(String(localized: "By type")).tag(LibraryGrouping.type.rawValue)
+            Text(String(localized: "By month")).tag(LibraryGrouping.month.rawValue)
+        }
+        .pickerStyle(.menu)
+        .frame(width: 150)
+        .accessibilityIdentifier("library.grouping")
     }
 
     private var filterBar: some View {
@@ -453,7 +475,7 @@ struct LibraryView: View {
                             items: section.itemIDs.compactMap { cachedItemByID[$0] },
                             state: state
                         )
-                        .id(section.id)
+                        .id(LibraryScrollTarget.section(section.id))
                         .onAppear { state.lastVisibleSectionID = section.id }
                     }
                 }
@@ -468,7 +490,10 @@ struct LibraryView: View {
                 guard shouldReveal else { return }
                 revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
             }
-            .onChange(of: cachedSections, initial: true) { _, _ in
+            .task(id: revealTrigger) {
+                guard selection.shouldRevealSelectionInLibrary else { return }
+                await Task.yield()
+                guard !Task.isCancelled else { return }
                 revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
             }
             .onAppear {
@@ -476,7 +501,9 @@ struct LibraryView: View {
                     revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
                 } else if let anchor = state.lastVisibleSectionID,
                           cachedSections.contains(where: { $0.id == anchor }) {
-                    DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .center) }
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(LibraryScrollTarget.section(anchor), anchor: .center)
+                    }
                 }
             }
         }
@@ -594,17 +621,39 @@ struct LibraryView: View {
             return
         }
 
-        guard sections.contains(where: { $0.itemIDs.contains(focus) }) else { return }
-        scroll(to: focus, using: proxy)
-        selection.shouldRevealSelectionInLibrary = false
+        guard let target = sections.first(where: { $0.itemIDs.contains(focus) }) else { return }
+        let selectionModel = selection
+        let itemTarget = LibraryScrollTarget.item(focus)
+        // Materialize the lazy section before asking the next layout pass for
+        // the card inside it.
+        proxy.scrollTo(LibraryScrollTarget.section(target.id), anchor: .center)
+        let animated = !reduceMotion
+        DispatchQueue.main.async {
+            guard selectionModel.shouldRevealSelectionInLibrary,
+                  selectionModel.focusedItemID == focus else { return }
+            if animated {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    proxy.scrollTo(itemTarget, anchor: .center)
+                }
+            } else {
+                proxy.scrollTo(itemTarget, anchor: .center)
+            }
+            selectionModel.shouldRevealSelectionInLibrary = false
+        }
     }
 
-    private func scroll(to itemID: String, using proxy: ScrollViewProxy) {
-        if reduceMotion {
-            proxy.scrollTo(itemID, anchor: .center)
-        } else {
-            withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(itemID, anchor: .center) }
+    private var revealTrigger: Int {
+        var hasher = Hasher()
+        hasher.combine(selection.shouldRevealSelectionInLibrary)
+        hasher.combine(selection.focusedItemID)
+        hasher.combine(typeRaw)
+        for section in cachedSections {
+            hasher.combine(section.id)
+            for itemID in section.itemIDs {
+                hasher.combine(itemID)
+            }
         }
+        return hasher.finalize()
     }
 }
 
@@ -709,7 +758,7 @@ private struct LibraryPhotoCell: View {
                 .accessibilityIdentifier("library.photo.\(item.id)")
                 .accessibilityValue(selection.isSelected(item.id) ? "Selected" : "Not selected")
                 .accessibilityAddTraits(selection.isSelected(item.id) ? .isSelected : [])
-                .id(item.id)
+                .id(LibraryScrollTarget.item(item.id))
 
                 HStack(spacing: 6) {
                     Button {

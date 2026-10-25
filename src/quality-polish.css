@@ -1,0 +1,106 @@
+/* Shared product quality layer.
+   Prefer atmosphere and spacing over black rules; keep feedback quick and soft. */
+:root {
+  --layer-canvas: #faf9f6;
+  --layer-panel: #f5f6f0;
+  --layer-panel-raised: #fffefa;
+  --line-soft: #e8ebe4;
+  --line-quiet: #edf0ea;
+  --ink-soft: #2b3b32;
+  --focus-border: #6f8976;
+  --focus-halo: #5475602e;
+  --shadow-soft: #283d3114;
+  --ui-body-weight: 400;
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  font-weight: var(--ui-body-weight);
+  text-rendering: optimizeLegibility;
+}
+
+/* A stable width prevents counters, dates and distances from nudging their layout. */
+.hero .count,
+.date,
+.footprints-stat strong,
+.footprints-date,
+.road-distance,
+.coord,
+.apple-time,
+[data-count],
+[data-number] {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* The light shell uses near-neighbour layers instead of high-contrast frames. */
+.card,
+.map-panel,
+.dialog,
+.product-map-panel,
+.footprints-map-card,
+.footprints-timeline-card,
+.footprints-inspector,
+.composer,
+.inline-details,
+.filter-panel,
+.cp-form,
+.apple-import {
+  border-color: var(--line-soft);
+  box-shadow: 0 14px 42px var(--shadow-soft);
+}
+
+.composer:focus-within,
+.inline-details:focus-within,
+.filter-panel:focus-within,
+.cp-form:focus-within {
+  border-color: var(--focus-border);
+  box-shadow: 0 0 0 1px var(--layer-canvas), 0 0 0 3px var(--focus-halo), 0 14px 42px var(--shadow-soft);
+}
+
+textarea:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 0;
+  border-color: var(--focus-border);
+  box-shadow: 0 0 0 1px var(--layer-canvas), 0 0 0 3px var(--focus-halo);
+}
+
+/* New memories, place labels and timeline nodes enter like ink settling into paper. */
+.moments-ink-reveal {
+  animation: moments-ink-in 360ms cubic-bezier(.2,.75,.25,1) both;
+  will-change: opacity, filter, transform;
+}
+
+/* A small, springy acknowledgement for save/favourite/copy-style actions. */
+.moments-success {
+  animation: moments-success-pop 260ms cubic-bezier(.2,1.45,.35,1) both;
+}
+
+@keyframes moments-ink-in {
+  from { opacity: 0; filter: blur(5px); transform: translateY(3px); }
+  to { opacity: 1; filter: blur(0); transform: none; }
+}
+
+@keyframes moments-success-pop {
+  0% { transform: scale(1); }
+  55% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-color-scheme: dark) {
+  /* If a dark shell is introduced later, reduce one weight step to counter halo. */
+  [data-theme="dark"],
+  [data-theme="dark"] body {
+    --ui-body-weight: 350;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .moments-ink-reveal,
+  .moments-success {
+    animation: none !important;
+  }
+}

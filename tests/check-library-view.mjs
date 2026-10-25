@@ -1,0 +1,48 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+const code=readFileSync(new URL('../src/library-view.js',import.meta.url),'utf8');
+const sandbox={module:{exports:{}},URL};vm.runInNewContext(code,sandbox);
+const L=sandbox.module.exports;
+const groups=Array.from({length:441},(_,i)=>['P'+i,'V'+i]);
+const batch=L.create();batch.reset(groups,'all');assert.equal(batch.count,48);assert.equal(batch.remaining,393);
+batch.more();assert.equal(batch.count,96);batch.reset(groups,'all');assert.equal(batch.count,96);
+assert.equal(batch.ensure('V400'),true);assert.equal(batch.count,432);assert.equal(batch.ensure('missing'),false);
+batch.reset(groups,'reverse');assert.equal(batch.count,48);
+batch.reset(groups.slice(400),'reverse');assert.equal(batch.count,41);assert.equal(batch.remaining,0);
+assert.equal(L.dateDay('2024:02:29 12:30:00'),'2024-02-29');assert.equal(L.dateDay('2023-02-29'),'');assert.equal(L.dateDay('06-01'),'');assert.equal(L.dateDay('unknown'),'');
+assert.equal(L.videoURL({type:'video',originalURL:'file:///private/synthetic.mov'},'https:'),'');
+assert.equal(L.videoURL({type:'video',originalURL:'https://example.invalid/video'},'file:'),'');
+assert.equal(L.videoURL({type:'video',originalURL:'file:///synthetic.mov',isLivePhoto:true},'file:'),'');
+assert.equal(L.videoURL({type:'video',originalURL:'file:///synthetic.mov'},'file:'),'file:///synthetic.mov');
+assert.ok(!/\.autoplay\s*=|\.play\(/.test(code));assert.ok(code.includes("video.preload='none'"));
+console.log('Library view: batch resets, all-group reachability, safe dates and user-initiated local video passed.');
+// Synthetic DOM adapter smoke: no real files, photos, browser or network.
+const dom = vm.createContext({URL,console});
+vm.runInContext(`
+const nodes=new Map();
+function element(tag='div'){return {tag,children:[],dataset:{},innerHTML:'',className:'',append(...children){this.children.push(...children)},addEventListener(){},setAttribute(){},remove(){},querySelector(){return null},querySelectorAll(){return []},insertAdjacentHTML(_position,html){this.innerHTML+=html},showModal(){this.open=true}}}
+const gallery=element(),viewer=element();nodes.set('gallery',gallery);nodes.set('viewer',viewer);
+const $=id=>nodes.get(id);const window={addEventListener(){}};const document={createElement:element,addEventListener(){}};const location={protocol:'file:'};
+const A=Array.from({length:120},(_,i)=>({id:'P'+i,type:'photo',tags:[],date:''}));const byId=Object.fromEntries(A.map(a=>[a.id,a]));
+const LIBRARY={groups:{china:A.map(a=>[a.id])},favoriteIds:[],sourceNotes:{}};const groups={china:[]},sourceNotes={};
+const S={trip:'all',mode:'photos',view:'gallery',sort:'asc',search:'',location:'all',sublocation:'all',type:'all',from:'',to:'',onlyFavorites:false,customLocation:null,lang:'en',favorites:new Set(),active:{}};
+let currentGroups=()=>groups[S.trip]||[];let shotDay,shotOrder,shotLabel;let card=g=>'<article>'+g[0]+'</article>';let details=()=>'<div>metadata</div>';let renderGallery;let openViewer=()=>{};
+let chooseMapPhoto=id=>{S.focus=id;S.mode='photos';renderGallery()};
+const filtered=()=>currentGroups(),cover=g=>g[0],tr=()=>{},t=k=>k,esc=v=>String(v),emptyView=()=>'<empty>',renderMap=()=>{},observeProductPhotos=()=>{},btn=(v,a)=>'<button>'+v+'</button>',img=id=>'<img data-id="'+id+'">',place=()=>'',viewerBottom=()=>'',icon=()=>'';
+`, dom);
+vm.runInContext(code,dom);
+vm.runInContext("byId.P0.timeConfidence='raw-minute-unconfirmed'",dom);
+assert(vm.runInContext("details('P0').includes('rawminute')",dom));
+vm.runInContext('renderGallery()',dom);
+assert.equal(vm.runInContext("gallery.innerHTML.match(/<article>/g).length",dom),48);
+vm.runInContext("chooseMapPhoto('P110')",dom);
+assert.equal(vm.runInContext("gallery.innerHTML.match(/<article>/g).length",dom),120);
+vm.runInContext("S.sort='desc';renderGallery()",dom);
+assert.equal(vm.runInContext("gallery.innerHTML.match(/<article>/g).length",dom),48);
+vm.runInContext("S.mode='timeline';renderGallery()",dom);
+assert.equal(vm.runInContext("gallery.innerHTML.match(/<img /g).length",dom),120);
+vm.runInContext("const importedAsset={id:'APL'+'a'.repeat(64),type:'photo',tags:[],date:''};A.push(importedAsset);byId[importedAsset.id]=importedAsset;S.mode='photos';S.trip='all';renderGallery()",dom);
+assert.equal(vm.runInContext('currentGroups().length',dom),121);
+assert(vm.runInContext("currentGroups().some(g=>g[0]===importedAsset.id)",dom));
+console.log('Synthetic DOM: initial 48 cards, distant map selection, reset, and full timeline passed.');

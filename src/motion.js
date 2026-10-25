@@ -87,7 +87,20 @@ const Motion = (() => {
     const animation=play(dialog,[{opacity:1,transform:'none'},{opacity:0,transform:'translateY(8px) scale(.99)'}],{duration:140},null);
     if(animation) animation.finished.then(()=>{if(dialog.open)dialog.close();},()=>{});else dialog.close();
   }
+  function ink(node, options = {}) {
+    if (!node || node.dataset.inkPlayed === 'true') return null;
+    node.dataset.inkPlayed = 'true';
+    return play(node,[{opacity:0,filter:'blur(5px)',transform:'translateY(3px)'},{opacity:1,filter:'blur(0)',transform:'none'}],{duration:options.duration ?? 360,easing:'cubic-bezier(.2,.75,.25,1)'},null);
+  }
+  function feedback(node, options = {}) {
+    if (!node) return;
+    node.classList.remove('moments-success');
+    void node.offsetWidth;
+    node.classList.add('moments-success');
+    clearTimeout(node.__momentsFeedbackTimer);
+    node.__momentsFeedbackTimer = setTimeout(() => node.classList.remove('moments-success'), options.hideAfter ?? 2500);
+  }
   document.addEventListener('input',()=>{quiet=true;queueMicrotask(()=>quiet=false);},true);
   preference.addEventListener?.('change',()=>{if(preference.matches){cancelLayout();for(const a of [...active])a.finish();}});
-  return {run,wrap,reveal,enterDialog,closeDialog,play,start(){ready=true;},get reduced(){return preference.matches;}};
+  return {run,wrap,reveal,ink,feedback,enterDialog,closeDialog,play,start(){ready=true;},get reduced(){return preference.matches;}};
 })();

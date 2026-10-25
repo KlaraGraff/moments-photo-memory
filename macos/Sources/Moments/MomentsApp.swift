@@ -7,6 +7,7 @@ struct MomentsApp: App {
     private let storeError: MomentsStoreError?
     @State private var selection = SelectionModel()
     @State private var libraryState = LibraryViewState()
+    @State private var importController = ImportController()
 
     #if DEBUG
     private var isUITestSmallWindow: Bool {
@@ -48,13 +49,21 @@ struct MomentsApp: App {
             if let modelContainer {
                 ContentView(libraryState: libraryState)
                     .environment(selection)
+                    .environment(importController)
                     .modelContainer(modelContainer)
+                    .onAppear { importController.configure(container: modelContainer) }
                     #if DEBUG
                     .frame(width: isUITestSmallWindow ? 900 : nil, height: isUITestSmallWindow ? 600 : nil)
                     .preferredColorScheme(isUITestDarkMode ? .dark : nil)
                     #endif
             } else {
                 StoreUnavailableView(isProtectedLegacyStore: storeError != nil)
+            }
+        }
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("Import Folder…") { importController.chooseFolder() }
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
             }
         }
     }

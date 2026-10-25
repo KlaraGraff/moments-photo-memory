@@ -6,6 +6,7 @@ struct LibraryView: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(ImportController.self) private var importController
 
     @Query private var items: [MediaItem]
     let state: LibraryViewState
@@ -141,6 +142,7 @@ struct LibraryView: View {
         VStack(spacing: 0) {
             header(for: displayedCollections)
             toolbar
+            ImportStatusView()
             if filtersAreVisible { filterPanel }
 
             if !hasGrouped {
@@ -192,6 +194,16 @@ struct LibraryView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle("Library")
         .task(id: groupingKey) { regroup() }
+        .sheet(
+            isPresented: Binding(
+                get: { importController.reviewSummary != nil },
+                set: { if !$0 { importController.dismissReview() } }
+            )
+        ) {
+            if let summary = importController.reviewSummary {
+                ImportReviewView(summary: summary)
+            }
+        }
     }
 
     private func header(for collections: [LibraryCollection]) -> some View {
@@ -338,11 +350,21 @@ struct LibraryView: View {
 
     private var emptyState: some View {
         let isFiltered = criteria != .default
-        return ContentUnavailableView(
-            isFiltered ? "No matching photos" : "No photos yet",
-            systemImage: isFiltered ? "line.3.horizontal.decrease.circle" : "photo.on.rectangle",
-            description: Text(isFiltered ? "Try changing your filters." : "Add a photo or import a synthetic demo to begin.")
-        )
+        return VStack(spacing: 14) {
+            ContentUnavailableView(
+                isFiltered ? "No matching photos" : "No photos yet",
+                systemImage: isFiltered ? "line.3.horizontal.decrease.circle" : "photo.on.rectangle",
+                description: Text(isFiltered ? "Try changing your filters." : "Add a photo or import a folder to begin.")
+            )
+            if !isFiltered {
+                Button {
+                    importController.chooseFolder()
+                } label: {
+                    Label("Import Folder…", systemImage: "folder.badge.plus")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

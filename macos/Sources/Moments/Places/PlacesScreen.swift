@@ -159,6 +159,7 @@ struct PlacesScreen: View {
                         clusterAnnotation(cluster)
                     } label: {
                         Text(clusterDisplayName(cluster))
+                            .accessibilityIdentifier("places.annotation.\(cluster.id)")
                     }
                 }
             }
@@ -293,16 +294,16 @@ struct PlacesScreen: View {
         .buttonStyle(.plain)
         .accessibilityLabel(clusterDisplayName(cluster))
         .accessibilityValue(Text("\(cluster.stopIDs.count) photos"))
-        .accessibilityIdentifier("places.annotation.\(cluster.id)")
+        .accessibilityIdentifier("places.marker.\(cluster.stopIDs.first ?? cluster.id)")
     }
 
     private func photoThumbnail(for itemID: String, selected: Bool) -> some View {
-        Image(systemName: "photo")
-            .font(.body)
+        Image(systemName: "mappin.circle.fill")
+            .font(.title2)
             .foregroundStyle(selected ? Color.white : Color.accentColor)
             .frame(width: 38, height: 38)
-            .background(selected ? Color.accentColor : Color.white, in: RoundedRectangle(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(selected ? .white : .accentColor, lineWidth: 2))
+            .background(selected ? Color.accentColor : Color.white, in: Circle())
+            .overlay(Circle().stroke(selected ? .white : .accentColor, lineWidth: 2))
             .shadow(radius: 4, y: 2)
     }
 

@@ -54,16 +54,18 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "library-02-memory-persisted")
     }
 
-    func testPlacesMapHasSyntheticAnnotation() {
+    func testPlacesMapHasSyntheticMarkers() {
         let app = launch(language: "en")
         element(in: app, identifier: "sidebar.places").click()
 
         let map = element(in: app, identifier: "places.map")
         XCTAssertTrue(map.waitForExistence(timeout: launchTimeout))
-        let annotation = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "places.annotation."))
+        let firstMarker = element(in: app, identifier: "places.marker.D0001")
+        XCTAssertTrue(firstMarker.waitForExistence(timeout: launchTimeout), "Route-start synthetic place marker was not exposed")
+        let marker = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "places.marker."))
             .firstMatch
-        XCTAssertTrue(annotation.waitForExistence(timeout: launchTimeout), "Synthetic place annotation was not exposed")
+        XCTAssertTrue(marker.waitForExistence(timeout: launchTimeout), "Synthetic place marker was not exposed")
         capture(app, named: "places-01-map-and-pin")
     }
 

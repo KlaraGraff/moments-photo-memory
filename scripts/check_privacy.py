@@ -11,7 +11,7 @@ IGNORED={'.git','dist','private-data','local-data','exports','backups','research
          '__pycache__','node_modules','.venv','.derivedData','DerivedData','build','.build'}
 EXACT={'.gitignore','README.md','AGENTS.md','demo/sample-data.json','docs/design-notes.html','docs/ui-quality-principles.md',
        'scripts/apple_photos_bridge.swift','scripts/apple_photos_host.swift',
-       'scripts/run-ui-smoke.sh','scripts/run-ui-import-check.sh',
+       'scripts/run-ui-smoke.sh','scripts/run-ui-import-check.sh','scripts/make_synthetic_import_fixtures.swift',
        'vendor/leaflet/leaflet.js','vendor/leaflet/leaflet.css','vendor/leaflet/LICENSE',
        'vendor/leaflet/manifest.json','docs/sharing-design.md',
        'macos/Config/Signing.xcconfig','macos/Config/Local.xcconfig.example'}

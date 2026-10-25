@@ -2751,6 +2751,28 @@
         }
       }
     },
+    "Undated photos" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Undatierte Fotos"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Undated photos"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未标日期的照片"
+          }
+        }
+      }
+    },
     "Unfavorite" : {
       "localizations" : {
         "de" : {

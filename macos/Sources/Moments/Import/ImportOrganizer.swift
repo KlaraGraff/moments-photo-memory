@@ -93,7 +93,9 @@ struct ImportOrganizer {
         self.geocodeDelay = geocodeDelay
     }
 
-    func organize(_ inputMetadata: [ImportedMediaMetadata]) async throws -> OrganizedImportPlan {
+    /// `sourceFolderName` names trips whose photos carry no real capture date;
+    /// it stays in the local store only.
+    func organize(_ inputMetadata: [ImportedMediaMetadata], sourceFolderName: String? = nil) async throws -> OrganizedImportPlan {
         let metadata = try await resolveCaptureDates(inputMetadata)
         guard !metadata.isEmpty else {
             return OrganizedImportPlan(media: [], trips: [], places: [], collectionCount: 0, routeCount: 0, flags: [], conflicts: [])
@@ -121,10 +123,20 @@ struct ImportOrganizer {
             }
         }
 
+        var undatedTripCount = 0
         for (index, group) in tripGroups.enumerated() {
             try Task.checkCancellation()
             let tripID = stableID(prefix: "trip", ids: group.map(\.id))
-            let tripName = Self.defaultTripName(for: group.first?.captureDate, index: index + 1)
+            let isUndated = group.allSatisfy { $0.captureDateSource == .fileDateFallback }
+            let tripName: String
+            if isUndated {
+                // Several undated groups from one folder get numbered names.
+                undatedTripCount += 1
+                let base = Self.undatedTripName(folderName: sourceFolderName)
+                tripName = undatedTripCount == 1 ? base : base + " " + String(undatedTripCount)
+            } else {
+                tripName = Self.defaultTripName(for: group.first?.captureDate, index: index + 1)
+            }
             let stops = group.compactMap { item -> PhotoStop? in
                 guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
                 return PhotoStop(id: item.id, date: item.captureDate, coordinate: GeoPoint(latitude: latitude, longitude: longitude))
@@ -494,6 +506,26 @@ struct ImportOrganizer {
             .filter { $0.timeZoneIdentifier != nil }
             .min { abs($0.captureDate.timeIntervalSince(item.captureDate)) < abs($1.captureDate.timeIntervalSince(item.captureDate)) }?
             .timeZoneIdentifier
+    }
+
+    /// Folders are usually named after the trip; generic container folders
+    /// such as Downloads or a camera's DCIM say nothing about it.
+    static func undatedTripName(folderName: String?) -> String {
+        let name = folderName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let lowered = name.lowercased()
+        let generic: Set<String> = [
+            "downloads", "desktop", "documents", "pictures", "photos", "images", "dcim",
+            "camera", "camera roll", "import", "imports", "export", "new folder", "untitled folder",
+            "untitled", "no name", "eos_digital",
+            "下载", "桌面", "文稿", "图片", "照片", "相册", "新建文件夹", "未命名文件夹"
+        ]
+        // DCF camera folders such as 100APPLE, 101MSDCF or 100_PANA, but not
+        // trip names that start with a year such as 2025Rome.
+        let isCameraFolder = lowered.range(of: #"^\d{3}(?:[a-z]{5}|_[a-z]{4})$"#, options: .regularExpression) != nil
+        if name.isEmpty || generic.contains(lowered) || isCameraFolder {
+            return String(localized: "Undated photos")
+        }
+        return name
     }
 
     private static func defaultTripName(for date: Date?, index: Int) -> String {

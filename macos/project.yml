@@ -10,7 +10,7 @@ settings:
   base:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     SWIFT_VERSION: "5.0"
-    PRODUCT_BUNDLE_IDENTIFIER: "org.example.Moments"
+    PRODUCT_BUNDLE_IDENTIFIER: "org.example.MomentsTests"
     GENERATE_INFOPLIST_FILE: "YES"
     CODE_SIGNING_ALLOWED: "NO"
     CODE_SIGNING_REQUIRED: "NO"
@@ -24,6 +24,9 @@ targets:
   Moments:
     type: application
     platform: macOS
+    configFiles:
+      Debug: Config/Signing.xcconfig
+      Release: Config/Signing.xcconfig
     sources:
       - path: Sources/Moments
     dependencies:

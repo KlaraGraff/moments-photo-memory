@@ -66,7 +66,7 @@ public enum DemoSeeder {
                 height: asset.height,
                 source: .demo,
                 title: title,
-                tripKey: asset.trip,
+                tripID: asset.trip,
                 trip: trip
             )
             context.insert(item)
@@ -126,7 +126,7 @@ public enum DemoSeeder {
                 isScreenshot: index % 97 == 0,
                 source: .demo,
                 title: "Synthetic stress item \(index + 1)",
-                tripKey: tripID,
+                tripID: tripID,
                 place: place
             )
             context.insert(item)

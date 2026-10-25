@@ -73,7 +73,7 @@ struct LibraryView: View {
     }
 
     private var trips: [String] {
-        Array(Set(items.compactMap(\.tripKey))).sorted()
+        Array(Set(items.compactMap(\.tripID))).sorted()
     }
 
     private var groupingKey: Int {
@@ -646,11 +646,19 @@ private struct MemoryEditor: View {
             if hasText {
                 memory.text = newText
                 memory.updatedAt = .now
+                memory.updatedBy = MomentsAccount.localID
+                memory.revision += 1
             } else {
                 modelContext.delete(memory)
             }
         } else if hasText {
-            modelContext.insert(Memory(text: newText, author: .me, mediaItem: item))
+            modelContext.insert(Memory(
+                text: newText,
+                author: .me,
+                authorAccountID: MomentsAccount.localID,
+                updatedBy: MomentsAccount.localID,
+                mediaItem: item
+            ))
         }
         try? modelContext.save()
         didSave = hasText || item.latestMemory != nil
@@ -735,16 +743,21 @@ private struct PlaceEditor: View {
         }
         let existing = item.localPlaceOverride
         if let existing {
-            existing.nameOverride = trimmedName.isEmpty ? nil : trimmedName
-            existing.mapLinkOverride = trimmedLink.isEmpty ? nil : trimmedLink
-            if !latText.isEmpty, let lat = Double(latText), let lon = Double(lonText) {
-                existing.latitude = lat
-                existing.longitude = lon
+            if trimmedName.isEmpty && trimmedLink.isEmpty && latText.isEmpty && lonText.isEmpty {
+                modelContext.delete(existing)
             } else {
-                existing.latitude = nil
-                existing.longitude = nil
+                existing.nameOverride = trimmedName.isEmpty ? nil : trimmedName
+                existing.mapLinkOverride = trimmedLink.isEmpty ? nil : trimmedLink
+                if !latText.isEmpty, let lat = Double(latText), let lon = Double(lonText) {
+                    existing.latitude = lat
+                    existing.longitude = lon
+                } else {
+                    existing.latitude = nil
+                    existing.longitude = nil
+                }
+                existing.updatedAt = .now
+                existing.updatedBy = MomentsAccount.localID
             }
-            existing.updatedAt = .now
         } else if !trimmedName.isEmpty || !trimmedLink.isEmpty || !latText.isEmpty || !lonText.isEmpty {
             let override = PlaceOverride(
                 placeID: item.place?.id,
@@ -754,8 +767,9 @@ private struct PlaceEditor: View {
                 mapLinkOverride: trimmedLink.isEmpty ? nil : trimmedLink,
                 latitude: latText.isEmpty ? nil : Double(latText),
                 longitude: lonText.isEmpty ? nil : Double(lonText),
-                mediaItem: item,
-                place: item.place
+                updatedBy: MomentsAccount.localID,
+                place: item.place,
+                mediaItem: item
             )
             modelContext.insert(override)
         }
@@ -800,12 +814,10 @@ private struct TagEditor: View {
         let normalizedName = Tag.normalize(name)
         guard !normalizedName.isEmpty, !item.tags.contains(where: { $0.normalizedName == normalizedName }) else { return }
         let tag: Tag
-        let existing = (try? modelContext.fetch(FetchDescriptor<Tag>()))?.first(where: { $0.normalizedName == normalizedName })
-        if let existing {
-            tag = existing
-        } else {
-            tag = Tag(displayName: name)
-            modelContext.insert(tag)
+        do {
+            tag = try Tag.lookupOrCreate(displayName: name, in: modelContext)
+        } catch {
+            return
         }
         item.addTag(tag, context: modelContext)
         tagDraft = ""

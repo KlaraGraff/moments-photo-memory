@@ -8,8 +8,14 @@
 - 就地补充回忆与详细信息，切换记录身份，导出文字。
 - 自定义地点标签：新增、改名、补充名称／地图链接／坐标、关联照片。
 - 可调整每行照片数量，原图比例显示，中文／英语／德语界面。
-- 地图标点、缩放、照片联动和可选先后顺序线。
+- 地图标点、缩放、照片联动、可选先后顺序线，以及记住偏好的鼠标滚轮反转。
+- 地图直接嵌入照片工作区：按当前筛选和合集封面显示，地图选点回到照片，照片滚动时联动；道路规划在同页展开。
+- 足迹工作区：全球地图总览、按日期组织的时间线、照片跳转和已有回忆默认展开；地图、时间线与照片共用焦点状态。
+- 鼠标与触控板分流，触控板捏合保持原方向；地图按帧连续缩放。浏览器没有标准设备标识，无法明确识别的输入按触控板处理。
+- 两点道路规划：驾车／步行／骑行，手动请求、取消与规划结果展示。
 - 集中管理展开、排列和弹窗动效，支持减少动态效果。
+- 大图库分批显示合集，滚动或点击继续加载；地图选中远处素材时自动显示对应批次。独立视频使用海报，点开后才加载本机原视频。
+- Mac 本机照片助手与三语导入入口：系统授权、相册／日期范围、只读元数据、按需预览、取消和重试；导入资料保存在本机浏览器。
 
 ## 本地运行
 
@@ -20,13 +26,23 @@ python3 scripts/build.py
 python3 scripts/serve.py --port 8767
 ```
 
-在浏览器打开 `http://127.0.0.1:8767`。地图底图需要联网，由 OpenStreetMap 提供；Leaflet 代码已随项目保存。
+在浏览器打开 `http://127.0.0.1:8767`。地图底图需要联网，由 OpenStreetMap 提供；Leaflet 代码已随项目保存。道路规划使用 FOSSGIS / OSRM；首次发送坐标前需在页面中明确允许。只有点击规划时才发送选中的两点与出行方式，许可仅留在本标签页内存中。公共路线服务用于轻量原型，遵守[服务使用政策](https://routing.openstreetmap.de/about.html)；不要批量抓取路线。
 
 ```sh
 python3 scripts/check_privacy.py
 python3 -m unittest discover -s tests
 node tests/check-model.mjs
 node tests/check-motion.mjs
+node tests/check-wheel.mjs
+node tests/check-routing.mjs
+node tests/check-road-panel.mjs
+node tests/check-product-map.mjs
+node tests/check-map-workspace.mjs
+node tests/check-library-view.mjs
+node tests/check-footprints.mjs
+node tests/check-apple-import.mjs
+python3 tests/check-apple-bridge.py
+python3 tests/check-apple-host.py
 ```
 
 ## 示例与个人资料
@@ -45,9 +61,21 @@ python3 scripts/build.py --private-data private-data/data.json
 
 ## 原型边界
 
-当前没有连接 Apple Photos / iCloud、AI 地名核验、多人同步或在线分享。自由输入的地图链接和坐标先作为线索保存。照片记录不等于完整道路轨迹；先后顺序线不表示实际驾驶路线。
+Apple Photos 已有 Mac 本机助手和产品内导入流程，尚需用户亲自授权后的真实图库验收；当前检查只使用合成数据，没有读取真实图库。助手通过 PhotoKit 读取系统照片图库，能看到的内容取决于这台 Mac 的 iCloud 同步状态；它不直接登录 iCloud，也不能证明云端全库已同步。Windows 接入、自动增量同步、原片下载、AI 地名核验、多人同步和在线分享尚未提供。自由输入的地图链接和坐标先作为线索保存。照片记录不等于完整道路轨迹；先后顺序线不表示实际驾驶路线。沿道路规划结果也仅代表当前路网的候选走法，不用于证明历史轨迹。服务请求最小间隔 1.1 秒，成功结果只作内存缓存；超时、取消或切换路段会移除过期结果。
+
+macOS 13+、Xcode 命令行工具可构建本机助手：
+
+```sh
+python3 scripts/build_apple_helper.py
+```
+
+助手输出到被忽略的 `dist/apple-helper/`，配对凭据写入被忽略的 `private-data/apple-connection.local.json`。助手只监听本机回环地址，启动不会扫描图库；照片访问只在用户点选授权后发生。通用演示页不含配对凭据，也不会自动连接助手。个人页面构建可用 `scripts/apple_web.py` 的 `integrate_apple(page, source, connection)` 接入这份本机配置；包含凭据的页面必须保留在被忽略的私人目录。默认不下载云端预览，用户勾选后才为所选范围请求预览。原片不会批量下载。
+
+导入内容保存在当前浏览器的 IndexedDB（本机数据库），按稳定标识合并；重复导入保留已写的补充内容与有效预览。图库 ID 不能用于跨文件夹内容去重。UTC 原时间保留，显示日期按导入时的设备时区换算，拍摄地时区未知；更改设备时区后需重新导入以更新显示。收藏调整和手动分组调整仍沿用原型的临时状态，不是完整同步。请保留原标签页并导出回忆备份。
 
 回忆试写保存在当前浏览器标签页；自定义地点保存在本浏览器。临时旅行分组仍属于原型状态。关闭标签页前可导出记录。
+
+地图通过独立的本机组件嵌入主页面，切换照片不重建地图。组件只接收照片 ID、标题、拍摄时间与坐标，不接收照片内容、输入的回忆或人物记录。消息核对来源窗口、来源地址与随机会话标记；没有主页面传入数据时不加载底图。原有单独地图页保留，但产品内“地点与路线”入口直接展开页内地图。
 
 ## 目录
 

@@ -8,7 +8,7 @@ tr('cpremoved','地点标签已删除，照片与回忆保留','Place label remo
 tr('cpnote','自定义地点 · {n} 张关联照片','Custom place · {n} linked photos','Eigener Ort · {n} zugeordnete Fotos');
 tr('cpnewstate','添加地点展开','Add place expanded','Ort hinzufügen, geöffnet');
 let cpStorage;try{cpStorage=localStorage;}catch{}
-const placeStore=CustomPlaces.create({storage:cpStorage,knownIds:A.map(a=>a.id)});
+const placeStore=CustomPlaces.create({storage:cpStorage,knownIds:id=>Object.hasOwn(byId,id)});
 S.customLocation=null;
 let placeDraft=null,placeEditorOpen=false,placeError='',placeRemove=false;
 const placeDrafts=new Map();
@@ -24,7 +24,7 @@ renderLocations=function(){
   for(const p of availablePlaces())link.insertAdjacentHTML('beforebegin',CustomPlaceUI.chip(p,S.customLocation===p.id,S.lang));
   const s=CustomPlaceUI.strings(S.lang);
   link.insertAdjacentHTML('beforebegin',`<button class="location-add" data-action="cp-add" aria-expanded="${placeEditorOpen}" aria-controls="place-editor">${icon('plus')}${esc(s.add)}</button>`);
-  if(S.customLocation){row.querySelector('[data-action="location:all"]')?.classList.remove('active');const p=placeStore.get(S.customLocation);if(p)host.insertAdjacentHTML('beforeend',`<div class="custom-location-note"><span>${esc(p.name)} · ${t('cpnote').replace('{n}',p.photoIds.length)}</span>${btn(esc(s.edit),'cp-edit:'+p.id)}${p.clue?`<span>${esc(p.clue)}</span>`:''}</div>`);}
+  if(S.customLocation){row.querySelector('[data-action="location:all"]')?.classList.remove('active');const p=placeStore.get(S.customLocation);if(p)host.insertAdjacentHTML('beforeend',`<div class="custom-location-note moments-ink-reveal"><span>${esc(p.name)} · ${t('cpnote').replace('{n}',p.photoIds.length)}</span>${btn(esc(s.edit),'cp-edit:'+p.id)}${p.clue?`<span>${esc(p.clue)}</span>`:''}</div>`);}
   renderPlaceEditor();
 };
 function rememberPlaceForm(){if(!placeEditorOpen||!placeDraft||!$('cp-name'))return;placeDraft.name=$('cp-name').value;placeDraft.clue=$('cp-clue').value;if($('cp-attach'))placeDraft.attach=$('cp-attach').checked;placeDrafts.set(placeDraftKey(placeDraft),{...placeDraft});}

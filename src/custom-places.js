@@ -5,13 +5,15 @@ const CustomPlaces = (() => {
   const normalized = value => value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase('en');
   const validId = id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(id);
   function create({storage, storageKey = KEY, knownIds = []} = {}) {
-    const allowed = new Set(knownIds), status = {code:'memory', persistent:false};
+    const knownSet = new Set(typeof knownIds === 'function' ? [] : knownIds);
+    const allowed = typeof knownIds === 'function' ? knownIds : id => knownSet.has(id);
+    const status = {code:'memory', persistent:false};
     let rows = [], serial = 0, corrupted = false;
     function validate(value, existing = rows) {
       if (!value || typeof value !== 'object' || !validId(value.id) || !validId(value.trip)) throw new Error('invalid-id');
       if (typeof value.name !== 'string' || !value.name.trim() || [...value.name.trim()].length > 60) throw new Error('invalid-name');
       if (typeof value.clue !== 'string' || [...value.clue].length > 1200) throw new Error('invalid-clue');
-      if (!Array.isArray(value.photoIds) || value.photoIds.some(id => !validId(id) || !allowed.has(id))) throw new Error('invalid-photo');
+      if (!Array.isArray(value.photoIds) || value.photoIds.some(id => !validId(id) || !allowed(id))) throw new Error('invalid-photo');
       if (existing.some(p => p.id !== value.id && p.trip === value.trip && normalized(p.name) === normalized(value.name))) throw new Error('duplicate-name');
       return {id:value.id, name:value.name.trim(), clue:value.clue, trip:value.trip, photoIds:[...new Set(value.photoIds)]};
     }

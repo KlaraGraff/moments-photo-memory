@@ -42,7 +42,7 @@ enum MainThreadSampler {
     }
 
     /// Stops sampling and returns the report. Call on the main thread.
-    static func stopAndReport(top: Int = 70) -> String {
+    static func stopAndReport(top: Int = 45) -> String {
         recording = false
         var inclusive: [String: Int] = [:]
         var selfCounts: [String: Int] = [:]
@@ -83,6 +83,11 @@ enum MainThreadSampler {
         text += "inclusive (on the stack):\n"
         for (symbol, hits) in inclusive.sorted(by: { $0.value > $1.value }).prefix(top) {
             text += String(format: "  %5.1f%% %@\n", Double(hits) * 100 / Double(max(count, 1)), String(symbol.prefix(200)))
+        }
+        // The app's own frames, which the framework lines above hide.
+        text += "inclusive, Moments code only:\n"
+        for (symbol, hits) in inclusive.filter({ $0.key.contains("Moments.") && !$0.key.contains("$main") }).sorted(by: { $0.value > $1.value }).prefix(60) {
+            text += String(format: "  %5.1f%% %@\n", Double(hits) * 100 / Double(max(count, 1)), String(symbol.prefix(240)))
         }
         text += "self (top of stack):\n"
         for (symbol, hits) in selfCounts.sorted(by: { $0.value > $1.value }).prefix(30) {

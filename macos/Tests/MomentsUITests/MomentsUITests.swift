@@ -127,6 +127,7 @@ final class MomentsUITests: XCTestCase {
         let paged = NSPredicate(format: "value != %@", start ?? "")
         expectation(for: paged, evaluatedWith: counter)
         waitForExpectations(timeout: launchTimeout)
+        capture(app, named: "grid-02b-viewer-paged-evidence")
         app.typeKey(.escape, modifierFlags: [])
         let gone = NSPredicate(format: "exists == false")
         expectation(for: gone, evaluatedWith: viewer)

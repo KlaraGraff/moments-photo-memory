@@ -81,6 +81,8 @@ struct PhotoViewer: View {
                 Label(String(localized: "Back"), systemImage: "chevron.left")
             }
             .buttonStyle(.borderless)
+            // Esc goes back wherever the keyboard focus is.
+            .keyboardShortcut(.cancelAction)
             .help(String(localized: "Back (Esc)"))
             .accessibilityIdentifier("viewer.close")
 
@@ -178,6 +180,7 @@ struct PhotoViewer: View {
         selection.select(id)
         selection.anchorItemID = id
         selection.viewerRequest?.itemID = id
+        isFocused = true
         return true
     }
 

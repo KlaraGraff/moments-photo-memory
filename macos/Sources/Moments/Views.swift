@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 private enum MomentsSection: Hashable {
     case library
     case review
+    case people
     case places
     case footprints
     case timeline
@@ -20,13 +21,7 @@ enum GroupEditorKind: String, Equatable, Identifiable {
     var id: String { rawValue }
 }
 
-private enum MomentsPalette {
-    static let sidebar = Color(red: 0.969, green: 0.906, blue: 0.863)
-    static let content = Color(red: 0.984, green: 0.945, blue: 0.918)
-    static let ink = Color(red: 0.227, green: 0.165, blue: 0.141)
-    static let muted = Color(red: 0.478, green: 0.365, blue: 0.314)
-    static let accent = Color(red: 0.690, green: 0.290, blue: 0.184)
-}
+private typealias MomentsPalette = Paper
 
 struct ContentView: View {
     @State private var selection: MomentsSection? = .library
@@ -37,6 +32,7 @@ struct ContentView: View {
     @Query private var items: [MediaItem]
     @Query(sort: \UserGroup.name) private var groups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
+    @Query private var faceObservations: [FaceObservation]
     @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
     @Query private var mediaTags: [MediaTag]
     @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
@@ -59,7 +55,7 @@ struct ContentView: View {
                     Section {
                         sidebarRow("Library", icon: "photo.on.rectangle.angled", section: .library, identifier: "sidebar.library")
                         sidebarRow("To review", icon: "checkmark.circle", section: .review, identifier: "sidebar.review", badge: reviewCount)
-                        // People is intentionally absent until issue #31 lands.
+                        sidebarRow("People", icon: "person.2", section: .people, identifier: "sidebar.people")
                         sidebarRow("Places", icon: "map", section: .places, identifier: "sidebar.places")
                         sidebarRow("Footprints", icon: "globe.americas", section: .footprints, identifier: "sidebar.footprints")
                         sidebarRow("Timeline", icon: "calendar", section: .timeline, identifier: "sidebar.timeline")
@@ -67,7 +63,7 @@ struct ContentView: View {
 
                     Section {
                         ForEach(groups, id: \.id) { group in
-                            HStack(spacing: 8) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Image(systemName: group.kind == .smart ? "sparkles" : "folder")
                                     .foregroundStyle(MomentsPalette.accent)
                                 Text(group.name)
@@ -123,45 +119,75 @@ struct ContentView: View {
                 .scrollContentBackground(.hidden)
                 .tint(MomentsPalette.accent)
 
-                Divider()
-                Button {
-                    importController.chooseFolder()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "plus.circle")
-                        Text(String(localized: "Import more photos…"))
-                        Spacer()
+                HStack(spacing: 0) {
+                    Button {
+                        importController.chooseFolder()
+                    } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Image(systemName: "plus.circle")
+                            Text(String(localized: "Import more photos…"))
+                            Spacer()
+                        }
+                        .font(.caption)
+                        .foregroundStyle(MomentsPalette.muted)
+                        .padding(.leading, 16)
+                        .padding(.vertical, 12)
+                        .contentShape(Rectangle())
                     }
-                    .font(.caption)
-                    .foregroundStyle(MomentsPalette.muted)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("sidebar.import")
+                    // The AI model is set up here too, not only from ⌘, or
+                    // after a note fails to organize.
+                    SettingsLink {
+                        Image(systemName: "gearshape")
+                            .font(.callout)
+                            .foregroundStyle(MomentsPalette.muted)
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 8)
+                    .help(String(localized: "AI model settings"))
+                    .accessibilityLabel(String(localized: "AI model settings"))
+                    .accessibilityIdentifier("sidebar.settings")
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("sidebar.import")
             }
             .background(MomentsPalette.sidebar)
             .navigationTitle("Moments")
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
         } detail: {
-            switch selection ?? .library {
-            case .library:
-                LibraryView(state: libraryState, firstLaunchCompleted: $firstLaunchCompleted)
-            case .review:
-                ReviewListView()
-            case .places:
-                PlacesScreen()
-            case .footprints:
-                FootprintsScreen()
-            case .timeline:
-                TimelineScreen()
-            case .group(let groupID):
-                GroupDetailView(groupID: groupID, state: libraryState)
+            Group {
+                switch selection ?? .library {
+                case .library:
+                    LibraryView(state: libraryState, firstLaunchCompleted: $firstLaunchCompleted)
+                case .review:
+                    ReviewListView()
+                case .people:
+                    PeopleScreen()
+                case .places:
+                    PlacesScreen()
+                case .footprints:
+                    FootprintsScreen()
+                case .timeline:
+                    TimelineScreen()
+                case .group(let groupID):
+                    GroupDetailView(groupID: groupID, state: libraryState)
+                }
             }
+            // The title bar continues the page's paper instead of a white strip.
+            .toolbarBackground(MomentsPalette.content, for: .windowToolbar)
+            .toolbarBackground(.visible, for: .windowToolbar)
         }
         .frame(minWidth: 900, minHeight: 600)
+        // One accent everywhere, sheets included: no system blue controls.
+        .tint(MomentsPalette.accent)
         .onChange(of: shared.requestedDestination) { _, destination in
             guard let destination else { return }
+            // A scoped jump opens the Library at the top of those photos,
+            // not where the full Library was left.
+            if destination == .library, shared.libraryScope != nil, !shared.shouldRevealSelectionInLibrary {
+                libraryState.topSectionScrollID = nil
+            }
             switch destination {
             case .library: selection = .library
             case .places: selection = .places
@@ -241,6 +267,12 @@ struct ContentView: View {
             hasher.combine(membership.mediaID)
             hasher.combine(membership.excluded)
         }
+        for observation in faceObservations {
+            hasher.combine(observation.id)
+            hasher.combine(observation.mediaID)
+            hasher.combine(observation.personID)
+            hasher.combine(observation.confirmed)
+        }
         for memory in memoryRecords {
             hasher.combine(memory.id)
             hasher.combine(memory.mediaID)
@@ -258,8 +290,9 @@ struct ContentView: View {
 
     private func refreshGroupCounts() {
         var counts: [String: Int] = [:]
+        let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
         for group in groups {
-            counts[group.id] = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: groupItems).count
+            counts[group.id] = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: groupItems, observations: faceObservations, personIDsByMediaID: personIndex).count
         }
         cachedGroupCounts = counts
     }
@@ -289,7 +322,7 @@ struct ContentView: View {
         HStack(spacing: 8) {
             Label(LocalizedStringKey(title), systemImage: icon)
             Spacer(minLength: 4)
-            if let badge {
+            if let badge, badge > 0 {
                 Text("\(badge)")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(MomentsPalette.accent)

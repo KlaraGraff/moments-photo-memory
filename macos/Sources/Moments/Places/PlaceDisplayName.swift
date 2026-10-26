@@ -74,3 +74,13 @@ extension MediaItem {
         return place?.displayName
     }
 }
+
+extension MediaItem {
+    /// This person's override, else a real name from the place or a parent;
+    /// nil when the import only gave it an internal handle like "Spot 402a14".
+    var namedPlace: String? {
+        let override = placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let override, !override.isEmpty { return override }
+        return place.flatMap(PlaceDisplayName.resolvedName(of:))
+    }
+}

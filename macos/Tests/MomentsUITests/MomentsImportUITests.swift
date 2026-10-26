@@ -74,9 +74,9 @@ final class MomentsImportUITests: XCTestCase {
         capture(app, named: "import-11-relaunched")
 
         let memory = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.memory."))
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.note."))
             .firstMatch
-        XCTAssertTrue(memory.waitForExistence(timeout: timeout), "An imported photo memory editor was not visible after relaunch")
+        XCTAssertTrue(memory.waitForExistence(timeout: timeout), "An imported photo's note line was not visible after relaunch")
         if memoryWasAdded {
             // The memory belongs to whichever photo was first in the review list,
             // which need not be the first card in the Library.
@@ -94,6 +94,29 @@ final class MomentsImportUITests: XCTestCase {
         } else {
             recordSkipped("The quick-memory field was unavailable, so persistence of that optional edit was not asserted.")
         }
+
+        exerciseToReviewList(in: app)
+    }
+
+    /// The To review screen confirms a flagged photo and can take it back.
+    private func exerciseToReviewList(in app: XCUIApplication) {
+        element(in: app, identifier: "sidebar.review").click()
+        let confirm = app.buttons
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "review.confirm."))
+            .firstMatch
+        guard confirm.waitForExistence(timeout: 5) else {
+            recordSkipped("No photo was left to review after the import, so the To review actions were not exercised.")
+            return
+        }
+        capture(app, named: "import-19-to-review-evidence")
+        let confirmedID = String(confirm.identifier.dropFirst("review.confirm.".count))
+        confirm.click()
+        XCTAssertTrue(element(in: app, identifier: "review.confirm.\(confirmedID)").waitForNonExistence(timeout: 5), "A confirmed photo should leave the list")
+        let undo = element(in: app, identifier: "review.undo")
+        XCTAssertTrue(undo.waitForExistence(timeout: timeout), "Confirming should offer Undo")
+        capture(app, named: "import-20-to-review-confirmed-evidence")
+        undo.click()
+        XCTAssertTrue(element(in: app, identifier: "review.confirm.\(confirmedID)").waitForExistence(timeout: timeout), "Undo should bring the photo back")
     }
 
     private func launch(storeDirectory: URL) -> XCUIApplication {

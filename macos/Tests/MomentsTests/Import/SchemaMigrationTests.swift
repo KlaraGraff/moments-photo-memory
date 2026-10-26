@@ -41,3 +41,25 @@ final class SchemaMigrationTests: XCTestCase {
         XCTAssertNil(migrated.first?.duration)
     }
 }
+
+extension SchemaMigrationTests {
+    func testFrozenSchemaV5StoreMigratesToV6AndAddsEmptyPeopleTables() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "moments-v5-v6-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let storeURL = folder.appending(path: "Moments.store")
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let legacy = try MomentsPersistence.makeV5Container(url: storeURL)
+        let oldContext = legacy.mainContext
+        oldContext.insert(SchemaV5.MediaItem(id: "frozen-v5-item", title: "Synthetic V5 item"))
+        oldContext.insert(SchemaV5.UserGroup(id: "frozen-v5-group", name: "Synthetic group"))
+        try oldContext.save()
+
+        let current = try MomentsPersistence.makeContainer(url: storeURL)
+        let items = try current.mainContext.fetch(FetchDescriptor<MediaItem>())
+        let groups = try current.mainContext.fetch(FetchDescriptor<UserGroup>())
+        XCTAssertEqual(items.map(\.id), ["frozen-v5-item"])
+        XCTAssertEqual(groups.map(\.id), ["frozen-v5-group"])
+        XCTAssertTrue(try current.mainContext.fetch(FetchDescriptor<Person>()).isEmpty)
+        XCTAssertTrue(try current.mainContext.fetch(FetchDescriptor<FaceObservation>()).isEmpty)
+    }
+}

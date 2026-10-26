@@ -2,16 +2,6 @@ import Foundation
 import SwiftUI
 import SwiftData
 
-private enum LibraryPalette {
-    static let sidebar = Color(red: 0.969, green: 0.906, blue: 0.863)
-    static let content = Color(red: 0.984, green: 0.945, blue: 0.918)
-    static let ink = Color(red: 0.227, green: 0.165, blue: 0.141)
-    static let muted = Color(red: 0.478, green: 0.365, blue: 0.314)
-    static let accent = Color(red: 0.690, green: 0.290, blue: 0.184)
-    static let line = Color(red: 0.937, green: 0.855, blue: 0.796)
-    static let rule = Color(red: 0.902, green: 0.804, blue: 0.741)
-}
-
 private enum LibraryScrollTarget {
     static func section(_ id: String) -> String { "section:\(id)" }
     static func item(_ id: String) -> String { "item:\(id)" }
@@ -39,6 +29,8 @@ struct LibraryView: View {
     @Query(sort: \UserGroup.name)
     private var allGroups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
+    @Query(sort: \Person.name) private var people: [Person]
+    @Query private var faceObservations: [FaceObservation]
 
     let state: LibraryViewState
     @Binding var firstLaunchCompleted: Bool
@@ -50,12 +42,14 @@ struct LibraryView: View {
     @AppStorage("moments.library.place") private var placeFilterID = ""
     @AppStorage("moments.library.trip") private var tripFilterKey = ""
     @AppStorage("moments.library.memory") private var memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+    @AppStorage("moments.library.person") private var personFilterID = ""
 
     @State private var cachedSections: [LibrarySection] = []
     @State private var cachedItemByID: [String: MediaItem] = [:]
     @State private var cachedVisibleCount = 0
     @State private var hasGrouped = false
     @State private var showingSmartGroupEditor = false
+    @State private var cachedPersonIndex: [String: Set<String>] = [:]
 
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
@@ -69,7 +63,8 @@ struct LibraryView: View {
             placeID: placeFilterID.isEmpty ? nil : placeFilterID,
             mediaType: LibraryMediaTypeFilter(rawValue: typeRaw) ?? .all,
             tripKey: tripFilterKey.isEmpty ? nil : tripFilterKey,
-            memoryFilter: LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all
+            memoryFilter: LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all,
+            personID: personFilterID.isEmpty ? nil : personFilterID
         )
     }
 
@@ -117,6 +112,16 @@ struct LibraryView: View {
         LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all
     }
 
+    private var visiblePeople: [Person] {
+        people.filter { !$0.hidden && ($0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) }
+    }
+
+    private var selectedPersonName: String? { people.first(where: { $0.id == personFilterID })?.name }
+
+    private var personIDsByMediaID: [String: Set<String>] {
+        cachedPersonIndex
+    }
+
     /// A lightweight query signature for the cached regroup. Memory presence,
     /// trip/place names, and overrides come from their own queries so this
     /// token never faults `item.memories` for every media item during a render.
@@ -132,7 +137,9 @@ struct LibraryView: View {
         hasher.combine(placeFilterID)
         hasher.combine(tripFilterKey)
         hasher.combine(memoryFilterRaw)
+        hasher.combine(personFilterID)
         hasher.combine(state.focusedMemoryItemID)
+        hasher.combine(selection.libraryScope?.itemIDs)
         for item in items {
             hasher.combine(item.id)
             hasher.combine(item.captureDate)
@@ -164,6 +171,13 @@ struct LibraryView: View {
             hasher.combine(memory.updatedAt)
             hasher.combine(memory.revision)
         }
+        for observation in faceObservations {
+            hasher.combine(observation.id)
+            hasher.combine(observation.mediaID)
+            hasher.combine(observation.personID)
+            hasher.combine(observation.confirmed)
+            hasher.combine(observation.assignmentSource)
+        }
         return hasher.finalize()
     }
 
@@ -178,8 +192,12 @@ struct LibraryView: View {
             }
         }
         .background(LibraryPalette.content)
+        .endsTextEditingOnOutsideClick()
         .onChange(of: allItems.count, initial: true) { _, count in
             if count > 0 { firstLaunchCompleted = true }
+        }
+        .onChange(of: people.map(\.id), initial: true) { _, ids in
+            if !personFilterID.isEmpty && !ids.contains(personFilterID) { personFilterID = "" }
         }
         .task(id: groupingKey) { regroup() }
         .sheet(
@@ -229,10 +247,9 @@ struct LibraryView: View {
                 }
             }
         }
-        .padding(.horizontal, 34)
-        .padding(.top, 28)
+        .padding(.horizontal, PaperMetrics.screenInset)
+        .padding(.top, PaperMetrics.screenTopInset)
         .padding(.bottom, 18)
-        .overlay(alignment: .bottom) { Rectangle().fill(LibraryPalette.line).frame(height: 1) }
     }
 
     private var libraryHeaderTitle: some View {
@@ -285,17 +302,19 @@ struct LibraryView: View {
 
     private var filterBar: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Chips never truncate; when they do not fit, drop the disabled
-            // "Add filter" stub, then scroll rather than clip.
+            // Chips never truncate; when they do not fit, scroll rather than clip.
             ViewThatFits(in: .horizontal) {
-                filterChipRow(showsAddFilter: true)
-                filterChipRow(showsAddFilter: false)
-                ScrollView(.horizontal) { filterChipRow(showsAddFilter: false) }
+                filterChipRow
+                ScrollView(.horizontal) { filterChipRow }
                     .scrollIndicators(.hidden)
             }
 
-            if hasActiveFilters {
+            if hasActiveFilters || selection.libraryScope != nil {
                 HStack(spacing: 7) {
+                    if let scope = selection.libraryScope {
+                        filterChip(scope.title) { selection.libraryScope = nil }
+                            .accessibilityIdentifier("library.scope-chip")
+                    }
                     if let selectedPlaceName {
                         filterChip("\(String(localized: "Place:")) \(selectedPlaceName)") { placeFilterID = "" }
                     }
@@ -311,6 +330,9 @@ struct LibraryView: View {
                     if selectedMemoryFilter != .all {
                         filterChip(memoryFilterLabel(selectedMemoryFilter)) { memoryFilterRaw = LibraryMemoryFilter.all.rawValue }
                     }
+                    if let selectedPersonName {
+                        filterChip("\(String(localized: "Person:")) \(selectedPersonName)") { personFilterID = "" }
+                    }
                     Button(String(localized: "Clear filters")) { clearFilters() }
                         .buttonStyle(.link)
                         .font(.caption)
@@ -323,28 +345,32 @@ struct LibraryView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(LibraryPalette.muted)
                 Spacer(minLength: 12)
-                // Its own row keeps the filter chips at full width and the
-                // button on one line in the smallest window.
-                Button(String(localized: "Save this filter as a smart group")) {
-                    showingSmartGroupEditor = true
+                // Only a real filter can become a smart group. Its own row
+                // keeps the chips at full width and the button on one line.
+                // A scope is a one-off list, not a rule a smart group could keep.
+                if criteria.isFiltered && selection.libraryScope == nil {
+                    Button(String(localized: "Save this filter as a smart group")) {
+                        showingSmartGroupEditor = true
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .foregroundStyle(LibraryPalette.accent)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .accessibilityIdentifier("library.save-smart-group")
                 }
-                .buttonStyle(.link)
-                .font(.caption)
-                .foregroundStyle(LibraryPalette.accent)
-                .lineLimit(1)
-                .fixedSize()
-                .accessibilityIdentifier("library.save-smart-group")
             }
         }
-        .padding(.horizontal, 34)
+        .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.vertical, 13)
-        .overlay(alignment: .bottom) { Rectangle().fill(LibraryPalette.line).frame(height: 1) }
+        // A band one tone down sets the filters apart; no rules above or below.
+        .background(Paper.well.opacity(0.45))
         .sheet(isPresented: $showingSmartGroupEditor) {
             GroupEditorSheet(kind: .newSmart, group: nil, initialCriteria: criteria)
         }
     }
 
-    private func filterChipRow(showsAddFilter: Bool) -> some View {
+    private var filterChipRow: some View {
         HStack(spacing: 8) {
             filterMenu(label: String(localized: "Place"), selected: selectedPlaceName) {
                 Button(String(localized: "All places")) { placeFilterID = "" }
@@ -372,20 +398,7 @@ struct LibraryView: View {
 
             dateFilterMenu
             memoryFilterMenu
-
-            if showsAddFilter {
-                Button {
-                    // The filter builder is intentionally a disabled stub until #30.
-                } label: {
-                    Label(String(localized: "Add filter"), systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(LibraryPalette.muted)
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 3])).foregroundStyle(LibraryPalette.muted.opacity(0.5)))
-                .disabled(true)
-                .accessibilityIdentifier("library.add-filter")
-            }
+            personFilterMenu
 
             Spacer(minLength: 0)
         }
@@ -403,11 +416,10 @@ struct LibraryView: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        // Chip labels read as ink; the app accent would turn every chip red.
+        .tint(LibraryPalette.ink)
         .fixedSize()
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.white.opacity(0.48), in: Capsule())
-        .overlay(Capsule().stroke(LibraryPalette.line, lineWidth: 1))
+        .paperChip(selected: selected != nil)
         .foregroundStyle(LibraryPalette.ink)
     }
 
@@ -451,11 +463,10 @@ struct LibraryView: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        // Chip labels read as ink; the app accent would turn every chip red.
+        .tint(LibraryPalette.ink)
         .fixedSize()
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.white.opacity(0.48), in: Capsule())
-        .overlay(Capsule().stroke(LibraryPalette.line, lineWidth: 1))
+        .paperChip(selected: dateFilterLabel != nil)
     }
 
     private var memoryFilterMenu: some View {
@@ -480,11 +491,32 @@ struct LibraryView: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        // Chip labels read as ink; the app accent would turn every chip red.
+        .tint(LibraryPalette.ink)
         .fixedSize()
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.white.opacity(0.48), in: Capsule())
-        .overlay(Capsule().stroke(LibraryPalette.line, lineWidth: 1))
+        .paperChip(selected: selectedMemoryFilter != .all)
+    }
+
+    private var personFilterMenu: some View {
+        Menu {
+            Button { personFilterID = "" } label: {
+                filterMenuLabel(String(localized: "All people"), selected: personFilterID.isEmpty)
+            }
+            if !visiblePeople.isEmpty { Divider() }
+            ForEach(visiblePeople, id: \.id) { person in
+                Button { personFilterID = person.id } label: {
+                    filterMenuLabel(person.name ?? String(localized: "Unnamed person"), selected: person.id == personFilterID)
+                }
+            }
+        } label: {
+            filterMenuTitle(String(localized: "Person"), selected: !personFilterID.isEmpty)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        // Chip labels read as ink; the app accent would turn every chip red.
+        .tint(LibraryPalette.ink)
+        .fixedSize()
+        .paperChip(selected: !personFilterID.isEmpty)
     }
 
     private func filterMenuTitle(_ label: String, selected: Bool) -> some View {
@@ -568,13 +600,14 @@ struct LibraryView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 13) {
+        let isFiltered = criteria.isFiltered || selection.libraryScope != nil
+        return VStack(spacing: 13) {
             ContentUnavailableView(
-                criteria.isFiltered ? String(localized: "No matching photos") : String(localized: "No photos yet"),
-                systemImage: criteria.isFiltered ? "line.3.horizontal.decrease.circle" : "photo.on.rectangle",
-                description: Text(criteria.isFiltered ? String(localized: "Try changing your filters.") : String(localized: "Add a photo or import a folder to begin."))
+                isFiltered ? String(localized: "No matching photos") : String(localized: "No photos yet"),
+                systemImage: isFiltered ? "line.3.horizontal.decrease.circle" : "photo.on.rectangle",
+                description: Text(isFiltered ? String(localized: "Try changing your filters.") : String(localized: "Add a photo or import a folder to begin."))
             )
-            if !criteria.isFiltered {
+            if !isFiltered {
                 Button {
                     importController.chooseFolder()
                 } label: {
@@ -623,7 +656,7 @@ struct LibraryView: View {
     }
 
     private var hasActiveFilters: Bool {
-        placeFilterID.isEmpty == false || tripFilterKey.isEmpty == false || dateFilterLabel != nil || selectedMemoryFilter != .all
+        placeFilterID.isEmpty == false || tripFilterKey.isEmpty == false || dateFilterLabel != nil || selectedMemoryFilter != .all || personFilterID.isEmpty == false
     }
 
     private func memoryFilterLabel(_ filter: LibraryMemoryFilter) -> String {
@@ -644,21 +677,31 @@ struct LibraryView: View {
         placeFilterID = ""
         tripFilterKey = ""
         memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+        personFilterID = ""
         typeRaw = LibraryMediaTypeFilter.all.rawValue
+        selection.libraryScope = nil
     }
 
     private func regroup() {
-        let filtered = LibraryFilterEngine.filteredItems(items, by: criteria)
+        let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
+        cachedPersonIndex = personIndex
+        // A scope from another screen narrows the grid only; the published
+        // ids below stay on the regular filters so the maps do not shrink.
+        let scopedItems = selection.libraryScope.map { scope in
+            items.filter { scope.itemIDs.contains($0.id) }
+        } ?? items
+        let filtered = LibraryFilterEngine.filteredItems(scopedItems, by: criteria, personIDsByMediaID: personIndex)
         let visible = LibraryFilterEngine.filteredItems(
-            items,
+            scopedItems,
             by: criteria,
-            preservingEditingItemID: state.focusedMemoryItemID
+            preservingEditingItemID: state.focusedMemoryItemID,
+            personIDsByMediaID: personIndex
         )
         cachedVisibleCount = visible.count
         cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
         cachedSections = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
         hasGrouped = true
-        let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria).map(\.id))
+        let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
         selection.visibleItemIDs = publishedVisible
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
         if let focus = selection.focusedItemID,
@@ -768,6 +811,8 @@ private struct LibrarySectionView: View {
     var allGroups: [UserGroup] = []
     var groupItems: [UserGroupItem] = []
     var group: UserGroup? = nil
+    @Query private var placeNotes: [PlaceNote]
+    @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: 175, maximum: 300), spacing: 24, alignment: .top)]
@@ -788,10 +833,25 @@ private struct LibrarySectionView: View {
                     .foregroundStyle(LibraryPalette.muted)
             }
 
+            CollectionMemoryLines(memories: sectionMemories)
+
             LazyVGrid(columns: columns, alignment: .leading, spacing: 28) {
                 ForEach(items, id: \.id) { item in
-                    LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group)
+                    LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes)
                 }
+            }
+        }
+    }
+
+    /// Trip memories for a trip section, and day memories for the days its photos were taken.
+    private var sectionMemories: [CollectionMemory] {
+        guard !collectionMemories.isEmpty else { return [] }
+        let tripID = section.id.hasPrefix("trip:") ? String(section.id.dropFirst("trip:".count)) : nil
+        let dayKeys = Set(items.compactMap { PhotoNoteDay.key(for: $0) })
+        return collectionMemories.filter { memory in
+            switch memory.scope {
+            case .trip: return memory.scopeKey == tripID
+            case .day, .photo: return dayKeys.contains(memory.scopeKey)
             }
         }
     }
@@ -815,6 +875,12 @@ private struct LibraryPhotoCell: View {
     let allGroups: [UserGroup]
     let groupItems: [UserGroupItem]
     var group: UserGroup? = nil
+    var placeNotes: [PlaceNote] = []
+
+    private var showsMemoryEditor: Bool {
+        state.memoryDrafts[item.id] != nil
+            || item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -825,10 +891,14 @@ private struct LibraryPhotoCell: View {
                     ThumbnailView(item: item, width: 560, height: 420)
                         .aspectRatio(1.33, contentMode: .fit)
                         .padding(5)
-                        // The shadow is cast by the white mat, not the photo:
-                        // a shadow over the whole cell is redrawn offscreen
-                        // every frame while the grid scrolls.
-                        .background(Color.white.shadow(.drop(color: .black.opacity(0.12), radius: 8, y: 5)))
+                        // A print's white mat, lifted by a warm two-layer shadow.
+                        // The mat casts it, not the photo: a shadow over the
+                        // whole cell is redrawn offscreen while the grid scrolls.
+                        .background(
+                            Color.white
+                                .shadow(.drop(color: Paper.shadow.opacity(0.08), radius: 1, y: 1))
+                                .shadow(.drop(color: Paper.shadow.opacity(0.10), radius: 8, y: 5))
+                        )
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("library.photo.\(item.id)")
@@ -846,8 +916,9 @@ private struct LibraryPhotoCell: View {
                         Image(systemName: selection.isSelected(item.id) ? "checkmark.circle.fill" : "circle")
                             .font(.title3)
                             .symbolRenderingMode(.palette)
-                            .foregroundStyle(.white, .black.opacity(0.42))
-                            .shadow(radius: 2)
+                            .foregroundStyle(.white, Paper.shadow.opacity(0.45))
+                            .shadow(color: Paper.shadow.opacity(0.35), radius: 2)
+                            .symbolEffect(.bounce, value: selection.isSelected(item.id))
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(String(localized: "Select"))
@@ -861,7 +932,9 @@ private struct LibraryPhotoCell: View {
                         Image(systemName: item.isFavorite ? "star.fill" : "star")
                             .font(.title3)
                             .foregroundStyle(item.isFavorite ? .yellow : .white)
-                            .shadow(radius: 2)
+                            .shadow(color: Paper.shadow.opacity(0.35), radius: 2)
+                            // Confirmations get one small, friendly bounce.
+                            .symbolEffect(.bounce, value: item.isFavorite)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(String(localized: "Favorite"))
@@ -869,7 +942,17 @@ private struct LibraryPhotoCell: View {
                 .padding(11)
             }
 
-            MemoryEditor(item: item, state: state)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                PhotoPlaceLine(item: item, placeNotes: placeNotes)
+                Spacer(minLength: 0)
+                PhotoNoteBadge(item: item)
+            }
+            // A written memory stays editable here; the ruled line below is
+            // where new words go, so an empty photo shows only that one line.
+            if showsMemoryEditor {
+                MemoryEditor(item: item, state: state)
+            }
+            PhotoNoteSection(item: item, state: state)
         }
         .contextMenu {
             Button(String(localized: "Select")) { selection.select(item.id) }
@@ -1061,6 +1144,10 @@ private struct MemoryEditor: View {
 
 struct ReviewListView: View {
     @Query private var items: [MediaItem]
+    @Environment(\.modelContext) private var modelContext
+    @Environment(SelectionModel.self) private var selection
+    /// The last confirmation, so it can be taken back.
+    @State private var lastConfirmed: [(id: String, decision: ImportReviewDecision)] = []
 
     private var pending: [MediaItem] {
         items
@@ -1071,30 +1158,91 @@ struct ReviewListView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text(String(localized: "To review"))
-                .font(.system(size: 30, weight: .medium, design: .serif))
-                .foregroundStyle(LibraryPalette.ink)
+        let pending = self.pending
+        VStack(alignment: .leading, spacing: 0) {
+            PaperScreenHeader(String(localized: "To review")) {
+                if !pending.isEmpty { Text("\(pending.count)") }
+            } trailing: {
+                if !lastConfirmed.isEmpty {
+                    Button(String(localized: "Undo")) { undo() }
+                        .keyboardShortcut("z", modifiers: .command)
+                        .accessibilityIdentifier("review.undo")
+                }
+                if pending.count > 1 {
+                    Button(String(localized: "Confirm all")) { confirm(pending) }
+                        .accessibilityIdentifier("review.confirm-all")
+                }
+            }
             if pending.isEmpty {
                 ContentUnavailableView(String(localized: "Nothing to review"), systemImage: "checkmark.circle", description: Text(String(localized: "Import review items will appear here.")))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(pending, id: \.id) { item in
-                    HStack(spacing: 12) {
-                        ThumbnailView(item: item, width: 90, height: 70)
-                            .frame(width: 90, height: 70)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.title.isEmpty ? item.id : item.title)
-                            Text(item.importReviewReasons.map(\.label).joined(separator: " · "))
-                                .font(.caption)
-                                .foregroundStyle(LibraryPalette.muted)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(pending, id: \.id) { item in
+                            HStack(spacing: 14) {
+                                Button {
+                                    selection.select(item.id)
+                                    selection.openViewer(item.id, in: pending.map(\.id))
+                                } label: {
+                                    ThumbnailView(item: item, width: 180, height: 140)
+                                        .frame(width: 90, height: 70)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                                .help(String(localized: "Open photo"))
+                                .accessibilityIdentifier("review.photo.\(item.id)")
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(item.title.isEmpty ? item.id : item.title)
+                                        .foregroundStyle(LibraryPalette.ink)
+                                    Text(item.importReviewReasons.map(\.label).joined(separator: " · "))
+                                        .font(.caption)
+                                        .foregroundStyle(LibraryPalette.muted)
+                                }
+                                Spacer(minLength: 8)
+                                Button(String(localized: "Show in Library")) {
+                                    selection.select(item.id)
+                                    selection.requestedDestination = .library
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityIdentifier("review.show.\(item.id)")
+                                Button(String(localized: "Confirm")) { confirm([item]) }
+                                    .buttonStyle(.bordered)
+                                    .accessibilityIdentifier("review.confirm.\(item.id)")
+                            }
+                            .paperCard(cornerRadius: 10, padding: 10)
                         }
                     }
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, PaperMetrics.screenInset)
+                    .padding(.bottom, 24)
                 }
             }
         }
-        .padding(34)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(LibraryPalette.content)
+    }
+
+    /// Confirming keeps Moments' suggestion as it is and clears the flag.
+    private func confirm(_ confirmed: [MediaItem]) {
+        lastConfirmed = confirmed.map { ($0.id, $0.importDecision) }
+        for item in confirmed {
+            item.importDecision = .accepted
+            item.updatedAt = .now
+            item.updatedBy = MomentsAccount.localID
+        }
+        try? modelContext.save()
+    }
+
+    private func undo() {
+        let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for entry in lastConfirmed {
+            guard let item = byID[entry.id] else { continue }
+            item.importDecision = entry.decision
+            item.updatedAt = .now
+            item.updatedBy = MomentsAccount.localID
+        }
+        try? modelContext.save()
+        lastConfirmed = []
     }
 }
 
@@ -1109,10 +1257,12 @@ struct GroupDetailView: View {
     @Query private var memoryRecords: [Memory]
     @Query private var mediaTags: [MediaTag]
     @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
+    @Query private var faceObservations: [FaceObservation]
     @State private var showingEditor = false
     @State private var showingDeleteConfirmation = false
     @State private var cachedVisibleItemIDs: [String] = []
     @State private var cachedVisibleItemsByID: [String: MediaItem] = [:]
+    @State private var cachedPersonIndex: [String: Set<String>] = [:]
 
     init(groupID: String, state: LibraryViewState) {
         self.groupID = groupID
@@ -1158,6 +1308,12 @@ struct GroupDetailView: View {
             hasher.combine(membership.mediaID)
             hasher.combine(membership.excluded)
         }
+        for observation in faceObservations {
+            hasher.combine(observation.id)
+            hasher.combine(observation.mediaID)
+            hasher.combine(observation.personID)
+            hasher.combine(observation.confirmed)
+        }
         for memory in memoryRecords {
             hasher.combine(memory.id)
             hasher.combine(memory.mediaID)
@@ -1179,7 +1335,9 @@ struct GroupDetailView: View {
             cachedVisibleItemsByID = [:]
             return
         }
-        let sorted = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: memberships)
+        let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
+        cachedPersonIndex = personIndex
+        let sorted = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: memberships, observations: faceObservations, personIDsByMediaID: personIndex)
             .sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) > ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
         cachedVisibleItemIDs = sorted.map(\.id)
         cachedVisibleItemsByID = Dictionary(uniqueKeysWithValues: sorted.map { ($0.id, $0) })
@@ -1193,22 +1351,14 @@ struct GroupDetailView: View {
         Group {
             if let group {
                 VStack(spacing: 0) {
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text(group.name)
-                            .font(.system(size: 34, weight: .medium, design: .serif))
-                            .foregroundStyle(LibraryPalette.ink)
+                    PaperScreenHeader(group.name) {
                         Text("\(visibleItems.count) \(String(localized: "photos"))")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(LibraryPalette.muted)
-                        Spacer()
+                    } trailing: {
                         Text(group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
                             .font(.caption)
                             .foregroundStyle(LibraryPalette.muted)
+                            .paperChip()
                     }
-                    .padding(.horizontal, 34)
-                    .padding(.top, 28)
-                    .padding(.bottom, 18)
-                    .overlay(alignment: .bottom) { Rectangle().fill(LibraryPalette.line).frame(height: 1) }
 
                     if sections.isEmpty {
                         ContentUnavailableView(
@@ -1237,7 +1387,8 @@ struct GroupDetailView: View {
                                     )
                                 }
                             }
-                            .padding(34)
+                            .padding(.horizontal, PaperMetrics.screenInset)
+                            .padding(.vertical, 24)
                         }
                     }
                 }
@@ -1247,7 +1398,7 @@ struct GroupDetailView: View {
                         Button(String(localized: "Edit")) { showingEditor = true }
                         if group.kind == .smart {
                             Button(String(localized: "Convert to manual")) {
-                                UserGroupRuleEngine.convertToManual(group, items: items, memberships: memberships, context: modelContext)
+                                UserGroupRuleEngine.convertToManual(group, items: items, memberships: memberships, observations: faceObservations, context: modelContext)
                                 try? modelContext.save()
                             }
                         }
@@ -1292,6 +1443,11 @@ struct GroupEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query private var items: [MediaItem]
+    @Query(sort: \Person.name) private var people: [Person]
+    @Query private var faceObservations: [FaceObservation]
+    @Query(sort: \Trip.id) private var trips: [Trip]
+    @Query(sort: \Tag.displayName) private var tags: [Tag]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var name = ""
     @State private var mode: UserGroupRuleSet.MatchMode = .all
     @State private var rules: [UserGroupRule] = []
@@ -1310,87 +1466,245 @@ struct GroupEditorSheet: View {
 
     private var isSmart: Bool { kind == .newSmart || group?.kind == .smart }
     private var matchCount: Int {
-        UserGroupRuleEngine.matchingItems(items, ruleSet: UserGroupRuleSet(mode: mode, rules: rules)).count
+        UserGroupRuleEngine.matchingItems(items, ruleSet: UserGroupRuleSet(mode: mode, rules: rules), observations: faceObservations, personIDsByMediaID: UserGroupRuleEngine.makePersonIndex(faceObservations)).count
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
+        PaperSheet(isSmart ? String(localized: "Edit smart group") : String(localized: "Edit group")) {
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 16) {
+                GridRow {
+                    PaperFormLabel(String(localized: "Group name"))
                     TextField(String(localized: "Group name"), text: $name)
+                        .textFieldStyle(.paper)
+                        .labelsHidden()
                 }
                 if isSmart {
-                    Section {
+                    GridRow {
+                        PaperFormLabel(String(localized: "Match"))
                         Picker(String(localized: "Match"), selection: $mode) {
                             Text(String(localized: "All conditions")).tag(UserGroupRuleSet.MatchMode.all)
                             Text(String(localized: "Any condition")).tag(UserGroupRuleSet.MatchMode.any)
                         }
                         .pickerStyle(.segmented)
-
-                        ForEach($rules) { $rule in
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Picker(String(localized: "Field"), selection: $rule.field) {
-                                        Text(String(localized: "Place")).tag(UserGroupRuleField.place)
-                                        Text(String(localized: "Trip")).tag(UserGroupRuleField.trip)
-                                        Text(String(localized: "Type")).tag(UserGroupRuleField.type)
-                                        Text(String(localized: "Date range")).tag(UserGroupRuleField.dateRange)
-                                        Text(String(localized: "Has memory")).tag(UserGroupRuleField.hasMemory)
-                                        Text(String(localized: "Tag")).tag(UserGroupRuleField.tag)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    // First-baseline: the label lines up with the first condition's text.
+                    GridRow {
+                        PaperFormLabel(String(localized: "Conditions"))
+                        VStack(alignment: .leading, spacing: 10) {
+                            if rules.count > 5 {
+                                // A long list scrolls so the buttons stay on screen.
+                                ScrollView { ruleList }
+                                    .frame(height: 250)
+                                    .paperWell(padding: 0)
+                            } else if !rules.isEmpty {
+                                ruleList
+                                    .paperWell()
+                            }
+                            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                Button {
+                                    withAnimation(Motion.animation(Motion.snap, reduceMotion: reduceMotion)) {
+                                        rules.append(UserGroupRule(field: .type, value: LibraryMediaTypeFilter.photo.rawValue))
                                     }
-                                    Picker(String(localized: "Condition"), selection: $rule.op) {
-                                        Text(String(localized: "is")).tag(UserGroupRuleOperator.equals)
-                                        Text(String(localized: "is not")).tag(UserGroupRuleOperator.isNot)
-                                    }
-                                    Button(role: .destructive) {
-                                        rules.removeAll { $0.id == rule.id }
-                                    } label: {
-                                        Image(systemName: "minus.circle")
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel(String(localized: "Remove condition"))
+                                } label: {
+                                    Label(String(localized: "Add condition"), systemImage: "plus")
                                 }
-                                TextField(rule.field == .dateRange ? String(localized: "From date (YYYY-MM-DD)") : String(localized: "Value"), text: $rule.value)
-                                if rule.field == .dateRange {
-                                    TextField(String(localized: "To date (YYYY-MM-DD)"), text: secondaryBinding(for: $rule))
-                                }
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(Paper.accent)
+                                .accessibilityIdentifier("groupEditor.addCondition")
+                                Text(String(format: String(localized: "Matches now message"), matchCount))
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(Paper.muted)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         }
-
-                        Button {
-                            rules.append(UserGroupRule(field: .place, value: ""))
-                        } label: {
-                            Label(String(localized: "Add condition"), systemImage: "plus")
-                        }
-                        Text(String(format: String(localized: "Matches now message"), matchCount))
-                            .font(.caption)
-                            .foregroundStyle(LibraryPalette.muted)
                     }
                 }
             }
-            .navigationTitle(isSmart ? String(localized: "Edit smart group") : String(localized: "Edit group"))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(String(localized: "Cancel")) { dismissEditor() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(String(localized: "Save")) { save() }
-                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-            .onAppear {
-                guard name.isEmpty else { return }
-                if let group {
-                    name = group.name
-                    mode = group.rules.mode
-                    rules = group.rules.rules
-                } else if let initialCriteria {
-                    name = String(localized: "New smart group")
-                    rules = Self.rules(from: initialCriteria)
-                }
+        } footer: {
+            Button(String(localized: "Cancel")) { dismissEditor() }
+                .keyboardShortcut(.cancelAction)
+            Button(String(localized: "Save")) { save() }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .onAppear {
+            guard name.isEmpty else { return }
+            if let group {
+                name = group.name
+                mode = group.rules.mode
+                rules = group.rules.rules
+            } else if let initialCriteria {
+                name = String(localized: "New smart group")
+                rules = Self.rules(from: initialCriteria)
             }
         }
-        .frame(minWidth: 560, minHeight: 440)
+        .frame(width: isSmart ? 620 : 440)
+        .frame(minHeight: isSmart ? 320 : 0)
+    }
+
+    private var ruleList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach($rules) { $rule in
+                ruleRow($rule)
+            }
+        }
+        .padding(rules.count > 5 ? 10 : 0)
+    }
+
+    /// One condition on a single line. Field and condition menus have fixed
+    /// widths so every row's value starts in the same column.
+    private func ruleRow(_ rule: Binding<UserGroupRule>) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Picker(String(localized: "Field"), selection: fieldBinding(for: rule)) {
+                Text(String(localized: "Place")).tag(UserGroupRuleField.place)
+                Text(String(localized: "Trip")).tag(UserGroupRuleField.trip)
+                Text(String(localized: "Type")).tag(UserGroupRuleField.type)
+                Text(String(localized: "Date range")).tag(UserGroupRuleField.dateRange)
+                Text(String(localized: "Has memory")).tag(UserGroupRuleField.hasMemory)
+                Text(String(localized: "Tag")).tag(UserGroupRuleField.tag)
+                Text(String(localized: "Person")).tag(UserGroupRuleField.person)
+            }
+            .labelsHidden()
+            .frame(width: 128)
+            Picker(String(localized: "Condition"), selection: rule.op) {
+                Text(String(localized: "is")).tag(UserGroupRuleOperator.equals)
+                Text(String(localized: "is not")).tag(UserGroupRuleOperator.isNot)
+            }
+            .labelsHidden()
+            .frame(width: 84)
+            valueControl(rule)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                withAnimation(Motion.animation(Motion.snap, reduceMotion: reduceMotion)) {
+                    rules.removeAll { $0.id == rule.wrappedValue.id }
+                }
+            } label: {
+                Image(systemName: "minus.circle")
+                    .foregroundStyle(Paper.muted)
+            }
+            .buttonStyle(.borderless)
+            .help(String(localized: "Remove condition"))
+            .accessibilityLabel(String(localized: "Remove condition"))
+        }
+    }
+
+    /// The value as a choice from what is in the library, never a raw ID to type.
+    @ViewBuilder
+    private func valueControl(_ rule: Binding<UserGroupRule>) -> some View {
+        switch rule.wrappedValue.field {
+        case .place:
+            valuePicker(rule, options: placeOptions)
+        case .trip:
+            valuePicker(rule, options: tripOptions)
+        case .tag:
+            valuePicker(rule, options: tagOptions)
+        case .type:
+            valuePicker(rule, options: [
+                (LibraryMediaTypeFilter.photo.rawValue, String(localized: "Photos")),
+                (LibraryMediaTypeFilter.video.rawValue, String(localized: "Videos")),
+                (LibraryMediaTypeFilter.live.rawValue, String(localized: "Live Photos")),
+                (LibraryMediaTypeFilter.screenshot.rawValue, String(localized: "Screenshots")),
+            ])
+        case .hasMemory:
+            valuePicker(rule, options: [
+                ("true", String(localized: "Has memory")),
+                ("false", String(localized: "No memory")),
+            ])
+        case .dateRange:
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                DatePicker(String(localized: "From date"), selection: dayBinding(rule.value), displayedComponents: .date)
+                    .labelsHidden()
+                Text(verbatim: "–")
+                    .foregroundStyle(Paper.muted)
+                DatePicker(String(localized: "To date"), selection: dayBinding(secondaryBinding(for: rule)), displayedComponents: .date)
+                    .labelsHidden()
+            }
+            .datePickerStyle(.field)
+        case .person:
+            valuePicker(rule, options: personOptions)
+        }
+    }
+
+    private func valuePicker(_ rule: Binding<UserGroupRule>, options: [(String, String)]) -> some View {
+        Picker(String(localized: "Value"), selection: rule.value) {
+            // A rule saved before its value disappeared still shows what it holds.
+            if !options.contains(where: { $0.0 == rule.wrappedValue.value }) {
+                Text(rule.wrappedValue.value.isEmpty ? String(localized: "Choose…") : rule.wrappedValue.value)
+                    .tag(rule.wrappedValue.value)
+            }
+            ForEach(options.indices, id: \.self) { index in
+                Text(options[index].1).tag(options[index].0)
+            }
+        }
+        .labelsHidden()
+    }
+
+    /// Changing the field starts the value over with that field's first choice.
+    private func fieldBinding(for rule: Binding<UserGroupRule>) -> Binding<UserGroupRuleField> {
+        Binding(
+            get: { rule.wrappedValue.field },
+            set: { field in
+                guard field != rule.wrappedValue.field else { return }
+                rule.wrappedValue.field = field
+                rule.wrappedValue.secondaryValue = nil
+                switch field {
+                case .place: rule.wrappedValue.value = placeOptions.first?.0 ?? ""
+                case .trip: rule.wrappedValue.value = tripOptions.first?.0 ?? ""
+                case .tag: rule.wrappedValue.value = tagOptions.first?.0 ?? ""
+                case .type: rule.wrappedValue.value = LibraryMediaTypeFilter.photo.rawValue
+                case .hasMemory: rule.wrappedValue.value = "true"
+                case .dateRange:
+                    rule.wrappedValue.value = UserGroupRuleSet.localDayKey(for: Calendar.current.date(byAdding: .month, value: -1, to: .now) ?? .now)
+                    rule.wrappedValue.secondaryValue = UserGroupRuleSet.localDayKey(for: .now)
+                case .person: rule.wrappedValue.value = personOptions.first?.0 ?? ""
+                }
+            }
+        )
+    }
+
+    /// A YYYY-MM-DD rule value edited with a date picker.
+    private func dayBinding(_ value: Binding<String>) -> Binding<Date> {
+        Binding(
+            get: {
+                let parts = value.wrappedValue.split(separator: "-").compactMap { Int($0) }
+                guard parts.count == 3,
+                      let date = Calendar.current.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2])) else { return .now }
+                return date
+            },
+            set: { value.wrappedValue = UserGroupRuleSet.localDayKey(for: $0) }
+        )
+    }
+
+    private var placeOptions: [(String, String)] {
+        var options: [String: String] = [:]
+        for item in items {
+            if let place = item.place, let named = PlaceDisplayName.namingPlace(of: place) {
+                options[named.id] = named.displayName
+            }
+            if let override = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
+                options["override:\(override)"] = override
+            }
+        }
+        return options.map { ($0.key, $0.value) }
+            .sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
+    }
+
+    private var tripOptions: [(String, String)] {
+        trips.map { ($0.id, $0.effectiveName) }
+            .sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
+    }
+
+    private var personOptions: [(String, String)] {
+        people.filter { !$0.hidden && $0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+            .map { ($0.id, $0.name ?? String(localized: "Unnamed person")) }
+    }
+
+    private var tagOptions: [(String, String)] {
+        tags.map { ($0.id, $0.displayName) }
+            .sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
     }
 
     private func dismissEditor() {
@@ -1435,6 +1749,7 @@ struct GroupEditorSheet: View {
             result.append(UserGroupRule(field: .hasMemory, value: criteria.memoryFilter == .hasMemory ? "true" : "false"))
         }
         if let tagID = criteria.tagID { result.append(UserGroupRule(field: .tag, value: tagID)) }
+        if let personID = criteria.personID { result.append(UserGroupRule(field: .person, value: personID)) }
         return result
     }
 }

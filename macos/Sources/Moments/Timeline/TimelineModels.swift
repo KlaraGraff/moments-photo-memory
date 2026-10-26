@@ -13,8 +13,6 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
     let tripID: String?
     let placeHint: String?
     let memories: [TimelineMemorySnippet]
-    /// Where the row's thumbnail comes from; nil draws the plain placeholder.
-    let thumbnail: ThumbnailSource?
 
     init(
         id: String,
@@ -25,8 +23,7 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
         kindRaw: String = MediaKind.photo.rawValue,
         tripID: String? = nil,
         placeHint: String? = nil,
-        memories: [TimelineMemorySnippet] = [],
-        thumbnail: ThumbnailSource? = nil
+        memories: [TimelineMemorySnippet] = []
     ) {
         self.id = id
         self.title = title
@@ -37,7 +34,6 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
         self.tripID = tripID
         self.placeHint = placeHint
         self.memories = memories
-        self.thumbnail = thumbnail
     }
 
     init(item: MediaItem, placeHint: String? = nil) {
@@ -59,8 +55,7 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
                         text: memory.text,
                         authorRaw: memory.authorRaw
                     )
-                },
-            thumbnail: ThumbnailSource(item: item)
+                }
         )
     }
 

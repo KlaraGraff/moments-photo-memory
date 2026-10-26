@@ -1,9 +1,8 @@
 import Foundation
 import SwiftData
 
-/// The fields available to a smart group's rule editor. Person is intentionally
-/// omitted until MediaItem has a person field.
-// TODO(#31): add a person rule when the sharing/person model lands.
+/// The fields available to a smart group's rule editor. Person membership is
+/// resolved through local FaceObservation records at evaluation time.
 public enum UserGroupRuleField: String, Codable, CaseIterable, Hashable, Sendable {
     case place
     case trip
@@ -11,6 +10,7 @@ public enum UserGroupRuleField: String, Codable, CaseIterable, Hashable, Sendabl
     case dateRange
     case hasMemory
     case tag
+    case person
 }
 
 public enum UserGroupRuleOperator: String, Codable, CaseIterable, Hashable, Sendable {
@@ -66,8 +66,37 @@ enum UserGroupRuleEngine {
         }
     }
 
+    static func matches(
+        _ item: MediaItem,
+        ruleSet: UserGroupRuleSet,
+        observations: [FaceObservation],
+        personIDsByMediaID: [String: Set<String>]? = nil,
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard !ruleSet.rules.isEmpty else { return false }
+        let ids = personIDsByMediaID?[item.id] ?? observations.reduce(into: Set<String>()) { ids, observation in
+            if observation.mediaID == item.id, let personID = observation.personID { ids.insert(personID) }
+        }
+        let results = ruleSet.rules.map { rule in
+            if rule.field == .person {
+                let result = ids.contains(rule.value)
+                return rule.op == .equals ? result : !result
+            }
+            return matches(item, rule: rule, calendar: calendar)
+        }
+        switch ruleSet.mode {
+        case .all: return results.allSatisfy { $0 }
+        case .any: return results.contains { $0 }
+        }
+    }
+
     static func matchingItems(_ items: [MediaItem], ruleSet: UserGroupRuleSet, calendar: Calendar = .current) -> [MediaItem] {
         items.filter { matches($0, ruleSet: ruleSet, calendar: calendar) }
+    }
+
+    static func matchingItems(_ items: [MediaItem], ruleSet: UserGroupRuleSet, observations: [FaceObservation], personIDsByMediaID: [String: Set<String>]? = nil, calendar: Calendar = .current) -> [MediaItem] {
+        let index = personIDsByMediaID ?? makePersonIndex(observations)
+        return items.filter { matches($0, ruleSet: ruleSet, observations: observations, personIDsByMediaID: index, calendar: calendar) }
     }
 
     /// Computes the current smart-group contents while retaining explicit
@@ -86,10 +115,27 @@ enum UserGroupRuleEngine {
         return items.filter { includedIDs.contains($0.id) && seen.insert($0.id).inserted }
     }
 
+    static func smartItems(
+        from items: [MediaItem],
+        ruleSet: UserGroupRuleSet,
+        observations: [FaceObservation],
+        personIDsByMediaID: [String: Set<String>]? = nil,
+        pinnedIDs: Set<String> = [],
+        exclusions: Set<String> = [],
+        calendar: Calendar = .current
+    ) -> [MediaItem] {
+        let matchingIDs = Set(matchingItems(items, ruleSet: ruleSet, observations: observations, personIDsByMediaID: personIDsByMediaID, calendar: calendar).map(\.id))
+        let includedIDs = (matchingIDs.union(pinnedIDs)).subtracting(exclusions)
+        var seen = Set<String>()
+        return items.filter { includedIDs.contains($0.id) && seen.insert($0.id).inserted }
+    }
+
     static func visibleItems(
         for group: UserGroup,
         from items: [MediaItem],
         memberships: [UserGroupItem],
+        observations: [FaceObservation] = [],
+        personIDsByMediaID: [String: Set<String>]? = nil,
         calendar: Calendar = .current
     ) -> [MediaItem] {
         let groupMemberships = memberships.filter { $0.groupID == group.id }
@@ -101,7 +147,13 @@ enum UserGroupRuleEngine {
         case .smart:
             let pinned = Set(groupMemberships.filter { !$0.excluded }.map(\.mediaID))
             let exclusions = Set(groupMemberships.filter(\.excluded).map(\.mediaID))
-            return smartItems(from: items, ruleSet: group.rules, pinnedIDs: pinned, exclusions: exclusions, calendar: calendar)
+            return smartItems(from: items, ruleSet: group.rules, observations: observations, personIDsByMediaID: personIDsByMediaID, pinnedIDs: pinned, exclusions: exclusions, calendar: calendar)
+        }
+    }
+
+    static func makePersonIndex(_ observations: [FaceObservation]) -> [String: Set<String>] {
+        observations.reduce(into: [:]) { result, observation in
+            if let personID = observation.personID { result[observation.mediaID, default: []].insert(personID) }
         }
     }
 
@@ -134,8 +186,14 @@ enum UserGroupRuleEngine {
         return (try? context.fetch(FetchDescriptor<UserGroupItem>(predicate: predicate))) ?? []
     }
 
-    static func convertToManual(_ group: UserGroup, items: [MediaItem], memberships: [UserGroupItem], context: ModelContext) {
-        let matches = visibleItems(for: group, from: items, memberships: memberships)
+    static func convertToManual(
+        _ group: UserGroup,
+        items: [MediaItem],
+        memberships: [UserGroupItem],
+        observations: [FaceObservation] = [],
+        context: ModelContext
+    ) {
+        let matches = visibleItems(for: group, from: items, memberships: memberships, observations: observations)
         for membership in memberships where membership.groupID == group.id {
             context.delete(membership)
         }
@@ -177,6 +235,7 @@ extension UserGroupRuleSet {
                 criteria.toDate = to
             }
         case .tag: criteria.tagID = rule.value
+        case .person: criteria.personID = rule.value
         }
         return criteria
     }

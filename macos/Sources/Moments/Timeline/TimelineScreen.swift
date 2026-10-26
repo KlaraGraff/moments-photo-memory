@@ -12,6 +12,8 @@ struct TimelineScreen: View {
     @State private var collapsedPlaceIDs: Set<String> = []
     /// Rebuilt only when the inputs change, not on every selection change or render.
     @State private var document = TimelineDocument(trips: [])
+    /// Thumbnails need the models; looked up by id, rebuilt with `document`.
+    @State private var itemByID: [String: MediaItem] = [:]
 
     private var inputKey: Int {
         var hasher = Hasher()
@@ -75,22 +77,25 @@ struct TimelineScreen: View {
                 timelineScroll
             }
         }
-        .navigationTitle("Timeline")
-        .task(id: inputKey) { document = timeline }
+        .task(id: inputKey) {
+            document = timeline
+            itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        }
     }
 
     private var timelineScroll: some View {
         ScrollView {
+            PaperScreenHeader(String(localized: "Timeline"))
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                 ForEach(document.trips) { trip in
                     tripSections(for: trip)
                 }
             }
-            .padding(.horizontal, 24)
+            .padding(.horizontal, PaperMetrics.screenInset)
             .padding(.bottom, 32)
         }
         .scrollIndicators(.automatic)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Paper.canvas)
     }
 
     @ViewBuilder
@@ -132,7 +137,9 @@ struct TimelineScreen: View {
                 isExpanded: !collapsedPlaceIDs.contains(place.id),
                 isSelected: !selection.selectedItemIDs.isDisjoint(with: place.itemIDs),
                 reduceMotion: reduceMotion,
+                itemByID: itemByID,
                 onSelect: { select(place) },
+                onOpen: { open($0, in: place) },
                 onToggle: { toggle(placeID: place.id) }
             )
         case let .travel(travel):
@@ -140,10 +147,17 @@ struct TimelineScreen: View {
         }
     }
 
+    /// The place name opens its photos on their own in the Library.
     private func select(_ place: TimelinePlace) {
-        guard !place.itemIDs.isEmpty else { return }
-        selection.select(place.itemIDs, focus: place.itemIDs.first)
-        selection.requestedDestination = .library
+        selection.showInLibrary(
+            place.itemIDs,
+            title: place.name ?? String(localized: "Unknown place", locale: locale)
+        )
+    }
+
+    private func open(_ itemID: String, in place: TimelinePlace) {
+        selection.select(itemID)
+        selection.openViewer(itemID, in: place.itemIDs)
     }
 
     private func toggle(placeID: String) {
@@ -157,7 +171,7 @@ struct TimelineScreen: View {
         if reduceMotion {
             update()
         } else {
-            withAnimation(.snappy(duration: 0.24), update)
+            withAnimation(Motion.snap, update)
         }
     }
 
@@ -190,13 +204,14 @@ private struct TimelineTripHeader: View {
             if trip.itemCount > 0 {
                 Text(photoCount(trip.itemCount))
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Paper.muted)
             }
         }
         .padding(.top, 20)
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial)
+        // Pinned headers sit on the page's own paper, not a grey material.
+        .background(Paper.canvas)
     }
 
     private func photoCount(_ count: Int) -> String {
@@ -214,14 +229,14 @@ private struct TimelineTripSummary: View {
     let locale: Locale
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(displayName)
                 .font(.subheadline.weight(.semibold))
             Text("·")
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Paper.muted.opacity(0.6))
             Text(photoCount(trip.itemCount))
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Paper.muted)
         }
         .padding(.leading, 4)
     }
@@ -243,35 +258,35 @@ private struct TimelineDayHeader: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Image(systemName: "calendar")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Paper.muted)
             if let date = day.date {
                 Text(date, format: .dateTime.weekday(.wide).month(.wide).day().locale(locale))
                     .font(.subheadline.weight(.semibold))
                 Text(date, format: .dateTime.year().locale(locale))
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Paper.muted)
             } else {
                 Text("Date to add")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Paper.muted)
             }
             Spacer()
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial)
+        .background(Paper.canvas)
     }
 }
 
 private struct TimelineEmptyTripRow: View {
     var body: some View {
         Label("No photos in this trip", systemImage: "photo.on.rectangle.angled")
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Paper.muted)
             .padding(.vertical, 18)
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+            .background(Paper.well, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -281,7 +296,9 @@ private struct TimelinePlaceCard: View {
     let isExpanded: Bool
     let isSelected: Bool
     let reduceMotion: Bool
+    let itemByID: [String: MediaItem]
     let onSelect: () -> Void
+    let onOpen: (String) -> Void
     let onToggle: () -> Void
 
     var body: some View {
@@ -291,8 +308,8 @@ private struct TimelinePlaceCard: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(place.name ?? String(localized: "Unknown place", locale: locale))
                             .font(.headline)
-                            .foregroundStyle(.primary)
-                        HStack(spacing: 5) {
+                            .foregroundStyle(Paper.ink)
+                        HStack(alignment: .firstTextBaseline, spacing: 5) {
                             Text(photoCount(place.photoCount))
                             if place.memoryCount > 0 {
                                 Text("·")
@@ -300,14 +317,15 @@ private struct TimelinePlaceCard: View {
                             }
                         }
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Paper.muted)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("timeline.place.\(place.id)")
-                .accessibilityLabel("Select \(place.photoCount) photos at \(place.name ?? String(localized: "Unknown place", locale: locale))")
+                .help("Show these photos in the Library")
+                .accessibilityLabel("Show \(place.photoCount) photos at \(place.name ?? String(localized: "Unknown place", locale: locale)) in the Library")
 
                 Button(action: onToggle) {
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
@@ -324,23 +342,28 @@ private struct TimelinePlaceCard: View {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 7) {
                         ForEach(place.items.prefix(4)) { item in
-                            TimelineThumbnail(item: item)
+                            Button { onOpen(item.id) } label: {
+                                TimelineThumbnail(item: item, media: itemByID[item.id])
+                            }
+                            .buttonStyle(.plain)
+                            .help("Open photo")
+                            .accessibilityLabel(item.title.isEmpty ? item.id : item.title)
+                            .accessibilityIdentifier("timeline.thumbnail.\(item.id)")
                         }
                     }
                     ForEach(place.items) { item in
-                        TimelineItemRow(item: item, locale: locale)
+                        Button { onOpen(item.id) } label: {
+                            TimelineItemRow(item: item, locale: locale)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("timeline.item.\(item.id)")
                     }
                 }
                 .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(16)
-        .background(isSelected ? Color.accentColor.opacity(0.08) : Color(nsColor: .controlBackgroundColor))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(isSelected ? Color.accentColor.opacity(0.42) : Color.primary.opacity(0.08), lineWidth: 1)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .paperCard(cornerRadius: 14, padding: 16, selected: isSelected)
     }
 
     private func photoCount(_ count: Int) -> String {
@@ -356,21 +379,24 @@ private struct TimelinePlaceCard: View {
 
 private struct TimelineThumbnail: View {
     let item: TimelineItemSnapshot
+    let media: MediaItem?
 
     var body: some View {
+        if let media {
+            ThumbnailView(item: media, width: 128, height: 96)
+                .frame(width: 64, height: 48)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        } else {
+            placeholder
+        }
+    }
+
+    private var placeholder: some View {
         ZStack {
-            if let source = item.thumbnail {
-                ThumbnailView(source: source, width: 128, height: 96)
-            } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(.quaternary)
-            }
-            if item.kindRaw == MediaKind.video.rawValue {
-                Image(systemName: "video.fill")
-                    .font(.caption)
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.35), radius: 1)
-            }
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Paper.well)
+            Image(systemName: item.kindRaw == MediaKind.video.rawValue ? "video" : "photo")
+                .foregroundStyle(Paper.muted)
         }
         .frame(width: 64, height: 48)
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -383,9 +409,9 @@ private struct TimelineItemRow: View {
     let locale: Locale
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
             Image(systemName: item.kindRaw == MediaKind.video.rawValue ? "video" : "photo")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Paper.muted)
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title.isEmpty ? item.id : item.title)
@@ -393,12 +419,12 @@ private struct TimelineItemRow: View {
                 if let date = item.date {
                     Text(date, format: .dateTime.hour().minute().locale(locale))
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Paper.muted)
                 }
                 ForEach(item.memories) { memory in
                     Text(memory.text)
                         .font(.callout)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(Paper.ink)
                         .padding(.top, 2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -414,32 +440,27 @@ private struct TimelineTravelRow: View {
     let locale: Locale
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "arrow.triangle.swap")
-                .foregroundStyle(.orange)
+                .foregroundStyle(Paper.accent)
             Text("Travel")
                 .fontWeight(.semibold)
             Text("·")
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Paper.muted.opacity(0.6))
             Text(travel.fromName ?? String(localized: "Unknown place", locale: locale))
             Image(systemName: "arrow.right")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Paper.muted)
             Text(travel.toName ?? String(localized: "Unknown place", locale: locale))
             Spacer(minLength: 8)
             Text(distanceLabel(travel.distanceMeters))
                 .font(.caption.monospacedDigit())
         }
         .font(.caption)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Paper.muted)
         .padding(.vertical, 9)
         .padding(.horizontal, 12)
-        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
-        .overlay {
-            RoundedRectangle(cornerRadius: 9)
-                .stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                .foregroundStyle(Color.orange.opacity(0.45))
-        }
+        .background(Paper.well.opacity(0.7), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Travel from \(travel.fromName ?? String(localized: "Unknown place", locale: locale)) to \(travel.toName ?? String(localized: "Unknown place", locale: locale)), \(distanceLabel(travel.distanceMeters))")
     }

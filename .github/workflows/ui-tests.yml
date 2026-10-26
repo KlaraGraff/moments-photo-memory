@@ -11,6 +11,11 @@ on:
       - 'scripts/make_synthetic_import_fixtures.swift'
       - '.github/workflows/ui-tests.yml'
   workflow_dispatch:
+    inputs:
+      only:
+        description: 'Run only these tests (xcodebuild -only-testing, e.g. MomentsUITests/MomentsCorrectionsUITests)'
+        required: false
+        default: ''
 
 jobs:
   ui:
@@ -30,9 +35,13 @@ jobs:
           TEST_RUNNER_MOMENTS_FLASH_DIR: ${{ runner.temp }}/flash
           TEST_RUNNER_MOMENTS_SCROLL_DIR: ${{ runner.temp }}/scroll
           TEST_RUNNER_MOMENTS_RESIZE_DIR: ${{ runner.temp }}/resize
+          ONLY_TESTING: ${{ inputs.only }}
         run: |
+          # A quick rerun of one class while fixing it; the PR runs everything.
+          only=()
+          if [ -n "$ONLY_TESTING" ]; then only=(-only-testing:"$ONLY_TESTING"); fi
           # Ad-hoc signing is enough for the test runner on the hosted Mac.
-          xcodebuild \
+          xcodebuild "${only[@]}" \
             -project macos/Moments.xcodeproj \
             -scheme MomentsUITests \
             -destination 'platform=macOS' \

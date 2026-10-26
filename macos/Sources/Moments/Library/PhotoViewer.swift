@@ -50,9 +50,13 @@ struct PhotoViewer: View {
         isEditingText || NSApp.keyWindow?.firstResponder is NSText
     }
 
-    private var index: Int? { request.itemIDs.firstIndex(of: request.itemID) }
+    /// The request as it is now. The event monitor keeps the copy of this view
+    /// taken when it was installed, whose `request` never changes; the model
+    /// is shared, so reading through it is always current.
+    private var live: ViewerRequest { selection.viewerRequest ?? request }
+    private var index: Int? { live.itemIDs.firstIndex(of: live.itemID) }
     private var hasPrevious: Bool { (index ?? 0) > 0 }
-    private var hasNext: Bool { (index ?? request.itemIDs.count) < request.itemIDs.count - 1 }
+    private var hasNext: Bool { (index ?? live.itemIDs.count) < live.itemIDs.count - 1 }
 
     var body: some View {
         ZStack {
@@ -296,7 +300,7 @@ struct PhotoViewer: View {
             close()
             return true
         }
-        guard image != nil || player != nil, let location = hoverLocation else { return false }
+        guard let location = hoverLocation else { return false }
         let wheel = !event.hasPreciseScrollingDeltas || (event.phase.isEmpty && event.momentumPhase.isEmpty)
         let canZoom = player == nil && image != nil
         if event.modifierFlags.contains(.command) {
@@ -358,7 +362,10 @@ struct PhotoViewer: View {
             pageOffset += pastEnd ? fingers * 0.3 : fingers
             if fingers != 0 { lastSwipeStep = fingers }
         }
-        if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+        if event.phase.contains(.cancelled) {
+            swipeAxis = .undecided
+            settleBack()
+        } else if event.phase.contains(.ended) {
             let direction = ViewerSwipe.direction(
                 offset: pageOffset, width: areaSize.width, lastStep: lastSwipeStep,
                 hasPrevious: hasPrevious, hasNext: hasNext
@@ -373,7 +380,7 @@ struct PhotoViewer: View {
     @discardableResult
     private func page(_ direction: Int) -> Bool {
         finishPendingPage()
-        guard let index, request.itemIDs.indices.contains(index + direction) else {
+        guard let index, live.itemIDs.indices.contains(index + direction) else {
             settleBack()
             return false
         }
@@ -405,6 +412,7 @@ struct PhotoViewer: View {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
+            stopVideo()
             if direction > 0 {
                 previousImage = image
                 image = nextImage
@@ -561,8 +569,8 @@ struct PhotoViewer: View {
     private func step(_ offset: Int) -> Bool {
         guard let index else { return false }
         let target = index + offset
-        guard request.itemIDs.indices.contains(target) else { return false }
-        let id = request.itemIDs[target]
+        guard live.itemIDs.indices.contains(target) else { return false }
+        let id = live.itemIDs[target]
         selection.select(id)
         selection.anchorItemID = id
         selection.viewerRequest?.itemID = id
@@ -585,43 +593,53 @@ struct PhotoViewer: View {
         }
         item = found
         zoom = ViewerZoom()
+        // Neighbours start loading now, alongside this photo, so a quick second
+        // swipe already has something to slide in.
+        async let neighbours: Void = loadNeighbours()
         if let cached = PhotoViewerImageCache.shared.image(for: id) {
             image = cached
         } else {
             // The grid's thumbnail first, so the photo appears at once; the
-            // full-size image replaces it when it is ready.
-            image = await ThumbnailCache.shared.image(for: found, width: 560, height: 420)
+            // full-size image replaces it when it is ready. A page turned in
+            // the meantime cancels this, and nothing is written after that.
+            let thumbnail = await ThumbnailCache.shared.image(for: found, width: 560, height: 420)
+            guard !Task.isCancelled else { return await neighbours }
+            if image == nil { image = thumbnail }
             if let full = await PhotoViewerImageCache.shared.load(found), !Task.isCancelled {
                 image = full
             }
         }
-        guard !Task.isCancelled else { return }
-        if found.kind == .video { startVideo(found) }
-        await loadNeighbours()
+        if !Task.isCancelled, found.kind == .video { startVideo(found) }
+        await neighbours
     }
 
-    /// The photos either side, so a swipe can slide them in at once.
+    /// The photos either side, so a swipe can slide them in at once: a
+    /// thumbnail first when the full image isn't ready.
     private func loadNeighbours() async {
         guard let index else { return }
-        let ids = request.itemIDs
+        let ids = live.itemIDs
         let nextID = ids.indices.contains(index + 1) ? ids[index + 1] : nil
         let previousID = ids.indices.contains(index - 1) ? ids[index - 1] : nil
-        let next = await neighbourImage(nextID)
-        guard !Task.isCancelled else { return }
-        nextImage = next
-        let previous = await neighbourImage(previousID)
-        guard !Task.isCancelled else { return }
-        previousImage = previous
+        async let next: Void = fillNeighbour(nextID, isNext: true)
+        async let previous: Void = fillNeighbour(previousID, isNext: false)
+        _ = await (next, previous)
     }
 
-    private func neighbourImage(_ id: String?) async -> NSImage? {
-        guard let id else { return nil }
-        if let cached = PhotoViewerImageCache.shared.image(for: id) { return cached }
+    private func fillNeighbour(_ id: String?, isNext: Bool) async {
+        func set(_ value: NSImage?) {
+            guard !Task.isCancelled else { return }
+            if isNext { nextImage = value } else { previousImage = value }
+        }
+        guard let id else { return set(nil) }
+        if let cached = PhotoViewerImageCache.shared.image(for: id) { return set(cached) }
         var descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == id })
         descriptor.fetchLimit = 1
-        guard let neighbour = try? modelContext.fetch(descriptor).first else { return nil }
-        if let full = await PhotoViewerImageCache.shared.load(neighbour) { return full }
-        return await ThumbnailCache.shared.image(for: neighbour, width: 560, height: 420)
+        guard let neighbour = try? modelContext.fetch(descriptor).first else { return set(nil) }
+        if let thumbnail = await ThumbnailCache.shared.image(for: neighbour, width: 560, height: 420),
+           (isNext ? nextImage : previousImage) == nil {
+            set(thumbnail)
+        }
+        if let full = await PhotoViewerImageCache.shared.load(neighbour) { set(full) }
     }
 
     private func startVideo(_ item: MediaItem) {

@@ -139,6 +139,11 @@ final class PlaceNameBackfillScheduler {
         let backfill = makeBackfill()
         task = Task.detached(priority: .utility) { [weak self] in
             _ = try? await backfill.run(container: container)
+            // Then trips still named by date only get their places in the name.
+            if !Task.isCancelled {
+                _ = try? await TripNameBackfill(geocoder: backfill.geocoder, geocodeCache: backfill.geocodeCache)
+                    .run(container: container)
+            }
             await self?.finished(current)
         }
     }

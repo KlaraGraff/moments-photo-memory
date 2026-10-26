@@ -3,7 +3,7 @@ import SwiftUI
 /// Settings › AI Model: which model organizes notes. The on-device Apple model
 /// is the default; a cloud model is optional and uses the person's own key.
 struct AISettingsView: View {
-    @AppStorage(AISettings.engineKey) private var engineRaw = AIEngine.onDevice.rawValue
+    @AppStorage(AISettings.engineKey) private var engineRaw = AISettings.defaultEngine.rawValue
     @AppStorage(AISettings.providerKey) private var providerRaw = CloudProvider.claude.rawValue
     @AppStorage(AISettings.modelKey) private var model = CloudProvider.claude.defaultModel
     @AppStorage(AISettings.baseURLKey) private var baseURL = ""
@@ -15,6 +15,8 @@ struct AISettingsView: View {
     @State private var testResult: String?
     @State private var isTesting = false
 
+    private let onDeviceAvailable = AppleOnDeviceOrganizer.unavailableReason() == nil
+
     private var provider: CloudProvider {
         CloudProvider(rawValue: providerRaw) ?? .claude
     }
@@ -24,7 +26,9 @@ struct AISettingsView: View {
             Section {
                 Picker(String(localized: "Model for organizing notes"), selection: $engineRaw) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(String(localized: "On-device Apple model (recommended)"))
+                        Text(onDeviceAvailable
+                             ? String(localized: "On-device Apple model (recommended)")
+                             : String(localized: "On-device Apple model"))
                         Text(String(localized: "Runs on this Mac; your words never leave it. Free, nothing to set up. Needs Apple Intelligence."))
                             .font(.caption)
                             .foregroundStyle(Paper.muted)
@@ -97,7 +101,7 @@ struct AISettingsView: View {
         .scrollContentBackground(.hidden)
         .background(Paper.canvas)
         .tint(Paper.accent)
-        .frame(width: 560)
+        .frame(width: SettingsLayout.width, height: SettingsLayout.height)
         .onAppear { loadKey(for: provider) }
         .onChange(of: providerRaw) { oldValue, newValue in
             if let old = CloudProvider(rawValue: oldValue) { storeKey(for: old) }

@@ -259,14 +259,14 @@ struct ImportOrganizer {
             try Task.checkCancellation()
             let tripID = stableID(prefix: "trip", ids: group.map(\.id))
             let isUndated = group.allSatisfy { $0.captureDateSource == .fileDateFallback }
-            let tripName: String
+            var tripName: String
             if isUndated {
                 // Several undated groups from one folder get numbered names.
                 undatedTripCount += 1
                 let base = Self.undatedTripName(folderName: sourceFolderName)
                 tripName = undatedTripCount == 1 ? base : base + " " + String(undatedTripCount)
             } else {
-                tripName = Self.defaultTripName(for: group.first?.captureDate, index: index + 1)
+                tripName = ""
             }
             let stops = group.compactMap { item -> PhotoStop? in
                 guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
@@ -278,6 +278,24 @@ struct ImportOrganizer {
             let cityClusters = clusterer.clusters(for: stops, level: .city)
             let cityLookup = try await cityNames(for: cityClusters)
             let cityNames = cityLookup.values
+            if !isUndated {
+                // "Morocco August 2026" or "Shanghai · Chongqing · Wulong April 2026":
+                // cities in the order they were first visited.
+                var orderedCities: [ImportGeocodeResult] = []
+                var seenClusters = Set<String>()
+                let cityOfStop = clusterMap(cityClusters)
+                for stop in stops {
+                    guard let cluster = cityOfStop[stop.id], seenClusters.insert(cluster.id).inserted,
+                          let result = cityNames[cluster.id] else { continue }
+                    orderedCities.append(result)
+                }
+                tripName = TripNaming.name(
+                    cities: orderedCities.compactMap(\.city),
+                    countries: orderedCities.compactMap(\.country),
+                    start: group.first?.captureDate,
+                    index: index + 1
+                )
+            }
 
             let cityByStop = clusterMap(cityClusters)
             let areaByStop = clusterMap(areaClusters)
@@ -706,14 +724,6 @@ struct ImportOrganizer {
             return String(localized: "Undated photos")
         }
         return name
-    }
-
-    private static func defaultTripName(for date: Date?, index: Int) -> String {
-        guard let date else { return String(localized: "Trip") + " " + String(index) }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        return String(localized: "Trip") + " " + formatter.string(from: date)
     }
 
     private func stableID(prefix: String, ids: [String]) -> String {

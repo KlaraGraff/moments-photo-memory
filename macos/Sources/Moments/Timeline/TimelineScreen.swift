@@ -61,6 +61,14 @@ struct TimelineScreen: View {
             } else if !isBuilt {
                 // Built on appear; until then show the bare page.
                 Paper.canvas
+            } else if visibleItems.isEmpty {
+                ContentUnavailableView {
+                    Label("No photos match these filters", systemImage: "line.3.horizontal.decrease.circle")
+                } description: {
+                    Text("Change or clear the filters to see more of your days.")
+                } actions: {
+                    Button("Clear filters") { LibraryFilterKeys.clearAll() }
+                }
             } else if months.isEmpty {
                 ContentUnavailableView(
                     "No timeline entries",
@@ -75,6 +83,7 @@ struct TimelineScreen: View {
         .navigationTitle(String(localized: "Timeline"))
         .navigationSubtitle(isBuilt && dayCount > 0 ? String(localized: "\(dayCount) days") : "")
         .task(id: inputKey) { rebuild() }
+        .compactLibraryFilters()
     }
 
     private var timelineScroll: some View {

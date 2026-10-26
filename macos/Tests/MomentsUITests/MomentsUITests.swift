@@ -317,6 +317,43 @@ final class MomentsUITests: XCTestCase {
         assertGlobeFullyVisible(app, screenshot: "map-04-globe-evidence")
     }
 
+    /// In the smallest window nothing overlaps: the Library's type bar has
+    /// no scroll bar and the Map's countries card clears its controls.
+    func testSmallWindowHasNoOverlaps() {
+        let app = launch(language: "en", smallWindow: true)
+        XCTAssertTrue(element(in: app, identifier: "library.type-filter").waitForExistence(timeout: launchTimeout))
+        capture(app, named: "small-01-library-evidence")
+
+        element(in: app, identifier: "sidebar.map").click()
+        let stats = element(in: app, identifier: "map.stats")
+        let toolbar = element(in: app, identifier: "map.toolbar")
+        XCTAssertTrue(stats.waitForExistence(timeout: 30))
+        XCTAssertTrue(toolbar.waitForExistence(timeout: launchTimeout))
+        Thread.sleep(forTimeInterval: 1.5)
+        capture(app, named: "small-02-map-evidence")
+        XCTAssertFalse(stats.frame.intersects(toolbar.frame), "Countries card \(stats.frame) overlaps the map controls \(toolbar.frame)")
+
+        element(in: app, identifier: "sidebar.library").click()
+        let date = element(in: app, identifier: "filter.date")
+        XCTAssertTrue(date.waitForExistence(timeout: launchTimeout))
+        date.click()
+        XCTAssertTrue(app.popovers.firstMatch.waitForExistence(timeout: launchTimeout), "Date did not open its calendar")
+        XCTAssertFalse(element(in: app, identifier: "filter.date-chip").exists, "Opening the calendar must not apply a date")
+        capture(app, named: "small-03-date-picker-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+
+        element(in: app, identifier: "sidebar.timeline").click()
+        XCTAssertTrue(element(in: app, identifier: "toolbar.filter").waitForExistence(timeout: launchTimeout), "The Timeline has no Filter button")
+        capture(app, named: "small-04-timeline-evidence")
+    }
+
+    /// Not a check: the candidate sidebar icons, for picking one.
+    func testSidebarIconCandidates() {
+        let app = launch(language: "en", iconGallery: true)
+        XCTAssertTrue(element(in: app, identifier: "debug.icon-gallery").waitForExistence(timeout: launchTimeout))
+        capture(app, named: "icons-01-candidates-evidence")
+    }
+
     func testFootprintsGlobeFitsSmallWindow() {
         let app = launch(language: "en", smallWindow: true)
         assertGlobeFullyVisible(app, screenshot: "map-05-globe-small-window-evidence")
@@ -560,9 +597,14 @@ final class MomentsUITests: XCTestCase {
     func testMapFiltersFollowTheLibrary() {
         let app = launch(language: "en")
         element(in: app, identifier: "sidebar.map").click()
-        let filters = element(in: app, identifier: "map.filters")
-        XCTAssertTrue(filters.waitForExistence(timeout: 30), "The Map has no filter bar")
-        let trip = filters.menuButtons["Trip"].firstMatch
+        let filterButton = element(in: app, identifier: "toolbar.filter")
+        XCTAssertTrue(filterButton.waitForExistence(timeout: 30), "The Map has no Filter button")
+        XCTAssertTrue(app.searchFields.firstMatch.exists, "The Map has no search field")
+        filterButton.click()
+        let popover = app.popovers.firstMatch
+        XCTAssertTrue(popover.waitForExistence(timeout: launchTimeout), "Filter did not open its options")
+        capture(app, named: "map-06-filter-popover-evidence")
+        let trip = popover.descendants(matching: .any).matching(identifier: "filter.trip").firstMatch
         XCTAssertTrue(trip.waitForExistence(timeout: launchTimeout))
         trip.click()
         let journey = app.menuItems["journeyA"].firstMatch
@@ -570,6 +612,7 @@ final class MomentsUITests: XCTestCase {
         journey.click()
         Thread.sleep(forTimeInterval: 1.5)
         capture(app, named: "map-07-filtered-evidence")
+        app.typeKey(.escape, modifierFlags: [])
 
         element(in: app, identifier: "sidebar.library").click()
         let chip = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "journeyA")).firstMatch
@@ -586,7 +629,7 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(probe.waitForExistence(timeout: launchTimeout))
         XCTAssertEqual(probe.label, "mapviews=0")
         element(in: app, identifier: "sidebar.map").click()
-        XCTAssertTrue(element(in: app, identifier: "map.filters").waitForExistence(timeout: 30))
+        XCTAssertTrue(element(in: app, identifier: "toolbar.filter").waitForExistence(timeout: 30))
         let onMap = NSPredicate(format: "label != %@", "mapviews=0")
         XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: onMap, evaluatedWith: probe)], timeout: 10), .completed, "The probe found no map view on the Map")
         for destination in ["sidebar.library", "sidebar.people", "sidebar.timeline"] {
@@ -700,9 +743,10 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "\(prefix)-05-trips-evidence")
     }
 
-    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false, mapProbe: Bool = false) -> XCUIApplication {
+    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false, mapProbe: Bool = false, iconGallery: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language]
+        if iconGallery { app.launchArguments += ["-MomentsUITestIconGallery"] }
         if mapProbe { app.launchArguments += ["-MomentsUITestMapProbe"] }
         if reviewItems { app.launchArguments += ["-MomentsUITestReviewItems"] }
         if darkMode { app.launchArguments += ["-MomentsUITestDarkMode"] }

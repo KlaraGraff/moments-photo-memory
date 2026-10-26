@@ -19,6 +19,8 @@ struct LibraryFilterChips: View {
     @AppStorage(LibraryFilterKeys.trip) private var tripFilterKey = ""
     @AppStorage(LibraryFilterKeys.memory) private var memoryFilterRaw = LibraryMemoryFilter.all.rawValue
     @AppStorage(LibraryFilterKeys.person) private var personFilterID = ""
+    @AppStorage(LibraryFilterKeys.dateMode) private var dateModeRaw = DateFilterMode.days.rawValue
+    @State private var showingDatePicker = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -46,6 +48,7 @@ struct LibraryFilterChips: View {
                             fromDateInterval = 0
                             toDateInterval = 0
                         }
+                        .accessibilityIdentifier("filter.date-chip")
                     }
                     if selectedMemoryFilter != .all {
                         filterChip(memoryFilterLabel(selectedMemoryFilter)) { memoryFilterRaw = LibraryMemoryFilter.all.rawValue }
@@ -111,31 +114,18 @@ struct LibraryFilterChips: View {
         return people.first(where: { $0.id == personFilterID })?.name
     }
 
-    private var fromDateBinding: Binding<Date> {
-        Binding(
-            get: { fromDateInterval == 0 ? .now : Date(timeIntervalSince1970: fromDateInterval) },
-            set: { fromDateInterval = $0.timeIntervalSince1970 }
-        )
-    }
-
-    private var toDateBinding: Binding<Date> {
-        Binding(
-            get: { toDateInterval == 0 ? .now : Date(timeIntervalSince1970: toDateInterval) },
-            set: { toDateInterval = $0.timeIntervalSince1970 }
-        )
-    }
-
     private var dateFilterLabel: String? {
-        guard fromDateInterval != 0 || toDateInterval != 0 else { return nil }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        if fromDateInterval != 0, toDateInterval != 0 {
-            return "\(String(localized: "Date:")) \(formatter.string(from: Date(timeIntervalSince1970: fromDateInterval))) – \(formatter.string(from: Date(timeIntervalSince1970: toDateInterval)))"
-        }
-        if fromDateInterval != 0 {
-            return "\(String(localized: "From:")) \(formatter.string(from: Date(timeIntervalSince1970: fromDateInterval)))"
-        }
-        return "\(String(localized: "To:")) \(formatter.string(from: Date(timeIntervalSince1970: toDateInterval)))"
+        DateFilterMode.label(
+            from: fromDateInterval == 0 ? nil : Date(timeIntervalSince1970: fromDateInterval),
+            to: toDateInterval == 0 ? nil : Date(timeIntervalSince1970: toDateInterval),
+            modeRaw: dateModeRaw
+        ).map { "\(String(localized: "Date:")) \($0)" }
+    }
+
+    /// Days with photos, for the dots in the date picker.
+    private var photoDays: Set<Date> {
+        let calendar = Calendar.current
+        return Set(allItems.compactMap { $0.effectiveCaptureDate.map(calendar.startOfDay(for:)) })
     }
 
     private var hasActiveFilters: Bool {
@@ -158,12 +148,13 @@ struct LibraryFilterChips: View {
         memoryFilterRaw = LibraryMemoryFilter.all.rawValue
         personFilterID = ""
         typeRaw = LibraryMediaTypeFilter.all.rawValue
+        UserDefaults.standard.removeObject(forKey: LibraryFilterKeys.query)
         selection.libraryScope = nil
     }
 
     private var chipRow: some View {
         HStack(spacing: 8) {
-            filterMenu(label: String(localized: "Place"), selected: selectedPlaceName) {
+            filterMenu(label: String(localized: "Place"), systemImage: "mappin.and.ellipse", identifier: "filter.place", selected: selectedPlaceName) {
                 Button(String(localized: "All places")) { placeFilterID = "" }
                 if !places.isEmpty { Divider() }
                 ForEach(places) { place in
@@ -175,7 +166,7 @@ struct LibraryFilterChips: View {
                 }
             }
 
-            filterMenu(label: String(localized: "Trip"), selected: selectedTripName) {
+            filterMenu(label: String(localized: "Trip"), systemImage: "airplane.departure", identifier: "filter.trip", selected: selectedTripName) {
                 Button(String(localized: "All trips")) { tripFilterKey = "" }
                 if !trips.isEmpty { Divider() }
                 ForEach(trips, id: \.self) { trip in
@@ -195,11 +186,14 @@ struct LibraryFilterChips: View {
         }
     }
 
-    private func filterMenu<Content: View>(label: String, selected: String?, @ViewBuilder content: () -> Content) -> some View {
+    private func filterMenu<Content: View>(label: String, systemImage: String, identifier: String, selected: String?, @ViewBuilder content: () -> Content) -> some View {
         Menu {
             content()
         } label: {
             HStack(spacing: 5) {
+                Image(systemName: systemImage)
+                    .imageScale(.small)
+                    .accessibilityHidden(true)
                 Text(selected.map(Self.chipTitle) ?? label)
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.semibold))
@@ -212,6 +206,7 @@ struct LibraryFilterChips: View {
         .fixedSize()
         .paperChip(selected: selected != nil)
         .foregroundStyle(LibraryPalette.ink)
+        .accessibilityIdentifier(identifier)
     }
 
     /// A long place or trip name would push the other chips out of the row;
@@ -224,40 +219,26 @@ struct LibraryFilterChips: View {
         Label(text, systemImage: selected ? "checkmark" : "circle")
     }
 
+    /// A calendar in a popover rather than a menu: picking a day must not
+    /// apply anything until a day is actually clicked.
     private var dateFilterMenu: some View {
-        Menu {
-            Toggle(String(localized: "From date"), isOn: Binding(
-                get: { fromDateInterval != 0 },
-                set: { enabled in
-                    fromDateInterval = enabled ? (fromDateInterval == 0 ? Date.now.timeIntervalSince1970 : fromDateInterval) : 0
-                }
-            ))
-            if fromDateInterval != 0 {
-                DatePicker(String(localized: "From date"), selection: fromDateBinding, displayedComponents: .date)
-            }
-            Toggle(String(localized: "To date"), isOn: Binding(
-                get: { toDateInterval != 0 },
-                set: { enabled in
-                    toDateInterval = enabled ? (toDateInterval == 0 ? Date.now.timeIntervalSince1970 : toDateInterval) : 0
-                }
-            ))
-            if toDateInterval != 0 {
-                DatePicker(String(localized: "To date"), selection: toDateBinding, displayedComponents: .date)
-            }
-            Divider()
-            Button(String(localized: "All dates")) {
-                fromDateInterval = 0
-                toDateInterval = 0
-            }
+        Button {
+            showingDatePicker.toggle()
         } label: {
-            filterMenuTitle(String(localized: "Date"), selected: dateFilterLabel != nil)
+            filterMenuTitle(String(localized: "Date"), systemImage: "calendar", selected: dateFilterLabel != nil)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        // Chip labels read as ink; the app accent would turn every chip red.
-        .tint(LibraryPalette.ink)
+        .buttonStyle(.plain)
         .fixedSize()
         .paperChip(selected: dateFilterLabel != nil)
+        .accessibilityIdentifier("filter.date")
+        .popover(isPresented: $showingDatePicker, arrowEdge: .bottom) {
+            DateFilterPicker(
+                fromInterval: $fromDateInterval,
+                toInterval: $toDateInterval,
+                modeRaw: $dateModeRaw,
+                photoDays: photoDays
+            )
+        }
     }
 
     private var memoryFilterMenu: some View {
@@ -278,7 +259,7 @@ struct LibraryFilterChips: View {
                 filterMenuLabel(String(localized: "No memory"), selected: selectedMemoryFilter == .noMemory)
             }
         } label: {
-            filterMenuTitle(String(localized: "Memory"), selected: selectedMemoryFilter != .all)
+            filterMenuTitle(String(localized: "Memory"), systemImage: "text.quote", selected: selectedMemoryFilter != .all)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -300,7 +281,7 @@ struct LibraryFilterChips: View {
                 }
             }
         } label: {
-            filterMenuTitle(String(localized: "Person"), selected: !personFilterID.isEmpty)
+            filterMenuTitle(String(localized: "Person"), systemImage: "person", selected: !personFilterID.isEmpty)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -310,8 +291,11 @@ struct LibraryFilterChips: View {
         .paperChip(selected: !personFilterID.isEmpty)
     }
 
-    private func filterMenuTitle(_ label: String, selected: Bool) -> some View {
+    private func filterMenuTitle(_ label: String, systemImage: String, selected: Bool) -> some View {
         HStack(spacing: 5) {
+            Image(systemName: systemImage)
+                .imageScale(.small)
+                .accessibilityHidden(true)
             Text(label)
                 .fontWeight(selected ? .semibold : .regular)
             Image(systemName: "chevron.down")
@@ -347,6 +331,17 @@ enum LibraryFilterKeys {
     static let trip = "moments.library.trip"
     static let memory = "moments.library.memory"
     static let person = "moments.library.person"
+    /// Date filter as picked: a day, a range, after/before a day, a month or a
+    /// year. The engine only reads fromDate/toDate; this names the choice.
+    static let dateMode = "moments.library.dateMode"
+    static let query = "moments.library.query"
+
+    /// Clears every filter (not the media type) on every screen.
+    static func clearAll(_ defaults: UserDefaults = .standard) {
+        for key in [fromDate, toDate, place, trip, memory, person, dateMode, query] {
+            defaults.removeObject(forKey: key)
+        }
+    }
 }
 
 /// Publishes the ids that pass the Library filters into `SelectionModel`
@@ -364,6 +359,7 @@ struct LibraryFilterPublisher: View {
     @AppStorage(LibraryFilterKeys.trip) private var tripFilterKey = ""
     @AppStorage(LibraryFilterKeys.memory) private var memoryFilterRaw = LibraryMemoryFilter.all.rawValue
     @AppStorage(LibraryFilterKeys.person) private var personFilterID = ""
+    @AppStorage(LibraryFilterKeys.query) private var query = ""
 
     private var criteria: LibraryFilterCriteria {
         LibraryFilterCriteria(
@@ -373,12 +369,14 @@ struct LibraryFilterPublisher: View {
             mediaType: LibraryMediaTypeFilter(rawValue: typeRaw) ?? .all,
             tripKey: tripFilterKey.isEmpty ? nil : tripFilterKey,
             memoryFilter: LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all,
-            personID: personFilterID.isEmpty ? nil : personFilterID
+            personID: personFilterID.isEmpty ? nil : personFilterID,
+            searchText: query
         )
     }
 
     private var key: Int {
         var hasher = Hasher()
+        hasher.combine(query)
         hasher.combine(typeRaw)
         hasher.combine(fromDateInterval)
         hasher.combine(toDateInterval)
@@ -405,5 +403,62 @@ struct LibraryFilterPublisher: View {
                 let visible = Set(LibraryFilterEngine.publishedItems(items, by: criteria, personIDsByMediaID: personIndex).map(\.id))
                 if selection.visibleItemIDs != visible { selection.visibleItemIDs = visible }
             }
+    }
+}
+
+/// The light way into the shared filters for screens other than the Library:
+/// a search field and a Filter button in the toolbar. The button opens the
+/// same chips as the Library in a popover and shows how many are on.
+struct CompactLibraryFilters: ViewModifier {
+    @AppStorage(LibraryFilterKeys.query) private var query = ""
+    @AppStorage(LibraryFilterKeys.fromDate) private var fromDateInterval = 0.0
+    @AppStorage(LibraryFilterKeys.toDate) private var toDateInterval = 0.0
+    @AppStorage(LibraryFilterKeys.place) private var placeFilterID = ""
+    @AppStorage(LibraryFilterKeys.trip) private var tripFilterKey = ""
+    @AppStorage(LibraryFilterKeys.memory) private var memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+    @AppStorage(LibraryFilterKeys.person) private var personFilterID = ""
+    @State private var showingFilters = false
+
+    private var activeCount: Int {
+        [
+            fromDateInterval != 0 || toDateInterval != 0,
+            !placeFilterID.isEmpty,
+            !tripFilterKey.isEmpty,
+            memoryFilterRaw != LibraryMemoryFilter.all.rawValue,
+            !personFilterID.isEmpty,
+        ].filter { $0 }.count
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .background { LibraryFilterPublisher() }
+            .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search places, trips, notes")))
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showingFilters.toggle()
+                    } label: {
+                        Label(
+                            activeCount == 0 ? String(localized: "Filter") : String(format: String(localized: "Filter (%lld)"), activeCount),
+                            systemImage: activeCount == 0 ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill"
+                        )
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(activeCount == 0 ? Paper.ink : Paper.accent)
+                    }
+                    .help(String(localized: "Filter by place, trip, date, memory or person"))
+                    .accessibilityIdentifier("toolbar.filter")
+                    .popover(isPresented: $showingFilters, arrowEdge: .bottom) {
+                        LibraryFilterChips()
+                            .padding(16)
+                            .frame(width: 560, alignment: .leading)
+                    }
+                }
+            }
+    }
+}
+
+extension View {
+    func compactLibraryFilters() -> some View {
+        modifier(CompactLibraryFilters())
     }
 }

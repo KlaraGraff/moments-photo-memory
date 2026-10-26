@@ -59,10 +59,12 @@ final class MomentsFlashUITests: XCTestCase {
         note.name = "flash-report"
         note.lifetime = .keepAlways
         add(note)
+        XCTAssertTrue(report.hasPrefix("capture available: true"), "The app could not capture its window:\n\(report)")
         // Sessions are "#<n> ..." blocks; a flashing window line ends in FLASH.
         let sessions = report.components(separatedBy: "\n#").dropFirst()
         XCTAssertGreaterThanOrEqual(sessions.count, clicks.count, "Missing capture sessions:\n\(report)")
         for (click, session) in zip(clicks, sessions) where click.judged {
+            XCTAssertTrue(session.contains(" frames, worst transient"), "No frames captured after clicking \(click.name):\n#\(session)")
             XCTAssertFalse(session.contains("FLASH"), "The window flashed after clicking \(click.name):\n#\(session)")
         }
     }

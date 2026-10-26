@@ -681,7 +681,10 @@ struct LibraryView: View {
         state.pendingRevealItemID = focus
         state.appearedRevealItemID = nil
         // Bring the section start into view so the lazy grid builds its cards;
-        // the card's onAppear then triggers the final centring scroll.
+        // the card's onAppear then triggers the final centring scroll. The
+        // scroll-position binding gets the same section so its restore of
+        // the previous position cannot win over the reveal.
+        state.topSectionScrollID = LibraryScrollTarget.section(target.id)
         proxy.scrollTo(LibraryScrollTarget.section(target.id), anchor: .top)
         let selectionModel = selection
         let viewState = state

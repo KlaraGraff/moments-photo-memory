@@ -71,6 +71,8 @@ enum FlashProbe {
     private static func tick() {
         guard session != nil else { return }
         for (number, frame) in captureWindows() {
+            // Keep only frames that changed, so a session holds a few images, not 90.
+            if let last = session?.frames[number]?.last, changedShare(frame.luma, last.luma) == 0 { continue }
             session?.frames[number, default: []].append(frame)
         }
         if now() > deadline {
@@ -97,10 +99,12 @@ enum FlashProbe {
     private static func lumaGrid(_ image: CGImage) -> [Float] {
         let w = 48, h = 30
         var pixels = [UInt8](repeating: 0, count: w * h * 4)
-        let context = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
-                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        context?.interpolationQuality = .medium
-        context?.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        pixels.withUnsafeMutableBytes { buffer in
+            let context = CGContext(data: buffer.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            context?.interpolationQuality = .medium
+            context?.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        }
         return (0..<(w * h)).map { i in
             (0.2126 * Float(pixels[i * 4]) + 0.7152 * Float(pixels[i * 4 + 1]) + 0.0722 * Float(pixels[i * 4 + 2])) / 255
         }
@@ -134,7 +138,7 @@ enum FlashProbe {
                 if score > worstScore { worstScore = score; worst = frame }
             }
             let flash = worstScore > 0.2
-            text += String(format: "  window %d: %d frames, worst transient %.2f%@\n", number, frames.count, worstScore, flash ? " FLASH" : "")
+            text += String(format: "  window %d: %d changed frames, worst transient %.2f%@\n", number, frames.count, worstScore, flash ? " FLASH" : "")
             // Only frames whose content changed, to keep the log readable.
             var previous: String?
             for line in lines {

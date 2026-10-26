@@ -829,9 +829,14 @@ private struct LibrarySectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(section.title)
-                    .font(.system(size: 21, weight: .medium, design: .serif))
-                    .foregroundStyle(LibraryPalette.ink)
+                if section.id.hasPrefix("trip:"), section.id != "trip:unassigned" {
+                    // A trip's name changes in place on double-click.
+                    EditableTripTitle(tripID: String(section.id.dropFirst("trip:".count)), title: section.title)
+                } else {
+                    Text(section.title)
+                        .font(.system(size: 21, weight: .medium, design: .serif))
+                        .foregroundStyle(LibraryPalette.ink)
+                }
                 Text(dateSpan)
                     .font(.caption)
                     .foregroundStyle(LibraryPalette.muted)

@@ -410,7 +410,8 @@ private struct TripDetailView: View {
         }
         .scrollIndicators(.automatic)
         .background(Paper.canvas)
-        .navigationTitle(TripText.name(trip))
+        // The title bar holds the trip's name; double-click it to rename.
+        .modifier(TripWindowTitle(name: TripText.name(trip), model: model))
         .navigationSubtitle(String(localized: "Trips"))
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -717,6 +718,25 @@ private struct TripDatesButton: View {
     private func saved() {
         trip.updatedAt = .now
         try? modelContext.save()
+    }
+}
+
+/// The window title is the trip's name, editable in place like a document
+/// title; photos in no trip get a plain title.
+private struct TripWindowTitle: ViewModifier {
+    @Environment(\.modelContext) private var modelContext
+    let name: String
+    let model: Trip?
+
+    func body(content: Content) -> some View {
+        if let model {
+            content.navigationTitle(Binding(
+                get: { name },
+                set: { TripRenaming.rename(model, to: $0, context: modelContext) }
+            ))
+        } else {
+            content.navigationTitle(name)
+        }
     }
 }
 

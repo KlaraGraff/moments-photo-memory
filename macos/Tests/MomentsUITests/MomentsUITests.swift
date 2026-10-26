@@ -370,6 +370,29 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(element(in: app, identifier: "trips.memory.trip").waitForExistence(timeout: launchTimeout), "The trip link did not open the trip")
     }
 
+    func testDoubleClickRenamesATripInPlace() {
+        let app = launch(language: "en")
+        // Library groups by trip by default; a trip's title renames in place.
+        let title = element(in: app, identifier: "trip.title.journeyA")
+        XCTAssertTrue(title.waitForExistence(timeout: launchTimeout), "The Library has no trip title")
+        title.doubleClick()
+        let field = element(in: app, identifier: "trip.rename.journeyA")
+        XCTAssertTrue(field.waitForExistence(timeout: launchTimeout), "Double-click did not start renaming")
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText("Synthetic renamed trip\r")
+        let renamed = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == %@ AND (label CONTAINS %@ OR value CONTAINS %@)", "trip.title.journeyA", "Synthetic renamed trip", "Synthetic renamed trip"))
+            .firstMatch
+        XCTAssertTrue(renamed.waitForExistence(timeout: launchTimeout), "Return did not save the new name")
+        capture(app, named: "library-04-trip-renamed-evidence")
+
+        // The Trips card follows.
+        element(in: app, identifier: "sidebar.trips").click()
+        let card = element(in: app, identifier: "trips.card.journeyA")
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue((card.label).contains("Synthetic renamed trip"), "The trip card kept the old name: \(card.label)")
+    }
+
     func testTripPlaceShowsItsPhotosInLibrary() {
         let app = launch(language: "en")
         tripPlaceShowsItsPhotosInLibrary(app)

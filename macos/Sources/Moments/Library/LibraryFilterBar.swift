@@ -449,8 +449,8 @@ struct CompactLibraryFilters: ViewModifier {
                     .accessibilityIdentifier("toolbar.filter")
                     .popover(isPresented: $showingFilters, arrowEdge: .bottom) {
                         LibraryFilterChips()
+                            .fixedSize()
                             .padding(16)
-                            .frame(width: 560, alignment: .leading)
                     }
                 }
             }

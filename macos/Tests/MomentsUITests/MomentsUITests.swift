@@ -89,17 +89,103 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "places-01-map-and-pin")
     }
 
+    func testPlacesPanelIsCompactAndCloses() {
+        let app = launch(language: "en")
+        element(in: app, identifier: "sidebar.places").click()
+        let map = element(in: app, identifier: "places.map")
+        XCTAssertTrue(map.waitForExistence(timeout: launchTimeout))
+        let marker = element(in: app, identifier: "places.marker.D0001")
+        XCTAssertTrue(marker.waitForExistence(timeout: launchTimeout))
+        marker.click()
+
+        let panel = element(in: app, identifier: "places.panel")
+        XCTAssertTrue(panel.waitForExistence(timeout: launchTimeout), "Clicking a place did not open its photo panel")
+        Thread.sleep(forTimeInterval: 1.0)
+        capture(app, named: "places-02-panel-open-evidence")
+        let title = element(in: app, identifier: "places.panel.title")
+        let titleText = (title.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? title.label
+        log("places panel \(panel.frame) map \(map.frame) title '\(titleText)'")
+        XCTAssertLessThan(panel.frame.height, map.frame.height * 0.45, "The photo panel covers most of the map (panel \(panel.frame), map \(map.frame))")
+        XCTAssertGreaterThan(panel.frame.minY, map.frame.midY, "The photo panel should sit at the bottom of the map")
+        XCTAssertNil(titleText.range(of: #"^Spot [0-9A-Za-z-]{6}$"#, options: .regularExpression), "The panel shows an internal place id: \(titleText)")
+
+        element(in: app, identifier: "places.panel.close").click()
+        XCTAssertTrue(panel.waitForNonExistence(timeout: launchTimeout), "The close button did not close the photo panel")
+
+        marker.click()
+        XCTAssertTrue(panel.waitForExistence(timeout: launchTimeout))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(panel.waitForNonExistence(timeout: launchTimeout), "Escape did not close the photo panel")
+        capture(app, named: "places-03-panel-closed")
+    }
+
     func testFootprintsGlobeOpens() {
         let app = launch(language: "en")
+        assertGlobeFullyVisible(app, screenshot: "footprints-01-globe-evidence")
+    }
+
+    func testFootprintsGlobeFitsSmallWindow() {
+        let app = launch(language: "en", smallWindow: true)
+        assertGlobeFullyVisible(app, screenshot: "footprints-02-globe-small-window-evidence")
+    }
+
+    /// The globe sits on black space: scan the middle row and column of the
+    /// map for the first and last bright pixels. A cropped globe touches the
+    /// map's edges.
+    private func assertGlobeFullyVisible(_ app: XCUIApplication, screenshot name: String, file: StaticString = #filePath, line: UInt = #line) {
         let footprints = element(in: app, identifier: "sidebar.footprints")
-        XCTAssertTrue(footprints.waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(footprints.waitForExistence(timeout: launchTimeout), file: file, line: line)
         footprints.click()
 
         // The first MapKit globe of a test run can take longer to appear.
         let globe = element(in: app, identifier: "footprints.globe")
-        XCTAssertTrue(globe.waitForExistence(timeout: 30))
-        Thread.sleep(forTimeInterval: 1.0)
-        capture(app, named: "footprints-01-globe")
+        XCTAssertTrue(globe.waitForExistence(timeout: 30), file: file, line: line)
+        Thread.sleep(forTimeInterval: 3.0)
+        capture(app, named: name)
+
+        guard let cgImage = globe.screenshot().image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            XCTFail("Could not read the globe screenshot", file: file, line: line)
+            return
+        }
+        let width = cgImage.width
+        let height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        context?.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        func luminance(_ x: Int, _ y: Int) -> Double {
+            let index = (y * width + x) * 4
+            return (0.2126 * Double(pixels[index]) + 0.7152 * Double(pixels[index + 1]) + 0.0722 * Double(pixels[index + 2])) / 255
+        }
+        let threshold = 0.08
+        // Ignore the compass and scale overlays near the corners: scan the middle third.
+        let row = height / 2
+        let column = width / 2
+        let bright = (0..<width).filter { luminance($0, row) > threshold }
+        let brightRows = (0..<height).filter { luminance(column, $0) > threshold }
+        let samples = [0.0, 0.25, 0.5, 0.75, 1.0].map { fraction -> String in
+            let x = min(width - 1, Int(Double(width - 1) * fraction))
+            return String(format: "%.2f", luminance(x, row))
+        }
+        log("\(name) globe \(globe.frame) px \(width)x\(height) row x=\(bright.first ?? -1)...\(bright.last ?? -1) column y=\(brightRows.first ?? -1)...\(brightRows.last ?? -1) row samples \(samples)")
+        guard let left = bright.first, let right = bright.last, let top = brightRows.first, let bottom = brightRows.last else {
+            XCTFail("The globe did not render", file: file, line: line)
+            return
+        }
+        let marginX = max(2, width / 100)
+        let marginY = max(2, height / 100)
+        XCTAssertGreaterThan(left, marginX, "The globe is cut off on the left", file: file, line: line)
+        XCTAssertLessThan(right, width - 1 - marginX, "The globe is cut off on the right", file: file, line: line)
+        XCTAssertGreaterThan(top, marginY, "The globe is cut off at the top", file: file, line: line)
+        XCTAssertLessThan(bottom, height - 1 - marginY, "The globe is cut off at the bottom", file: file, line: line)
+    }
+
+    private func log(_ message: String) {
+        print("MOMENTS-UI \(message)")
+        let note = XCTAttachment(string: message)
+        note.name = "note"
+        note.lifetime = .keepAlways
+        add(note)
     }
 
     func testTimelinePlaceSelectsLibraryItem() {

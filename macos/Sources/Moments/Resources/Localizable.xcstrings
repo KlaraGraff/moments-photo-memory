@@ -3191,24 +3191,24 @@
         }
       }
     },
-    "Save as smart group" : {
+    "Save this filter as a smart group" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Save as smart group"
+            "value" : "Save this filter as a smart group"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "存为智能分组"
+            "value" : "把这个筛选存成智能分组"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Als intelligente Gruppe sichern"
+            "value" : "Diesen Filter als intelligente Gruppe speichern"
           }
         }
       }

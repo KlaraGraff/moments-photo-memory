@@ -17,6 +17,11 @@ struct FootprintsScreen: View {
         )
     )
     @State private var cameraInputSignature: String?
+    /// Size of the map area; the overview camera is fitted to it.
+    @State private var mapSize: CGSize = .zero
+    /// The overview is refitted on resize; after the user flies to a country
+    /// the camera stays where they put it.
+    @State private var isShowingGlobeOverview = true
 
     /// Created once per screen; a stored `let` would re-read the cache file
     /// from disk every time SwiftUI re-creates this view value.
@@ -32,7 +37,13 @@ struct FootprintsScreen: View {
             statsHeader
             Divider()
             HStack(spacing: 0) {
-                mapView
+                GeometryReader { proxy in
+                    mapView
+                        .onChange(of: proxy.size, initial: true) { _, size in
+                            mapSize = size
+                            refitGlobeOverview()
+                        }
+                }
                 Divider()
                 countryPanel
                     .frame(minWidth: 250, idealWidth: 290, maxWidth: 340)
@@ -216,11 +227,20 @@ struct FootprintsScreen: View {
         moveCamera(to: center)
     }
 
+    private func refitGlobeOverview() {
+        guard isShowingGlobeOverview else { return }
+        moveCamera(to: screenState.snapshot.cameraTarget, animated: false)
+    }
+
     private func moveCamera(to target: FootprintsCameraTarget, animated: Bool = true) {
+        isShowingGlobeOverview = target.isGlobeOverview
+        let distance = target.isGlobeOverview
+            ? FootprintsCameraTarget.globeDistance(fitting: mapSize)
+            : target.distanceMetres
         let position = MapCameraPosition.camera(
             MapCamera(
                 centerCoordinate: target.coordinate,
-                distance: target.distanceMetres
+                distance: distance
             )
         )
         if animated && !reduceMotion {

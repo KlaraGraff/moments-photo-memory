@@ -393,7 +393,7 @@ enum LibraryFilterEngine {
         case .trip:
             return "trip:\(item.tripID ?? "unassigned")"
         case .place:
-            return "place:\(item.effectivePlaceName ?? "")"
+            return "place:\(item.displayPlaceName ?? "")"
         case .type:
             return "type:\(typeKey(for: item))"
         case .month:
@@ -407,7 +407,7 @@ enum LibraryFilterEngine {
         case .trip:
             return item.trip?.effectiveName ?? String(localized: "Unsorted")
         case .place:
-            return item.effectivePlaceName ?? String(localized: "No place")
+            return item.displayPlaceName ?? String(localized: "No place")
         case .type:
             switch typeKey(for: item) {
             case "screenshot": return String(localized: "Screenshots")

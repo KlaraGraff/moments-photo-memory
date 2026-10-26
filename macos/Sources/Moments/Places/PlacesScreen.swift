@@ -20,6 +20,9 @@ struct PlacesScreen: View {
     @State private var mapStyle: PlacesMapStyle = .standard
     @State private var selectedClusterID: String?
     @State private var isLoading = true
+    /// A marker click also reaches the map's background tap; ignore that
+    /// echo so the panel does not close right after it opens.
+    @State private var lastMarkerSelection = Date.distantPast
     @StateObject private var networkMonitor = PlacesNetworkMonitor()
 
     private let viewModel = PlacesViewModel()
@@ -175,6 +178,10 @@ struct PlacesScreen: View {
         .onMapCameraChange(frequency: .onEnd) { context in
             latitudeDelta = context.region.span.latitudeDelta
         }
+        .onTapGesture {
+            guard Date().timeIntervalSince(lastMarkerSelection) > 0.4 else { return }
+            closePanel()
+        }
     }
 
     private var mapToolbar: some View {
@@ -198,13 +205,20 @@ struct PlacesScreen: View {
         .padding(14)
     }
 
+    /// Height of the photo row; a horizontal ScrollView otherwise takes all
+    /// the vertical space it is offered and the panel covers the map.
+    private static let photoRowHeight: CGFloat = 112
+
     @ViewBuilder
     private var bottomStrip: some View {
         if let selectedCluster, !selectedItems.isEmpty {
             VStack(spacing: 8) {
-                HStack {
+                HStack(spacing: 8) {
                     Text(clusterDisplayName(selectedCluster))
                         .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .accessibilityIdentifier("places.panel.title")
                     HStack(spacing: 4) {
                         Text(selectedItems.count, format: .number)
                             .font(.caption.monospacedDigit())
@@ -212,16 +226,25 @@ struct PlacesScreen: View {
                             .font(.caption)
                     }
                     .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Close", systemImage: "xmark") {
-                        selectedClusterID = nil
-                        selection.clear()
+                    .fixedSize()
+                    Spacer(minLength: 8)
+                    Button {
+                        closePanel()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
                     }
-                    .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
+                    .keyboardShortcut(.cancelAction)
+                    .help("Close")
                     .accessibilityLabel("Close photo strip")
+                    .accessibilityIdentifier("places.panel.close")
                 }
-                .padding(.horizontal, 12)
+                .padding(.leading, 12)
+                .padding(.trailing, 6)
+                .padding(.top, 8)
 
                 ScrollView(.horizontal) {
                     LazyHStack(spacing: 10) {
@@ -238,9 +261,15 @@ struct PlacesScreen: View {
                     .padding(.bottom, 12)
                 }
                 .scrollIndicators(.hidden)
+                .frame(height: Self.photoRowHeight)
             }
             .frame(maxWidth: 720)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            // Opaque: map labels must not show through the photo panel.
+            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(.primary.opacity(0.12), lineWidth: 1))
+            .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("places.panel")
             .padding(14)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
@@ -312,22 +341,21 @@ struct PlacesScreen: View {
 
     private func photoCard(_ item: MediaItem) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            ZStack(alignment: .bottomLeading) {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(.quaternary)
-                    .frame(width: 112, height: 66)
-                Image(systemName: item.kind == .video ? "video" : "photo")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                Text(item.title.isEmpty ? item.id : item.title)
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .foregroundStyle(.white)
-                    .padding(4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.black.opacity(0.55))
+            ZStack(alignment: .bottomTrailing) {
+                ThumbnailView(item: item, width: 224, height: 150)
+                    .frame(width: 112, height: 75)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                if item.kind == .video {
+                    Image(systemName: "video.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.white)
+                        .padding(4)
+                        .shadow(radius: 2)
+                }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(item.title)
+            .accessibilityIdentifier("places.panel.photo.\(item.id)")
             if let date = item.captureDate {
                 Text(date, format: .dateTime.year().month().day())
                     .font(.caption2)
@@ -349,17 +377,21 @@ struct PlacesScreen: View {
                 return (place, center.distance(to: GeoPoint(latitude: latitude, longitude: longitude)))
             }
             .min { $0.1 < $1.1 }
-        if let nearestPlace, nearestPlace.1 <= 1_500, !nearestPlace.0.name.isEmpty {
-            return nearestPlace.0.name
+        if let nearestPlace, nearestPlace.1 <= 1_500,
+           let name = PlaceDisplayName.resolvedName(of: nearestPlace.0) {
+            return name
         }
-        switch cluster.level {
-        case .city: return "City cluster"
-        case .area: return "Area cluster"
-        case .spot: return "Spot"
-        }
+        return String(localized: "Unknown place")
+    }
+
+    private func closePanel() {
+        guard selectedCluster != nil else { return }
+        selectedClusterID = nil
+        selection.clear()
     }
 
     private func select(cluster: PlaceCluster) {
+        lastMarkerSelection = Date()
         selectedClusterID = cluster.id
         let ids = viewModel.selectionIDs(for: cluster)
         let focus = cluster.stopIDs.first

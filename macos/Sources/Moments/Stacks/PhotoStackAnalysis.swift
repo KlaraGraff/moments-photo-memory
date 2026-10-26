@@ -54,6 +54,7 @@ final class PhotoStackAnalysisStore {
     /// The file has been read (or there is none).
     @ObservationIgnored private(set) var isLoaded = true
     @ObservationIgnored private var hasUnpublished = false
+    @ObservationIgnored private var hasUnsaved = false
     @ObservationIgnored private var lastPublished = Date.distantPast
     @ObservationIgnored private var lastSaved = Date()
     @ObservationIgnored private var generation = 0
@@ -102,6 +103,7 @@ final class PhotoStackAnalysisStore {
         guard !results.isEmpty else { return }
         entries.merge(results) { _, new in new }
         hasUnpublished = true
+        hasUnsaved = true
         if Date().timeIntervalSince(lastPublished) >= interval {
             hasUnpublished = false
             lastPublished = Date()
@@ -119,16 +121,19 @@ final class PhotoStackAnalysisStore {
             let gone = entries.keys.filter { !itemIDs.contains($0) }
             for id in gone { entries[id] = nil }
             changed = changed || !gone.isEmpty
+            hasUnsaved = hasUnsaved || !gone.isEmpty
         }
-        guard changed else { return }
-        hasUnpublished = false
-        lastPublished = Date()
-        revision += 1
-        save()
+        if changed {
+            hasUnpublished = false
+            lastPublished = Date()
+            revision += 1
+        }
+        if hasUnsaved { save() }
     }
 
     func save() {
         guard let fileURL else { return }
+        hasUnsaved = false
         lastSaved = Date()
         generation += 1
         let snapshot = entries

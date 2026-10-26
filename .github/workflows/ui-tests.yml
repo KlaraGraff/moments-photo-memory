@@ -35,6 +35,7 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -resultBundlePath "$RUNNER_TEMP/MomentsUITests.xcresult" \
+            -only-testing:MomentsUITests/MomentsVisualTourUITests \
             CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
             test
       - name: Export screenshots

@@ -470,7 +470,8 @@ final class LibraryViewState {
     var memoryDrafts: [String: String] = [:]
     /// Unsaved words on a photo's note line, by media ID.
     var noteDrafts: [String: String] = [:]
-    var lastVisibleSectionID: String?
+    /// Scroll ID of the section at the top of the Library, restored on return.
+    var topSectionScrollID: String?
     var focusedMemoryItemID: String?
     /// The photo whose note line is being typed in.
     var focusedNoteItemID: String?

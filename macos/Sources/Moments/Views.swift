@@ -180,6 +180,11 @@ struct ContentView: View {
         }
         .onChange(of: shared.requestedDestination) { _, destination in
             guard let destination else { return }
+            // A scoped jump opens the Library at the top of those photos,
+            // not where the full Library was left.
+            if destination == .library, shared.libraryScope != nil, !shared.shouldRevealSelectionInLibrary {
+                libraryState.topSectionScrollID = nil
+            }
             switch destination {
             case .library: selection = .library
             case .places: selection = .places

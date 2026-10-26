@@ -26,6 +26,7 @@ final class ImportController {
 
     func configure(container: ModelContainer) {
         modelContainer = container
+        PlaceNameBackfillScheduler.shared.start(container: container)
     }
 
     func chooseFolder() {
@@ -41,12 +42,14 @@ final class ImportController {
     func start(folder: URL) {
         guard let modelContainer else { return }
         task?.cancel()
+        PlaceNameBackfillScheduler.shared.beginImport()
         lastFolderURL = folder
         reviewSummary = nil
         state = .importing
         progress = ImportProgress(phase: .scanning, completed: 0, total: 0, message: String(localized: "Scanning folder"))
         let importer = FolderImporter()
         task = Task { [weak self] in
+            defer { PlaceNameBackfillScheduler.shared.endImport() }
             do {
                 let summary = try await importer.importFolder(folder, container: modelContainer) { progress in
                     Task { @MainActor [weak self] in

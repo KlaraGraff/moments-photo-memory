@@ -170,11 +170,13 @@ public final class PhotosImportController {
     ) {
         guard let container else { return }
         task?.cancel()
+        PlaceNameBackfillScheduler.shared.beginImport()
         lastImportSelection = changeScope
         persistLastImportSelection(changeScope)
         state = .importing
         summary = nil
         task = Task { [weak self] in
+            defer { PlaceNameBackfillScheduler.shared.endImport() }
             guard let self else { return }
             do {
                 authorizationStatus = await importer.requestAccess()

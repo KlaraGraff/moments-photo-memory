@@ -7,6 +7,16 @@ import XCTest
 final class FootprintsTests: XCTestCase {
     private let origin = Date(timeIntervalSince1970: 1_700_000_000)
 
+    func testGlobeDistanceMovesBackForNarrowMaps() {
+        let square = FootprintsCameraTarget.globeDistance(fitting: CGSize(width: 600, height: 600))
+        let narrow = FootprintsCameraTarget.globeDistance(fitting: CGSize(width: 300, height: 600))
+        let wide = FootprintsCameraTarget.globeDistance(fitting: CGSize(width: 1_200, height: 600))
+        XCTAssertGreaterThan(narrow, square, "A narrow map needs the camera further back to fit the globe sideways")
+        XCTAssertEqual(wide, square, accuracy: 1, "Width beyond the height does not change the fit")
+        XCTAssertGreaterThanOrEqual(square, FootprintsCameraTarget.globeDistanceMetres)
+        XCTAssertEqual(FootprintsCameraTarget.globeDistance(fitting: .zero), FootprintsCameraTarget.globeDistanceMetres)
+    }
+
     func testStatisticsCountCountriesCitiesAndOverviewKilometres() {
         let paris = cluster(id: "city-paris", stopIDs: ["a", "b"], latitude: 48.8566, longitude: 2.3522)
         let london = cluster(id: "city-london", stopIDs: ["c"], latitude: 51.5074, longitude: -0.1278)

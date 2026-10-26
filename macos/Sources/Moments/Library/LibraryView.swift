@@ -1397,7 +1397,7 @@ struct GroupDetailView: View {
                                             section: section,
                                             items: section.itemIDs.compactMap { cachedVisibleItemsByID[$0] },
                                             state: state,
-                                            allGroups: groups,
+                                            allGroups: groups.filter { $0.kindRaw != UserGroup.Kind.chapter.rawValue },
                                             groupItems: memberships,
                                             group: group
                                         )

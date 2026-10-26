@@ -119,7 +119,8 @@ struct TripsScreen: View {
     /// trip last. Chapters other than trips show even before they have photos.
     private var allChapters: [TimelineTrip] {
         // A trip someone made by hand keeps its card even before photos join.
-        let planned = Set(trips.filter { $0.startDate != nil }.map(\.id))
+        // Imports mark their trips as suggested or confirmed; hand-made ones carry no status.
+        let planned = Set(trips.filter { $0.startDate != nil && $0.suggestionStatusRaw == nil }.map(\.id))
         let real = document.trips.filter { !$0.isUnsorted && ($0.itemCount > 0 || planned.contains($0.id)) } + Array(chapterDocs.values)
         let dated = real.filter { $0.startDate != nil }.sorted { ($0.startDate ?? .distantPast, $0.id) > ($1.startDate ?? .distantPast, $1.id) }
         let undated = real.filter { $0.startDate == nil }
@@ -1153,7 +1154,7 @@ private struct TripAroundSection: View {
                         Text(day.date, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day().locale(locale))
                             .font(.callout)
                             .foregroundStyle(Paper.ink)
-                        Text(day.isBefore ? String(localized: "Before") : String(localized: "After"))
+                        Text(day.isBefore ? String(localized: "chapter.around.before", defaultValue: "Before") : String(localized: "chapter.around.after", defaultValue: "After"))
                             .font(.caption2)
                             .foregroundStyle(Paper.muted)
                     }

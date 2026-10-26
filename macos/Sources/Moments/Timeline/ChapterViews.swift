@@ -208,7 +208,7 @@ struct ChapterNewSheet: View {
                 }
             }
             VStack(alignment: .leading, spacing: 3) {
-                Text("Will add \(preview.joining) · will take out 0")
+                Text("Will add \(preview.joining) · will take out \(0)")
                 if preview.elsewhere > 0 {
                     Text("\(preview.elsewhere) in other trips stay there")
                         .foregroundStyle(Paper.muted)

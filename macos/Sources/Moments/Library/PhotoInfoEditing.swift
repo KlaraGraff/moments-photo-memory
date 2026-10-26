@@ -59,10 +59,10 @@ enum PhotoInfoEditing {
     }
 
     /// Moves the photo into another trip, or out of every trip.
-    static func setTrip(_ trip: Trip?, on item: MediaItem, now: Date = .now) {
+    static func setTrip(_ trip: Trip?, on item: MediaItem, now: Date = .now, defaults: UserDefaults = TripAssignmentLocks.store) {
         guard item.trip?.id != trip?.id || item.tripID != trip?.id else { return }
         // Placed by hand: changing a trip's dates never moves it again.
-        TripAssignmentLocks.lock(item.id)
+        TripAssignmentLocks.lock(item.id, defaults: defaults)
         item.trip = trip
         item.tripID = trip?.id
         touch(item, now: now)
@@ -70,13 +70,13 @@ enum PhotoInfoEditing {
 
     /// Starts a trip with this photo in it, spanning the photo's day.
     @discardableResult
-    static func moveToNewTrip(named name: String, item: MediaItem, context: ModelContext, now: Date = .now) -> Trip? {
+    static func moveToNewTrip(named name: String, item: MediaItem, context: ModelContext, now: Date = .now, defaults: UserDefaults = TripAssignmentLocks.store) -> Trip? {
         let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
         let date = item.effectiveCaptureDate
         let trip = Trip(name: value, startDate: date, endDate: date, updatedAt: now, updatedBy: MomentsAccount.localID)
         context.insert(trip)
-        setTrip(trip, on: item, now: now)
+        setTrip(trip, on: item, now: now, defaults: defaults)
         return trip
     }
 

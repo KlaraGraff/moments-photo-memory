@@ -43,13 +43,16 @@ enum SettingsTab: String {
     }
 }
 
-/// What happens after an import, where the library lives, and finding people.
+/// The app language, what happens after an import, where the library lives,
+/// and finding people.
 struct GeneralSettingsView: View {
     @AppStorage(ImportSettings.autoOrganizeKey) private var autoOrganize = true
     @Environment(PeopleScanController.self) private var scanner
 
     var body: some View {
         Form {
+            LanguageSettingsSection()
+
             Section {
                 Toggle(String(localized: "Organize automatically after import"), isOn: $autoOrganize)
                     .accessibilityIdentifier("settings.auto-organize")

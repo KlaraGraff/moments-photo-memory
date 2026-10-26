@@ -1,0 +1,32 @@
+name: Localization
+
+# Every string the app shows needs German and Chinese (Simplified).
+# Xcode extracts the strings from the Swift sources; the check fails on any
+# string without a de or zh-Hans translation and lists it in the log.
+on:
+  pull_request:
+    paths:
+      - 'macos/**'
+      - 'scripts/check_localization.py'
+      - '.github/workflows/localization.yml'
+  workflow_dispatch:
+
+jobs:
+  strings:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate --spec macos/project.yml
+      - name: Export localizations
+        run: |
+          xcodebuild -exportLocalizations \
+            -project macos/Moments.xcodeproj \
+            -localizationPath "$RUNNER_TEMP/loc" \
+            -exportLanguage de -exportLanguage zh-Hans \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Check translations
+        run: python3 scripts/check_localization.py "$RUNNER_TEMP/loc"

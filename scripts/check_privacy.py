@@ -72,9 +72,9 @@ def inspect(name,data):
         return [] if hashlib.sha256(data).hexdigest()==PINNED[name] else ['pinned-file-changed']
     errors=[]
     if not allowed(name):errors.append('outside-source-allowlist')
-    # The string catalog grows with every language and screen; it is still
-    # text and still checked against every pattern below.
-    if len(data)>(1_000_000 if name.endswith('.xcstrings') else 300_000):errors.append('oversized-file')
+    # String Catalogs grow with every translated string; their text is still
+    # scanned by every pattern below.
+    if len(data)>(2_000_000 if name.endswith('.xcstrings') else 300_000):errors.append('oversized-file')
     try:text=data.decode('utf-8')
     except UnicodeDecodeError:return errors+['binary-file']
     if '\0' in text:errors.append('binary-or-symlink')

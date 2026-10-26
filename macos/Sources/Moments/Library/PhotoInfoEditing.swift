@@ -66,6 +66,18 @@ enum PhotoInfoEditing {
         touch(item, now: now)
     }
 
+    /// Starts a trip with this photo in it, spanning the photo's day.
+    @discardableResult
+    static func moveToNewTrip(named name: String, item: MediaItem, context: ModelContext, now: Date = .now) -> Trip? {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        let date = item.effectiveCaptureDate
+        let trip = Trip(name: value, startDate: date, endDate: date, updatedAt: now, updatedBy: MomentsAccount.localID)
+        context.insert(trip)
+        setTrip(trip, on: item, now: now)
+        return trip
+    }
+
     /// Renames a trip; an empty name goes back to the name it was given.
     static func renameTrip(_ trip: Trip, to name: String, now: Date = .now) {
         let value = name.trimmingCharacters(in: .whitespacesAndNewlines)

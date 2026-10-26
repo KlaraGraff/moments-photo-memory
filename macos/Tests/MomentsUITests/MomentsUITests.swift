@@ -199,6 +199,24 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(note.waitForExistence(timeout: launchTimeout), "⌘+ did not bring the print size back")
     }
 
+    /// The viewer at the smallest window size: photo, column and header must not overlap.
+    func testViewerFitsTheSmallWindow() {
+        let app = launch(language: "en", smallWindow: true)
+        let first = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo.")).element(boundBy: 0)
+        XCTAssertTrue(first.waitForExistence(timeout: launchTimeout))
+        first.doubleClick()
+        let viewer = element(in: app, identifier: "viewer")
+        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout))
+        let window = app.windows.firstMatch.frame
+        XCTAssertTrue(window.contains(viewer.frame), "The viewer card spills outside the window")
+        let close = element(in: app, identifier: "viewer.close")
+        let date = app.buttons["viewer.date"]
+        XCTAssertTrue(date.waitForExistence(timeout: launchTimeout))
+        XCTAssertFalse(close.frame.intersects(date.frame), "The header overlaps the info column")
+        capture(app, named: "grid-04-viewer-small-window-evidence")
+    }
+
     /// Two clicks closer together than the double-click interval are a double click.
     private func pauseLongerThanADoubleClick() {
         RunLoop.current.run(until: Date().addingTimeInterval(NSEvent.doubleClickInterval + 0.3))

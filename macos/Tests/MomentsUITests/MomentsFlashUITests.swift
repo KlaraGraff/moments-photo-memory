@@ -134,9 +134,11 @@ final class MomentsLibraryHeaderUITests: XCTestCase {
         }
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         Thread.sleep(forTimeInterval: 2)
-        if let flashFolder,
-           let report = try? String(contentsOf: URL(fileURLWithPath: flashFolder).appending(path: "report.txt"), encoding: .utf8) {
+        if let flashFolder {
+            let report = try String(contentsOf: URL(fileURLWithPath: flashFolder).appending(path: "report.txt"), encoding: .utf8)
             print("HEADER-FLASH-REPORT \(width)\n\(report)")
+            XCTAssertTrue(report.hasPrefix("capture available: true"), "The app could not capture its window:\n\(report)")
+            XCTAssertTrue(report.contains(" frames, worst transient"), "No frames captured after the favourite clicks:\n\(report)")
             XCTAssertFalse(report.contains("FLASH"), "The window flashed on a favourite click at width \(width):\n\(report)")
             XCTAssertFalse(report.contains("CONTROL-JUMP"), "A control jumped on a favourite click at width \(width):\n\(report)")
         }

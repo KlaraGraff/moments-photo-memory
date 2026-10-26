@@ -431,57 +431,62 @@ struct LibraryView: View {
     }
 
     private var results: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 34) {
-                    ForEach(cachedSections) { section in
-                        LibrarySectionView(
-                            section: section,
-                            items: section.itemIDs.compactMap { cachedItemByID[$0] },
-                            state: state,
-                            allGroups: allGroups,
-                            groupItems: groupItems
-                        )
-                        .id(LibraryScrollTarget.section(section.id))
+        // While the sidebar moves, the photos zoom as one picture and are
+        // laid out once at the new width.
+        SettledWidthScaling {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    // Headings and photo rows space themselves (LibrarySectionView).
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(cachedSections) { section in
+                            LibrarySectionView(
+                                section: section,
+                                items: section.itemIDs.compactMap { cachedItemByID[$0] },
+                                state: state,
+                                allGroups: allGroups,
+                                groupItems: groupItems
+                            )
+                        }
+                    }
+                    .reportsLibraryGridColumns(to: state)
+                    .scrollTargetLayout()
+                    .padding(.horizontal, 34)
+                    .padding(.vertical, 24)
+                    .deselectsOnBackgroundClick(selection)
+                }
+                .scrollIndicators(.visible)
+                // The scroll view opens at the section that was at the top when
+                // the user left, in its first layout. Scrolling there after
+                // onAppear showed the top first and then jumped.
+                .scrollPosition(
+                    id: Binding(get: { state.topSectionScrollID }, set: { state.topSectionScrollID = $0 }),
+                    anchor: .top
+                )
+                .libraryGridInteraction(state: state, proxy: proxy)
+                .onChange(of: selection.focusedItemID) { _, _ in
+                    revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
+                }
+                .onChange(of: state.appearedRevealItemID) { _, appeared in
+                    guard let appeared, appeared == state.pendingRevealItemID else { return }
+                    // Let the grid finish laying out the card before centring it.
+                    DispatchQueue.main.async {
+                        finishReveal(of: appeared, using: proxy, selection: selection, state: state)
                     }
                 }
-                .scrollTargetLayout()
-                .padding(.horizontal, 34)
-                .padding(.vertical, 24)
-                .deselectsOnBackgroundClick(selection)
-            }
-            .scrollIndicators(.visible)
-            // The scroll view opens at the section that was at the top when
-            // the user left, in its first layout. Scrolling there after
-            // onAppear showed the top first and then jumped.
-            .scrollPosition(
-                id: Binding(get: { state.topSectionScrollID }, set: { state.topSectionScrollID = $0 }),
-                anchor: .top
-            )
-            .libraryGridInteraction(state: state, proxy: proxy)
-            .onChange(of: selection.focusedItemID) { _, _ in
-                revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
-            }
-            .onChange(of: state.appearedRevealItemID) { _, appeared in
-                guard let appeared, appeared == state.pendingRevealItemID else { return }
-                // Let the grid finish laying out the card before centring it.
-                DispatchQueue.main.async {
-                    finishReveal(of: appeared, using: proxy, selection: selection, state: state)
-                }
-            }
-            .onChange(of: selection.shouldRevealSelectionInLibrary) { _, shouldReveal in
-                guard shouldReveal else { return }
-                revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
-            }
-            .task(id: revealTrigger) {
-                guard selection.shouldRevealSelectionInLibrary else { return }
-                await Task.yield()
-                guard !Task.isCancelled else { return }
-                revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
-            }
-            .onAppear {
-                if selection.shouldRevealSelectionInLibrary {
+                .onChange(of: selection.shouldRevealSelectionInLibrary) { _, shouldReveal in
+                    guard shouldReveal else { return }
                     revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
+                }
+                .task(id: revealTrigger) {
+                    guard selection.shouldRevealSelectionInLibrary else { return }
+                    await Task.yield()
+                    guard !Task.isCancelled else { return }
+                    revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
+                }
+                .onAppear {
+                    if selection.shouldRevealSelectionInLibrary {
+                        revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
+                    }
                 }
             }
         }
@@ -697,8 +702,8 @@ private struct LibrarySectionView: View {
 
     private var size: LibraryThumbnailSize { LibraryThumbnailSize(level: sizeLevel) }
 
-    private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: size.minimumWidth, maximum: size.maximumWidth), spacing: size.spacing, alignment: .top)]
+    private var columnCount: Int {
+        LibraryGridNavigation.columns(windowWidth: state.windowWidth, minimum: size.minimumWidth, spacing: size.spacing)
     }
 
     @Environment(SelectionModel.self) private var selection
@@ -711,6 +716,17 @@ private struct LibrarySectionView: View {
         selection.select(section.itemIDs, focus: section.itemIDs.first)
     }
 
+    /// The section's photos in rows of `columnCount`.
+    private var rows: [ArraySlice<MediaItem>] {
+        stride(from: 0, to: items.count, by: columnCount).map { items[$0..<min($0 + columnCount, items.count)] }
+    }
+
+    /// The heading and each row of photos are separate children of the
+    /// Library's lazy stack, so only rows on screen are laid out. A grid per
+    /// section sized every photo in it whenever the width changed: half a
+    /// second a frame while the sidebar moved with a few hundred photos.
+    /// Rows have a fixed number of equal columns, so when the space changes
+    /// the photos grow and shrink with it, like Photos.
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -755,15 +771,35 @@ private struct LibrarySectionView: View {
             }
 
             CollectionMemoryLines(memories: sectionMemories)
+        }
+        .padding(.bottom, 13)
+        .id(LibraryScrollTarget.section(section.id))
+        #if DEBUG
+        .modifier(ResizeProbeGridWidth(columns: columnCount))
+        #endif
 
-            LazyVGrid(columns: columns, alignment: .leading, spacing: size.rowSpacing) {
-                ForEach(items, id: \.id) { item in
+        let rows = self.rows
+        ForEach(rows.indices, id: \.self) { index in
+            HStack(alignment: .top, spacing: size.spacing) {
+                ForEach(rows[index], id: \.id) { item in
                     LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                // A short last row keeps the same column widths.
+                ForEach(rows[index].count..<columnCount, id: \.self) { _ in
+                    Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
                 }
             }
-            .measuresLibraryGridColumns(state, minimum: size.minimumWidth, spacing: size.spacing)
+            // The last row carries the space before the next section, so a
+            // heading scrolled to the top sits flush with it.
+            .padding(.bottom, index < rows.count - 1 ? size.rowSpacing : LibrarySectionView.sectionSpacing)
+            // By position, so a saved scroll position still exists after a zoom.
+            .id("row:\(section.id):\(index)")
         }
     }
+
+    /// Space between one section's last row and the next heading.
+    static let sectionSpacing: CGFloat = 34
 
     /// Trip memories for a trip section, and day memories for the days its photos were taken.
     private var sectionMemories: [CollectionMemory] {
@@ -1390,7 +1426,7 @@ struct GroupDetailView: View {
                     } else {
                         ScrollViewReader { proxy in
                             ScrollView {
-                                LazyVStack(alignment: .leading, spacing: 34) {
+                                LazyVStack(alignment: .leading, spacing: 0) {
                                     ForEach(sections) { section in
                                         LibrarySectionView(
                                             section: section,
@@ -1402,6 +1438,7 @@ struct GroupDetailView: View {
                                         )
                                     }
                                 }
+                                .reportsLibraryGridColumns(to: state)
                                 .padding(.horizontal, PaperMetrics.screenInset)
                                 .padding(.vertical, 24)
                                 .deselectsOnBackgroundClick(selection)

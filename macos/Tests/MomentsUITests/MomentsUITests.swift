@@ -159,8 +159,8 @@ final class MomentsUITests: XCTestCase {
         // SwiftUI reports the field with its scroll view's frame, which has no
         // hit point; click the place line by its position under the date.
         let date = app.buttons["viewer.date"]
-        // Its own frame now, before editing makes it report the scroll view's too.
-        let dateTitle = date.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: 30, dy: 12))
+        // Its frame may be reported as the column's; 30 pt down is on the date either way.
+        let dateTitle = date.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: 40, dy: 30))
         date.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 1)).withOffset(CGVector(dx: 30, dy: 47)).click()
         app.typeKey("a", modifierFlags: .command)
         app.typeText("Harbour cafe\r")

@@ -95,7 +95,30 @@ final class MomentsImportUITests: XCTestCase {
             recordSkipped("The quick-memory field was unavailable, so persistence of that optional edit was not asserted.")
         }
 
+        exerciseVideoPlayback(in: app)
         exerciseToReviewList(in: app)
+    }
+
+    /// The imported video plays in the large viewer. Showing the player once
+    /// aborted the app, because nothing linked AVKit.
+    private func exerciseVideoPlayback(in app: XCUIApplication) {
+        element(in: app, identifier: "sidebar.library").click()
+        let videos = app.radioButtons["Videos"].firstMatch
+        XCTAssertTrue(videos.waitForExistence(timeout: timeout), "The Library has no Videos filter")
+        videos.click()
+        let clip = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+            .firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: timeout), "The imported video is not in the Library")
+        clip.doubleClick()
+        XCTAssertTrue(element(in: app, identifier: "viewer.video").waitForExistence(timeout: timeout), "The viewer shows no player for the video")
+        // Give the player time to load and start; the old crash came on first show.
+        Thread.sleep(forTimeInterval: 2)
+        XCTAssertEqual(app.state, .runningForeground, "Moments quit while showing the video")
+        capture(app, named: "import-21-video-playing-evidence")
+        let close = element(in: app, identifier: "viewer.close")
+        if close.exists { close.click() } else { app.typeKey(.escape, modifierFlags: []) }
+        app.radioButtons["All"].firstMatch.click()
     }
 
     /// The Library's "to confirm" banner opens the review list, which

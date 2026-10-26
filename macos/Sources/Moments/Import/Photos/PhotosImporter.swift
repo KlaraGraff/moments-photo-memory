@@ -165,10 +165,14 @@ public struct PhotosImporter {
         let metadata = fresh.map(\.metadata)
         let organizer = ImportOrganizer(
             configuration: configuration,
-            geocoder: BestEffortPhotosGeocoder(base: geocoder),
-            geocodeCache: geocodeCache
+            geocoder: geocoder,
+            geocodeCache: geocodeCache,
+            geocodeProgress: { done, budget in
+                progress(ImportProgress(phase: .organizing, completed: done, total: budget, message: String(localized: "Looking up places")))
+            }
         )
         let plan = try await organizer.organize(metadata)
+        await geocodeCache.persist()
         progress(ImportProgress(phase: .organizing, completed: metadata.count, total: metadata.count, message: String(localized: "Organizing Apple Photos")))
 
         let mappedByMetadataID = Dictionary(uniqueKeysWithValues: fresh.map { ($0.metadata.id, $0) })
@@ -535,11 +539,3 @@ public struct PhotosImporter {
     }
 }
 
-private struct BestEffortPhotosGeocoder: ImportGeocoder {
-    let base: any ImportGeocoder
-
-    func reverseGeocode(coordinate: MomentsCore.GeoPoint) async throws -> ImportGeocodeResult {
-        do { return try await base.reverseGeocode(coordinate: coordinate) }
-        catch { return ImportGeocodeResult() }
-    }
-}

@@ -243,6 +243,11 @@ struct LibraryView: View {
                     libraryGroupingPicker
                 }
             }
+            VStack(alignment: .leading, spacing: 12) {
+                libraryHeaderTitle
+                libraryTypePicker
+                libraryGroupingPicker
+            }
         }
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.top, PaperMetrics.screenTopInset)
@@ -281,7 +286,12 @@ struct LibraryView: View {
         // The segments name themselves; a visible "Media type" label wrapped
         // onto two lines in narrow windows. VoiceOver still reads it.
         .labelsHidden()
-        .frame(maxWidth: 410)
+        // Always its natural width. Capped below it (English needs ~495 pt),
+        // AppKit drew the control wider than its slot, over the photo count,
+        // and every store save flipped it between the two widths; in a
+        // 900 pt window it also squeezed the sidebar. Narrow windows get the
+        // stacked layout above instead.
+        .fixedSize()
         .accessibilityIdentifier("library.type-filter")
     }
 

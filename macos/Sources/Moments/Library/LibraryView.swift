@@ -130,6 +130,9 @@ struct LibraryView: View {
     /// trip/place names, and overrides come from their own queries so this
     /// token never faults `item.memories` for every media item during a render.
     private var groupingKey: Int {
+        #if DEBUG
+        ScrollProbe.count("library.groupingKey")
+        #endif
         var hasher = Hasher()
         hasher.combine(typeRaw)
         hasher.combine(groupingRaw)
@@ -747,15 +750,19 @@ private struct LibraryPhotoCell: View {
                             .aspectRatio(1.33, contentMode: .fit)
                             .padding(5)
                             // A print's white mat, lifted by a warm two-layer shadow.
-                            .background(Color.white)
+                            // The mat casts it, not the photo: a shadow over the
+                            // whole cell is redrawn offscreen while the grid scrolls.
+                            .background(
+                                Color.white
+                                    .shadow(.drop(color: Paper.shadow.opacity(0.08), radius: 1, y: 1))
+                                    .shadow(.drop(color: Paper.shadow.opacity(0.10), radius: 8, y: 5))
+                            )
                             // Selected photos get an accent frame, like Photos.
                             .overlay {
                                 if selection.isSelected(item.id) {
                                     Rectangle().strokeBorder(LibraryPalette.accent, lineWidth: 3)
                                 }
                             }
-                            .shadow(color: Paper.shadow.opacity(0.08), radius: 1, y: 1)
-                            .shadow(color: Paper.shadow.opacity(0.10), radius: 8, y: 5)
                     }
                 }
                 .buttonStyle(.plain)

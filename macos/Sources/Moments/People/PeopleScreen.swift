@@ -55,6 +55,29 @@ private struct PeopleClusterSnapshot: Identifiable {
     let faces: [FaceObservation]
 }
 
+/// A cluster name that matches an existing person, waiting for the user to
+/// choose between merging and keeping the two apart.
+private struct PendingNameMerge: Identifiable {
+    let id: String
+    let name: String
+    let targetID: String
+    let targetName: String
+}
+
+private enum PeopleFacePicker {
+    /// The face that represents a group: a user-confirmed face if there is one,
+    /// then the sharpest. Every People surface shows this face's aligned crop,
+    /// never the whole source photo, so a multi-person photo shows one face.
+    static func cover(_ faces: [FaceObservation]) -> FaceObservation? {
+        faces.max { lhs, rhs in
+            let left = lhs.confirmed && lhs.assignmentSource == "user"
+            let right = rhs.confirmed && rhs.assignmentSource == "user"
+            if left != right { return !left }
+            return lhs.quality < rhs.quality
+        }
+    }
+}
+
 actor PeopleScanCoordinator {
     private var running: Task<Void, Never>?
     private var generation = 0
@@ -328,7 +351,107 @@ final class PeopleScanController {
 }
 
 enum PeopleStoreActions {
-    static func merge(sourceID: String, into targetID: String, people: [Person], observations: [FaceObservation], context: ModelContext) {
+    /// Local person IDs the user chose to keep apart from a same-named person.
+    /// Only opaque IDs are stored here, never names, faces or embeddings.
+    static let keepSeparateKey = "moments.people.keepSeparate"
+
+    /// Two person names are the same when they match after trimming, ignoring
+    /// case and full-width/half-width forms (so "Ａｌｉｃｅ" equals "alice").
+    static func namesMatch(_ lhs: String?, _ rhs: String?) -> Bool {
+        let left = (lhs ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let right = (rhs ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !left.isEmpty, !right.isEmpty else { return false }
+        return left.compare(right, options: [.caseInsensitive, .widthInsensitive]) == .orderedSame
+    }
+
+    static func keepSeparateIDs(_ defaults: UserDefaults = .standard) -> Set<String> {
+        Set(defaults.stringArray(forKey: keepSeparateKey) ?? [])
+    }
+
+    private static func setKeepSeparate(_ personID: String, _ isSeparate: Bool, defaults: UserDefaults) {
+        var ids = keepSeparateIDs(defaults)
+        let changed = isSeparate ? ids.insert(personID).inserted : ids.remove(personID) != nil
+        guard changed else { return }
+        if ids.isEmpty { defaults.removeObject(forKey: keepSeparateKey) } else { defaults.set(ids.sorted(), forKey: keepSeparateKey) }
+    }
+
+    private static func isOlder(_ lhs: Person, _ rhs: Person) -> Bool {
+        (lhs.createdAt, lhs.id) < (rhs.createdAt, rhs.id)
+    }
+
+    /// The visible person a new name should merge into: the oldest non-hidden
+    /// person with an equal name that the user has not kept separate.
+    static func mergeCandidate(forName name: String, people: [Person], excluding excludedID: String? = nil, defaults: UserDefaults = .standard) -> Person? {
+        let separate = keepSeparateIDs(defaults)
+        return people
+            .filter { !$0.hidden && $0.id != excludedID && !separate.contains($0.id) && namesMatch($0.name, name) }
+            .min(by: isOlder)
+    }
+
+    /// Names a group of faces as a user-confirmed person. With `target`, the
+    /// faces join that existing person through ``merge``; otherwise a new
+    /// person is created, optionally marked to stay apart from same-named people.
+    @discardableResult
+    static func name(
+        faces: [FaceObservation],
+        as name: String,
+        mergingInto target: Person?,
+        keepSeparate: Bool,
+        people: [Person],
+        observations: [FaceObservation],
+        context: ModelContext,
+        defaults: UserDefaults = .standard
+    ) -> String? {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !faces.isEmpty else { return nil }
+        let person = Person(name: value)
+        context.insert(person)
+        for face in faces {
+            face.personID = person.id
+            face.clusterID = nil
+            face.confirmed = true
+            face.assignmentSource = "user"
+            face.updatedAt = .now
+        }
+        guard let target, !target.hidden, target.id != person.id else {
+            if keepSeparate { setKeepSeparate(person.id, true, defaults: defaults) }
+            return person.id
+        }
+        var seen = Set<ObjectIdentifier>()
+        let allFaces = (faces + observations).filter { seen.insert(ObjectIdentifier($0)).inserted }
+        merge(sourceID: person.id, into: target.id, people: people + [person], observations: allFaces, context: context, defaults: defaults)
+        // Naming these faces is an explicit choice, so it overrides an older
+        // "not this person" rejection of the same person.
+        for face in faces {
+            var rejected = face.rejectedPersonIDSet
+            guard rejected.remove(target.id) != nil else { continue }
+            face.rejectedPersonIDs = rejected.sorted().joined(separator: ",")
+        }
+        return target.id
+    }
+
+    /// Merges visible people whose names are equal into the oldest of them,
+    /// skipping anyone the user kept separate. Returns how many were merged.
+    @discardableResult
+    static func mergeDuplicateNames(people: [Person], observations: [FaceObservation], context: ModelContext, defaults: UserDefaults = .standard) -> Int {
+        let separate = keepSeparateIDs(defaults)
+        let candidates = people
+            .filter { !$0.hidden && !separate.contains($0.id) && $0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+            .sorted(by: isOlder)
+        var keepers: [Person] = []
+        var merged = 0
+        for person in candidates {
+            if let keeper = keepers.first(where: { namesMatch($0.name, person.name) }) {
+                merge(sourceID: person.id, into: keeper.id, people: people, observations: observations, context: context, defaults: defaults)
+                merged += 1
+            } else {
+                keepers.append(person)
+            }
+        }
+        return merged
+    }
+
+    static func merge(sourceID: String, into targetID: String, people: [Person], observations: [FaceObservation], context: ModelContext, defaults: UserDefaults = .standard) {
         guard sourceID != targetID else { return }
         for face in observations where face.personID == sourceID {
             face.personID = targetID
@@ -354,9 +477,10 @@ enum PeopleStoreActions {
             if changed { group.rules = rules; group.updatedAt = .now }
         }
         let key = "moments.library.person"
-        if UserDefaults.standard.string(forKey: key) == sourceID {
-            UserDefaults.standard.set(targetID, forKey: key)
+        if defaults.string(forKey: key) == sourceID {
+            defaults.set(targetID, forKey: key)
         }
+        setKeepSeparate(sourceID, false, defaults: defaults)
         if let source = people.first(where: { $0.id == sourceID }) { context.delete(source) }
     }
 
@@ -556,6 +680,7 @@ struct PeopleScreen: View {
     @State private var clusterNames: [String: String] = [:]
     @State private var mergeSource: String?
     @State private var mergeTarget: String?
+    @State private var pendingNameMerge: PendingNameMerge?
     @State private var cachedFacesByPerson: [String: [FaceObservation]] = [:]
     @State private var cachedUnnamedClusters: [PeopleClusterSnapshot] = []
 
@@ -637,17 +762,71 @@ struct PeopleScreen: View {
         }
         .padding(34)
         .background(Color(red: 0.984, green: 0.945, blue: 0.918))
-        .onAppear { scanner.scanIfNeeded() }
+        .onAppear {
+            mergeSameNamedPeople()
+            scanner.scanIfNeeded()
+        }
         .onChange(of: observationsKey, initial: true) { _, _ in refreshFaceCaches() }
         .onChange(of: people.map(\.id), initial: true) { _, ids in
             if !personFilterIsValid(ids: ids) { UserDefaults.standard.removeObject(forKey: "moments.library.person") }
         }
-        .confirmationDialog(String(localized: "Merge two people"), isPresented: Binding(get: { mergeSource != nil }, set: { if !$0 { mergeSource = nil } })) {
-            ForEach(namedPeople.filter { $0.id != mergeSource }, id: \.id) { person in
-                Button(person.name ?? String(localized: "Unnamed person")) { mergeTarget = person.id; mergePeople() }
-            }
-            Button(String(localized: "Cancel"), role: .cancel) { mergeSource = nil }
+        .sheet(isPresented: Binding(get: { mergeSource != nil }, set: { if !$0 { mergeSource = nil } })) {
+            mergeSheet
         }
+        .alert(
+            String(format: String(localized: "Merge with existing %@?"), pendingNameMerge?.targetName ?? ""),
+            isPresented: Binding(get: { pendingNameMerge != nil }, set: { if !$0 { pendingNameMerge = nil } }),
+            presenting: pendingNameMerge
+        ) { pending in
+            Button(String(localized: "Merge")) { commitName(pending, merge: true) }
+                .keyboardShortcut(.defaultAction)
+            Button(String(localized: "Keep separate")) { commitName(pending, merge: false) }
+        }
+    }
+
+    private var mergeSheet: some View {
+        let source = people.first { $0.id == mergeSource }
+        return VStack(alignment: .leading, spacing: 14) {
+            Text(String(localized: "Merge two people")).font(.headline)
+            if let source {
+                HStack(spacing: 10) {
+                    if let face = PeopleFacePicker.cover(cachedFacesByPerson[source.id] ?? []) {
+                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
+                    }
+                    Text(source.name ?? String(localized: "Unnamed person")).font(.title3)
+                }
+                Divider()
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(namedPeople.filter { $0.id != mergeSource }, id: \.id) { person in
+                        Button {
+                            mergeTarget = person.id
+                            mergePeople()
+                        } label: {
+                            HStack(spacing: 10) {
+                                if let face = PeopleFacePicker.cover(cachedFacesByPerson[person.id] ?? []) {
+                                    FaceCropView(data: face.cropData, cacheKey: face.id, size: 44)
+                                }
+                                Text(person.name ?? String(localized: "Unnamed person"))
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+            .frame(maxHeight: 320)
+            HStack {
+                Spacer()
+                Button(String(localized: "Cancel"), role: .cancel) { mergeSource = nil }
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 340)
     }
 
     private var namedSection: some View {
@@ -664,7 +843,7 @@ struct PeopleScreen: View {
         let photoCount = Set(faces.map(\.mediaID)).count
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                if let first = faces.first { FaceCropView(data: first.cropData, size: 62) }
+                if let cover = PeopleFacePicker.cover(faces) { FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72) }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(person.name ?? String(localized: "Unnamed person")).font(.headline)
                     Text(String(format: String(localized: "People photo count"), photoCount)).font(.caption).foregroundStyle(.secondary)
@@ -679,7 +858,7 @@ struct PeopleScreen: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 6) {
                         ForEach(faces, id: \.id) { face in
-                            FaceCropView(data: face.cropData, size: 40)
+                            FaceCropView(data: face.cropData, cacheKey: face.id, size: 40)
                                 .overlay(alignment: .topTrailing) {
                                     VStack(spacing: 2) {
                                         if !face.confirmed || face.assignmentSource != "user" {
@@ -710,20 +889,26 @@ struct PeopleScreen: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(String(localized: "Is this the same person?")).font(.headline)
             ForEach(unnamedClusters) { cluster in
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        TextField(String(localized: "Name this person"), text: Binding(get: { clusterNames[cluster.id] ?? "" }, set: { clusterNames[cluster.id] = $0 }))
-                            .textFieldStyle(.roundedBorder)
-                        Button(String(localized: "Save")) { name(cluster) }.buttonStyle(.borderedProminent)
+                HStack(alignment: .top, spacing: 14) {
+                    if let cover = PeopleFacePicker.cover(cluster.faces) {
+                        FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 112)
                     }
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 10) {
-                            ForEach(cluster.faces, id: \.id) { face in
-                                VStack(spacing: 4) {
-                                    FaceCropView(data: face.cropData, size: 72)
-                                    HStack(spacing: 6) {
-                                        Button { face.confirmed = true; face.assignmentSource = "user"; face.updatedAt = .now; try? modelContext.save() } label: { Image(systemName: "checkmark") }.buttonStyle(.borderless).foregroundStyle(.green)
-                                        Button { remove(face) } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).foregroundStyle(.red)
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            TextField(String(localized: "Name this person"), text: Binding(get: { clusterNames[cluster.id] ?? "" }, set: { clusterNames[cluster.id] = $0 }))
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { name(cluster) }
+                            Button(String(localized: "Save")) { name(cluster) }.buttonStyle(.borderedProminent)
+                        }
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            LazyHStack(spacing: 10) {
+                                ForEach(cluster.faces, id: \.id) { face in
+                                    VStack(spacing: 4) {
+                                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 64)
+                                        HStack(spacing: 6) {
+                                            Button { face.confirmed = true; face.assignmentSource = "user"; face.updatedAt = .now; try? modelContext.save() } label: { Image(systemName: "checkmark") }.buttonStyle(.borderless).foregroundStyle(.green)
+                                            Button { remove(face) } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).foregroundStyle(.red)
+                                        }
                                     }
                                 }
                             }
@@ -739,17 +924,39 @@ struct PeopleScreen: View {
     private func name(_ cluster: PeopleClusterSnapshot) {
         let value = (clusterNames[cluster.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
-        let person = Person(name: value)
-        modelContext.insert(person)
-        for face in cluster.faces {
-            face.personID = person.id
-            face.clusterID = nil
-            face.confirmed = true
-            face.assignmentSource = "user"
-            face.updatedAt = .now
+        if let target = PeopleStoreActions.mergeCandidate(forName: value, people: people) {
+            pendingNameMerge = PendingNameMerge(id: cluster.id, name: value, targetID: target.id, targetName: target.name ?? value)
+            return
         }
+        commitName(clusterID: cluster.id, name: value, target: nil, keepSeparate: false)
+    }
+
+    private func commitName(_ pending: PendingNameMerge, merge: Bool) {
+        let target = merge ? people.first { $0.id == pending.targetID && !$0.hidden } : nil
+        commitName(clusterID: pending.id, name: pending.name, target: target, keepSeparate: !merge)
+        pendingNameMerge = nil
+    }
+
+    private func commitName(clusterID: String, name: String, target: Person?, keepSeparate: Bool) {
+        guard let cluster = cachedUnnamedClusters.first(where: { $0.id == clusterID }) else { return }
+        PeopleStoreActions.name(
+            faces: cluster.faces,
+            as: name,
+            mergingInto: target,
+            keepSeparate: keepSeparate,
+            people: people,
+            observations: observations,
+            context: modelContext
+        )
         try? modelContext.save()
-        clusterNames[cluster.id] = nil
+        clusterNames[clusterID] = nil
+    }
+
+    /// Folds same-named people left over from earlier versions or other paths
+    /// into the oldest one each time the People screen appears.
+    private func mergeSameNamedPeople() {
+        guard PeopleStoreActions.mergeDuplicateNames(people: people, observations: observations, context: modelContext) > 0 else { return }
+        try? modelContext.save()
     }
 
     private func remove(_ face: FaceObservation) {
@@ -784,6 +991,10 @@ private struct FaceCropView: View {
         return cache
     }()
     let data: Data
+    /// The face's own ID. `Data` hashes only its first 80 bytes, which are the
+    /// same JPEG header for every crop, so a data-derived key could show one
+    /// person's face in another person's slot.
+    let cacheKey: String
     let size: CGFloat
     @State private var image: NSImage?
 
@@ -798,8 +1009,8 @@ private struct FaceCropView: View {
         .frame(width: size, height: size)
         .clipShape(Circle())
         .overlay(Circle().stroke(Color.white.opacity(0.7), lineWidth: 1))
-        .task(id: data) {
-            let key = "\(data.hashValue):\(data.count)" as NSString
+        .task(id: cacheKey) {
+            let key = cacheKey as NSString
             if let cached = Self.cache.object(forKey: key) {
                 image = cached
                 return

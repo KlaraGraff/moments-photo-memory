@@ -18,6 +18,7 @@ public struct PhotosMetadataMapper: Sendable {
             kind = .photo
         }
         let bookmark = Data("photos-reference:\(asset.localIdentifier)".utf8)
+        let location = ImportLocation.usable(latitude: asset.location?.latitude, longitude: asset.location?.longitude)
         let metadata = ImportedMediaMetadata(
             id: "photos-\(stableID)",
             bookmarkData: bookmark,
@@ -26,8 +27,8 @@ public struct PhotosMetadataMapper: Sendable {
             captureDate: captureDate,
             captureDateSource: hasCaptureDate ? .asset : .fileDateFallback,
             timeZoneOffsetMinutes: nil,
-            latitude: asset.location?.latitude,
-            longitude: asset.location?.longitude,
+            latitude: location?.latitude,
+            longitude: location?.longitude,
             width: asset.pixelWidth,
             height: asset.pixelHeight,
             kind: kind,

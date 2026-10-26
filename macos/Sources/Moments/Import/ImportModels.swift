@@ -95,6 +95,20 @@ public struct ImportConflictEvent: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// Cameras and editing tools write exactly (0, 0) when they have no GPS fix
+/// or strip location, so that coordinate means "no location", not a point in
+/// the Gulf of Guinea. MapKit also cannot draw annotations there.
+public enum ImportLocation {
+    public static func isPlaceholder(latitude: Double, longitude: Double) -> Bool {
+        latitude == 0 && longitude == 0
+    }
+
+    public static func usable(latitude: Double?, longitude: Double?) -> (latitude: Double, longitude: Double)? {
+        guard let latitude, let longitude, !isPlaceholder(latitude: latitude, longitude: longitude) else { return nil }
+        return (latitude, longitude)
+    }
+}
+
 public enum ImportCaptureDateSource: String, Codable, Equatable, Sendable {
     case exif
     case asset

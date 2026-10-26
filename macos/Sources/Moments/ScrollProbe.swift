@@ -51,8 +51,7 @@ enum ScrollProbe {
         intervals = []
         counters = [:]
         lastFrame = 0
-        // The CI workflow starts `sample` on the app when this file appears.
-        if let folder { try? Data().write(to: folder.appending(path: "scrolling")) }
+        MainThreadSampler.start()
         let target = Target()
         let link = content.displayLink(target: target, selector: #selector(Target.tick(_:)))
         link.add(to: .main, forMode: .common)
@@ -90,6 +89,7 @@ enum ScrollProbe {
         if passes == 1 {
             speed = -speed
             lastFrame = 0
+            MainThreadSampler.start()
         } else {
             speed = 0
             displayLink?.invalidate()
@@ -121,6 +121,8 @@ enum ScrollProbe {
         for (name, value) in counters.sorted(by: { $0.key < $1.key }) {
             text += "  \(name): \(value)\n"
         }
+        // Where the main thread spent this pass (sampling adds a little load).
+        text += MainThreadSampler.stopAndReport()
         try? text.write(to: folder.appending(path: "scroll-report-\(reports).txt"), atomically: true, encoding: .utf8)
         intervals = []
         counters = [:]

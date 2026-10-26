@@ -8,6 +8,7 @@ import SwiftUI
 struct PhotoInfoPanel: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(SelectionModel.self) private var selection
     let item: MediaItem
     let libraryState: LibraryViewState
     /// True while one of the column's own fields is being typed in, so the
@@ -44,7 +45,24 @@ struct PhotoInfoPanel: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 dateSection
-                row(String(localized: "Place")) { placeField }
+                row(String(localized: "Place")) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        placeField
+                        if item.latitude != nil {
+                            Button { selection.showOnMap(item.id) } label: {
+                                Image(systemName: "map")
+                                    .font(.callout)
+                                    .foregroundStyle(LibraryPalette.muted)
+                                    .frame(width: 24, height: 20)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help(String(localized: "Show on Map"))
+                            .accessibilityLabel(String(localized: "Show on Map"))
+                            .accessibilityIdentifier("viewer.place.map")
+                        }
+                    }
+                }
                 row(String(localized: "Trip")) { tripField }
                 if !visibleFaces.isEmpty {
                     row(String(localized: "People")) { peopleList }
@@ -137,43 +155,7 @@ struct PhotoInfoPanel: View {
     }
 
     private var datePopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(String(localized: "Adjust date and time"))
-                .font(.headline)
-                .foregroundStyle(LibraryPalette.ink)
-            DatePicker("", selection: $draftDate, displayedComponents: .date)
-                .datePickerStyle(.graphical)
-                .labelsHidden()
-            DatePicker(String(localized: "Time"), selection: $draftDate, displayedComponents: .hourAndMinute)
-                .datePickerStyle(.field)
-            if item.userCorrectedCaptureDateUTC != nil, let original = item.captureDate {
-                Text(String(localized: "Original: \(original.formatted(date: .abbreviated, time: .shortened))"))
-                    .font(.caption)
-                    .foregroundStyle(LibraryPalette.muted)
-            }
-            HStack {
-                if item.userCorrectedCaptureDateUTC != nil, item.captureDate != nil {
-                    Button(String(localized: "Use original")) {
-                        PhotoInfoEditing.revertCaptureDate(on: item)
-                        save()
-                        showingDatePicker = false
-                    }
-                }
-                Spacer()
-                Button(String(localized: "Cancel")) { showingDatePicker = false }
-                    .keyboardShortcut(.cancelAction)
-                Button(String(localized: "Done")) {
-                    PhotoInfoEditing.setCaptureDate(draftDate, on: item)
-                    save()
-                    showingDatePicker = false
-                }
-                .keyboardShortcut(.defaultAction)
-                .accessibilityIdentifier("viewer.date.done")
-            }
-            .controlSize(.small)
-        }
-        .padding(16)
-        .frame(width: 280)
+        PhotoDateEditor(item: item, draftDate: $draftDate) { showingDatePicker = false }
     }
 
     // MARK: Place
@@ -259,6 +241,7 @@ struct PhotoInfoPanel: View {
                 .disabled(item.trip == nil)
                 if let trip = item.trip {
                     Divider()
+                    Button(String(localized: "Show Trip")) { selection.showTrip(trip.id) }
                     Button(String(localized: "Rename “\(trip.effectiveName)”…")) {
                         tripNameText = trip.effectiveName
                         isRenamingTrip = true
@@ -354,8 +337,11 @@ struct PhotoInfoPanel: View {
                     namingFaceID = face.id
                 }
             }
-            if face.personID != nil {
+            if let personID = face.personID {
                 Divider()
+                Button(String(localized: "Show photos of \(current ?? String(localized: "this person"))")) {
+                    selection.showPhotos(ofPerson: personID)
+                }
                 Button(String(localized: "Not \(current ?? String(localized: "this person"))")) {
                     PeopleStoreActions.remove(face: face)
                     save()
@@ -417,5 +403,54 @@ private struct InlineFieldUnderline: ViewModifier {
                     .frame(height: isFocused ? 1.5 : 1)
                     .animation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), value: isFocused)
             }
+    }
+}
+
+/// Adjusting a photo's date and time, shared by the viewer's info column and
+/// the time under each photo in the Library.
+struct PhotoDateEditor: View {
+    @Environment(\.modelContext) private var modelContext
+    let item: MediaItem
+    @Binding var draftDate: Date
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(String(localized: "Adjust date and time"))
+                .font(.headline)
+                .foregroundStyle(LibraryPalette.ink)
+            DatePicker("", selection: $draftDate, displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+            DatePicker(String(localized: "Time"), selection: $draftDate, displayedComponents: .hourAndMinute)
+                .datePickerStyle(.field)
+            if item.userCorrectedCaptureDateUTC != nil, let original = item.captureDate {
+                Text(String(localized: "Original: \(original.formatted(date: .abbreviated, time: .shortened))"))
+                    .font(.caption)
+                    .foregroundStyle(LibraryPalette.muted)
+            }
+            HStack {
+                if item.userCorrectedCaptureDateUTC != nil, item.captureDate != nil {
+                    Button(String(localized: "Use original")) {
+                        PhotoInfoEditing.revertCaptureDate(on: item)
+                        try? modelContext.save()
+                        dismiss()
+                    }
+                }
+                Spacer()
+                Button(String(localized: "Cancel")) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(String(localized: "Done")) {
+                    PhotoInfoEditing.setCaptureDate(draftDate, on: item)
+                    try? modelContext.save()
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("viewer.date.done")
+            }
+            .controlSize(.small)
+        }
+        .padding(16)
+        .frame(width: 280)
     }
 }

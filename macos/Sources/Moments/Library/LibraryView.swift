@@ -650,12 +650,41 @@ private struct LibrarySectionView: View {
         [GridItem(.adaptive(minimum: size.minimumWidth, maximum: size.maximumWidth), spacing: size.spacing, alignment: .top)]
     }
 
+    @Environment(SelectionModel.self) private var selection
+
+    private var sectionTripID: String? {
+        section.id.hasPrefix("trip:") ? String(section.id.dropFirst("trip:".count)) : nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(section.title)
-                    .font(.system(size: 21, weight: .medium, design: .serif))
-                    .foregroundStyle(LibraryPalette.ink)
+                // Like a moment title in Photos: click selects the section's
+                // photos, and the menu goes to the trip or the map.
+                Button {
+                    selection.select(section.itemIDs, focus: section.itemIDs.first)
+                } label: {
+                    Text(section.title)
+                        .font(.system(size: 21, weight: .medium, design: .serif))
+                        .foregroundStyle(LibraryPalette.ink)
+                }
+                .buttonStyle(.plain)
+                .help(String(localized: "Select these photos"))
+                .accessibilityIdentifier("library.section.\(section.id)")
+                .contextMenu {
+                    Button(String(localized: "Select these photos")) {
+                        selection.select(section.itemIDs, focus: section.itemIDs.first)
+                    }
+                    Button(String(localized: "Show only these photos")) {
+                        selection.showInLibrary(section.itemIDs, title: section.title)
+                    }
+                    if let tripID = sectionTripID {
+                        Button(String(localized: "Show Trip")) { selection.showTrip(tripID) }
+                    }
+                    if let first = section.itemIDs.first {
+                        Button(String(localized: "Show on Map")) { selection.showOnMap(first) }
+                    }
+                }
                 Text(dateSpan)
                     .font(.caption)
                     .foregroundStyle(LibraryPalette.muted)
@@ -826,6 +855,17 @@ private struct LibraryPhotoCell: View {
             Button(String(localized: "Open")) { open() }
             Button(selection.isSelected(item.id) ? String(localized: "Deselect") : String(localized: "Select")) {
                 selection.toggle(item.id)
+            }
+            Button(item.isFavorite ? String(localized: "Unfavorite") : String(localized: "Favorite")) {
+                item.setFavorite(!item.isFavorite, context: modelContext)
+                try? modelContext.save()
+            }
+            Divider()
+            if item.latitude != nil {
+                Button(String(localized: "Show on Map")) { selection.showOnMap(item.id) }
+            }
+            if let tripID = item.tripID {
+                Button(String(localized: "Show Trip")) { selection.showTrip(tripID) }
             }
             if let group {
                 Button(String(localized: "Remove from this group")) {

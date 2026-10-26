@@ -622,6 +622,7 @@ private struct WrittenNoteView: View {
 
 private struct WrittenSuggestionRow: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(SelectionModel.self) private var selection
     let note: PhotoNote
     let item: MediaItem
     let suggestion: NoteSuggestion
@@ -635,9 +636,16 @@ private struct WrittenSuggestionRow: View {
                     .font(.caption)
                     .foregroundStyle(LibraryPalette.accent)
                 if suggestion.kind == .placeCorrection, suggestion.applyToNearby, !suggestion.nearbyMediaIDs.isEmpty {
-                    Text(String(localized: "also \(suggestion.nearbyMediaIDs.count) photos nearby"))
-                        .font(.caption)
-                        .foregroundStyle(LibraryPalette.muted)
+                    Button {
+                        selection.showInLibrary(suggestion.nearbyMediaIDs + [item.id], title: NoteSuggestionContent.title(for: suggestion))
+                    } label: {
+                        Text(String(localized: "also \(suggestion.nearbyMediaIDs.count) photos nearby"))
+                            .font(.caption)
+                            .foregroundStyle(LibraryPalette.muted)
+                            .underline(true, color: LibraryPalette.muted.opacity(0.4))
+                    }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Show these photos"))
                 }
                 Spacer(minLength: 4)
                 if !isEditing {
@@ -681,9 +689,12 @@ private struct WrittenSuggestionRow: View {
 
 /// Place and time under a photo, with the place's description when one was written.
 struct PhotoPlaceLine: View {
+    @Environment(SelectionModel.self) private var selection
     let item: MediaItem
     let placeNotes: [PlaceNote]
     @State private var showingDescription = false
+    @State private var showingDateEditor = false
+    @State private var draftDate = Date.now
 
     private var description: String? {
         guard let name = item.namedPlace else { return nil }
@@ -702,13 +713,36 @@ struct PhotoPlaceLine: View {
         if item.namedPlace != nil || item.effectiveCaptureDate != nil {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if let name = item.namedPlace {
-                    Text(name)
-                        .foregroundStyle(LibraryPalette.ink)
-                        .lineLimit(1)
+                    // The place goes to the map, the time opens the date editor.
+                    if item.latitude != nil {
+                        Button { selection.showOnMap(item.id) } label: {
+                            Text(name)
+                                .foregroundStyle(LibraryPalette.ink)
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                        .help(String(localized: "Show on Map"))
+                        .accessibilityIdentifier("library.place.\(item.id)")
+                    } else {
+                        Text(name)
+                            .foregroundStyle(LibraryPalette.ink)
+                            .lineLimit(1)
+                    }
                 }
                 if let time = item.effectiveCaptureDate?.formatted(date: .omitted, time: .shortened) {
-                    Text(time)
-                        .foregroundStyle(LibraryPalette.muted)
+                    Button {
+                        draftDate = item.effectiveCaptureDate ?? .now
+                        showingDateEditor = true
+                    } label: {
+                        Text(time)
+                            .foregroundStyle(LibraryPalette.muted)
+                    }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Adjust date and time"))
+                    .accessibilityIdentifier("library.time.\(item.id)")
+                    .popover(isPresented: $showingDateEditor, arrowEdge: .bottom) {
+                        PhotoDateEditor(item: item, draftDate: $draftDate) { showingDateEditor = false }
+                    }
                 }
                 if let correctedFrom {
                     Text(String(localized: "Corrected, was \(correctedFrom)"))

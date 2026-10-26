@@ -119,6 +119,11 @@ struct MapScreen: View {
                 visibleItemIDs: selection.visibleItemIDs,
                 latitudeDelta: latitudeDelta
             )
+            // "Show on Map" from another screen: fly there once the pins exist.
+            if let requested = selection.mapFocusRequest {
+                selection.mapFocusRequest = nil
+                focus(on: requested)
+            }
         }
         .task(id: currentWorldInput.signature) {
             await refreshWorld(for: currentWorldInput)
@@ -452,11 +457,17 @@ struct MapScreen: View {
         if let selectedCluster, !selectedItems.isEmpty {
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
-                    Text(clusterDisplayName(selectedCluster))
-                        .font(.headline)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .accessibilityIdentifier("map.panel.title")
+                    Button {
+                        selection.showInLibrary(selectedItems.map(\.id), title: clusterDisplayName(selectedCluster))
+                    } label: {
+                        Text(clusterDisplayName(selectedCluster))
+                            .font(.headline)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show in Library")
+                    .accessibilityIdentifier("map.panel.title")
                     HStack(spacing: 4) {
                         Text(selectedItems.count, format: .number)
                             .font(.caption.monospacedDigit())
@@ -502,6 +513,13 @@ struct MapScreen: View {
                             }
                             .buttonStyle(.plain)
                             .help("Open photo")
+                            .contextMenu {
+                                Button("Open photo") { open(itemID: item.id) }
+                                Button("Show in Library") { selection.revealInLibrary(item.id) }
+                                if let tripID = item.tripID {
+                                    Button("Show Trip") { selection.showTrip(tripID) }
+                                }
+                            }
                         }
                     }
                     .padding(.horizontal, 12)

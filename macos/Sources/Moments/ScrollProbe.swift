@@ -51,6 +51,8 @@ enum ScrollProbe {
         intervals = []
         counters = [:]
         lastFrame = 0
+        // The CI workflow starts `sample` on the app when this file appears.
+        if let folder { try? Data().write(to: folder.appending(path: "scrolling")) }
         let target = Target()
         let link = content.displayLink(target: target, selector: #selector(Target.tick(_:)))
         link.add(to: .main, forMode: .common)

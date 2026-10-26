@@ -30,6 +30,13 @@ jobs:
           TEST_RUNNER_MOMENTS_FLASH_DIR: ${{ runner.temp }}/flash
           TEST_RUNNER_MOMENTS_SCROLL_DIR: ${{ runner.temp }}/scroll
         run: |
+          # While the scroll test scrolls, sample the app's call stacks so a
+          # stall can be traced to the code that caused it.
+          scroll_dir="$RUNNER_TEMP/scroll"
+          ( for _ in $(seq 1 6000); do
+              [ -f "$scroll_dir/scrolling" ] && { sample Moments 10 -mayDie -file "$RUNNER_TEMP/scroll-sample.txt" >/dev/null 2>&1; break; }
+              sleep 0.2
+            done ) &
           # Ad-hoc signing is enough for the test runner on the hosted Mac.
           xcodebuild \
             -project macos/Moments.xcodeproj \
@@ -41,7 +48,26 @@ jobs:
             test
       - name: Print scroll reports
         if: always()
-        run: cat "$RUNNER_TEMP"/scroll/scroll-report-*.txt 2>/dev/null || echo "no scroll report"
+        run: |
+          cat "$RUNNER_TEMP"/scroll/scroll-report-*.txt 2>/dev/null || echo "no scroll report"
+          sample="$RUNNER_TEMP/scroll-sample.txt"
+          [ -f "$sample" ] || { echo "no scroll sample"; exit 0; }
+          # Main thread call tree, only frames seen in at least 2% of samples.
+          python3 - "$sample" <<'PY'
+          import re, sys
+          text = open(sys.argv[1], errors="replace").read()
+          graph = text.split("Call graph:", 1)[-1].split("Total number in stack", 1)[0]
+          threads = re.split(r"\n(?=    \d+ Thread_)", graph)
+          main = next((t for t in threads if "com.apple.main-thread" in t), threads[0] if threads else "")
+          total = int(re.search(r"^\s*(\d+)", main.strip()).group(1)) if main.strip() else 1
+          print(f"MAIN THREAD SAMPLES {total}")
+          for line in main.splitlines():
+              m = re.match(r"^([\s+!:|]*)(\d+) (.*)$", line)
+              if m and int(m.group(2)) >= total * 0.02:
+                  print((m.group(1) + m.group(2) + " " + m.group(3))[:220])
+          top = text.split("Sort by top of stack", 1)[-1].split("Binary Images", 1)[0]
+          print("TOP OF STACK"); print("\n".join(top.splitlines()[:40]))
+          PY
       - name: Print flash report
         if: always()
         run: |

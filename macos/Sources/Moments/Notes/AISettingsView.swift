@@ -9,6 +9,9 @@ struct AISettingsView: View {
     @AppStorage(AISettings.baseURLKey) private var baseURL = ""
     @AppStorage(AISettings.fallbackKey) private var fallbackRaw = OnDeviceFallback.keepForLater.rawValue
     @State private var apiKey = ""
+    /// Only a key the person typed is ever written, so a failed keychain read
+    /// can't erase the stored key.
+    @State private var keyEdited = false
     @State private var testResult: String?
     @State private var isTesting = false
 
@@ -59,8 +62,11 @@ struct AISettingsView: View {
                 if provider == .openAICompatible {
                     TextField(String(localized: "Endpoint"), text: $baseURL, prompt: Text(verbatim: "https://example.com/v1"))
                 }
-                SecureField(String(localized: "API key"), text: $apiKey)
-                    .onSubmit { AIKeychain.setKey(apiKey, for: provider) }
+                SecureField(String(localized: "API key"), text: Binding(
+                    get: { apiKey },
+                    set: { apiKey = $0; keyEdited = true }
+                ))
+                    .onSubmit { storeKey(for: provider) }
                 HStack {
                     Text(String(localized: "The key is kept in your Mac's keychain."))
                         .font(.caption)
@@ -89,19 +95,30 @@ struct AISettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 560)
-        .onAppear { apiKey = AIKeychain.key(for: provider) ?? "" }
+        .onAppear { loadKey(for: provider) }
         .onChange(of: providerRaw) { oldValue, newValue in
-            if let old = CloudProvider(rawValue: oldValue) { AIKeychain.setKey(apiKey, for: old) }
+            if let old = CloudProvider(rawValue: oldValue) { storeKey(for: old) }
             let new = CloudProvider(rawValue: newValue) ?? .claude
-            apiKey = AIKeychain.key(for: new) ?? ""
+            loadKey(for: new)
             if model.isEmpty || model == CloudProvider.claude.defaultModel { model = new.defaultModel }
             testResult = nil
         }
-        .onDisappear { AIKeychain.setKey(apiKey, for: provider) }
+        .onDisappear { storeKey(for: provider) }
+    }
+
+    private func loadKey(for provider: CloudProvider) {
+        apiKey = AIKeychain.key(for: provider) ?? ""
+        keyEdited = false
+    }
+
+    private func storeKey(for provider: CloudProvider) {
+        guard keyEdited else { return }
+        AIKeychain.setKey(apiKey, for: provider)
+        keyEdited = false
     }
 
     private func test() {
-        AIKeychain.setKey(apiKey, for: provider)
+        storeKey(for: provider)
         var settings = AISettings.load()
         settings.provider = provider
         let organizer = NoteOrganizerFactory.cloudOrganizer(settings: settings, apiKey: AIKeychain.key(for:))

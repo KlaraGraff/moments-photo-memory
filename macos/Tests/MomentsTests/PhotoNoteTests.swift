@@ -27,8 +27,18 @@ private final class CapturingOrganizer: NoteOrganizing, @unchecked Sendable {
 final class PhotoNoteTests: XCTestCase {
     private let base = Date(timeIntervalSince1970: 1_700_000_000)
 
+    /// Held for the whole test: a ModelContext whose container is released crashes.
+    private var container: ModelContainer?
+
     private func makeContext() throws -> ModelContext {
-        try MomentsPersistence.makeContainer(inMemory: true).mainContext
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        self.container = container
+        return container.mainContext
+    }
+
+    override func tearDown() {
+        container = nil
+        super.tearDown()
     }
 
     @discardableResult
@@ -111,6 +121,8 @@ final class PhotoNoteTests: XCTestCase {
         insertItem("close", minutes: -30, latitude: 0.0015, longitude: 0.001, in: context)
         insertItem("far", minutes: 10, latitude: 0.05, longitude: 0.05, in: context)
         insertItem("late", minutes: 200, place: harbor, in: context)
+        let corrected = insertItem("ownCorrection", minutes: 5, place: harbor, in: context)
+        context.insert(PlaceOverride(mediaID: "ownCorrection", nameOverride: "Pier", mediaItem: corrected))
         let all = try context.fetch(FetchDescriptor<MediaItem>())
 
         XCTAssertEqual(NoteApplier.nearbyMediaIDs(for: item, among: all), ["close", "samePlace"])
@@ -176,6 +188,27 @@ final class PhotoNoteTests: XCTestCase {
         XCTAssertEqual(theirs.memories.map(\.text), ["Partner words"])
     }
 
+    func testUndoLeavesLaterEditsAlone() throws {
+        let context = try makeContext()
+        let item = insertItem("a", in: context)
+        let note = PhotoNote(mediaID: "a", text: "x", status: .ready)
+        note.suggestions = [
+            NoteSuggestion(id: "m", kind: .memory, text: "From the note", scope: .photo),
+            NoteSuggestion(id: "c", kind: .placeCorrection, text: "Old Lane")
+        ]
+        context.insert(note)
+        try NoteApplier.accept(["m", "c"], of: note, item: item, context: context)
+        try context.save()
+
+        item.memories.first?.text = "From the note, then edited by hand"
+        item.localPlaceOverride?.nameOverride = "Renamed later"
+        try NoteApplier.undo(note, context: context)
+        try context.save()
+
+        XCTAssertEqual(item.memories.map(\.text), ["From the note, then edited by hand"])
+        XCTAssertEqual(item.effectivePlaceName, "Renamed later")
+    }
+
     func testDayTripAndPlaceDescriptionWritesAndUndo() throws {
         let context = try makeContext()
         let item = insertItem("a", tripID: "trip-1", in: context)
@@ -218,7 +251,9 @@ final class PhotoNoteTests: XCTestCase {
 
         let note = try XCTUnwrap(service.save("  It was Old Lane  ", for: item, context: context))
         XCTAssertEqual(note.text, "It was Old Lane")
-        await service.organize(note, item: item, context: context)
+        XCTAssertTrue(service.isRunning(note), "A just-saved note counts as organizing at once")
+        for _ in 0..<1000 where service.isRunning(note) { await Task.yield() }
+        XCTAssertFalse(service.isRunning(note))
 
         XCTAssertEqual(capture.received?.noteText, "It was Old Lane")
         XCTAssertEqual(capture.received?.placeName, "Harbor")

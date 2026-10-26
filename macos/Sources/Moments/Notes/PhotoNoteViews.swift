@@ -116,9 +116,16 @@ struct PhotoNoteSection: View {
                         .font(.system(.callout, design: .serif))
                         .foregroundStyle(LibraryPalette.ink)
                         .textSelection(.enabled)
-                    Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption2)
-                        .foregroundStyle(LibraryPalette.muted)
+                    HStack(spacing: 8) {
+                        Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption2)
+                            .foregroundStyle(LibraryPalette.muted)
+                        if !note.undoRecord.isEmpty {
+                            Button(String(localized: "Undo")) { undo(note) }
+                                .buttonStyle(.link)
+                                .font(.caption2)
+                        }
+                    }
                 }
             }
         }
@@ -138,15 +145,17 @@ struct PhotoNoteSection: View {
                 Text(String(localized: "Written from your note."))
                     .font(.caption)
                     .foregroundStyle(LibraryPalette.muted)
-                Button(String(localized: "Undo")) {
-                    try? NoteApplier.undo(note, context: modelContext)
-                    try? modelContext.save()
-                }
+                Button(String(localized: "Undo")) { undo(note) }
                 .buttonStyle(.link)
                 .font(.caption)
                 .accessibilityIdentifier("library.note.undo.\(item.id)")
             }
         }
+    }
+
+    private func undo(_ note: PhotoNote) {
+        try? NoteApplier.undo(note, context: modelContext)
+        try? modelContext.save()
     }
 
     private func save() {
@@ -254,6 +263,14 @@ private struct PhotoNoteStatusView: View {
                     .font(.caption)
                     .foregroundStyle(LibraryPalette.muted)
                 Spacer(minLength: 4)
+                if !note.undoRecord.isEmpty {
+                    Button(String(localized: "Undo")) {
+                        try? NoteApplier.undo(note, context: modelContext)
+                        try? modelContext.save()
+                    }
+                    .buttonStyle(.link)
+                    .controlSize(.small)
+                }
                 Button(String(localized: "Later")) {
                     state.collapsedNoteIDs.insert(note.id)
                 }

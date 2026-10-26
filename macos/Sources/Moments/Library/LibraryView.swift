@@ -760,7 +760,7 @@ private struct LibrarySectionView: View {
     private var sectionMemories: [CollectionMemory] {
         guard !collectionMemories.isEmpty else { return [] }
         let tripID = section.id.hasPrefix("trip:") ? String(section.id.dropFirst("trip:".count)) : nil
-        let dayKeys = Set(items.compactMap { $0.effectiveCaptureDate.map { PhotoNoteDay.key(for: $0) } })
+        let dayKeys = Set(items.compactMap { PhotoNoteDay.key(for: $0) })
         return collectionMemories.filter { memory in
             switch memory.scope {
             case .trip: return memory.scopeKey == tripID

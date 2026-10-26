@@ -7,12 +7,16 @@ public struct PhotoNoteUndoRecord: Codable, Equatable, Sendable {
         public var mediaID: String
         public var previousName: String?
         public var created: Bool
+        /// The name the note wrote; undo leaves a later, different name alone.
+        public var writtenName: String?
     }
 
     public struct TextChange: Codable, Equatable, Sendable {
         public var recordID: String
         public var previousText: String?
         public var created: Bool
+        /// The text after the note's write; undo leaves later edits alone.
+        public var writtenText: String?
     }
 
     public var overrides: [OverrideChange] = []
@@ -33,12 +37,22 @@ public enum PhotoNoteDay {
         let parts = calendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
     }
+
+    /// The photo's own local day when import recorded one and the date was not
+    /// corrected since, so day memories don't move with the Mac's time zone.
+    public static func key(for item: MediaItem) -> String? {
+        if item.userCorrectedCaptureDateUTC == nil, let local = item.localDayKey, local.count == 10 {
+            return local
+        }
+        return item.effectiveCaptureDate.map { key(for: $0) }
+    }
 }
 
 public enum NoteApplier {
     /// Photos taken within `window` of this one at the same place name or
     /// within `radius` metres, oldest first. Used to offer a place correction
-    /// for the whole stop, not just the photo the note is under.
+    /// for the whole stop, not just the photo the note is under. Photos that
+    /// already carry their own place correction are left out.
     public static func nearbyMediaIDs(
         for item: MediaItem,
         among candidates: [MediaItem],
@@ -51,7 +65,8 @@ public enum NoteApplier {
         return candidates
             .filter { other in
                 guard other.id != item.id, let otherDate = other.effectiveCaptureDate,
-                      abs(otherDate.timeIntervalSince(date)) <= window else { return false }
+                      abs(otherDate.timeIntervalSince(date)) <= window,
+                      other.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return false }
                 if let name, !name.isEmpty, other.effectivePlaceName.map(PlaceNote.key(for:)) == name { return true }
                 if let coordinate, let otherCoordinate = other.effectiveCoordinate {
                     return distance(coordinate, otherCoordinate) <= radius
@@ -92,30 +107,36 @@ public enum NoteApplier {
         var suggestions = note.suggestions
         var record = note.undoRecord
         var written = 0
+        // Fetch before writing anything, so a failed fetch leaves no
+        // unrecorded writes behind.
+        let nearbyIDs = Set(suggestions.filter { suggestionIDs.contains($0.id) && $0.kind == .placeCorrection && $0.applyToNearby }
+            .flatMap(\.nearbyMediaIDs))
+        let nearbyItems = nearbyIDs.isEmpty ? [] : try context.fetch(FetchDescriptor<MediaItem>()).filter { nearbyIDs.contains($0.id) }
         for index in suggestions.indices where suggestionIDs.contains(suggestions[index].id) && suggestions[index].decision == .pending {
             let suggestion = suggestions[index]
             switch suggestion.kind {
             case .placeCorrection:
                 var targets = [item]
-                if suggestion.applyToNearby, !suggestion.nearbyMediaIDs.isEmpty {
+                if suggestion.applyToNearby {
                     let ids = Set(suggestion.nearbyMediaIDs)
-                    targets += try context.fetch(FetchDescriptor<MediaItem>()).filter { ids.contains($0.id) }
+                    targets += nearbyItems.filter { ids.contains($0.id) }
                 }
                 for target in targets {
                     record.overrides.append(setPlaceName(suggestion.text, on: target, context: context, now: now))
                 }
             case .placeDescription:
                 guard let place = suggestion.placeName else { continue }
-                record.placeNotes.append(try writePlaceDescription(suggestion.text, place: place, noteID: note.id, context: context, now: now))
+                guard let change = try? writePlaceDescription(suggestion.text, place: place, noteID: note.id, context: context, now: now) else { continue }
+                record.placeNotes.append(change)
             case .memory:
                 let scope = suggestion.scope ?? .photo
-                if scope == .photo || (scope == .day && item.effectiveCaptureDate == nil) || (scope == .trip && item.tripID == nil) {
-                    record.memories.append(writePhotoMemory(suggestion.text, on: item, context: context, now: now))
-                } else {
-                    let key = scope == .day ? PhotoNoteDay.key(for: item.effectiveCaptureDate!) : item.tripID!
+                let key = scope == .day ? PhotoNoteDay.key(for: item) : scope == .trip ? item.tripID : nil
+                if let key {
                     let memory = CollectionMemory(scope: scope, scopeKey: key, text: suggestion.text, createdAt: now, sourceNoteID: note.id)
                     context.insert(memory)
                     record.collectionMemoryIDs.append(memory.id)
+                } else {
+                    record.memories.append(writePhotoMemory(suggestion.text, on: item, context: context, now: now))
                 }
             }
             suggestions[index].decision = .accepted
@@ -148,7 +169,8 @@ public enum NoteApplier {
         if !record.memories.isEmpty {
             let memories = try context.fetch(FetchDescriptor<Memory>())
             for change in record.memories.reversed() {
-                guard let memory = memories.first(where: { $0.id == change.recordID }) else { continue }
+                guard let memory = memories.first(where: { $0.id == change.recordID }),
+                      change.writtenText == nil || memory.text == change.writtenText else { continue }
                 if change.created {
                     context.delete(memory)
                 } else {
@@ -170,7 +192,8 @@ public enum NoteApplier {
         if !record.placeNotes.isEmpty {
             let placeNotes = try context.fetch(FetchDescriptor<PlaceNote>())
             for change in record.placeNotes.reversed() {
-                guard let placeNote = placeNotes.first(where: { $0.id == change.recordID }) else { continue }
+                guard let placeNote = placeNotes.first(where: { $0.id == change.recordID }),
+                      change.writtenText == nil || placeNote.text == change.writtenText else { continue }
                 if change.created {
                     context.delete(placeNote)
                 } else {
@@ -184,8 +207,9 @@ public enum NoteApplier {
             let items = try context.fetch(FetchDescriptor<MediaItem>()).filter { ids.contains($0.id) }
             for change in record.overrides.reversed() {
                 guard let target = items.first(where: { $0.id == change.mediaID }),
-                      let override = target.localPlaceOverride else { continue }
-                if change.created {
+                      let override = target.localPlaceOverride,
+                      change.writtenName == nil || override.nameOverride == change.writtenName else { continue }
+                if change.created, override.mapLinkOverride == nil, override.latitude == nil, override.longitude == nil {
                     context.delete(override)
                 } else {
                     override.nameOverride = change.previousName
@@ -214,14 +238,14 @@ public enum NoteApplier {
         item.updatedAt = now
         item.updatedBy = MomentsAccount.localID
         if let existing = item.localPlaceOverride {
-            let change = PhotoNoteUndoRecord.OverrideChange(mediaID: item.id, previousName: existing.nameOverride, created: false)
+            let change = PhotoNoteUndoRecord.OverrideChange(mediaID: item.id, previousName: existing.nameOverride, created: false, writtenName: name)
             existing.nameOverride = name
             existing.updatedAt = now
             existing.updatedBy = MomentsAccount.localID
             return change
         }
         context.insert(PlaceOverride(mediaID: item.id, nameOverride: name, updatedAt: now, updatedBy: MomentsAccount.localID, mediaItem: item))
-        return PhotoNoteUndoRecord.OverrideChange(mediaID: item.id, previousName: nil, created: true)
+        return PhotoNoteUndoRecord.OverrideChange(mediaID: item.id, previousName: nil, created: true, writtenName: name)
     }
 
     private static func writePlaceDescription(_ text: String, place: String, noteID: String, context: ModelContext, now: Date) throws -> PhotoNoteUndoRecord.TextChange {
@@ -229,14 +253,14 @@ public enum NoteApplier {
         let mine = try context.fetch(FetchDescriptor<PlaceNote>())
             .first { $0.placeKey == key && $0.authorAccountID == MomentsAccount.localID }
         if let mine {
-            let change = PhotoNoteUndoRecord.TextChange(recordID: mine.id, previousText: mine.text, created: false)
+            let previous = mine.text
             mine.text = appending(text, to: mine.text)
             mine.updatedAt = now
-            return change
+            return PhotoNoteUndoRecord.TextChange(recordID: mine.id, previousText: previous, created: false, writtenText: mine.text)
         }
         let placeNote = PlaceNote(placeName: place, text: text, updatedAt: now, sourceNoteID: noteID)
         context.insert(placeNote)
-        return PhotoNoteUndoRecord.TextChange(recordID: placeNote.id, previousText: nil, created: true)
+        return PhotoNoteUndoRecord.TextChange(recordID: placeNote.id, previousText: nil, created: true, writtenText: text)
     }
 
     /// Adds to this person's own memory on the photo, or starts one. A
@@ -246,7 +270,7 @@ public enum NoteApplier {
             .filter { $0.authorAccountID == MomentsAccount.localID || ($0.authorAccountID == nil && $0.author == .me) }
             .max { $0.updatedAt < $1.updatedAt }
         if let mine, !mine.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let change = PhotoNoteUndoRecord.TextChange(recordID: mine.id, previousText: mine.text, created: false)
+            let previous = mine.text
             context.insert(MemoryRevision(
                 text: mine.text,
                 editedBy: MomentsAccount.localID,
@@ -259,7 +283,7 @@ public enum NoteApplier {
             mine.updatedAt = now
             mine.updatedBy = MomentsAccount.localID
             mine.revision += 1
-            return change
+            return PhotoNoteUndoRecord.TextChange(recordID: mine.id, previousText: previous, created: false, writtenText: mine.text)
         }
         let memory = Memory(
             text: text,
@@ -271,7 +295,7 @@ public enum NoteApplier {
             mediaItem: item
         )
         context.insert(memory)
-        return PhotoNoteUndoRecord.TextChange(recordID: memory.id, previousText: nil, created: true)
+        return PhotoNoteUndoRecord.TextChange(recordID: memory.id, previousText: nil, created: true, writtenText: text)
     }
 
     private static func appending(_ text: String, to existing: String) -> String {

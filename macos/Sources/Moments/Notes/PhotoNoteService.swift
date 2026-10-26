@@ -28,7 +28,10 @@ final class PhotoNoteService {
             context.delete(note)
             return nil
         }
-        Task { await organize(note, item: item, context: context) }
+        // Mark it running right away so the line never shows "interrupted"
+        // between saving and the model starting.
+        runningNoteIDs.insert(note.id)
+        Task { await run(note, item: item, context: context) }
         return note
     }
 
@@ -39,6 +42,11 @@ final class PhotoNoteService {
     func organize(_ note: PhotoNote, item: MediaItem, context: ModelContext) async {
         guard !runningNoteIDs.contains(note.id) else { return }
         runningNoteIDs.insert(note.id)
+        await run(note, item: item, context: context)
+    }
+
+    /// Expects the note to be marked running already; clears that mark when done.
+    private func run(_ note: PhotoNote, item: MediaItem, context: ModelContext) async {
         defer { runningNoteIDs.remove(note.id) }
         note.status = .organizing
         note.failureReason = nil

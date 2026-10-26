@@ -359,18 +359,21 @@ private struct TimelineThumbnail: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(
-                    LinearGradient(
-                        colors: [.teal.opacity(0.18), .orange.opacity(0.16)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-            Image(systemName: item.kindRaw == MediaKind.video.rawValue ? "video" : "photo")
-                .foregroundStyle(.secondary)
+            if let source = item.thumbnail {
+                ThumbnailView(source: source, width: 128, height: 96)
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.quaternary)
+            }
+            if item.kindRaw == MediaKind.video.rawValue {
+                Image(systemName: "video.fill")
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.35), radius: 1)
+            }
         }
         .frame(width: 64, height: 48)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .accessibilityHidden(true)
     }
 }

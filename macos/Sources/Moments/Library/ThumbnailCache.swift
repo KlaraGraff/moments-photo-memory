@@ -7,7 +7,7 @@ import SwiftUI
 
 /// Renders synthetic thumbnails without touching the main thread or a photo file.
 private enum DeterministicThumbnailRenderer {
-    static func pngData(id: String, width: Int, height: Int) -> Data? {
+    static func image(id: String, width: Int, height: Int) -> CGImage? {
         let width = max(8, width)
         let height = max(8, height)
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
@@ -57,12 +57,7 @@ private enum DeterministicThumbnailRenderer {
         }
         context.strokePath()
 
-        guard let image = context.makeImage() else { return nil }
-        let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(destination, image, nil)
-        guard CGImageDestinationFinalize(destination) else { return nil }
-        return data as Data
+        return context.makeImage()
     }
 
     private static func rgb(hue: Double, saturation: Double, brightness: Double) -> (red: CGFloat, green: CGFloat, blue: CGFloat) {
@@ -85,107 +80,227 @@ private enum DeterministicThumbnailRenderer {
     }
 }
 
-/// Main-actor access to an NSCache whose expensive bitmap work happens in a detached task.
+/// What a thumbnail is made from: the Apple Photos asset, the original file,
+/// or (for demo items) a generated picture.
+struct ThumbnailSource: Sendable, Equatable {
+    let id: String
+    let photosLocalIdentifier: String?
+    let bookmark: Data?
+
+    init(id: String, photosLocalIdentifier: String? = nil, bookmark: Data? = nil) {
+        self.id = id
+        self.photosLocalIdentifier = photosLocalIdentifier
+        self.bookmark = bookmark
+    }
+
+    init(item: MediaItem) {
+        self.init(id: item.id, photosLocalIdentifier: item.photosLocalIdentifier, bookmark: item.originalBookmarkData)
+    }
+
+    /// Items with a real photo behind them never show the generated picture
+    /// for good; a failed read is retried next time.
+    var hasOriginal: Bool { photosLocalIdentifier != nil || bookmark != nil }
+}
+
+/// Thumbnails for every screen. Reading, scaling and decoding happen off the
+/// main thread, so a cell only hands an already decoded bitmap to SwiftUI.
+/// Apple Photos items come from PhotoKit, folder items from the original file.
+/// The disk cache holds small JPEGs; generated stand-ins for a photo that could
+/// not be read are never written there.
 @MainActor
 final class ThumbnailCache {
-    static let shared = ThumbnailCache()
+    static let shared = ThumbnailCache(directory: ThumbnailCache.defaultDirectory, photos: PhotoKitAssetSource())
 
+    private let directory: URL?
+    private let photos: (any PhotosAssetSource)?
     private let cache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
-        cache.countLimit = 320
+        cache.countLimit = 600
         return cache
     }()
 
-    func image(for id: String, width: Int, height: Int) async -> NSImage? {
-        let key = "\(id)-\(width)x\(height)" as NSString
-        if let cached = cache.object(forKey: key) { return cached }
-        let data = await Task.detached(priority: .userInitiated) { () -> Data? in
-            DeterministicThumbnailRenderer.pngData(id: id, width: width, height: height)
-        }.value
-        guard let data, let image = NSImage(data: data) else { return nil }
-        cache.setObject(image, forKey: key)
-        return image
+    init(directory: URL?, photos: (any PhotosAssetSource)?) {
+        self.directory = directory
+        self.photos = photos
+        if let directory { Self.prepare(directory) }
+    }
+
+    private static var defaultDirectory: URL? {
+        #if DEBUG
+        // UI and unit tests never write into the user's Application Support.
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-MomentsUITesting") || arguments.contains("-MomentsUITestStoreDirectory") || UnitTestHostDelegate.isUnitTestHost {
+            return FileManager.default.temporaryDirectory.appending(path: "MomentsTestThumbnails-\(ProcessInfo.processInfo.processIdentifier)", directoryHint: .isDirectory)
+        }
+        #endif
+        return URL.applicationSupportDirectory
+            .appending(path: "Moments", directoryHint: .isDirectory)
+            .appending(path: "Thumbnails", directoryHint: .isDirectory)
+    }
+
+    private static func key(_ id: String, _ width: Int, _ height: Int) -> NSString {
+        "\(id)-\(width)x\(height)" as NSString
+    }
+
+    /// A thumbnail that is already in memory, for drawing it in the first frame.
+    func cachedImage(for id: String, width: Int, height: Int) -> NSImage? {
+        cache.object(forKey: Self.key(id, width, height))
     }
 
     func image(for item: MediaItem, width: Int, height: Int) async -> NSImage? {
-        let key = "\(item.id)-\(width)x\(height)" as NSString
+        await image(for: ThumbnailSource(item: item), width: width, height: height)
+    }
+
+    func image(for source: ThumbnailSource, width: Int, height: Int) async -> NSImage? {
+        let key = Self.key(source.id, width, height)
         #if DEBUG
         ScrollProbe.count("thumbnail.request")
         #endif
         if let cached = cache.object(forKey: key) { return cached }
-        let bookmark = item.originalBookmarkData
-        let id = item.id
-        let diskURL = Self.diskURL(for: id, width: width, height: height)
-        let data = await Task.detached(priority: .userInitiated) { () -> Data? in
-            if let existing = try? Data(contentsOf: diskURL) {
-                return existing
-            }
-            if let bookmark, let imageData = Self.importedPNG(bookmark: bookmark, width: width, height: height) {
-                try? imageData.write(to: diskURL, options: .atomic)
-                return imageData
-            }
-            let generated = DeterministicThumbnailRenderer.pngData(id: id, width: width, height: height)
-            if let generated { try? generated.write(to: diskURL, options: .atomic) }
-            return generated
-        }.value
-        guard let data, let image = NSImage(data: data) else { return nil }
-        cache.setObject(image, forKey: key)
+        // Asking PhotoKit before access was granted could raise the system prompt.
+        let photoKit = source.photosLocalIdentifier != nil && photos?.authorizationStatus.canRead == true ? photos : nil
+        let diskURL = directory?.appending(path: "\(Self.fileName(for: source.id))-\(width)x\(height).jpg")
+        let work = Task.detached(priority: .userInitiated) { () async -> (image: CGImage, isFinal: Bool)? in
+            await Self.load(source: source, photos: photoKit, diskURL: diskURL, width: width, height: height)
+        }
+        let result = await withTaskCancellationHandler {
+            await work.value
+        } onCancel: {
+            work.cancel()
+        }
+        guard let result else { return nil }
+        let image = NSImage(cgImage: result.image, size: NSSize(width: result.image.width, height: result.image.height))
+        if result.isFinal { cache.setObject(image, forKey: key) }
         return image
     }
 
-    nonisolated private static func importedPNG(bookmark: Data, width: Int, height: Int) -> Data? {
-        guard let resolved = try? OriginalMediaBookmark.resolve(bookmark),
-              resolved.url.startAccessingSecurityScopedResource() else { return nil }
-        defer { resolved.url.stopAccessingSecurityScopedResource() }
-        guard let source = CGImageSourceCreateWithURL(resolved.url as CFURL, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(
-                source,
-                0,
-                [
-                    kCGImageSourceCreateThumbnailFromImageAlways: true,
-                    kCGImageSourceCreateThumbnailWithTransform: true,
-                    kCGImageSourceThumbnailMaxPixelSize: max(width, height)
-                ] as CFDictionary
-              ) else { return nil }
-        let output = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(destination, image, nil)
-        return CGImageDestinationFinalize(destination) ? output as Data : nil
+    nonisolated private static func load(
+        source: ThumbnailSource,
+        photos: (any PhotosAssetSource)?,
+        diskURL: URL?,
+        width: Int,
+        height: Int
+    ) async -> (image: CGImage, isFinal: Bool)? {
+        if let diskURL, let cached = decodedImage(at: diskURL) { return (cached, true) }
+        // A cell that scrolled away before the work started needs nothing.
+        guard !Task.isCancelled else { return nil }
+        var made: CGImage?
+        if let identifier = source.photosLocalIdentifier, let photos,
+           let data = try? await photos.thumbnailData(
+            forLocalIdentifier: identifier,
+            targetSize: CGSize(width: width, height: height),
+            networkAccessAllowed: true
+           ) {
+            made = decodedImage(data: data, maxPixelSize: max(width, height))
+        }
+        if made == nil, let bookmark = source.bookmark {
+            made = fileThumbnail(bookmark: bookmark, maxPixelSize: max(width, height))
+        }
+        if let made {
+            if let diskURL { writeJPEG(made, to: diskURL) }
+            return (made, true)
+        }
+        guard let generated = DeterministicThumbnailRenderer.image(id: source.id, width: width, height: height) else { return nil }
+        // Demo items have nothing else to show; real photos try again next time.
+        if !source.hasOriginal, let diskURL { writeJPEG(generated, to: diskURL) }
+        return (generated, !source.hasOriginal)
     }
 
-    private static func diskURL(for id: String, width: Int, height: Int) -> URL {
-        let folder = URL.applicationSupportDirectory
-            .appending(path: "Moments", directoryHint: .isDirectory)
-            .appending(path: "Thumbnails", directoryHint: .isDirectory)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        return folder.appending(path: "\(id)-\(width)x\(height).png")
+    nonisolated private static func fileThumbnail(bookmark: Data, maxPixelSize: Int) -> CGImage? {
+        guard let resolved = try? OriginalMediaBookmark.resolve(bookmark) else { return nil }
+        // Outside the sandbox this returns false for plain paths; the file is
+        // still readable, so it only decides whether to stop access again.
+        let scoped = resolved.url.startAccessingSecurityScopedResource()
+        defer { if scoped { resolved.url.stopAccessingSecurityScopedResource() } }
+        guard let source = CGImageSourceCreateWithURL(resolved.url as CFURL, nil) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ] as CFDictionary)
+    }
+
+    nonisolated private static func decodedImage(at url: URL) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+    }
+
+    nonisolated private static func decodedImage(data: Data, maxPixelSize: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ] as CFDictionary)
+    }
+
+    nonisolated private static func writeJPEG(_ image: CGImage, to url: URL) {
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else { return }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.82] as CFDictionary)
+        CGImageDestinationFinalize(destination)
+    }
+
+    /// Photos identifiers contain "/", which cannot be in a file name.
+    nonisolated private static func fileName(for id: String) -> String {
+        id.replacingOccurrences(of: "/", with: "_")
+    }
+
+    /// Creates the folder and, once, removes the PNG thumbnails of earlier
+    /// versions: some of them saved the generated picture for real photos.
+    private static func prepare(_ directory: URL) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        Task.detached(priority: .utility) {
+            let manager = FileManager.default
+            guard let names = try? manager.contentsOfDirectory(atPath: directory.path) else { return }
+            for name in names where name.hasSuffix(".png") {
+                try? manager.removeItem(at: directory.appending(path: name))
+            }
+        }
     }
 }
 
 struct ThumbnailView: View {
-    let item: MediaItem
+    let source: ThumbnailSource
     let width: Int
     let height: Int
 
     @State private var image: NSImage?
 
+    init(item: MediaItem, width: Int, height: Int) {
+        self.init(source: ThumbnailSource(item: item), width: width, height: height)
+    }
+
+    init(source: ThumbnailSource, width: Int, height: Int) {
+        self.source = source
+        self.width = width
+        self.height = height
+    }
+
     var body: some View {
+        // A thumbnail already in memory is drawn in the first frame, so cells
+        // that scroll back into view do not blink through the placeholder.
+        let shown = image ?? ThumbnailCache.shared.cachedImage(for: source.id, width: width, height: height)
         ZStack {
+            // A still tint, not a spinner per cell: spinners animate every
+            // frame and make fast scrolling heavier.
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(.quaternary)
-            if let image {
-                Image(nsImage: image)
+            if let shown {
+                Image(nsImage: shown)
                     .resizable()
                     .scaledToFill()
-                    .transition(.opacity)
-            } else {
-                ProgressView()
-                    .controlSize(.small)
             }
         }
         .clipped()
-        .task(id: "\(item.id)-\(width)x\(height)") {
-            image = await ThumbnailCache.shared.image(for: item, width: width, height: height)
+        .task(id: "\(source.id)-\(width)x\(height)") {
+            if let cached = ThumbnailCache.shared.cachedImage(for: source.id, width: width, height: height) {
+                image = cached
+                return
+            }
+            image = nil
+            image = await ThumbnailCache.shared.image(for: source, width: width, height: height)
         }
     }
 }

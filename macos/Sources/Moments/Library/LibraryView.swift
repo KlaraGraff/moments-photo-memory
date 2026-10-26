@@ -825,8 +825,10 @@ private struct LibraryPhotoCell: View {
                     ThumbnailView(item: item, width: 560, height: 420)
                         .aspectRatio(1.33, contentMode: .fit)
                         .padding(5)
-                        .background(Color.white)
-                        .shadow(color: .black.opacity(0.12), radius: 8, y: 5)
+                        // The shadow is cast by the white mat, not the photo:
+                        // a shadow over the whole cell is redrawn offscreen
+                        // every frame while the grid scrolls.
+                        .background(Color.white.shadow(.drop(color: .black.opacity(0.12), radius: 8, y: 5)))
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("library.photo.\(item.id)")

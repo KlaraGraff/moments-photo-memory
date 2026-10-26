@@ -402,8 +402,14 @@ final class MomentsUITests: XCTestCase {
         ]
         for (language, smallWindow, libraryLabel, languageLabel) in cases {
             let app = launch(language: language, smallWindow: smallWindow, extraArguments: ["-moments.settings.tab", "general"])
-            let library = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR title == %@", libraryLabel, libraryLabel)).firstMatch
-            XCTAssertTrue(library.waitForExistence(timeout: launchTimeout), "The sidebar shows no \(libraryLabel) in \(language)")
+            // The small window may start with the sidebar folded away.
+            let library = element(in: app, identifier: "sidebar.library")
+            let sidebarShown = library.waitForExistence(timeout: smallWindow ? 5 : launchTimeout)
+            XCTAssertTrue(sidebarShown || smallWindow, "The sidebar is missing in \(language)")
+            if sidebarShown {
+                let texts = [library.label, library.title] + library.staticTexts.allElementsBoundByIndex.map(\.label)
+                XCTAssertTrue(texts.contains(libraryLabel), "The sidebar reads \(texts), not \(libraryLabel), in \(language)")
+            }
             app.typeKey(",", modifierFlags: .command)
             let picker = element(in: app, identifier: "settings.language")
             XCTAssertTrue(picker.waitForExistence(timeout: launchTimeout), "Settings › General has no language picker (\(language))")

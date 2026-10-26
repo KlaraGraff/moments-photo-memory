@@ -720,6 +720,7 @@ private struct LibrarySectionView: View {
                 HStack(spacing: 0) {
                     if let tripID = sectionTripID, section.id != "trip:unassigned" {
                         EditableTripTitle(tripID: tripID, title: section.title, onClick: selectSection)
+                            .accessibilityAction(named: Text(String(localized: "Select these photos"))) { selectSection() }
                     } else {
                         Button { selectSection() } label: {
                             Text(section.title)

@@ -351,8 +351,10 @@ final class PeopleScanController {
     /// the face closest to the group's mean stays; the others move to groups of
     /// their own. Faces the user confirmed are never moved.
     nonisolated static func separateSamePhotoFaces(_ assignments: inout [PeopleFaceAssignment], faces: [PeopleFaceSnapshot]) {
+        // The same faces that write-back never touches: anything confirmed or
+        // set by the user.
         func isUserConfirmed(_ index: Int) -> Bool {
-            assignments[index].confirmed && assignments[index].assignmentSource == "user"
+            assignments[index].confirmed || assignments[index].assignmentSource == "user"
         }
         func groupKey(_ index: Int) -> String? {
             guard !faces[index].mediaID.isEmpty else { return nil }
@@ -603,7 +605,9 @@ actor PeopleScanStore {
     /// from one photo, as groups made before the one-face-per-photo rule can.
     static func hasSamePhotoSuggestions(_ faces: [FaceObservation]) -> Bool {
         var seen = Set<String>()
-        for face in faces where !(face.confirmed && face.assignmentSource == "user") {
+        // Matches separateSamePhotoFaces: faces without a photo and faces the
+        // write-back never moves can't make work.
+        for face in faces where !face.mediaID.isEmpty && !face.confirmed && face.assignmentSource != "user" {
             let group: String
             if let personID = face.personID { group = "person:\(personID)" }
             else if let clusterID = face.clusterID, !clusterID.hasPrefix("pending-") { group = "cluster:\(clusterID)" }
@@ -699,7 +703,13 @@ actor PeopleScanStore {
         var descriptor = FetchDescriptor<FaceObservation>(predicate: #Predicate { faceIDs.contains($0.id) })
         descriptor.propertiesToFetch = [\.id, \.personID, \.clusterID, \.confirmed, \.assignmentSource, \.updatedAt, \.rejectedPersonIDs]
         let facesByID = Dictionary(try modelContext.fetch(descriptor).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // A person merged or removed while the scan ran must not get faces back;
+        // such a face stays as it was and the next scan places it again.
+        var peopleDescriptor = FetchDescriptor<Person>()
+        peopleDescriptor.propertiesToFetch = [\.id]
+        let livePersonIDs = Set(try modelContext.fetch(peopleDescriptor).map(\.id))
         for assignment in assignments {
+            if let personID = assignment.personID, !livePersonIDs.contains(personID) { continue }
             guard let snapshot = snapshotsByID[assignment.id] else { continue }
             guard let face = facesByID[assignment.id],
                   face.updatedAt == snapshot.updatedAt,
@@ -859,6 +869,7 @@ struct PeopleScreen: View {
             Button(String(localized: "Merge")) { commitName(pending, merge: true) }
                 .keyboardShortcut(.defaultAction)
             Button(String(localized: "Keep separate")) { commitName(pending, merge: false) }
+            Button(String(localized: "Cancel"), role: .cancel) { pendingNameMerge = nil }
         }
     }
 
@@ -964,7 +975,8 @@ struct PeopleScreen: View {
     }
 
     private var unnamedSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        // Lazy so a card's zoomed photo loads only when the card scrolls in.
+        LazyVStack(alignment: .leading, spacing: 14) {
             Text(String(localized: "Is this the same person?")).font(.headline)
             ForEach(unnamedClusters) { cluster in
                 HStack(alignment: .top, spacing: 14) {
@@ -972,7 +984,7 @@ struct PeopleScreen: View {
                         FaceInPhotoView(
                             faceID: cover.id,
                             faceRect: CGRect(x: cover.rectX, y: cover.rectY, width: cover.rectWidth, height: cover.rectHeight),
-                            descriptor: mediaDescriptor(for: cover.mediaID),
+                            mediaID: cover.mediaID,
                             fallbackCrop: cover.cropData,
                             size: 150
                         )
@@ -1062,12 +1074,6 @@ struct PeopleScreen: View {
         mergeTarget = nil
     }
 
-    private func mediaDescriptor(for mediaID: String) -> PeopleMediaDescriptor? {
-        var descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == mediaID })
-        descriptor.fetchLimit = 1
-        return (try? modelContext.fetch(descriptor))?.first.map(PeopleMediaDescriptor.init)
-    }
-
     private func personFilterIsValid(ids: [String]) -> Bool {
         let value = UserDefaults.standard.string(forKey: "moments.library.person") ?? ""
         return value.isEmpty || ids.contains(value)
@@ -1155,7 +1161,8 @@ private struct FaceInPhotoView: View {
     }()
     let faceID: String
     let faceRect: CGRect
-    let descriptor: PeopleMediaDescriptor?
+    @Environment(\.modelContext) private var modelContext
+    let mediaID: String
     let fallbackCrop: Data
     let size: CGFloat
     @State private var image: NSImage?
@@ -1176,11 +1183,19 @@ private struct FaceInPhotoView: View {
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.7), lineWidth: 1))
         .accessibilityHidden(true)
         .task(id: faceID) {
+            // The cover face can change under the same card; never leave the
+            // previous face showing.
+            image = nil
+            loadFailed = false
             let key = faceID as NSString
             if let cached = Self.cache.object(forKey: key) {
                 image = cached
                 return
             }
+            let wantedID = mediaID
+            var fetch = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == wantedID })
+            fetch.fetchLimit = 1
+            let descriptor = (try? modelContext.fetch(fetch))?.first.map(PeopleMediaDescriptor.init)
             guard let descriptor, let photo = await PeopleImageLoader.load(descriptor) else {
                 loadFailed = true
                 return

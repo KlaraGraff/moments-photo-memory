@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import SwiftData
 import XCTest
 @testable import Moments
 
@@ -110,5 +111,54 @@ final class PeopleSamePhotoTests: XCTestCase {
         XCTAssertEqual(big.width, 300)
         XCTAssertEqual(big.height, 300)
         XCTAssertTrue(CGRect(x: 0, y: 0, width: 400, height: 300).contains(big))
+    }
+
+    @MainActor
+    func testWriteBackNeverPointsAFaceAtADeletedPerson() async throws {
+        // A scan suggested "gone" for a face, then the user merged "gone" away
+        // before the scan wrote back.
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let stored = FaceObservation(id: "f", mediaID: "photo-1", rect: (0.1, 0.1, 0.2, 0.2), embedding: embedding([1, 0]), cropData: Data([1]), quality: 0.8, clusterID: "pending-f")
+        // Control: a face suggested for a person who still exists is written.
+        let control = FaceObservation(id: "g", mediaID: "photo-2", rect: (0.1, 0.1, 0.2, 0.2), embedding: embedding([1, 0]), cropData: Data([1]), quality: 0.8, clusterID: "pending-g")
+        context.insert(Person(id: "alive", name: "Synthetic"))
+        context.insert(stored)
+        context.insert(control)
+        try context.save()
+        let snapshots = try ModelContext(container).fetch(FetchDescriptor<FaceObservation>()).map {
+            PeopleFaceSnapshot(id: $0.id, personID: nil, clusterID: $0.clusterID, confirmed: false, assignmentSource: "auto",
+                               rejectedPersonIDs: "", embedding: $0.embedding, createdAt: $0.createdAt, updatedAt: $0.updatedAt, mediaID: $0.mediaID)
+        }
+        let store = PeopleScanStore(modelContainer: container)
+        try await store.apply(
+            assignments: [
+                PeopleFaceAssignment(id: "f", personID: "gone", clusterID: nil, confirmed: false, assignmentSource: "auto"),
+                PeopleFaceAssignment(id: "g", personID: "alive", clusterID: nil, confirmed: false, assignmentSource: "auto")
+            ],
+            snapshots: snapshots
+        )
+        let fresh = Dictionary(uniqueKeysWithValues: try ModelContext(container).fetch(FetchDescriptor<FaceObservation>()).map { ($0.id, $0) })
+        XCTAssertEqual(fresh["g"]?.personID, "alive")
+        XCTAssertNil(fresh["f"]?.personID)
+        XCTAssertEqual(fresh["f"]?.clusterID, "pending-f", "Left for the next scan to place")
+    }
+
+    func testSamePhotoCheckIgnoresFacesItCannotMove() {
+        func stored(_ id: String, photo: String, personID: String?, confirmed: Bool, source: String) -> FaceObservation {
+            FaceObservation(id: id, mediaID: photo, rect: (0, 0, 0.1, 0.1), embedding: Data(), cropData: Data(), quality: 1,
+                            personID: personID, confirmed: confirmed, assignmentSource: source)
+        }
+        // Legacy confirmed-but-auto rows and faces without a photo never count.
+        XCTAssertFalse(PeopleScanStore.hasSamePhotoSuggestions([
+            stored("a", photo: "photo-1", personID: "p", confirmed: true, source: "auto"),
+            stored("b", photo: "photo-1", personID: "p", confirmed: true, source: "auto"),
+            stored("c", photo: "", personID: "q", confirmed: false, source: "auto"),
+            stored("d", photo: "", personID: "q", confirmed: false, source: "auto")
+        ]))
+        XCTAssertTrue(PeopleScanStore.hasSamePhotoSuggestions([
+            stored("e", photo: "photo-2", personID: "r", confirmed: false, source: "auto"),
+            stored("f", photo: "photo-2", personID: "r", confirmed: false, source: "auto")
+        ]))
     }
 }

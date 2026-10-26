@@ -794,8 +794,9 @@ private struct LibrarySectionView: View {
             // The last row carries the space before the next section, so a
             // heading scrolled to the top sits flush with it.
             .padding(.bottom, index < rows.count - 1 ? size.rowSpacing : LibrarySectionView.sectionSpacing)
-            // By position, so a saved scroll position still exists after a zoom.
-            .id("row:\(section.id):\(index)")
+            // No string id on rows: the scroll position binding takes the
+            // top child with a string id, so row ids made it change every
+            // few frames while scrolling, and each change rebuilt the Library.
         }
     }
 

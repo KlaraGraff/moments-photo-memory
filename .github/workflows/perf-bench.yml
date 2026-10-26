@@ -1,0 +1,54 @@
+name: Scroll and sidebar benchmark
+
+# Builds several commits on one hosted Mac and runs the scroll and resize
+# probes alternately, so commits are compared on the same runner.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/perf-bench.yml'
+      - 'macos/Sources/Moments/Library/**'
+
+jobs:
+  bench:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      REFS: "d7d3627 546d7b7 HEAD"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Build each commit
+        run: |
+          for ref in $REFS; do
+            sha=$(git rev-parse --short "$ref")
+            dir="$RUNNER_TEMP/src-$sha"
+            git worktree add --detach "$dir" "$ref"
+            # The newest probes and tests, so every commit is measured the same way.
+            cp macos/Sources/Moments/ScrollProbe.swift macos/Sources/Moments/MainThreadSampler.swift "$dir/macos/Sources/Moments/"
+            cp macos/Tests/MomentsUITests/MomentsScrollUITests.swift "$dir/macos/Tests/MomentsUITests/"
+            (cd "$dir" && xcodegen generate --spec macos/project.yml >/dev/null)
+            xcodebuild -project "$dir/macos/Moments.xcodeproj" -scheme MomentsUITests -destination 'platform=macOS' \
+              -derivedDataPath "$RUNNER_TEMP/dd-$sha" \
+              CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
+              build-for-testing -quiet
+          done
+      - name: Measure alternately
+        run: |
+          for round in 1 2; do
+            for ref in $REFS; do
+              sha=$(git rev-parse --short "$ref")
+              out="$RUNNER_TEMP/out-$sha-$round"
+              only="-only-testing:MomentsUITests/MomentsScrollUITests"
+              [ -f "$RUNNER_TEMP/src-$sha/macos/Tests/MomentsUITests/MomentsResizeUITests.swift" ] && only="$only -only-testing:MomentsUITests/MomentsResizeUITests"
+              TEST_RUNNER_MOMENTS_SCROLL_DIR="$out/scroll" TEST_RUNNER_MOMENTS_RESIZE_DIR="$out/resize" \
+                xcodebuild -project "$RUNNER_TEMP/src-$sha/macos/Moments.xcodeproj" -scheme MomentsUITests -destination 'platform=macOS' \
+                -derivedDataPath "$RUNNER_TEMP/dd-$sha" $only test-without-building -quiet || echo "tests failed for $sha"
+              echo "===== $ref ($sha) round $round ====="
+              cat "$out"/scroll/scroll-report-*.txt 2>/dev/null || echo "no scroll report"
+              cat "$out"/resize/resize-report.txt 2>/dev/null | grep -v "frames ms:" || echo "no resize report"
+            done
+          done

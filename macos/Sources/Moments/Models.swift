@@ -3387,7 +3387,113 @@ public enum MomentsStoreError: LocalizedError, Equatable {
     }
 }
 
+/// What happened when the store could not be opened and was moved aside.
+public struct StoreRecovery: Equatable, Sendable {
+    public let backupFolder: URL
+}
+
+/// Remembers a recovery until the user has seen the alert once.
+public enum StoreRecoveryNotice {
+    public static let defaultsKey = "moments.store.recoveredBackupPath"
+
+    /// Pending backup paths, one per line, so a second recovery before the
+    /// alert is dismissed doesn't hide the first.
+    public static func record(_ recovery: StoreRecovery, in defaults: UserDefaults = .standard) {
+        let existing = defaults.string(forKey: defaultsKey).map { $0.split(separator: "\n").map(String.init) } ?? []
+        defaults.set((existing + [recovery.backupFolder.path]).joined(separator: "\n"), forKey: defaultsKey)
+    }
+}
+
 public enum MomentsPersistence {
+    /// Opens the store. If it cannot be opened *and* SQLite reports the file
+    /// itself as corrupt or not a database, moves the whole store set into
+    /// `Backups/<timestamp>/` next to it (never deleting or overwriting
+    /// anything), records the notice, and opens a fresh, empty store at the
+    /// normal path. Busy or locked databases, readable legacy stores and
+    /// readable stores from other app versions are never moved: the original
+    /// error is rethrown so a later fixed release can still open them.
+    public static func openWithRecovery(
+        url: URL? = nil,
+        now: Date = .now,
+        notices: UserDefaults = .standard
+    ) throws -> (container: ModelContainer, recovery: StoreRecovery?) {
+        let storeURL = try url ?? defaultStoreURL()
+        do {
+            return (try makeContainer(url: storeURL), nil)
+        } catch {
+            guard FileManager.default.fileExists(atPath: storeURL.path),
+                  isProvablyCorrupt(storeURL),
+                  let backupFolder = try? backUpStoreSet(at: storeURL, now: now) else { throw error }
+            let recovery = StoreRecovery(backupFolder: backupFolder)
+            // Record before reopening, so a failure below can't hide the backup.
+            StoreRecoveryNotice.record(recovery, in: notices)
+            return (try makeContainer(url: storeURL), recovery)
+        }
+    }
+
+    /// True only when SQLite itself says the file is not a database or is
+    /// corrupt. Any other outcome (busy, locked, can't open, healthy) is false.
+    static func isProvablyCorrupt(_ storeURL: URL) -> Bool {
+        var database: OpaquePointer?
+        let openResult = sqlite3_open_v2(storeURL.path, &database, SQLITE_OPEN_READONLY, nil)
+        defer { sqlite3_close(database) }
+        if openResult == SQLITE_NOTADB || openResult == SQLITE_CORRUPT { return true }
+        guard openResult == SQLITE_OK else { return false }
+        sqlite3_busy_timeout(database, 2_000)
+        var statement: OpaquePointer?
+        let prepareResult = sqlite3_prepare_v2(database, "PRAGMA quick_check(1)", -1, &statement, nil)
+        defer { sqlite3_finalize(statement) }
+        if prepareResult == SQLITE_NOTADB || prepareResult == SQLITE_CORRUPT { return true }
+        guard prepareResult == SQLITE_OK else { return false }
+        let stepResult = sqlite3_step(statement)
+        if stepResult == SQLITE_NOTADB || stepResult == SQLITE_CORRUPT { return true }
+        guard stepResult == SQLITE_ROW, let text = sqlite3_column_text(statement, 0) else { return false }
+        return String(cString: text) != "ok"
+    }
+
+    /// Moves Moments.store, its -wal/-shm companions and its external-storage
+    /// folder (`.Moments_SUPPORT`) into a new timestamped backup folder.
+    static func backUpStoreSet(at storeURL: URL, now: Date) throws -> URL {
+        let fileManager = FileManager.default
+        let folder = storeURL.deletingLastPathComponent()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate, .withTime, .withTimeZone]
+        // Finder shows ":" as "/", so use dashes in the time.
+        let stamp = formatter.string(from: now).replacingOccurrences(of: ":", with: "-")
+        let backupRoot = folder.appending(path: "Backups", directoryHint: .isDirectory)
+        var backupFolder = backupRoot.appending(path: stamp, directoryHint: .isDirectory)
+        var suffix = 2
+        while fileManager.fileExists(atPath: backupFolder.path) {
+            backupFolder = backupRoot.appending(path: "\(stamp)-\(suffix)", directoryHint: .isDirectory)
+            suffix += 1
+        }
+        try fileManager.createDirectory(at: backupFolder, withIntermediateDirectories: true)
+        let storeName = storeURL.lastPathComponent
+        let supportName = "." + storeURL.deletingPathExtension().lastPathComponent + "_SUPPORT"
+        let members = try fileManager.contentsOfDirectory(atPath: folder.path).filter { name in
+            name == storeName || name.hasPrefix(storeName + "-") || name == supportName
+        }
+        var moved: [(from: URL, to: URL)] = []
+        do {
+            for name in members {
+                let source = folder.appending(path: name)
+                let destination = backupFolder.appending(path: name)
+                try fileManager.moveItem(at: source, to: destination)
+                moved.append((source, destination))
+            }
+        } catch {
+            // Put back whatever already moved, so the store set stays together.
+            for item in moved.reversed() { try? fileManager.moveItem(at: item.to, to: item.from) }
+            // Remove the backup folder only if it is empty: anything that could
+            // not be moved back stays in it rather than being deleted.
+            if (try? fileManager.contentsOfDirectory(atPath: backupFolder.path))?.isEmpty == true {
+                try? fileManager.removeItem(at: backupFolder)
+            }
+            throw error
+        }
+        return backupFolder
+    }
+
     public static func makeContainer(inMemory: Bool = false, url: URL? = nil) throws -> ModelContainer {
         if inMemory {
             let configuration = ModelConfiguration(isStoredInMemoryOnly: true)

@@ -1,6 +1,13 @@
 import XCTest
 
 final class MomentsImportUITests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        // Stop at the first failure: a test must never keep clicking once Moments
+        // is not the frontmost app, or its clicks land in other apps.
+        continueAfterFailure = false
+    }
+
     private let timeout: TimeInterval = 15
 
     func testFolderImportPersistsAndSupportsReviewActions() throws {
@@ -93,12 +100,15 @@ final class MomentsImportUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = [
             "-MomentsUITestStoreDirectory", storeDirectory.path,
-            "-ApplePersistenceIgnoreState", "YES"
+            "-ApplePersistenceIgnoreState", "YES",
+            "-NSQuitAlwaysKeepsWindows", "NO"
         ]
         app.launch()
         app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: timeout), "Moments is not the frontmost app")
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: timeout), "Moments opened no window")
+        XCTAssertTrue(window.isHittable, "The Moments window is covered or off screen")
         return app
     }
 
@@ -337,6 +347,7 @@ final class MomentsImportUITests: XCTestCase {
     }
 
     private func element(in app: XCUIApplication, identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        XCTAssertEqual(app.state, .runningForeground, "Moments lost focus; stopping before clicking another app")
+        return app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 }

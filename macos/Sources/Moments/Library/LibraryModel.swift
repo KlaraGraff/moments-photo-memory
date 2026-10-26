@@ -470,6 +470,10 @@ final class LibraryViewState {
     var memoryDrafts: [String: String] = [:]
     var lastVisibleSectionID: String?
     var focusedMemoryItemID: String?
+    /// The card a reveal request is waiting for; lazy grids build cards only
+    /// near the viewport, so the final scroll happens when this card appears.
+    var pendingRevealItemID: String?
+    var appearedRevealItemID: String?
 
     func draft(for item: MediaItem) -> String {
         memoryDrafts[item.id] ?? item.latestMemory?.text ?? ""

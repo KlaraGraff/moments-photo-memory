@@ -9,6 +9,19 @@ The app is a **native SwiftUI rewrite** in `macos/` (macOS 14+, SwiftData, MapKi
 - New work goes in `macos/`. Never hand-edit `dist/`; it is generated output.
 - Swift code must build and pass XCTest on a Mac (`xcodebuild ... build test`); a Linux sandbox cannot verify it.
 - Keep PRs to one issue. Say in the PR what you verified by actually running the app or a browser, and what you only checked offline.
+- Split a PR that mixes fixes with a product decision (anything the owner would notice and might disagree with: new feature shape, UI style, user-visible text, defaults, data handling), so the fixes can merge while the decision waits.
+
+## Verification before handing over
+- A build or static check alone is not verification. Run at least one test that exercises the change (XCTest, `swift test`, or a UI test on the GitHub macOS runner) and name it in the PR. Docs-only changes are exempt; run the privacy check instead.
+- State plainly what you did not run, why, and what could break. "Should be fine" is not verified.
+- Verify in the cloud or on the GitHub macOS runner whatever can be verified there. Ask for an on-Mac check only for what needs the real Mac (real Photos library, real user data, signing); list what was already verified and the exact items left.
+- When fixing a UI bug, check every screen the change touches, not only the one reported. When the same kind of bug shows up a second time, fix the shared mechanism and sweep all screens.
+- Tests never read or write the real store, settings or `~/Library/Application Support/Moments/`; use in-memory stores or temporary directories.
+
+## Data compatibility
+- Every schema change ships a migration and a test that opens a store from the previous schema with data in it.
+- A store that cannot be opened is never deleted or overwritten. Prefer copying it to a timestamped backup path and starting a usable store, and tell the user where the backup is, over a dead end.
+- Before a release, upgrade a copy of the previous version's real store on the Mac (never the original).
 
 ## Privacy (hard rules)
 - Never commit photos, videos, previews, EXIF, real GPS, real place history, real paths (`/Users/...`), Apple Photos data, pairing tokens or personal memories.
@@ -25,6 +38,11 @@ python3 tests/check-apple-bridge.py     # macOS only (needs xcrun)
 python3 scripts/check_privacy.py
 git diff --check
 ```
+
+## Releases
+- Tagging and publishing need the repository owner's explicit go-ahead for each step.
+- Version: bug-fix releases bump the third number, features the second, a change in what the app fundamentally is the first.
+- Release notes are written for the app's two users (the owner and their partner) in plain language, Chinese first. Leave out problems introduced and fixed within the same cycle. State signing and notarization from the actual build, never copied from the previous release.
 
 ## UI
 Follow `docs/ui-quality-principles.md`, adapted to native macOS conventions. Localize zh-Hans, en, de via String Catalog. Respect `prefers-reduced-motion`. Never lose user input, memories, tags or filter state on view switches.

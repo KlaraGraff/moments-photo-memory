@@ -88,7 +88,10 @@ struct FolderImporter {
             configuration: configuration,
             geocoder: geocoder,
             geocodeCache: geocodeCache,
-            geocodeDelay: geocodeDelay
+            geocodeDelay: geocodeDelay,
+            geocodeProgress: { done, budget in
+                progress(ImportProgress(phase: .organizing, completed: done, total: budget, message: String(localized: "Looking up places")))
+            }
         )
         let resolvedMetadata = try await organizer.resolveCaptureDates(metadata)
         let organizedMetadata = coalesceDuplicatesAndLivePairs(resolvedMetadata)
@@ -121,6 +124,7 @@ struct FolderImporter {
 
         progress(ImportProgress(phase: .organizing, completed: 0, total: fresh.count, message: String(localized: "Organizing trips and places")))
         let plan = try await organizer.organize(fresh, sourceFolderName: folderURL.lastPathComponent)
+        await geocodeCache.persist()
         try Task.checkCancellation()
 
         progress(ImportProgress(phase: .saving, completed: 0, total: fresh.count, message: String(localized: "Saving import")))

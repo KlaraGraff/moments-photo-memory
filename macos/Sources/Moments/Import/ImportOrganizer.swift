@@ -4,6 +4,7 @@ import MomentsCore
 public actor ImportGeocodeCache {
     private var values: [String: ImportGeocodeResult]
     private let fileURL: URL?
+    private var isDirty = false
 
     public init(fileURL: URL? = nil) {
         self.fileURL = fileURL
@@ -22,16 +23,53 @@ public actor ImportGeocodeCache {
 
     public func insert(_ result: ImportGeocodeResult, for coordinate: GeoPoint) {
         values[key(for: coordinate)] = result
-        guard let fileURL else { return }
+        isDirty = true
+    }
+
+    /// Writes the cache once (call at the end of an import). Rewriting the
+    /// whole file on every insert made large imports quadratic.
+    public func persist() {
+        guard isDirty, let fileURL else { return }
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let data = try? JSONEncoder().encode(values) {
             try? data.write(to: fileURL, options: .atomic)
         }
+        isDirty = false
     }
 
     private func key(for coordinate: GeoPoint) -> String {
         String(format: "%.5f,%.5f", coordinate.latitude, coordinate.longitude)
     }
+}
+
+/// Limits reverse-geocoding during one import. CLGeocoder is rate-limited
+/// (roughly one request a second, then throttling errors), so an import makes
+/// at most `maxLookups` calls, gives each `timeout`, and stops after
+/// `maxConsecutiveFailures` failures in a row. Places it skips are flagged for
+/// a later retry instead of blocking the import.
+actor ImportGeocodeGate {
+    let maxLookups: Int
+    let maxConsecutiveFailures: Int
+    let timeout: Duration
+    private(set) var lookups = 0
+    private var consecutiveFailures = 0
+
+    init(maxLookups: Int = 40, maxConsecutiveFailures: Int = 3, timeout: Duration = .seconds(10)) {
+        self.maxLookups = maxLookups
+        self.maxConsecutiveFailures = maxConsecutiveFailures
+        self.timeout = timeout
+    }
+
+    /// Reserves one lookup, or returns false when the budget is spent or
+    /// the service keeps failing.
+    func reserve() -> Bool {
+        guard lookups < maxLookups, consecutiveFailures < maxConsecutiveFailures else { return false }
+        lookups += 1
+        return true
+    }
+
+    func recordSuccess() { consecutiveFailures = 0 }
+    func recordFailure() { consecutiveFailures += 1 }
 }
 
 struct OrganizedPlace: Equatable, Sendable {
@@ -78,6 +116,10 @@ struct ImportOrganizer {
     let geocoder: any ImportGeocoder
     let geocodeCache: ImportGeocodeCache
     let geocodeDelay: @Sendable () async -> Void
+    let geocodeGate: ImportGeocodeGate
+    /// Reports (lookups made, lookup budget) so the UI shows progress while
+    /// places are looked up.
+    let geocodeProgress: @Sendable (Int, Int) -> Void
 
     init(
         configuration: ImportConfiguration,
@@ -85,12 +127,16 @@ struct ImportOrganizer {
         geocodeCache: ImportGeocodeCache,
         geocodeDelay: @escaping @Sendable () async -> Void = {
             try? await Task.sleep(nanoseconds: 100_000_000)
-        }
+        },
+        geocodeGate: ImportGeocodeGate = ImportGeocodeGate(),
+        geocodeProgress: @escaping @Sendable (Int, Int) -> Void = { _, _ in }
     ) {
         self.configuration = configuration
         self.geocoder = geocoder
         self.geocodeCache = geocodeCache
         self.geocodeDelay = geocodeDelay
+        self.geocodeGate = geocodeGate
+        self.geocodeProgress = geocodeProgress
     }
 
     /// `sourceFolderName` names trips whose photos carry no real capture date;
@@ -311,14 +357,22 @@ struct ImportOrganizer {
         }
 
         // A coordinate's own geocode is the strongest source for an
-        // offset-less EXIF value. Failures are deliberately ignored here so a
-        // neighbouring known zone or the device zone can still be used.
-        for item in unresolved where timeZones[item.id] == nil {
-            guard let coordinate = coordinate(for: item) else { continue }
-            if let result = try await lookupGeocode(coordinate: coordinate),
-               let identifier = result.timeZoneIdentifier {
-                timeZones[item.id] = identifier
-            }
+        // offset-less EXIF value. Time zones don't change within a few dozen
+        // kilometres, so look up one representative per ~0.5° cell instead of
+        // one per photo (thousands of photos used to mean thousands of
+        // rate-limited calls). Failures are ignored so a neighbouring known
+        // zone or the device zone can still be used.
+        let needingZone = unresolved.filter { timeZones[$0.id] == nil && coordinate(for: $0) != nil }
+        let cells = Dictionary(grouping: needingZone) { item -> String in
+            let point = coordinate(for: item)!
+            return "\((point.latitude * 2).rounded()),\((point.longitude * 2).rounded())"
+        }
+        for (_, members) in cells.sorted(by: { $0.key < $1.key }) {
+            try Task.checkCancellation()
+            guard let representative = members.first.flatMap(coordinate(for:)),
+                  let result = try await lookupGeocode(coordinate: representative),
+                  let identifier = result.timeZoneIdentifier else { continue }
+            for member in members { timeZones[member.id] = identifier }
         }
 
         let candidates = metadata.compactMap { item -> (date: Date, identifier: String)? in
@@ -376,14 +430,34 @@ struct ImportOrganizer {
 
     private func lookupGeocode(coordinate: GeoPoint) async throws -> ImportGeocodeResult? {
         if let cached = await geocodeCache.result(for: coordinate) { return cached }
+        guard await geocodeGate.reserve() else { return nil }
+        geocodeProgress(await geocodeGate.lookups, geocodeGate.maxLookups)
         await geocodeDelay()
         do {
-            let result = try await geocoder.reverseGeocode(coordinate: coordinate)
+            let geocoder = self.geocoder
+            let timeout = geocodeGate.timeout
+            let result = try await withThrowingTaskGroup(of: ImportGeocodeResult?.self) { group in
+                group.addTask { try await geocoder.reverseGeocode(coordinate: coordinate) }
+                group.addTask {
+                    try await Task.sleep(for: timeout)
+                    return nil
+                }
+                defer { group.cancelAll() }
+                return try await group.next() ?? nil
+            }
+            guard let result else {
+                await geocodeGate.recordFailure()
+                return nil
+            }
+            await geocodeGate.recordSuccess()
             await geocodeCache.insert(result, for: coordinate)
             return result
         } catch is CancellationError {
-            throw CancellationError()
+            try Task.checkCancellation()
+            await geocodeGate.recordFailure()
+            return nil
         } catch {
+            await geocodeGate.recordFailure()
             return nil
         }
     }

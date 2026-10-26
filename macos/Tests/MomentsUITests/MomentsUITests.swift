@@ -429,7 +429,7 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
         let cards = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (identifier BEGINSWITH %@) AND NOT (identifier BEGINSWITH %@)", "trips.card.", "trips.card.name.", "trips.card.dates."))
-        let cardCount = cards.count
+        let cardIDs = Set(cards.allElementsBoundByIndex.map(\.identifier))
         card.click()
         XCTAssertTrue(element(in: app, identifier: "trips.memory.trip").waitForExistence(timeout: launchTimeout))
 
@@ -453,7 +453,8 @@ final class MomentsUITests: XCTestCase {
         element(in: app, identifier: "trips.back").click()
         XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
         Thread.sleep(forTimeInterval: 0.8)
-        XCTAssertEqual(cards.count, cardCount, "Undo left the split-off trip behind")
+        let afterIDs = Set(cards.allElementsBoundByIndex.map(\.identifier))
+        XCTAssertTrue(afterIDs.isSubset(of: cardIDs), "Undo left the split-off trip behind: \(afterIDs.subtracting(cardIDs))")
     }
 
     func testTripPlaceShowsItsPhotosInLibrary() {

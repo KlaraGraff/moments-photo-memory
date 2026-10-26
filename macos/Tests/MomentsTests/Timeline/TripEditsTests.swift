@@ -53,22 +53,52 @@ final class TripEditsTests: XCTestCase {
         try context.fetch(FetchDescriptor<MediaItem>()).first { $0.id == id }?.tripID
     }
 
+    private func relatedTripID(of id: String, in context: ModelContext) throws -> String? {
+        try context.fetch(FetchDescriptor<MediaItem>()).first { $0.id == id }?.trip?.id
+    }
+
     // MARK: Plan
 
     func testPlanJoinsFreePhotosLeavesOutsideOnesAndOffersOtherTrips() {
-        let range = TripEdits.range(start: day(10), end: day(12), calendar: utc)
-        let plan = TripEdits.plan(tripID: "t", range: range, members: [
-            .init(id: "in-free", date: day(11), tripID: nil, isLocked: false),
-            .init(id: "in-mine", date: day(10, hour: 0), tripID: "t", isLocked: false),
-            .init(id: "out-mine", date: day(13, hour: 0), tripID: "t", isLocked: false),
-            .init(id: "in-other", date: day(12, hour: 23), tripID: "o", isLocked: false),
-            .init(id: "locked-out", date: day(20), tripID: "t", isLocked: true),
-            .init(id: "locked-free", date: day(11), tripID: nil, isLocked: true),
-            .init(id: "undated", date: nil, tripID: "t", isLocked: false),
+        let plan = TripEdits.plan(tripID: "t", first: "2026-08-10", last: "2026-08-12", members: [
+            .init(id: "in-free", dayKey: "2026-08-11", tripID: nil, isLocked: false),
+            .init(id: "in-mine", dayKey: "2026-08-10", tripID: "t", isLocked: false),
+            .init(id: "out-mine", dayKey: "2026-08-13", tripID: "t", isLocked: false),
+            .init(id: "in-other", dayKey: "2026-08-12", tripID: "o", isLocked: false),
+            .init(id: "locked-out", dayKey: "2026-08-20", tripID: "t", isLocked: true),
+            .init(id: "locked-free", dayKey: "2026-08-11", tripID: nil, isLocked: true),
+            .init(id: "undated", dayKey: nil, tripID: "t", isLocked: false),
         ])
         XCTAssertEqual(plan.joining, ["in-free"])
         XCTAssertEqual(plan.leaving, ["out-mine"])
         XCTAssertEqual(plan.elsewhere, ["o": ["in-other"]])
+    }
+
+    /// Days follow the photo's own local day, not the Mac's time zone.
+    func testDaysFollowThePhotosLocalDay() throws {
+        let context = try makeContext()
+        let trip = Trip(id: "t", name: "t", startDate: day(10, hour: 0), endDate: day(11, hour: 23))
+        context.insert(trip)
+        let late = photo("late", on: day(11, hour: 23), trip: trip, in: context)
+        late.localDayKey = "2026-08-12"
+        photo("a", on: day(10), trip: trip, in: context)
+        try context.save()
+
+        TripEdits.removeDay("2026-08-12", from: trip, session: session(context))
+        XCTAssertNil(try tripID(of: "late", in: context))
+        XCTAssertEqual(try tripID(of: "a", in: context), "t")
+    }
+
+    func testPhotosOfAVanishedTripCountAsFree() throws {
+        let context = try makeContext()
+        let trip = Trip(id: "t", name: "t", startDate: day(10), endDate: day(10))
+        context.insert(trip)
+        let stray = photo("stray", on: day(11), trip: nil, in: context)
+        stray.tripID = "gone"
+        try context.save()
+        let outcome = TripEdits.changeDates(of: trip, start: day(10), end: day(11), session: session(context), locked: [])
+        XCTAssertEqual(outcome.joined, 1)
+        XCTAssertTrue(outcome.elsewhere.isEmpty)
     }
 
     // MARK: Dates
@@ -145,7 +175,7 @@ final class TripEditsTests: XCTestCase {
         try context.save()
 
         let edit = session(context)
-        let part = try XCTUnwrap(TripEdits.split(trip, at: day(12), session: edit))
+        let part = try XCTUnwrap(TripEdits.split(trip, at: "2026-08-12", session: edit))
         XCTAssertEqual(try tripID(of: "p1", in: context), "t")
         XCTAssertEqual(try tripID(of: "p2", in: context), part.id)
         XCTAssertEqual(try tripID(of: "p3", in: context), part.id)
@@ -155,6 +185,7 @@ final class TripEditsTests: XCTestCase {
         TripEdits.undo(edit.undo, context: context, defaults: defaults)
         XCTAssertEqual(try context.fetch(FetchDescriptor<Trip>()).map(\.id), ["t"])
         XCTAssertEqual(try tripID(of: "p3", in: context), "t")
+        XCTAssertEqual(try relatedTripID(of: "p3", in: context), "t", "The photo's trip relationship came back too")
         XCTAssertEqual(trip.endDate, day(13, hour: 23))
     }
 
@@ -165,7 +196,7 @@ final class TripEditsTests: XCTestCase {
         photo("a", on: day(10), trip: trip, in: context)
         photo("b", on: day(11), trip: trip, in: context)
         try context.save()
-        XCTAssertNil(TripEdits.split(trip, at: day(10), session: session(context)))
+        XCTAssertNil(TripEdits.split(trip, at: "2026-08-10", session: session(context)))
     }
 
     func testMergeMovesPhotosAndMemoriesAndUndoBringsTheTripBack() throws {
@@ -184,6 +215,7 @@ final class TripEditsTests: XCTestCase {
         TripEdits.merge(other, into: trip, session: edit)
         XCTAssertEqual(try context.fetch(FetchDescriptor<Trip>()).map(\.id), ["t"])
         XCTAssertEqual(try tripID(of: "b", in: context), "t")
+        XCTAssertEqual(try relatedTripID(of: "b", in: context), "t", "Deleting the merged trip kept the photo's new trip")
         XCTAssertEqual(memory.scopeKey, "t")
         XCTAssertEqual(trip.endDate, day(15))
 
@@ -204,7 +236,7 @@ final class TripEditsTests: XCTestCase {
         photo("c", on: day(12), trip: trip, in: context)
         try context.save()
 
-        TripEdits.removeDay(day(12), from: trip, session: session(context))
+        TripEdits.removeDay("2026-08-12", from: trip, session: session(context))
         XCTAssertNil(try tripID(of: "c", in: context))
         XCTAssertEqual(trip.endDate, TripEdits.endOfDay(day(11), calendar: utc))
         XCTAssertTrue(TripAssignmentLocks.isLocked("c", defaults: defaults), "A day taken out by hand stays out")

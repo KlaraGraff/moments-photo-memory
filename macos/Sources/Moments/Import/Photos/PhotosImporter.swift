@@ -355,7 +355,8 @@ public struct PhotosImporter {
                 if !addedReasons.isEmpty {
                     existing.importReviewReasonsRaw = existingReasons.union(incomingReasons).sorted().joined(separator: ",")
                 }
-                if existing.trip == nil, let trip = tripModels[organized.tripID] {
+                // A photo taken out of a trip by hand stays out.
+                if existing.trip == nil, !TripAssignmentLocks.isLocked(existing.id), let trip = tripModels[organized.tripID] {
                     existing.trip = trip
                     existing.tripID = trip.id
                 }

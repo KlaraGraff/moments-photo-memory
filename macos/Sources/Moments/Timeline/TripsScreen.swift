@@ -140,6 +140,10 @@ struct TripsScreen: View {
             }
         }
         .animation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), value: notice?.id)
+        // ⌘Z already put things back; the note and its offer no longer apply.
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { _ in
+            notice = nil
+        }
         .task(id: notice?.id) {
             // A note without a question goes away by itself.
             guard let notice, notice.offer == nil else { return }
@@ -297,8 +301,9 @@ struct TripsScreen: View {
 struct TripActions {
     var changeDates: (Trip, Date, Date) -> Void
     var addPhotos: ([String], Trip) -> Void
-    var removeDay: (Date, Trip) -> Void
-    var split: (Date, Trip) -> Void
+    /// Days by their `yyyy-MM-dd` key, as the page groups them.
+    var removeDay: (String, Trip) -> Void
+    var split: (String, Trip) -> Void
     /// The first trip merges into the second.
     var merge: (Trip, Trip) -> Void
     var setCover: (String, String) -> Void
@@ -795,10 +800,10 @@ private struct TripDetailView: View {
     }
 
     private func dayActions(for day: TimelineDay) -> TripDayActions? {
-        guard let model, let date = day.date else { return nil }
+        guard let model, day.date != nil, let key = day.memoryKey else { return nil }
         return TripDayActions(
-            remove: { actions.removeDay(date, model) },
-            split: day.id == firstDatedDayID ? nil : { actions.split(date, model) }
+            remove: { actions.removeDay(key, model) },
+            split: day.id == firstDatedDayID ? nil : { actions.split(key, model) }
         )
     }
 
@@ -1126,11 +1131,14 @@ private struct TripDatesControl<Content: View>: View {
     @State private var isEditing = false
     @State private var start = Date.now
     @State private var end = Date.now
+    /// Gathered when the popover opens, so the preview follows the pickers cheaply.
+    @State private var members: [TripEdits.Member] = []
 
     var body: some View {
         Button {
             start = trip.startDate ?? photoDates.min() ?? .now
             end = trip.endDate ?? photoDates.max() ?? start
+            members = TripEdits.members(context: modelContext)
             isEditing = true
         } label: {
             label().contentShape(Rectangle())
@@ -1151,7 +1159,7 @@ private struct TripDatesControl<Content: View>: View {
     }
 
     private var popover: some View {
-        let plan = TripEdits.preview(trip, start: start, end: max(start, end), context: modelContext)
+        let plan = TripEdits.plan(for: trip, start: start, end: max(start, end), members: members, calendar: calendar)
         let elsewhere = plan.elsewhere.values.reduce(0) { $0 + $1.count }
         return VStack(alignment: .leading, spacing: 14) {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {

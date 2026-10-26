@@ -18,7 +18,8 @@ import SwiftData
 enum TripEdits {
     struct Member: Equatable {
         let id: String
-        let date: Date?
+        /// The photo's own `yyyy-MM-dd`, the day the Trips page shows it under.
+        let dayKey: String?
         let tripID: String?
         let isLocked: Bool
     }
@@ -42,11 +43,25 @@ enum TripEdits {
         return next.addingTimeInterval(-1)
     }
 
-    static func plan(tripID: String, range: ClosedRange<Date>, members: [Member]) -> Plan {
+    /// The photo's own day, as the Trips page groups it: its local day from
+    /// import, so a trip abroad keeps its days whatever the Mac's time zone.
+    static func dayKey(_ item: MediaItem) -> String? { PhotoNoteDay.key(for: item) }
+
+    static func dayKey(_ date: Date, calendar: Calendar) -> String { PhotoNoteDay.key(for: date, calendar: calendar) }
+
+    /// Midnight of a `yyyy-MM-dd` day in `calendar`.
+    static func dayStart(_ key: String, calendar: Calendar) -> Date? {
+        let parts = key.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+    }
+
+    /// `first` and `last` are `yyyy-MM-dd`, both included.
+    static func plan(tripID: String, first: String, last: String, members: [Member]) -> Plan {
         var plan = Plan()
         for member in members where !member.isLocked {
-            guard let date = member.date else { continue }
-            let inside = range.contains(date)
+            guard let key = member.dayKey else { continue }
+            let inside = key >= first && key <= last
             if member.tripID == tripID {
                 if !inside { plan.leaving.append(member.id) }
             } else if let other = member.tripID {
@@ -67,8 +82,14 @@ enum TripEdits {
         let endDate: Date?
         let suggestionStatusRaw: String?
         let confirmedAt: Date?
+        let mergeOverrideID: String?
+        let splitOverrideDayKeys: String?
+        let updatedBy: String?
 
         init(_ trip: Trip) {
+            mergeOverrideID = trip.mergeOverrideID
+            splitOverrideDayKeys = trip.splitOverrideDayKeys
+            updatedBy = trip.updatedBy
             name = trip.name
             overrideName = trip.overrideName
             startDate = trip.startDate
@@ -153,19 +174,24 @@ enum TripEdits {
         )
         for (id, state) in undo.trips {
             if let state {
-                let trip = tripByID[id] ?? {
+                let trip: Trip
+                if let existing = tripByID[id] {
+                    trip = existing
+                } else {
                     // A trip merged away comes back under its own id.
-                    let trip = Trip(id: id, name: state.name)
+                    trip = Trip(id: id, name: state.name)
                     context.insert(trip)
                     tripByID[id] = trip
-                    return trip
-                }()
+                }
                 trip.name = state.name
                 trip.overrideName = state.overrideName
                 trip.startDate = state.startDate
                 trip.endDate = state.endDate
                 trip.suggestionStatusRaw = state.suggestionStatusRaw
                 trip.confirmedAt = state.confirmedAt
+                trip.mergeOverrideID = state.mergeOverrideID
+                trip.splitOverrideDayKeys = state.splitOverrideDayKeys
+                trip.updatedBy = state.updatedBy
                 trip.updatedAt = now
             }
         }
@@ -185,7 +211,9 @@ enum TripEdits {
                 memory.updatedAt = now
             }
         }
-        // Trips the change created go last, once their photos have left.
+        // Trips the change created go last, once their photos have left and
+        // that is saved, so deleting them cannot take the photos' trip along.
+        try? context.save()
         for (id, state) in undo.trips where state == nil {
             if let trip = tripByID[id] { context.delete(trip) }
         }
@@ -198,11 +226,21 @@ enum TripEdits {
 
     // MARK: Dates
 
-    /// What new dates would do, for the preview before they are applied.
+    /// Members gathered once, for a preview that follows the date pickers.
     @MainActor
-    static func preview(_ trip: Trip, start: Date, end: Date, context: ModelContext, calendar: Calendar = .current, locked: Set<String> = TripAssignmentLocks.lockedIDs()) -> Plan {
+    static func members(context: ModelContext, locked: Set<String> = TripAssignmentLocks.lockedIDs()) -> [Member] {
         let items = (try? context.fetch(FetchDescriptor<MediaItem>())) ?? []
-        return plan(tripID: trip.id, range: range(start: start, end: end, calendar: calendar), members: members(items, locked: locked))
+        let trips = (try? context.fetch(FetchDescriptor<Trip>())) ?? []
+        return members(items, trips: trips, locked: locked)
+    }
+
+    static func plan(for trip: Trip, start: Date, end: Date, members: [Member], calendar: Calendar) -> Plan {
+        plan(
+            tripID: trip.id,
+            first: dayKey(min(start, end), calendar: calendar),
+            last: dayKey(max(start, end), calendar: calendar),
+            members: members
+        )
     }
 
     struct DatesOutcome {
@@ -217,7 +255,7 @@ enum TripEdits {
     static func changeDates(of trip: Trip, start: Date, end: Date, session: Session, locked: Set<String> = TripAssignmentLocks.lockedIDs()) -> DatesOutcome {
         let items = session.allItems
         let range = Self.range(start: start, end: end, calendar: session.calendar)
-        let plan = Self.plan(tripID: trip.id, range: range, members: members(items, locked: locked))
+        let plan = Self.plan(for: trip, start: start, end: end, members: members(items, trips: session.allTrips, locked: locked), calendar: session.calendar)
         let itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let oldStart = firstDay(of: trip)
 
@@ -248,7 +286,7 @@ enum TripEdits {
         let oldStart = firstDay(of: trip)
         session.record(trip)
         for item in items { session.move(item, to: trip, lock: true) }
-        stretchDates(of: trip, toHold: items.compactMap(\.effectiveCaptureDate), calendar: session.calendar)
+        stretchDates(of: trip, toHold: items.compactMap { dayKey($0) }, calendar: session.calendar)
         rename(trip, start: trip.startDate ?? oldStart, oldStart: oldStart, session: session)
         session.touch(trip)
         session.save()
@@ -256,22 +294,22 @@ enum TripEdits {
 
     /// One day's photos leave the trip; a first or last day also leaves its dates.
     @MainActor
-    static func removeDay(_ day: Date, from trip: Trip, session: Session) {
+    static func removeDay(_ key: String, from trip: Trip, session: Session) {
         let calendar = session.calendar
-        let leaving = trip.items.filter { item in
-            item.effectiveCaptureDate.map { calendar.isDate($0, inSameDayAs: day) } ?? false
-        }
+        let leaving = trip.items.filter { dayKey($0) == key }
         guard !leaving.isEmpty else { return }
         let oldStart = firstDay(of: trip)
         session.record(trip)
         for item in leaving { session.move(item, to: nil, lock: true) }
-        let remaining = trip.items.filter { item in !leaving.contains { $0.id == item.id } }.compactMap(\.effectiveCaptureDate)
+        let remaining = trip.items.filter { $0.tripID == trip.id && dayKey($0) != key }.compactMap { dayKey($0) }
         if let first = remaining.min(), let last = remaining.max() {
-            if let start = trip.startDate, calendar.isDate(start, inSameDayAs: day) || start > first {
-                trip.startDate = calendar.startOfDay(for: first)
+            if let start = trip.startDate, dayKey(start, calendar: calendar) == key || dayKey(start, calendar: calendar) > first,
+               let day = dayStart(first, calendar: calendar) {
+                trip.startDate = day
             }
-            if let end = trip.endDate, calendar.isDate(end, inSameDayAs: day) || end < last {
-                trip.endDate = endOfDay(last, calendar: calendar)
+            if let end = trip.endDate, dayKey(end, calendar: calendar) == key || dayKey(end, calendar: calendar) < last,
+               let day = dayStart(last, calendar: calendar) {
+                trip.endDate = endOfDay(day, calendar: calendar)
             }
         }
         rename(trip, start: trip.startDate ?? oldStart, oldStart: oldStart, session: session)
@@ -283,11 +321,11 @@ enum TripEdits {
     /// photos from that day on. The trip's memories stay with the first part.
     @MainActor
     @discardableResult
-    static func split(_ trip: Trip, at day: Date, session: Session) -> Trip? {
+    static func split(_ trip: Trip, at key: String, session: Session) -> Trip? {
         let calendar = session.calendar
-        let cut = calendar.startOfDay(for: day)
-        let later = trip.items.filter { ($0.effectiveCaptureDate ?? .distantPast) >= cut }
-        let earlier = trip.items.filter { ($0.effectiveCaptureDate ?? .distantPast) < cut && $0.effectiveCaptureDate != nil }
+        guard let cut = dayStart(key, calendar: calendar) else { return nil }
+        let later = trip.items.filter { (dayKey($0) ?? "") >= key }
+        let earlier = trip.items.filter { dayKey($0).map { $0 < key } ?? false }
         guard !later.isEmpty, !earlier.isEmpty else { return nil }
         let oldStart = firstDay(of: trip)
         let oldEnd = trip.endDate
@@ -297,11 +335,12 @@ enum TripEdits {
         session.context.insert(part)
         session.created(part)
         for item in later { session.move(item, to: part, lock: true) }
-        if let last = earlier.compactMap(\.effectiveCaptureDate).max() {
-            trip.endDate = endOfDay(last, calendar: calendar)
+        if let last = earlier.compactMap { dayKey($0) }.max(), let day = dayStart(last, calendar: calendar) {
+            trip.endDate = endOfDay(day, calendar: calendar)
         }
-        if let end = part.endDate, let last = later.compactMap(\.effectiveCaptureDate).max(), end < last {
-            part.endDate = endOfDay(last, calendar: calendar)
+        if let last = later.compactMap { dayKey($0) }.max(), let day = dayStart(last, calendar: calendar),
+           part.endDate.map({ dayKey($0, calendar: calendar) < last }) ?? true {
+            part.endDate = endOfDay(day, calendar: calendar)
         }
         rename(trip, start: oldStart, oldStart: oldStart, session: session)
         part.name = defaultName(items: later, start: cut, calendar: calendar)
@@ -329,18 +368,24 @@ enum TripEdits {
         let ends = [trip.endDate, other.endDate].compactMap { $0 }
         if let first = starts.min() { trip.startDate = first }
         if let last = ends.max() { trip.endDate = last }
-        stretchDates(of: trip, toHold: moving.compactMap(\.effectiveCaptureDate), calendar: session.calendar)
+        stretchDates(of: trip, toHold: moving.compactMap { dayKey($0) }, calendar: session.calendar)
         rename(trip, start: trip.startDate ?? oldStart, oldStart: oldStart, session: session)
         session.touch(trip)
+        // Saved before the delete, so it cannot take the photos' new trip along.
+        session.save()
         session.context.delete(other)
         session.save()
     }
 
     // MARK: Helpers
 
-    private static func members(_ items: [MediaItem], locked: Set<String>) -> [Member] {
-        items.map { item in
-            Member(id: item.id, date: item.effectiveCaptureDate, tripID: item.trip?.id ?? item.tripID, isLocked: locked.contains(item.id))
+    /// A photo pointing at a trip that no longer exists counts as in no trip,
+    /// as it shows on the Trips page.
+    private static func members(_ items: [MediaItem], trips: [Trip], locked: Set<String>) -> [Member] {
+        let known = Set(trips.map(\.id))
+        return items.map { item in
+            let tripID = (item.trip?.id ?? item.tripID).flatMap { known.contains($0) ? $0 : nil }
+            return Member(id: item.id, dayKey: dayKey(item), tripID: tripID, isLocked: locked.contains(item.id))
         }
     }
 
@@ -348,10 +393,14 @@ enum TripEdits {
         trip.startDate ?? trip.items.compactMap(\.effectiveCaptureDate).min()
     }
 
-    private static func stretchDates(of trip: Trip, toHold dates: [Date], calendar: Calendar) {
-        guard let first = dates.min(), let last = dates.max() else { return }
-        if trip.startDate.map({ first < $0 }) ?? true { trip.startDate = calendar.startOfDay(for: first) }
-        if trip.endDate.map({ last > $0 }) ?? true { trip.endDate = endOfDay(last, calendar: calendar) }
+    private static func stretchDates(of trip: Trip, toHold keys: [String], calendar: Calendar) {
+        guard let first = keys.min(), let last = keys.max() else { return }
+        if trip.startDate.map({ first < dayKey($0, calendar: calendar) }) ?? true, let day = dayStart(first, calendar: calendar) {
+            trip.startDate = day
+        }
+        if trip.endDate.map({ last > dayKey($0, calendar: calendar) }) ?? true, let day = dayStart(last, calendar: calendar) {
+            trip.endDate = endOfDay(day, calendar: calendar)
+        }
     }
 
     /// A name the app gave follows the trip's photos and month; a name

@@ -391,11 +391,11 @@ struct LibraryView: View {
                             items: section.itemIDs.compactMap { cachedItemByID[$0] },
                             state: state,
                             allGroups: allGroups,
-                            groupItems: groupItems,
-                            isFirst: section.id == cachedSections.first?.id
+                            groupItems: groupItems
                         )
                     }
                 }
+                .reportsLibraryGridColumns(to: state)
                 .scrollTargetLayout()
                 .padding(.horizontal, 34)
                 .padding(.vertical, 24)
@@ -640,7 +640,6 @@ private struct LibrarySectionView: View {
     var allGroups: [UserGroup] = []
     var groupItems: [UserGroupItem] = []
     var group: UserGroup? = nil
-    var isFirst = false
     @Query private var placeNotes: [PlaceNote]
     @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
@@ -680,10 +679,11 @@ private struct LibrarySectionView: View {
 
             CollectionMemoryLines(memories: sectionMemories)
         }
-        .padding(.top, isFirst ? 0 : LibrarySectionView.sectionSpacing)
         .padding(.bottom, 13)
         .id(LibraryScrollTarget.section(section.id))
-        .reportsLibraryGridColumns(columnCount, to: state)
+        #if DEBUG
+        .modifier(ResizeProbeGridWidth(columns: columnCount))
+        #endif
 
         let rows = self.rows
         ForEach(rows.indices, id: \.self) { index in
@@ -697,12 +697,15 @@ private struct LibrarySectionView: View {
                     Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
                 }
             }
-            .padding(.bottom, index < rows.count - 1 ? size.rowSpacing : 0)
-            .id("row:\(section.id):\(columnCount):\(index)")
+            // The last row carries the space before the next section, so a
+            // heading scrolled to the top sits flush with it.
+            .padding(.bottom, index < rows.count - 1 ? size.rowSpacing : LibrarySectionView.sectionSpacing)
+            // By position, so a saved scroll position still exists after a zoom.
+            .id("row:\(section.id):\(index)")
         }
     }
 
-    /// Space above every section heading but the first.
+    /// Space between one section's last row and the next heading.
     static let sectionSpacing: CGFloat = 34
 
     /// Trip memories for a trip section, and day memories for the days its photos were taken.
@@ -1327,11 +1330,11 @@ struct GroupDetailView: View {
                                             state: state,
                                             allGroups: groups,
                                             groupItems: memberships,
-                                            group: group,
-                                            isFirst: section.id == sections.first?.id
+                                            group: group
                                         )
                                     }
                                 }
+                                .reportsLibraryGridColumns(to: state)
                                 .padding(.horizontal, PaperMetrics.screenInset)
                                 .padding(.vertical, 24)
                                 .deselectsOnBackgroundClick(selection)

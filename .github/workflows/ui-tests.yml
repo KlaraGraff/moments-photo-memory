@@ -53,7 +53,6 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -resultBundlePath "$RUNNER_TEMP/MomentsUITests.xcresult" \
             CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
-            -only-testing:MomentsUITests/MomentsResizeUITests \
             test
       - name: Print scroll reports
         if: always()

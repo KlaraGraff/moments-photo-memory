@@ -137,4 +137,30 @@ final class PeopleNamingTests: XCTestCase {
         XCTAssertEqual(rejectsNewer.rejectedPersonIDs, oldest.id)
         XCTAssertEqual(group.rules.rules.first?.value, oldest.id)
     }
+
+    /// The key photo the user picks wins over confirmed and sharper faces,
+    /// and a merge drops the merged-away person's choice.
+    func testKeyPhotoOverridesTheAutomaticCover() throws {
+        let sharp = face("sharp", personID: "alice")
+        sharp.quality = 0.95
+        let chosen = face("chosen", personID: "alice")
+        chosen.quality = 0.2
+        XCTAssertEqual(PeopleFacePicker.cover([sharp, chosen])?.id, "sharp")
+
+        PeopleStoreActions.setKeyFace("chosen", for: "alice", defaults: defaults)
+        let key = PeopleStoreActions.keyFaceID(for: "alice", defaults: defaults)
+        XCTAssertEqual(key, "chosen")
+        XCTAssertEqual(PeopleFacePicker.cover([sharp, chosen], keyFaceID: key)?.id, "chosen")
+        // A key face that no longer belongs to the person falls back.
+        XCTAssertEqual(PeopleFacePicker.cover([sharp], keyFaceID: key)?.id, "sharp")
+
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let alice = Person(id: "alice", name: "Alice")
+        let bob = Person(id: "bob", name: "Bob")
+        [alice, bob].forEach(context.insert)
+        [sharp, chosen].forEach(context.insert)
+        PeopleStoreActions.merge(sourceID: "alice", into: "bob", people: [alice, bob], observations: [sharp, chosen], context: context, defaults: defaults)
+        XCTAssertNil(PeopleStoreActions.keyFaceID(for: "alice", defaults: defaults))
+    }
 }

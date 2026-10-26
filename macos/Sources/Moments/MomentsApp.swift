@@ -75,9 +75,7 @@ struct MomentsApp: App {
     /// Opens the user's store; an unreadable store is backed up and replaced
     /// with a new empty one, and the user is told once where the backup is.
     private static func openUserStore() throws -> ModelContainer {
-        let opened = try MomentsPersistence.openWithRecovery()
-        if let recovery = opened.recovery { StoreRecoveryNotice.record(recovery) }
-        return opened.container
+        try MomentsPersistence.openWithRecovery().container
     }
 
     @ViewBuilder
@@ -166,12 +164,20 @@ private struct StoreRecoveryAlert: ViewModifier {
             isPresented: Binding(get: { !backupPath.isEmpty }, set: { if !$0 { backupPath = "" } })
         ) {
             Button(String(localized: "Show in Finder")) {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: backupPath)])
+                NSWorkspace.shared.activateFileViewerSelecting(backupPaths.map { URL(fileURLWithPath: $0) })
                 backupPath = ""
             }
             Button(String(localized: "OK"), role: .cancel) { backupPath = "" }
         } message: {
-            Text(String(format: String(localized: "Moments couldn't open its data, so it saved a copy to %@ and started a new, empty library. Your original photos are not affected."), backupPath))
+            Text(String(format: String(localized: "Moments couldn't open its data, so it saved a copy to %@ and started a new, empty library. Your original photos are not affected."), displayedPaths))
         }
+    }
+
+    private var backupPaths: [String] {
+        backupPath.split(separator: "\n").map(String.init)
+    }
+
+    private var displayedPaths: String {
+        backupPaths.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: "\n")
     }
 }

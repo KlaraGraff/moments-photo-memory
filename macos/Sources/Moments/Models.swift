@@ -2556,25 +2556,59 @@ public struct StoreRecovery: Equatable, Sendable {
 public enum StoreRecoveryNotice {
     public static let defaultsKey = "moments.store.recoveredBackupPath"
 
+    /// Pending backup paths, one per line, so a second recovery before the
+    /// alert is dismissed doesn't hide the first.
     public static func record(_ recovery: StoreRecovery, in defaults: UserDefaults = .standard) {
-        defaults.set(recovery.backupFolder.path, forKey: defaultsKey)
+        let existing = defaults.string(forKey: defaultsKey).map { $0.split(separator: "\n").map(String.init) } ?? []
+        defaults.set((existing + [recovery.backupFolder.path]).joined(separator: "\n"), forKey: defaultsKey)
     }
 }
 
 public enum MomentsPersistence {
-    /// Opens the store; if it cannot be opened, moves the whole store set into
+    /// Opens the store. If it cannot be opened *and* SQLite reports the file
+    /// itself as corrupt or not a database, moves the whole store set into
     /// `Backups/<timestamp>/` next to it (never deleting or overwriting
-    /// anything) and opens a fresh, empty store at the normal path. If the
-    /// backup cannot be made, the original error is rethrown unchanged.
-    public static func openWithRecovery(url: URL? = nil, now: Date = .now) throws -> (container: ModelContainer, recovery: StoreRecovery?) {
+    /// anything), records the notice, and opens a fresh, empty store at the
+    /// normal path. Busy or locked databases, readable legacy stores and
+    /// readable stores from other app versions are never moved: the original
+    /// error is rethrown so a later fixed release can still open them.
+    public static func openWithRecovery(
+        url: URL? = nil,
+        now: Date = .now,
+        notices: UserDefaults = .standard
+    ) throws -> (container: ModelContainer, recovery: StoreRecovery?) {
         let storeURL = try url ?? defaultStoreURL()
         do {
             return (try makeContainer(url: storeURL), nil)
         } catch {
             guard FileManager.default.fileExists(atPath: storeURL.path),
+                  isProvablyCorrupt(storeURL),
                   let backupFolder = try? backUpStoreSet(at: storeURL, now: now) else { throw error }
-            return (try makeContainer(url: storeURL), StoreRecovery(backupFolder: backupFolder))
+            let recovery = StoreRecovery(backupFolder: backupFolder)
+            // Record before reopening, so a failure below can't hide the backup.
+            StoreRecoveryNotice.record(recovery, in: notices)
+            return (try makeContainer(url: storeURL), recovery)
         }
+    }
+
+    /// True only when SQLite itself says the file is not a database or is
+    /// corrupt. Any other outcome (busy, locked, can't open, healthy) is false.
+    static func isProvablyCorrupt(_ storeURL: URL) -> Bool {
+        var database: OpaquePointer?
+        let openResult = sqlite3_open_v2(storeURL.path, &database, SQLITE_OPEN_READONLY, nil)
+        defer { sqlite3_close(database) }
+        if openResult == SQLITE_NOTADB || openResult == SQLITE_CORRUPT { return true }
+        guard openResult == SQLITE_OK else { return false }
+        sqlite3_busy_timeout(database, 2_000)
+        var statement: OpaquePointer?
+        let prepareResult = sqlite3_prepare_v2(database, "PRAGMA quick_check(1)", -1, &statement, nil)
+        defer { sqlite3_finalize(statement) }
+        if prepareResult == SQLITE_NOTADB || prepareResult == SQLITE_CORRUPT { return true }
+        guard prepareResult == SQLITE_OK else { return false }
+        let stepResult = sqlite3_step(statement)
+        if stepResult == SQLITE_NOTADB || stepResult == SQLITE_CORRUPT { return true }
+        guard stepResult == SQLITE_ROW, let text = sqlite3_column_text(statement, 0) else { return false }
+        return String(cString: text) != "ok"
     }
 
     /// Moves Moments.store, its -wal/-shm companions and its external-storage
@@ -2610,7 +2644,11 @@ public enum MomentsPersistence {
         } catch {
             // Put back whatever already moved, so the store set stays together.
             for item in moved.reversed() { try? fileManager.moveItem(at: item.to, to: item.from) }
-            try? fileManager.removeItem(at: backupFolder)
+            // Remove the backup folder only if it is empty: anything that could
+            // not be moved back stays in it rather than being deleted.
+            if (try? fileManager.contentsOfDirectory(atPath: backupFolder.path))?.isEmpty == true {
+                try? fileManager.removeItem(at: backupFolder)
+            }
             throw error
         }
         return backupFolder

@@ -50,7 +50,7 @@ final class MomentsUITests: XCTestCase {
         note.click()
         note.typeText(text)
 
-        for destination in ["sidebar.places", "sidebar.timeline", "sidebar.footprints", "sidebar.library"] {
+        for destination in ["sidebar.map", "sidebar.timeline", "sidebar.people", "sidebar.library"] {
             let item = element(in: app, identifier: destination)
             XCTAssertTrue(item.waitForExistence(timeout: launchTimeout), "Missing sidebar item \(destination)")
             item.click()
@@ -145,17 +145,28 @@ final class MomentsUITests: XCTestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(NSEvent.doubleClickInterval + 0.3))
     }
 
+    /// Opens the Map and zooms from the globe to the photos.
+    private func openMapAtPhotos(_ app: XCUIApplication) -> XCUIElement {
+        element(in: app, identifier: "sidebar.map").click()
+        let map = element(in: app, identifier: "map.view")
+        XCTAssertTrue(map.waitForExistence(timeout: 30))
+        let fit = element(in: app, identifier: "map.fit")
+        XCTAssertTrue(fit.waitForExistence(timeout: launchTimeout))
+        // The fitted region needs the clustered snapshot; give it a moment.
+        Thread.sleep(forTimeInterval: 1.0)
+        fit.click()
+        Thread.sleep(forTimeInterval: 2.0)
+        return map
+    }
+
     func testPlacesMapHasSyntheticMarkers() {
         let app = launch(language: "en")
-        element(in: app, identifier: "sidebar.places").click()
-
-        let map = element(in: app, identifier: "places.map")
-        XCTAssertTrue(map.waitForExistence(timeout: launchTimeout))
-        let firstMarker = element(in: app, identifier: "places.marker.D0001")
+        let map = openMapAtPhotos(app)
+        let firstMarker = element(in: app, identifier: "map.marker.D0001")
         XCTAssertTrue(firstMarker.waitForExistence(timeout: launchTimeout), "Route-start synthetic place marker was not exposed")
         // Record where every marker and label sits, so a failure in CI says why.
         let placeElements = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "places."))
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "map."))
             .allElementsBoundByIndex
         let layout = placeElements.map { "\($0.identifier) \($0.elementType.rawValue) \($0.frame) hittable=\($0.isHittable)" }
         let note = XCTAttachment(string: (["map \(map.frame)"] + layout).joined(separator: "\n"))
@@ -167,61 +178,60 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(map.frame.contains(firstMarker.frame), "Route-start marker is outside the Places map")
         XCTAssertTrue(firstMarker.isHittable, "Route-start marker is not hittable")
         let marker = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "places.marker."))
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "map.marker."))
             .firstMatch
         XCTAssertTrue(marker.waitForExistence(timeout: launchTimeout), "Synthetic place marker was not exposed")
-        capture(app, named: "places-01-map-and-pin")
+        capture(app, named: "map-01-photo-pins-evidence")
     }
 
     func testPlacesPanelIsCompactAndCloses() {
         let app = launch(language: "en")
-        element(in: app, identifier: "sidebar.places").click()
-        let map = element(in: app, identifier: "places.map")
-        XCTAssertTrue(map.waitForExistence(timeout: launchTimeout))
-        let marker = element(in: app, identifier: "places.marker.D0001")
+        let map = openMapAtPhotos(app)
+        let marker = element(in: app, identifier: "map.marker.D0001")
         XCTAssertTrue(marker.waitForExistence(timeout: launchTimeout))
         marker.click()
 
-        let panel = element(in: app, identifier: "places.panel")
+        let panel = element(in: app, identifier: "map.panel")
         XCTAssertTrue(panel.waitForExistence(timeout: launchTimeout), "Clicking a place did not open its photo panel")
         Thread.sleep(forTimeInterval: 1.0)
-        capture(app, named: "places-02-panel-open-evidence")
-        let title = element(in: app, identifier: "places.panel.title")
+        capture(app, named: "map-02-panel-open-evidence")
+        let title = element(in: app, identifier: "map.panel.title")
         let titleText = (title.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? title.label
         log("places panel \(panel.frame) map \(map.frame) title '\(titleText)'")
         XCTAssertLessThan(panel.frame.height, map.frame.height * 0.45, "The photo panel covers most of the map (panel \(panel.frame), map \(map.frame))")
         XCTAssertGreaterThan(panel.frame.minY, map.frame.midY, "The photo panel should sit at the bottom of the map")
 
-        element(in: app, identifier: "places.panel.close").click()
+        element(in: app, identifier: "map.panel.close").click()
         XCTAssertTrue(panel.waitForNonExistence(timeout: launchTimeout), "The close button did not close the photo panel")
 
         marker.click()
         XCTAssertTrue(panel.waitForExistence(timeout: launchTimeout))
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(panel.waitForNonExistence(timeout: launchTimeout), "Escape did not close the photo panel")
-        capture(app, named: "places-03-panel-closed")
+        capture(app, named: "map-03-panel-closed")
     }
 
     func testFootprintsGlobeOpens() {
         let app = launch(language: "en")
-        assertGlobeFullyVisible(app, screenshot: "footprints-01-globe-evidence")
+        assertGlobeFullyVisible(app, screenshot: "map-04-globe-evidence")
     }
 
     func testFootprintsGlobeFitsSmallWindow() {
         let app = launch(language: "en", smallWindow: true)
-        assertGlobeFullyVisible(app, screenshot: "footprints-02-globe-small-window-evidence")
+        assertGlobeFullyVisible(app, screenshot: "map-05-globe-small-window-evidence")
     }
 
     /// The globe sits on black space: scan the middle row and column of the
     /// map for the first and last bright pixels. A cropped globe touches the
     /// map's edges.
     private func assertGlobeFullyVisible(_ app: XCUIApplication, screenshot name: String, file: StaticString = #filePath, line: UInt = #line) {
-        let footprints = element(in: app, identifier: "sidebar.footprints")
-        XCTAssertTrue(footprints.waitForExistence(timeout: launchTimeout), file: file, line: line)
-        footprints.click()
+        let mapRow = element(in: app, identifier: "sidebar.map")
+        XCTAssertTrue(mapRow.waitForExistence(timeout: launchTimeout), file: file, line: line)
+        mapRow.click()
 
-        // The first MapKit globe of a test run can take longer to appear.
-        let globe = element(in: app, identifier: "footprints.globe")
+        // The Map opens on the globe. The first MapKit globe of a test run
+        // can take longer to appear.
+        let globe = element(in: app, identifier: "map.view")
         XCTAssertTrue(globe.waitForExistence(timeout: 30), file: file, line: line)
         Thread.sleep(forTimeInterval: 3.0)
         capture(app, named: name)
@@ -280,6 +290,41 @@ final class MomentsUITests: XCTestCase {
         add(note)
     }
 
+    func testSidebarHasFourDestinations() {
+        let app = launch(language: "en")
+        for identifier in ["sidebar.library", "sidebar.people", "sidebar.map", "sidebar.timeline"] {
+            XCTAssertTrue(element(in: app, identifier: identifier).waitForExistence(timeout: launchTimeout), "Missing \(identifier)")
+        }
+        for identifier in ["sidebar.review", "sidebar.places", "sidebar.footprints", "sidebar.import"] {
+            XCTAssertFalse(element(in: app, identifier: identifier).exists, "\(identifier) should have left the sidebar")
+        }
+        // Without photos to confirm there is no banner.
+        XCTAssertFalse(element(in: app, identifier: "library.review-banner").exists)
+
+        let importButton = element(in: app, identifier: "toolbar.import")
+        XCTAssertTrue(importButton.waitForExistence(timeout: launchTimeout), "The toolbar + import button is missing")
+        importButton.click()
+        XCTAssertTrue(app.menuItems["Import Folder…"].waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(app.menuItems["Import from Apple Photos…"].exists)
+        capture(app, named: "toolbar-01-import-menu-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
+    func testReviewBannerOpensTheReviewList() {
+        let app = launch(language: "zh-Hans", reviewItems: true)
+        let banner = element(in: app, identifier: "library.review-banner")
+        XCTAssertTrue(banner.waitForExistence(timeout: launchTimeout), "Photos to confirm should show a banner in the Library")
+        capture(app, named: "library-03-review-banner-evidence")
+        banner.click()
+        XCTAssertTrue(app.sheets.firstMatch.waitForExistence(timeout: launchTimeout), "The banner did not open the review list")
+        Thread.sleep(forTimeInterval: 0.6)
+        capture(app, named: "library-04-review-sheet-evidence")
+        let done = element(in: app, identifier: "review.done")
+        XCTAssertTrue(done.waitForExistence(timeout: launchTimeout))
+        done.click()
+        XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: launchTimeout))
+    }
+
     func testTimelinePlaceSelectsLibraryItem() {
         let app = launch(language: "en")
         element(in: app, identifier: "sidebar.timeline").click()
@@ -308,19 +353,18 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(library.waitForExistence(timeout: launchTimeout))
         capture(app, named: "\(prefix)-01-library-evidence")
 
-        let places = element(in: app, identifier: "sidebar.places")
-        XCTAssertTrue(places.waitForExistence(timeout: launchTimeout))
-        places.click()
-        XCTAssertTrue(element(in: app, identifier: "places.map").waitForExistence(timeout: launchTimeout))
-        if settleMap { Thread.sleep(forTimeInterval: 1.0) }
-        capture(app, named: "\(prefix)-02-places")
+        let map = element(in: app, identifier: "sidebar.map")
+        XCTAssertTrue(map.waitForExistence(timeout: launchTimeout))
+        map.click()
+        XCTAssertTrue(element(in: app, identifier: "map.view").waitForExistence(timeout: 30))
+        if settleMap { Thread.sleep(forTimeInterval: 2.0) }
+        capture(app, named: "\(prefix)-02-map-globe-evidence")
 
-        let footprints = element(in: app, identifier: "sidebar.footprints")
-        XCTAssertTrue(footprints.waitForExistence(timeout: launchTimeout))
-        footprints.click()
-        XCTAssertTrue(element(in: app, identifier: "footprints.globe").waitForExistence(timeout: launchTimeout))
-        if settleMap { Thread.sleep(forTimeInterval: 1.0) }
-        capture(app, named: "\(prefix)-03-footprints")
+        let fit = element(in: app, identifier: "map.fit")
+        XCTAssertTrue(fit.waitForExistence(timeout: launchTimeout))
+        fit.click()
+        if settleMap { Thread.sleep(forTimeInterval: 2.0) }
+        capture(app, named: "\(prefix)-03-map-places-evidence")
 
         let timeline = element(in: app, identifier: "sidebar.timeline")
         XCTAssertTrue(timeline.waitForExistence(timeout: launchTimeout))
@@ -333,9 +377,10 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "\(prefix)-04-timeline")
     }
 
-    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false) -> XCUIApplication {
+    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language]
+        if reviewItems { app.launchArguments += ["-MomentsUITestReviewItems"] }
         if darkMode { app.launchArguments += ["-MomentsUITestDarkMode"] }
         if smallWindow { app.launchArguments += ["-MomentsUITestSmallWindow"] }
         // No window-state arguments: with -MomentsUITesting, both

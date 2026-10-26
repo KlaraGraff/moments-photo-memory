@@ -51,6 +51,9 @@ struct LibraryView: View {
     @State private var hasGrouped = false
     @State private var showingSmartGroupEditor = false
     @State private var cachedPersonIndex: [String: Set<String>] = [:]
+    /// Photos the import flagged for a look; shown as a banner, not a sidebar row.
+    @State private var cachedReviewCount = 0
+    @State private var showingReview = false
 
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
@@ -197,6 +200,13 @@ struct LibraryView: View {
             if !personFilterID.isEmpty && !ids.contains(personFilterID) { personFilterID = "" }
         }
         .task(id: groupingKey) { regroup() }
+        .sheet(isPresented: $showingReview) {
+            ReviewSheet()
+        }
+        // A jump to another place (such as Show in Library) closes the list.
+        .onChange(of: selection.requestedDestination) { _, destination in
+            if destination != nil { showingReview = false }
+        }
         .sheet(
             isPresented: Binding(
                 get: { importController.reviewSummary != nil },
@@ -213,6 +223,9 @@ struct LibraryView: View {
         VStack(spacing: 0) {
             libraryHeader
             filterBar
+            if cachedReviewCount > 0 {
+                reviewBanner
+            }
             ImportStatusView()
                 .padding(.horizontal, 34)
                 .padding(.vertical, 7)
@@ -225,6 +238,38 @@ struct LibraryView: View {
                 results
             }
         }
+    }
+
+    /// "12 photos to confirm" under the filters; opens the review list.
+    private var reviewBanner: some View {
+        Button {
+            showingReview = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle")
+                    .foregroundStyle(LibraryPalette.accent)
+                    .inlineIcon()
+                Text(String(localized: "\(cachedReviewCount) photos to confirm"))
+                    .foregroundStyle(LibraryPalette.ink)
+                Spacer(minLength: 8)
+                Text(String(localized: "Review"))
+                    .foregroundStyle(LibraryPalette.accent)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(LibraryPalette.accent)
+                    .inlineIcon()
+            }
+            .font(.callout)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(LibraryPalette.well, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, PaperMetrics.screenInset)
+        .padding(.top, 10)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("library.review-banner")
     }
 
     private var libraryHeader: some View {
@@ -687,6 +732,9 @@ struct LibraryView: View {
     }
 
     private func regroup() {
+        cachedReviewCount = allItems.reduce(into: 0) { count, item in
+            if item.needsImportReview { count += 1 }
+        }
         let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
         cachedPersonIndex = personIndex
         let filtered = LibraryFilterEngine.filteredItems(items, by: criteria, personIDsByMediaID: personIndex)
@@ -1171,6 +1219,30 @@ private struct MemoryEditor: View {
         } catch {
             // Keep the draft in LibraryViewState so a transient save failure does not lose input.
         }
+    }
+}
+
+/// The review list in a sheet, opened from the Library banner.
+struct ReviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ReviewListView()
+            HStack {
+                Spacer()
+                Button(String(localized: "Done")) { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("review.done")
+            }
+            .controlSize(.large)
+            .padding(.horizontal, PaperMetrics.sheetInset)
+            .padding(.vertical, 14)
+            .background(Paper.well.opacity(0.6))
+        }
+        .frame(minWidth: 640, idealWidth: 720, minHeight: 480, idealHeight: 620)
+        .background(Paper.canvas)
+        .tint(Paper.accent)
     }
 }
 

@@ -6,10 +6,8 @@ import UniformTypeIdentifiers
 
 private enum MomentsSection: Hashable {
     case library
-    case review
     case people
-    case places
-    case footprints
+    case map
     case timeline
     case group(String)
 }
@@ -42,22 +40,14 @@ struct ContentView: View {
     @State private var groupToDelete: UserGroup?
     @State private var cachedGroupCounts: [String: Int] = [:]
 
-    private var reviewCount: Int {
-        items.reduce(into: 0) { count, item in
-            if item.needsImportReview { count += 1 }
-        }
-    }
-
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 List(selection: $selection) {
                     Section {
                         sidebarRow("Library", icon: "photo.on.rectangle.angled", section: .library, identifier: "sidebar.library")
-                        sidebarRow("To review", icon: "checkmark.circle", section: .review, identifier: "sidebar.review", badge: reviewCount)
                         sidebarRow("People", icon: "person.2", section: .people, identifier: "sidebar.people")
-                        sidebarRow("Places", icon: "map", section: .places, identifier: "sidebar.places")
-                        sidebarRow("Footprints", icon: "globe.americas", section: .footprints, identifier: "sidebar.footprints")
+                        sidebarRow("Map", icon: "map", section: .map, identifier: "sidebar.map")
                         sidebarRow("Timeline", icon: "calendar", section: .timeline, identifier: "sidebar.timeline")
                     }
 
@@ -119,21 +109,24 @@ struct ContentView: View {
                 .scrollContentBackground(.hidden)
                 .tint(MomentsPalette.accent)
 
-                Button {
-                    importController.chooseFolder()
-                } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Image(systemName: "plus.circle")
-                        Text(String(localized: "Import more photos…"))
-                        Spacer()
+                // Importing lives in the toolbar's + and the File menu; the
+                // sidebar foot keeps only the way into Settings.
+                HStack {
+                    SettingsLink {
+                        Image(systemName: "gearshape")
+                            .font(.callout)
+                            .foregroundStyle(MomentsPalette.muted)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
                     }
-                    .font(.caption)
-                    .foregroundStyle(MomentsPalette.muted)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Settings"))
+                    .accessibilityLabel(String(localized: "Settings"))
+                    .accessibilityIdentifier("sidebar.settings")
+                    Spacer()
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("sidebar.import")
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
             }
             .background(MomentsPalette.sidebar)
             .navigationTitle("Moments")
@@ -143,14 +136,10 @@ struct ContentView: View {
                 switch selection ?? .library {
                 case .library:
                     LibraryView(state: libraryState, firstLaunchCompleted: $firstLaunchCompleted)
-                case .review:
-                    ReviewListView()
                 case .people:
                     PeopleScreen()
-                case .places:
-                    PlacesScreen()
-                case .footprints:
-                    FootprintsScreen()
+                case .map:
+                    MapScreen()
                 case .timeline:
                     TimelineScreen()
                 case .group(let groupID):
@@ -162,6 +151,11 @@ struct ContentView: View {
                 if let request = shared.viewerRequest {
                     PhotoViewer(request: request, libraryState: libraryState)
                         .transition(.opacity)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    ImportToolbarButton()
                 }
             }
             // The title bar continues the page's paper instead of a white strip.
@@ -178,8 +172,7 @@ struct ContentView: View {
             guard let destination else { return }
             switch destination {
             case .library: selection = .library
-            case .places: selection = .places
-            case .footprints: selection = .footprints
+            case .map: selection = .map
             case .timeline: selection = .timeline
             }
             shared.requestedDestination = nil
@@ -296,27 +289,35 @@ struct ContentView: View {
         return true
     }
 
-    @ViewBuilder
     private func sidebarRow(
         _ title: String,
         icon: String,
         section: MomentsSection,
-        identifier: String,
-        badge: Int? = nil
+        identifier: String
     ) -> some View {
-        HStack(spacing: 8) {
-            Label(LocalizedStringKey(title), systemImage: icon)
-            Spacer(minLength: 4)
-            if let badge, badge > 0 {
-                Text("\(badge)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(MomentsPalette.accent)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(MomentsPalette.accent.opacity(0.12), in: Capsule())
+        Label(LocalizedStringKey(title), systemImage: icon)
+            .tag(section)
+            .accessibilityIdentifier(identifier)
+    }
+}
+
+/// The window's + button: the same two imports as the File menu.
+private struct ImportToolbarButton: View {
+    @Environment(ImportController.self) private var importController
+
+    var body: some View {
+        Menu {
+            Button(String(localized: "Import Folder…")) {
+                importController.chooseFolder()
             }
+            Button(String(localized: "Import from Apple Photos…")) {
+                NotificationCenter.default.post(name: .momentsShowPhotosImport, object: nil)
+            }
+        } label: {
+            Label(String(localized: "Import photos"), systemImage: "plus")
         }
-        .tag(section)
-        .accessibilityIdentifier(identifier)
+        .menuIndicator(.hidden)
+        .help(String(localized: "Import photos"))
+        .accessibilityIdentifier("toolbar.import")
     }
 }

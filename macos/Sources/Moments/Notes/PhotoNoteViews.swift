@@ -295,6 +295,7 @@ private struct PhotoNoteStatusView: View {
                 SettingsLink {
                     Text(String(localized: "AI model settings"))
                 }
+                .simultaneousGesture(TapGesture().onEnded { SettingsTab.select(.aiModel) })
                 .buttonStyle(.link)
                 .font(.caption)
             }

@@ -61,6 +61,9 @@ struct MomentsApp: App {
             // The on-disk UI-test store holds only what the test imports.
             if Self.uiTestStoreDirectory == nil {
                 try? DemoSeeder.seedIfNeeded(context: container.mainContext)
+                if ProcessInfo.processInfo.arguments.contains("-MomentsUITestReviewItems") {
+                    try? DemoSeeder.flagUndatedDemoItemsForReview(context: container.mainContext)
+                }
             }
             #endif
             modelContainer = container
@@ -143,7 +146,8 @@ struct MomentsApp: App {
         }
 
         Settings {
-            AISettingsView()
+            SettingsView()
+                .environment(peopleController)
                 .preferredColorScheme(.light)
         }
     }

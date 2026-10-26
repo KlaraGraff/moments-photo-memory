@@ -238,6 +238,49 @@ final class MomentsUITests: XCTestCase {
         return map
     }
 
+    /// Section titles, the time and the place under a photo look like
+    /// information; clicking them must do something.
+    func testInfoUnderPhotosIsClickable() {
+        exerciseInfoClicks(launch(language: "en"), prefix: "info")
+    }
+
+    func testInfoUnderPhotosIsClickableInASmallWindow() {
+        exerciseInfoClicks(launch(language: "en", smallWindow: true), prefix: "info-small")
+    }
+
+    private func exerciseInfoClicks(_ app: XCUIApplication, prefix: String) {
+        let anyID = { (prefix: String) in
+            app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix)).firstMatch
+        }
+        let firstPhoto = anyID("library.photo.")
+        XCTAssertTrue(firstPhoto.waitForExistence(timeout: launchTimeout))
+
+        // A section title selects its photos.
+        let section = anyID("library.section.")
+        XCTAssertTrue(section.waitForExistence(timeout: launchTimeout), "Library section title is not a control")
+        section.click()
+        XCTAssertEqual(firstPhoto.value as? String, "Selected", "Clicking the section title did not select its photos")
+        app.typeKey(.escape, modifierFlags: [])
+
+        // The time under a photo opens the date editor.
+        let time = anyID("library.time.")
+        XCTAssertTrue(time.waitForExistence(timeout: launchTimeout), "The time under a photo is not a control")
+        time.click()
+        let done = element(in: app, identifier: "viewer.date.done")
+        XCTAssertTrue(done.waitForExistence(timeout: launchTimeout), "Clicking the time did not open the date editor")
+        capture(app, named: "\(prefix)-01-date-editor-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(done.waitForNonExistence(timeout: launchTimeout))
+
+        // The place under a photo shows it on the map.
+        let place = anyID("library.place.")
+        XCTAssertTrue(place.waitForExistence(timeout: launchTimeout), "The place under a photo is not a control")
+        place.click()
+        XCTAssertTrue(element(in: app, identifier: "map.panel").waitForExistence(timeout: launchTimeout), "Clicking the place did not show it on the map")
+        Thread.sleep(forTimeInterval: 1.0)
+        capture(app, named: "\(prefix)-02-place-on-map-evidence")
+    }
+
     func testPlacesMapHasSyntheticMarkers() {
         let app = launch(language: "en")
         let map = openMapAtPhotos(app)

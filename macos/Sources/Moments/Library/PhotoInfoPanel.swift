@@ -21,6 +21,7 @@ struct PhotoInfoPanel: View {
     @State private var placeText = ""
     @State private var tripNameText = ""
     @State private var isRenamingTrip = false
+    @State private var isCreatingTrip = false
     @State private var showingDatePicker = false
     @State private var draftDate = Date.now
     @State private var namingFaceID: String?
@@ -73,7 +74,7 @@ struct PhotoInfoPanel: View {
         // Paging away while typing: keep what was typed and give the keys back.
         .onDisappear {
             commitPlace()
-            if isRenamingTrip { commitTripName() }
+            if isRenamingTrip || isCreatingTrip { commitTripName() }
             if let id = namingFaceID, let face = faces.first(where: { $0.id == id }) { commitFaceName(face) }
             isEditing = false
         }
@@ -221,8 +222,8 @@ struct PhotoInfoPanel: View {
 
     @ViewBuilder
     private var tripField: some View {
-        if isRenamingTrip, let trip = item.trip {
-            TextField("", text: $tripNameText, prompt: Text(trip.name))
+        if isCreatingTrip || (isRenamingTrip && item.trip != nil) {
+            TextField("", text: $tripNameText, prompt: Text(isCreatingTrip ? String(localized: "Trip name") : item.trip?.name ?? ""))
                 .textFieldStyle(.plain)
                 .foregroundStyle(LibraryPalette.ink)
                 .focused($field, equals: .tripName)
@@ -232,10 +233,11 @@ struct PhotoInfoPanel: View {
                 .onSubmit { commitTripName() }
                 .onExitCommand {
                     isRenamingTrip = false
+                    isCreatingTrip = false
                     field = nil
                 }
                 .onChange(of: field) { old, _ in
-                    if old == .tripName, isRenamingTrip { commitTripName() }
+                    if old == .tripName, isRenamingTrip || isCreatingTrip { commitTripName() }
                 }
         } else {
             Menu {
@@ -257,19 +259,21 @@ struct PhotoInfoPanel: View {
                     save()
                 }
                 .disabled(item.trip == nil)
+                Divider()
+                Button(String(localized: "New trip…")) {
+                    tripNameText = suggestedTripName
+                    isCreatingTrip = true
+                }
                 if let trip = item.trip {
-                    Divider()
                     Button(String(localized: "Rename “\(trip.effectiveName)”…")) {
                         tripNameText = trip.effectiveName
                         isRenamingTrip = true
                     }
                 }
             } label: {
-                Text(item.trip?.effectiveName ?? String(localized: "Not in a trip"))
-                    .foregroundStyle(item.trip == nil ? LibraryPalette.muted : LibraryPalette.ink)
+                InlineMenuLabel(text: item.trip?.effectiveName ?? String(localized: "Not in a trip"), isPlaceholder: item.trip == nil)
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
+            .inlineMenuStyle()
             .accessibilityIdentifier("viewer.trip")
         }
     }
@@ -281,12 +285,22 @@ struct PhotoInfoPanel: View {
             .sorted { ($0.startDate ?? .distantPast, $0.id) > ($1.startDate ?? .distantPast, $1.id) }
     }
 
+    /// A new trip is named after where and when this photo was taken.
+    private var suggestedTripName: String {
+        let date = item.effectiveCaptureDate?.formatted(.dateTime.year().month(.abbreviated).day())
+        return [item.namedPlace, date].compactMap { $0 }.joined(separator: " ")
+    }
+
     private func commitTripName() {
-        if let trip = item.trip {
+        if isCreatingTrip {
+            PhotoInfoEditing.moveToNewTrip(named: tripNameText, item: item, context: modelContext)
+            save()
+        } else if isRenamingTrip, let trip = item.trip {
             PhotoInfoEditing.renameTrip(trip, to: tripNameText)
             save()
         }
         isRenamingTrip = false
+        isCreatingTrip = false
         if field == .tripName { field = nil }
     }
 
@@ -362,11 +376,9 @@ struct PhotoInfoPanel: View {
                 }
             }
         } label: {
-            Text(current ?? String(localized: "Who is this?"))
-                .foregroundStyle(current == nil ? LibraryPalette.muted : LibraryPalette.ink)
+            InlineMenuLabel(text: current ?? String(localized: "Who is this?"), isPlaceholder: current == nil)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+        .inlineMenuStyle()
     }
 
     private func assign(_ face: FaceObservation, to person: Person) {
@@ -417,5 +429,33 @@ private struct InlineFieldUnderline: ViewModifier {
                     .frame(height: isFocused ? 1.5 : 1)
                     .animation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), value: isFocused)
             }
+    }
+}
+
+/// A menu that reads as the value it sets, lined up with the text around it,
+/// with a small chevron to say it opens.
+private struct InlineMenuLabel: View {
+    let text: String
+    let isPlaceholder: Bool
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(text)
+                .foregroundStyle(isPlaceholder ? LibraryPalette.muted : LibraryPalette.ink)
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(LibraryPalette.muted)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+private extension View {
+    func inlineMenuStyle() -> some View {
+        menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
     }
 }

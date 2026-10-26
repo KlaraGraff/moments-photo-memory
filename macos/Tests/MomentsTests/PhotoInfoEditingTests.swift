@@ -99,6 +99,19 @@ final class PhotoInfoEditingTests: XCTestCase {
         XCTAssertEqual(summer.effectiveName, "Trip 2026-08-20")
     }
 
+    func testNewTripHoldsThePhotoAndSpansItsDay() throws {
+        let context = try makeContext()
+        let item = MediaItem(id: "a", captureDate: base)
+        context.insert(item)
+        XCTAssertNil(PhotoInfoEditing.moveToNewTrip(named: "  ", item: item, context: context))
+        let trip = try XCTUnwrap(PhotoInfoEditing.moveToNewTrip(named: "Fes Aug 21", item: item, context: context))
+        XCTAssertEqual(item.trip?.id, trip.id)
+        XCTAssertEqual(item.tripID, trip.id)
+        XCTAssertEqual(trip.startDate, base)
+        XCTAssertEqual(trip.endDate, base)
+        XCTAssertFalse(trip.isSuggestion)
+    }
+
     // A 400×300 photo fitted into a 400×300 area.
     private let fitted = CGSize(width: 400, height: 300)
     private let area = CGSize(width: 400, height: 300)

@@ -159,12 +159,16 @@ final class MomentsUITests: XCTestCase {
         // SwiftUI reports the field with its scroll view's frame, which has no
         // hit point; click the place line by its position under the date.
         let date = app.buttons["viewer.date"]
+        // Its frame may be reported as the column's; 30 pt down is on the date either way.
+        let dateTitle = date.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: 40, dy: 30))
         date.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 1)).withOffset(CGVector(dx: 30, dy: 47)).click()
         app.typeKey("a", modifierFlags: .command)
         app.typeText("Harbour cafe\r")
-        expectation(for: NSPredicate(format: "value == %@", "Harbour cafe"), evaluatedWith: place)
-        waitForExpectations(timeout: launchTimeout)
-        date.click()
+        capture(app, named: "grid-02c2-viewer-place-typed-evidence")
+        // The corrected place shows what it was found as.
+        let corrected = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@ OR value BEGINSWITH %@", "Corrected, was", "Corrected, was")).firstMatch
+        XCTAssertTrue(corrected.waitForExistence(timeout: launchTimeout), "Typing over the place did not correct it")
+        dateTitle.click()
         let dateDone = app.buttons["viewer.date.done"]
         XCTAssertTrue(dateDone.waitForExistence(timeout: launchTimeout), "Clicking the date did not open the date editor")
         capture(app, named: "grid-02d-viewer-date-evidence")
@@ -195,6 +199,24 @@ final class MomentsUITests: XCTestCase {
         app.typeKey("=", modifierFlags: .command)
         app.typeKey("=", modifierFlags: .command)
         XCTAssertTrue(note.waitForExistence(timeout: launchTimeout), "⌘+ did not bring the print size back")
+    }
+
+    /// The viewer at the smallest window size: photo, column and header must not overlap.
+    func testViewerFitsTheSmallWindow() {
+        let app = launch(language: "en", smallWindow: true)
+        let first = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo.")).element(boundBy: 0)
+        XCTAssertTrue(first.waitForExistence(timeout: launchTimeout))
+        first.doubleClick()
+        let viewer = element(in: app, identifier: "viewer")
+        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout))
+        let window = app.windows.firstMatch.frame
+        XCTAssertTrue(window.contains(viewer.frame), "The viewer card spills outside the window")
+        let close = element(in: app, identifier: "viewer.close")
+        let date = app.buttons["viewer.date"]
+        XCTAssertTrue(date.waitForExistence(timeout: launchTimeout))
+        XCTAssertFalse(close.frame.intersects(date.frame), "The header overlaps the info column")
+        capture(app, named: "grid-04-viewer-small-window-evidence")
     }
 
     /// Two clicks closer together than the double-click interval are a double click.

@@ -25,12 +25,21 @@ struct PhotoViewer: View {
     @State private var hoverLocation: CGPoint?
     @State private var areaSize: CGSize = .zero
     @State private var eventMonitor: Any?
+    /// How far two fingers have moved sideways in this swipe, and whether it
+    /// already turned the page.
+    @State private var swipeDistance: CGFloat = 0
+    @State private var swipePaged = false
     @State private var isEditingInfo = false
     @FocusState private var isFocused: Bool
 
     /// A text field in the column has the keyboard: Esc and the arrows are its own.
     private var isEditingText: Bool {
         isEditingInfo || libraryState.focusedNoteItemID != nil
+    }
+
+    /// A text field or text view in this window is being typed in.
+    private var isTyping: Bool {
+        isEditingText || NSApp.keyWindow?.firstResponder is NSText
     }
 
     private var index: Int? { request.itemIDs.firstIndex(of: request.itemID) }
@@ -76,9 +85,12 @@ struct PhotoViewer: View {
         .onChange(of: isEditingText) { _, editing in
             if !editing { isFocused = true }
         }
-        .onKeyPress(.leftArrow) { step(-1) ? .handled : .ignored }
-        .onKeyPress(.rightArrow) { step(1) ? .handled : .ignored }
+        // Key presses reach these handlers even while a field in the column
+        // has the keyboard; then the keys are the field's own.
+        .onKeyPress(.leftArrow) { !isTyping && step(-1) ? .handled : .ignored }
+        .onKeyPress(.rightArrow) { !isTyping && step(1) ? .handled : .ignored }
         .onKeyPress(.space) {
+            guard !isTyping else { return .ignored }
             close()
             return .handled
         }
@@ -281,10 +293,31 @@ struct PhotoViewer: View {
             zoom = next
             return true
         }
-        guard zoom.isZoomed else { return false }
+        guard zoom.isZoomed else { return swipe(event) }
         var next = zoom
         next.pan(by: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY), fitted: fittedSize, area: areaSize)
         zoom = next
+        return true
+    }
+
+    /// Two fingers sideways on the trackpad turn to the next or previous
+    /// photo, once per swipe, as in Photos. The slide that continues after
+    /// the fingers lift is swallowed so it doesn't scroll the grid behind.
+    private func swipe(_ event: NSEvent) -> Bool {
+        if !event.momentumPhase.isEmpty { return swipePaged || abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) }
+        guard event.hasPreciseScrollingDeltas else { return false }
+        if event.phase.contains(.began) {
+            swipeDistance = 0
+            swipePaged = false
+        }
+        swipeDistance += event.scrollingDeltaX
+        guard abs(swipeDistance) > abs(event.scrollingDeltaY) || swipePaged else { return false }
+        if !swipePaged, abs(swipeDistance) > 50 {
+            // Fingers moving left bring the next photo in from the right.
+            let towardsNext = event.isDirectionInvertedFromDevice ? swipeDistance < 0 : swipeDistance > 0
+            _ = step(towardsNext ? 1 : -1)
+            swipePaged = true
+        }
         return true
     }
 

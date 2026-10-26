@@ -9088,6 +9088,29 @@
           }
         }
       }
+    },
+    "New trip…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neue Reise …"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New trip…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建旅行…"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

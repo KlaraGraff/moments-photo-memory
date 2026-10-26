@@ -29,10 +29,14 @@ private struct StackedPaperEdges: ViewModifier {
 
     private func sheet(level: CGFloat, tone: Color) -> some View {
         let inset = (isCompact ? 5 : 9) * level
-        let lift = (isCompact ? 2 : 4) * level
-        return RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let lift = (isCompact ? 3 : 5) * level
+        let shape = RoundedRectangle(cornerRadius: max(cornerRadius, 3), style: .continuous)
+        // A soft edge line and shadow, so the sheets read on the paper
+        // canvas, which is almost the same tone.
+        return shape
             .fill(tone)
-            .shadow(color: Paper.shadow.opacity(isCompact ? 0.10 : 0.08), radius: isCompact ? 0.5 : 1.5, y: 0.5)
+            .overlay(shape.strokeBorder(Paper.shadow.opacity(0.13), lineWidth: 0.75))
+            .shadow(color: Paper.shadow.opacity(0.14), radius: isCompact ? 1 : 2, y: 0.5)
             .padding(.horizontal, inset)
             .offset(y: -lift)
             .accessibilityHidden(true)

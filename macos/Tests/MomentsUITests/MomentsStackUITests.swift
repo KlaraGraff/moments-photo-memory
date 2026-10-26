@@ -6,10 +6,24 @@ import XCTest
 /// and takes the stack apart with Undo.
 final class MomentsStackUITests: XCTestCase {
     private let timeout: TimeInterval = 15
+    private var app: XCUIApplication?
 
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
+    }
+
+    /// A failure carries a picture of the window, printed in the job log.
+    override func record(_ issue: XCTIssue) {
+        var issue = issue
+        if let app {
+            let line = issue.sourceCodeContext.location?.lineNumber ?? 0
+            let attachment = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+            attachment.name = "stack-failure-line-\(line)-evidence"
+            attachment.lifetime = .keepAlways
+            issue.add(attachment)
+        }
+        super.record(issue)
     }
 
     func testBurstShowsAsAStackAndTheViewerPicksTheCover() {
@@ -88,6 +102,7 @@ final class MomentsStackUITests: XCTestCase {
         app.launchArguments = ["-MomentsUITesting", "-MomentsUITestBurst", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh-Hans"] + extra
         app.launch()
         app.activate()
+        self.app = app
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: timeout))
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: timeout))
         return app

@@ -399,7 +399,6 @@ private struct TimelineThumbnail: View {
                 .foregroundStyle(Paper.muted)
         }
         .frame(width: 64, height: 48)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
         .accessibilityHidden(true)
     }
 }

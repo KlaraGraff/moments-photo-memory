@@ -229,6 +229,14 @@ struct PlacesScreen: View {
                     .fixedSize()
                     Spacer(minLength: 8)
                     Button {
+                        selection.showInLibrary(selectedItems.map(\.id), title: clusterDisplayName(selectedCluster))
+                    } label: {
+                        Label("Show in Library", systemImage: "photo.on.rectangle")
+                            .font(.callout)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("places.panel.show-in-library")
+                    Button {
                         closePanel()
                     } label: {
                         Image(systemName: "xmark")
@@ -250,11 +258,12 @@ struct PlacesScreen: View {
                     LazyHStack(spacing: 10) {
                         ForEach(selectedItems) { item in
                             Button {
-                                select(itemID: item.id)
+                                open(itemID: item.id)
                             } label: {
                                 photoCard(item)
                             }
                             .buttonStyle(.plain)
+                            .help("Open photo")
                         }
                     }
                     .padding(.horizontal, 12)
@@ -399,8 +408,10 @@ struct PlacesScreen: View {
         selection.select(ids, focus: focus)
     }
 
-    private func select(itemID: String) {
+    /// A photo in the strip opens in the large viewer, paging through the strip.
+    private func open(itemID: String) {
         selection.select([itemID], focus: itemID)
+        selection.openViewer(itemID, in: selectedItems.map(\.id))
     }
 
     private func focus(on itemID: String?) {

@@ -8,6 +8,20 @@ enum SidebarDestination: Hashable {
     case timeline
 }
 
+/// A request to show photos in the large viewer, with the order to page through.
+struct ViewerRequest: Equatable {
+    var itemIDs: [String]
+    var itemID: String
+}
+
+/// Photos another screen asked the Library to show on their own, such as one
+/// city from Footprints. It narrows only the Library grid (shown there as a
+/// removable chip); the maps keep following the regular Library filters.
+struct LibraryScope: Equatable {
+    var title: String
+    var itemIDs: Set<String>
+}
+
 /// Shared cross-screen state, injected once with `.environment(_:)` on the
 /// window and read with `@Environment(SelectionModel.self)`.
 ///
@@ -37,6 +51,15 @@ final class SelectionModel {
     /// Library consumes this after its collections have been built so the
     /// focused item wins over the previously remembered scroll anchor.
     var shouldRevealSelectionInLibrary = false
+    /// The photo open in the large viewer and the order it pages through.
+    var viewerRequest: ViewerRequest?
+
+    func openViewer(_ itemID: String, in itemIDs: [String]) {
+        viewerRequest = ViewerRequest(itemIDs: itemIDs.isEmpty ? [itemID] : itemIDs, itemID: itemID)
+    }
+
+    /// Set by `showInLibrary`; cleared from the Library's chip.
+    var libraryScope: LibraryScope?
 
     init() {}
 
@@ -61,6 +84,18 @@ final class SelectionModel {
             selectedItemIDs.insert(id)
             focusedItemID = id
         }
+    }
+
+    /// Switches to the Library showing only `ids`, scrolled to the top.
+    func showInLibrary(_ ids: some Sequence<String>, title: String) {
+        let set = Set(ids)
+        guard !set.isEmpty else { return }
+        libraryScope = LibraryScope(title: title, itemIDs: set)
+        selectedItemIDs = []
+        focusedItemID = nil
+        requestedDestination = .library
+        // Nothing to reveal: the scoped grid opens at its top.
+        shouldRevealSelectionInLibrary = false
     }
 
     func isSelected(_ id: String) -> Bool {

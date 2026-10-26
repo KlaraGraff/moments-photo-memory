@@ -69,7 +69,7 @@ struct CorrectionUndoBar: View {
                 // In its own AppKit view: drawn SwiftUI content never gets the
                 // clicks over a text field (the notes under the photos), which
                 // AppKit asks first.
-                FrontLayer(content: CorrectionUndoCapsule(
+                FrontLayer(id: correction.id, content: CorrectionUndoCapsule(
                     message: correction.message,
                     undo: {
                         correction.perform(in: modelContext)
@@ -134,13 +134,27 @@ private struct CorrectionUndoCapsule: View {
 
 /// SwiftUI content in an AppKit view of its own, so it sits in front of the
 /// AppKit views under it for clicks as well as on screen.
-private struct FrontLayer<Content: View>: NSViewRepresentable {
+private struct FrontLayer<ID: Hashable, Content: View>: NSViewRepresentable {
+    /// The content changes only with this: setting it again on every update
+    /// of the view behind (the Library redraws after a change) restarts the
+    /// button and drops a click in progress.
+    let id: ID
     let content: Content
 
-    func makeCoordinator() -> NSHostingController<Content> {
-        // Measures the content: the shown view has no Auto Layout size, so
-        // its own fitting size is zero.
-        NSHostingController(rootView: content)
+    final class Coordinator {
+        /// Measures the content: the shown view has no Auto Layout size, so
+        /// its own fitting size is zero.
+        let measure: NSHostingController<Content>
+        var id: ID
+
+        init(id: ID, content: Content) {
+            self.id = id
+            measure = NSHostingController(rootView: content)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(id: id, content: content)
     }
 
     func makeNSView(context: Context) -> FirstClickHostingView<Content> {
@@ -151,14 +165,16 @@ private struct FrontLayer<Content: View>: NSViewRepresentable {
     }
 
     func updateNSView(_ view: FirstClickHostingView<Content>, context: Context) {
+        guard context.coordinator.id != id else { return }
+        context.coordinator.id = id
         view.rootView = content
-        context.coordinator.rootView = content
+        context.coordinator.measure.rootView = content
     }
 
     /// Its own size, but no wider than offered, so a long line truncates.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: FirstClickHostingView<Content>, context: Context) -> CGSize? {
         let unbounded = CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
-        let ideal = context.coordinator.sizeThatFits(in: unbounded)
+        let ideal = context.coordinator.measure.sizeThatFits(in: unbounded)
         return CGSize(width: min(ideal.width, proposal.width ?? ideal.width), height: ideal.height)
     }
 }

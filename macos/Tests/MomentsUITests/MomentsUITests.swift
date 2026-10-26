@@ -222,7 +222,7 @@ final class MomentsUITests: XCTestCase {
     private func navigateAndCapture(_ app: XCUIApplication, prefix: String, settleMap: Bool) {
         let library = element(in: app, identifier: "sidebar.library")
         XCTAssertTrue(library.waitForExistence(timeout: launchTimeout))
-        capture(app, named: "\(prefix)-01-library")
+        capture(app, named: "\(prefix)-01-library-evidence")
 
         let places = element(in: app, identifier: "sidebar.places")
         XCTAssertTrue(places.waitForExistence(timeout: launchTimeout))

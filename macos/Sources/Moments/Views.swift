@@ -136,8 +136,8 @@ struct ContentView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("sidebar.import")
-                    // The AI model is set up here too, not only from ⌘, or
-                    // after a note fails to organize.
+                    // Language and the AI model are set up here too, not
+                    // only from ⌘, or after a note fails to organize.
                     SettingsLink {
                         Image(systemName: "gearshape")
                             .font(.callout)
@@ -147,8 +147,8 @@ struct ContentView: View {
                     }
                     .buttonStyle(.plain)
                     .padding(.trailing, 8)
-                    .help(String(localized: "AI model settings"))
-                    .accessibilityLabel(String(localized: "AI model settings"))
+                    .help(String(localized: "Settings"))
+                    .accessibilityLabel(String(localized: "Settings"))
                     .accessibilityIdentifier("sidebar.settings")
                 }
             }
@@ -310,14 +310,14 @@ struct ContentView: View {
 
     @ViewBuilder
     private func sidebarRow(
-        _ title: String,
+        _ title: LocalizedStringKey,
         icon: String,
         section: MomentsSection,
         identifier: String,
         badge: Int? = nil
     ) -> some View {
         HStack(spacing: 8) {
-            Label(LocalizedStringKey(title), systemImage: icon)
+            Label(title, systemImage: icon)
             Spacer(minLength: 4)
             if let badge, badge > 0 {
                 Text("\(badge)")

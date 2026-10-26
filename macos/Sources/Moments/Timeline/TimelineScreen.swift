@@ -335,7 +335,7 @@ private struct TimelinePlaceCard: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(isExpanded ? "Collapse place" : "Expand place")
+                .accessibilityLabel(isExpanded ? String(localized: "Collapse place") : String(localized: "Expand place"))
             }
 
             if isExpanded {

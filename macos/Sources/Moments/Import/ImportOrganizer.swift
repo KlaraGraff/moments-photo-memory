@@ -336,7 +336,7 @@ struct ImportOrganizer {
                 }
                 if item.isAirDropLike {
                     reasons.append(.airDropReceived)
-                    detailParts.append("The file name suggests a received/shared copy; check its date and place.")
+                    detailParts.append(String(localized: "The file name suggests a received/shared copy; check its date and place."))
                 }
                 if isGPSJump(item: item, in: ordered, index: orderedIndex) { reasons.append(.gpsJump) }
                 if outsideDateIDs.contains(item.id) || isCaptureDateOutsideTrip(item: item, at: groupIndex, in: group) {

@@ -145,7 +145,7 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "places-03-panel-closed")
     }
 
-    /// The AI model settings are reachable from the sidebar, not only via ⌘,.
+    /// Settings (language, AI model) are reachable from the sidebar, not only via ⌘,.
     func testSidebarOpensAIModelSettings() {
         let app = launch(language: "en")
         let gear = element(in: app, identifier: "sidebar.settings")
@@ -158,9 +158,26 @@ final class MomentsUITests: XCTestCase {
         while app.windows.count <= windowsBefore && Date() < deadline {
             Thread.sleep(forTimeInterval: 0.3)
         }
-        XCTAssertGreaterThan(app.windows.count, windowsBefore, "The AI model settings window did not open")
+        XCTAssertGreaterThan(app.windows.count, windowsBefore, "The Settings window did not open")
         capture(app, named: "settings-01-from-sidebar-evidence")
         app.typeKey("w", modifierFlags: .command)
+    }
+
+    /// Settings › General offers the app language, readable in German at the
+    /// small window size and in Chinese.
+    func testSettingsOfferLanguage() {
+        for (language, smallWindow) in [("de", true), ("zh-Hans", false)] {
+            let app = launch(language: language, smallWindow: smallWindow, extraArguments: ["-MomentsSettingsTab", "general"])
+            app.typeKey(",", modifierFlags: .command)
+            let picker = element(in: app, identifier: "settings.language")
+            XCTAssertTrue(picker.waitForExistence(timeout: launchTimeout), "Settings › General has no language picker (\(language))")
+            let window = app.windows.containing(.any, identifier: "settings.language").firstMatch
+            let attachment = XCTAttachment(screenshot: window.screenshot())
+            attachment.name = "settings-02-language-\(language)-evidence"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            app.terminate()
+        }
     }
 
     func testFootprintsGlobeOpens() {
@@ -325,6 +342,9 @@ final class MomentsUITests: XCTestCase {
     }
 
     private func navigateAndCapture(_ app: XCUIApplication, prefix: String, settleMap: Bool) {
+        // German and Chinese screens go to the log too, to check translations
+        // and long German labels without artifact access.
+        let evidence = prefix == "en" ? "" : "-evidence"
         let library = element(in: app, identifier: "sidebar.library")
         XCTAssertTrue(library.waitForExistence(timeout: launchTimeout))
         capture(app, named: "\(prefix)-01-library-evidence")
@@ -334,14 +354,14 @@ final class MomentsUITests: XCTestCase {
         places.click()
         XCTAssertTrue(element(in: app, identifier: "places.map").waitForExistence(timeout: launchTimeout))
         if settleMap { Thread.sleep(forTimeInterval: 1.0) }
-        capture(app, named: "\(prefix)-02-places")
+        capture(app, named: "\(prefix)-02-places\(evidence)")
 
         let footprints = element(in: app, identifier: "sidebar.footprints")
         XCTAssertTrue(footprints.waitForExistence(timeout: launchTimeout))
         footprints.click()
         XCTAssertTrue(element(in: app, identifier: "footprints.globe").waitForExistence(timeout: launchTimeout))
         if settleMap { Thread.sleep(forTimeInterval: 1.0) }
-        capture(app, named: "\(prefix)-03-footprints")
+        capture(app, named: "\(prefix)-03-footprints\(evidence)")
 
         let timeline = element(in: app, identifier: "sidebar.timeline")
         XCTAssertTrue(timeline.waitForExistence(timeout: launchTimeout))
@@ -351,12 +371,12 @@ final class MomentsUITests: XCTestCase {
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.place."))
             .firstMatch
         XCTAssertTrue(placeRow.waitForExistence(timeout: launchTimeout))
-        capture(app, named: "\(prefix)-04-timeline")
+        capture(app, named: "\(prefix)-04-timeline\(evidence)")
     }
 
-    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false) -> XCUIApplication {
+    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language]
+        app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language] + extraArguments
         if darkMode { app.launchArguments += ["-MomentsUITestDarkMode"] }
         if smallWindow { app.launchArguments += ["-MomentsUITestSmallWindow"] }
         // No window-state arguments: with -MomentsUITesting, both

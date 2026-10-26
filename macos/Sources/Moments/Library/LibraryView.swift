@@ -895,7 +895,7 @@ private struct LibraryPhotoCell: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("library.photo.\(item.id)")
-                .accessibilityValue(selection.isSelected(item.id) ? "Selected" : "Not selected")
+                .accessibilityValue(selection.isSelected(item.id) ? String(localized: "Selected") : String(localized: "Not selected"))
                 .accessibilityAddTraits(selection.isSelected(item.id) ? .isSelected : [])
                 .id(LibraryScrollTarget.item(item.id))
                 .onAppear {

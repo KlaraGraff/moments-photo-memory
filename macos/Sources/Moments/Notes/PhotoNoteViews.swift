@@ -255,6 +255,7 @@ private struct EndTextEditingOnOutsideClick: ViewModifier {
 /// could not be organized yet.
 private struct PhotoNoteStatusView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.openSettings) private var openSettings
     @Environment(PhotoNoteService.self) private var service
     let note: PhotoNote
     let item: MediaItem
@@ -292,8 +293,9 @@ private struct PhotoNoteStatusView: View {
                 }
                 .buttonStyle(.link)
                 .font(.caption)
-                SettingsLink {
-                    Text(String(localized: "AI model settings"))
+                Button(String(localized: "AI model settings")) {
+                    UserDefaults.standard.set(MomentsSettingsView.Tab.ai.rawValue, forKey: MomentsSettingsView.tabKey)
+                    openSettings()
                 }
                 .buttonStyle(.link)
                 .font(.caption)

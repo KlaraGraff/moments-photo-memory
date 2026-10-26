@@ -113,14 +113,20 @@ private struct LibraryGridInteraction: ViewModifier {
 
 /// The toolbar's thumbnail size control: − slider +, with ⌘− and ⌘+ like Photos.
 struct LibraryZoomControl: View {
+    @Environment(SelectionModel.self) private var selection
     @AppStorage(LibraryThumbnailSize.storageKey) private var level = LibraryThumbnailSize.defaultLevel
+
+    /// While the large viewer is open, ⌘− and ⌘+ zoom the photo instead.
+    private func shortcut(_ key: KeyEquivalent) -> KeyboardShortcut? {
+        selection.viewerRequest == nil ? KeyboardShortcut(key, modifiers: .command) : nil
+    }
 
     private var maximum: Int { LibraryThumbnailSize.maximumLevel }
 
     var body: some View {
         HStack(spacing: 6) {
             Button { zoom(-1) } label: { Image(systemName: "minus.magnifyingglass") }
-                .keyboardShortcut("-", modifiers: .command)
+                .keyboardShortcut(shortcut("-"))
                 .disabled(level <= 0)
                 .help(String(localized: "Smaller thumbnails (⌘−)"))
                 .accessibilityIdentifier("library.zoom-out")
@@ -133,7 +139,7 @@ struct LibraryZoomControl: View {
             .accessibilityLabel(String(localized: "Thumbnail size"))
             .accessibilityIdentifier("library.zoom")
             Button { zoom(1) } label: { Image(systemName: "plus.magnifyingglass") }
-                .keyboardShortcut("=", modifiers: .command)
+                .keyboardShortcut(shortcut("="))
                 .disabled(level >= maximum)
                 .help(String(localized: "Larger thumbnails (⌘+)"))
                 .accessibilityIdentifier("library.zoom-in")
@@ -141,7 +147,7 @@ struct LibraryZoomControl: View {
         // Keyboards with a "+" key send ⌘+ rather than ⌘=.
         .background {
             Button("") { zoom(1) }
-                .keyboardShortcut("+", modifiers: .command)
+                .keyboardShortcut(shortcut("+"))
                 .opacity(0)
                 .frame(width: 0, height: 0)
                 .accessibilityHidden(true)

@@ -366,6 +366,7 @@ struct PhotoInfoPanel: View {
             InlineMenuLabel(text: current ?? String(localized: "Who is this?"), isPlaceholder: current == nil)
         }
         .inlineMenuStyle()
+        .accessibilityIdentifier("viewer.face.\(face.id)")
     }
 
     private func assign(_ face: FaceObservation, to person: Person) {

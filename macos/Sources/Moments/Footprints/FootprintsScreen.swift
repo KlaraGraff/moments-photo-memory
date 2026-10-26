@@ -22,8 +22,10 @@ struct FootprintsScreen: View {
     /// The overview is refitted on resize; after the user flies to a country
     /// the camera stays where they put it.
     @State private var isShowingGlobeOverview = true
-    /// Distance of the last camera this screen set, to tell user moves apart.
-    @State private var lastSetDistance: Double?
+    /// MapKit reports a programmatic camera with its own distance value, so
+    /// the first report after a move is the baseline for spotting user zooms.
+    @State private var awaitingProgrammaticCamera = false
+    @State private var programmaticDistance: Double?
 
     /// Created once per screen; a stored `let` would re-read the cache file
     /// from disk every time SwiftUI re-creates this view value.
@@ -137,9 +139,14 @@ struct FootprintsScreen: View {
         }
         .mapStyle(.imagery(elevation: .realistic))
         .onMapCameraChange(frequency: .onEnd) { context in
-            guard isShowingGlobeOverview, let lastSetDistance else { return }
+            if awaitingProgrammaticCamera {
+                awaitingProgrammaticCamera = false
+                programmaticDistance = context.camera.distance
+                return
+            }
+            guard isShowingGlobeOverview, let programmaticDistance else { return }
             // Zooming by hand changes the distance; keep the user's camera.
-            if abs(context.camera.distance - lastSetDistance) > lastSetDistance * 0.05 {
+            if abs(context.camera.distance - programmaticDistance) > programmaticDistance * 0.05 {
                 isShowingGlobeOverview = false
             }
         }
@@ -251,7 +258,7 @@ struct FootprintsScreen: View {
         let distance = target.isGlobeOverview
             ? FootprintsCameraTarget.globeDistance(fitting: mapSize)
             : target.distanceMetres
-        lastSetDistance = distance
+        awaitingProgrammaticCamera = true
         let position = MapCameraPosition.camera(
             MapCamera(
                 centerCoordinate: target.coordinate,

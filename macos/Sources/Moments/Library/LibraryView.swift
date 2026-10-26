@@ -225,11 +225,6 @@ struct LibraryView: View {
                     libraryGroupingPicker
                 }
             }
-            VStack(alignment: .leading, spacing: 10) {
-                libraryHeaderTitle
-                libraryTypePicker
-                libraryGroupingPicker
-            }
         }
         .padding(.horizontal, 34)
         .padding(.top, 28)
@@ -265,8 +260,10 @@ struct LibraryView: View {
             Text(String(localized: "Screenshots")).tag(LibraryMediaTypeFilter.screenshot.rawValue)
         }
         .pickerStyle(.segmented)
-        // The label ("Medientyp") must not wrap onto two lines.
-        .fixedSize()
+        // The segments name themselves; a visible "Media type" label wrapped
+        // onto two lines in narrow windows. VoiceOver still reads it.
+        .labelsHidden()
+        .frame(maxWidth: 410)
         .accessibilityIdentifier("library.type-filter")
     }
 

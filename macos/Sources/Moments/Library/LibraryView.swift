@@ -1314,7 +1314,7 @@ struct GroupEditorSheet: View {
                         Button {
                             rules.append(UserGroupRule(field: .place, value: ""))
                         } label: {
-                            Label(String(localized: "+ Add condition"), systemImage: "plus")
+                            Label(String(localized: "Add condition"), systemImage: "plus")
                         }
                         Text(String(format: String(localized: "Matches now message"), matchCount))
                             .font(.caption)

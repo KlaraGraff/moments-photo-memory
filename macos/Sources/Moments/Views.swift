@@ -109,7 +109,7 @@ struct ContentView: View {
                                 groupEditorKind = .newSmart
                             }
                         } label: {
-                            Label(String(localized: "+ New group"), systemImage: "plus")
+                            Label(String(localized: "New group"), systemImage: "plus")
                         }
                         .accessibilityIdentifier("sidebar.new-group")
                     } header: {

@@ -107,8 +107,44 @@ enum TripEdits {
         fileprivate(set) var items: [String: String?] = [:]
         fileprivate(set) var memoryKeys: [String: String] = [:]
         fileprivate(set) var newLocks: Set<String> = []
+        /// Chapters that are not trips; `nil` for one the change created.
+        fileprivate(set) var groups: [String: GroupState?] = [:]
+        /// Chapter memberships by id; `nil` for one the change created.
+        fileprivate(set) var memberships: [String: MembershipState?] = [:]
 
-        var isEmpty: Bool { trips.isEmpty && items.isEmpty && memoryKeys.isEmpty }
+        var isEmpty: Bool { trips.isEmpty && items.isEmpty && memoryKeys.isEmpty && groups.isEmpty && memberships.isEmpty }
+    }
+
+    struct GroupState {
+        let name: String
+        let rulesData: Data
+        let kindRaw: String
+        let ownerAccountID: String
+        let createdAt: Date
+
+        init(_ group: UserGroup) {
+            name = group.name
+            rulesData = group.rulesData
+            kindRaw = group.kindRaw
+            ownerAccountID = group.ownerAccountID
+            createdAt = group.createdAt
+        }
+    }
+
+    struct MembershipState {
+        let groupID: String
+        let mediaID: String
+        let excluded: Bool
+        let addedBy: String
+        let addedAt: Date
+
+        init(_ membership: UserGroupItem) {
+            groupID = membership.groupID
+            mediaID = membership.mediaID
+            excluded = membership.excluded
+            addedBy = membership.addedBy
+            addedAt = membership.addedAt
+        }
     }
 
     /// Records each thing before it changes, then saves.
@@ -134,6 +170,22 @@ enum TripEdits {
 
         func created(_ trip: Trip) {
             if undo.trips[trip.id] == nil { undo.trips[trip.id] = .some(nil) }
+        }
+
+        func record(_ group: UserGroup) {
+            if undo.groups[group.id] == nil { undo.groups[group.id] = .some(GroupState(group)) }
+        }
+
+        func created(_ group: UserGroup) {
+            if undo.groups[group.id] == nil { undo.groups[group.id] = .some(nil) }
+        }
+
+        func record(_ membership: UserGroupItem) {
+            if undo.memberships[membership.id] == nil { undo.memberships[membership.id] = .some(MembershipState(membership)) }
+        }
+
+        func created(_ membership: UserGroupItem) {
+            if undo.memberships[membership.id] == nil { undo.memberships[membership.id] = .some(nil) }
         }
 
         func move(_ item: MediaItem, to trip: Trip?, lock: Bool = false) {
@@ -211,6 +263,48 @@ enum TripEdits {
                 memory.updatedAt = now
             }
         }
+        // Chapters that are not trips, and their photos.
+        var groupByID = Dictionary(
+            ((try? context.fetch(FetchDescriptor<UserGroup>())) ?? []).map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for (id, state) in undo.groups {
+            guard let state else { continue }
+            let group: UserGroup
+            if let existing = groupByID[id] {
+                group = existing
+            } else {
+                group = UserGroup(id: id, name: state.name, ownerAccountID: state.ownerAccountID, createdAt: state.createdAt)
+                context.insert(group)
+                groupByID[id] = group
+            }
+            group.name = state.name
+            group.kindRaw = state.kindRaw
+            group.rulesData = state.rulesData
+            group.updatedAt = now
+        }
+        if !undo.memberships.isEmpty {
+            let memberships = Dictionary(
+                ((try? context.fetch(FetchDescriptor<UserGroupItem>())) ?? []).map { ($0.id, $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            for (id, state) in undo.memberships {
+                if let state {
+                    let membership = memberships[id] ?? {
+                        let restored = UserGroupItem(id: id, groupID: state.groupID, mediaID: state.mediaID, addedBy: state.addedBy, addedAt: state.addedAt)
+                        context.insert(restored)
+                        return restored
+                    }()
+                    membership.excluded = state.excluded
+                } else if let membership = memberships[id] {
+                    context.delete(membership)
+                }
+            }
+        }
+        for (id, state) in undo.groups where state == nil {
+            if let group = groupByID[id] { context.delete(group) }
+        }
+
         // Trips the change created go last, once their photos have left and
         // that is saved, so deleting them cannot take the photos' trip along.
         try? context.save()
@@ -451,5 +545,192 @@ enum TripEdits {
         let cities = TripNameBackfill.orderedCities(of: items).map(\.name)
         guard !cities.isEmpty, Set(cities).count <= 3 else { return nil }
         return TripNaming.name(cities: cities, countries: [], start: start, index: 1, calendar: calendar)
+    }
+}
+
+// MARK: - Chapters that are not trips
+
+/// Events, celebrations, stretches of time and custom chapters keep their
+/// photos as `UserGroupItem` rows, so a photo can be in a trip and in any
+/// number of them. A photo taken out by hand stays as an `excluded` row, so
+/// new dates never bring it back.
+extension TripEdits {
+    @MainActor
+    static func memberships(of group: UserGroup, context: ModelContext) -> [UserGroupItem] {
+        let groupID = group.id
+        let predicate = #Predicate<UserGroupItem> { $0.groupID == groupID }
+        return (try? context.fetch(FetchDescriptor<UserGroupItem>(predicate: predicate))) ?? []
+    }
+
+    /// Photos in the chapter now, by id.
+    @MainActor
+    static func memberIDs(of group: UserGroup, context: ModelContext) -> Set<String> {
+        Set(memberships(of: group, context: context).filter { !$0.excluded }.map(\.mediaID))
+    }
+
+    /// The chapter's members in the shape `plan` reads: in the chapter, or
+    /// not; photos taken out by hand are locked.
+    @MainActor
+    static func members(of group: UserGroup, context: ModelContext) -> [Member] {
+        let rows = memberships(of: group, context: context)
+        let inside = Set(rows.filter { !$0.excluded }.map(\.mediaID))
+        let excluded = Set(rows.filter(\.excluded).map(\.mediaID))
+        let items = (try? context.fetch(FetchDescriptor<MediaItem>())) ?? []
+        return items.map { item in
+            Member(id: item.id, dayKey: dayKey(item), tripID: inside.contains(item.id) ? group.id : nil, isLocked: excluded.contains(item.id))
+        }
+    }
+
+    /// A new chapter over these dates holding every dated photo in them,
+    /// whatever trip or chapter they are also in.
+    @MainActor
+    @discardableResult
+    static func createChapter(named name: String, type: ChapterType, symbol: String?, start: Date, end: Date, session: Session) -> UserGroup {
+        let range = Self.range(start: start, end: end, calendar: session.calendar)
+        let typed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let group = UserGroup(
+            name: typed.isEmpty ? type.label + " " + TripNaming.month(range.lowerBound, calendar: session.calendar) : typed,
+            kind: .chapter,
+            createdAt: session.now,
+            updatedAt: session.now
+        )
+        group.chapterInfo = ChapterInfo(type: type.raw, symbol: symbol, startDate: range.lowerBound, endDate: range.upperBound)
+        session.context.insert(group)
+        session.created(group)
+        let first = dayKey(range.lowerBound, calendar: session.calendar)
+        let last = dayKey(range.upperBound, calendar: session.calendar)
+        for item in session.allItems {
+            guard let key = dayKey(item), key >= first, key <= last else { continue }
+            let membership = UserGroupItem(groupID: group.id, mediaID: item.id, addedAt: session.now)
+            session.context.insert(membership)
+            session.created(membership)
+        }
+        session.save()
+        return group
+    }
+
+    /// New dates: photos in them join, the chapter's photos outside leave.
+    /// Photos taken out by hand stay out.
+    @MainActor
+    @discardableResult
+    static func changeDates(of group: UserGroup, start: Date, end: Date, session: Session) -> (joined: Int, left: Int) {
+        let range = Self.range(start: start, end: end, calendar: session.calendar)
+        let plan = Self.plan(for: group.id, start: start, end: end, members: members(of: group, context: session.context), calendar: session.calendar)
+        let rows = memberships(of: group, context: session.context)
+        session.record(group)
+        var info = group.chapterInfo
+        info.startDate = range.lowerBound
+        info.endDate = range.upperBound
+        group.chapterInfo = info
+        let leaving = Set(plan.leaving)
+        for row in rows where !row.excluded && leaving.contains(row.mediaID) {
+            session.record(row)
+            session.context.delete(row)
+        }
+        for id in plan.joining {
+            let membership = UserGroupItem(groupID: group.id, mediaID: id, addedAt: session.now)
+            session.context.insert(membership)
+            session.created(membership)
+        }
+        group.updatedAt = session.now
+        session.save()
+        return (plan.joining.count, plan.leaving.count)
+    }
+
+    /// Photos join the chapter by hand; its dates stretch to hold them.
+    @MainActor
+    static func add(_ itemIDs: [String], to group: UserGroup, session: Session) {
+        let wanted = Set(itemIDs)
+        let rows = memberships(of: group, context: session.context)
+        session.record(group)
+        for id in wanted {
+            if let row = rows.first(where: { $0.mediaID == id }) {
+                guard row.excluded else { continue }
+                session.record(row)
+                row.excluded = false
+            } else {
+                let membership = UserGroupItem(groupID: group.id, mediaID: id, addedAt: session.now)
+                session.context.insert(membership)
+                session.created(membership)
+            }
+        }
+        let keys = session.allItems.filter { wanted.contains($0.id) }.compactMap { dayKey($0) }
+        stretchChapter(group, toHold: keys, calendar: session.calendar)
+        group.updatedAt = session.now
+        session.save()
+    }
+
+    /// One day's photos leave the chapter and stay out; a first or last day
+    /// also leaves its dates.
+    @MainActor
+    static func removeDay(_ key: String, from group: UserGroup, session: Session) {
+        let calendar = session.calendar
+        let rows = memberships(of: group, context: session.context).filter { !$0.excluded }
+        let keyByID = Dictionary(session.allItems.map { ($0.id, dayKey($0)) }, uniquingKeysWith: { first, _ in first })
+        let leaving = rows.filter { keyByID[$0.mediaID] == .some(key) }
+        guard !leaving.isEmpty else { return }
+        session.record(group)
+        for row in leaving {
+            session.record(row)
+            row.excluded = true
+        }
+        let remaining = rows.filter { keyByID[$0.mediaID] != .some(key) }.compactMap { keyByID[$0.mediaID] ?? nil }
+        var info = group.chapterInfo
+        if let first = remaining.min(), let last = remaining.max() {
+            if let start = info.startDate, dayKey(start, calendar: calendar) == key, let day = dayStart(first, calendar: calendar) {
+                info.startDate = day
+            }
+            if let end = info.endDate, dayKey(end, calendar: calendar) == key, let day = dayStart(last, calendar: calendar) {
+                info.endDate = endOfDay(day, calendar: calendar)
+            }
+        }
+        group.chapterInfo = info
+        group.updatedAt = session.now
+        session.save()
+    }
+
+    /// The chapter goes away; its photos stay in the Library and any trip.
+    @MainActor
+    static func delete(_ group: UserGroup, session: Session) {
+        session.record(group)
+        for row in memberships(of: group, context: session.context) {
+            session.record(row)
+            session.context.delete(row)
+        }
+        session.save()
+        session.context.delete(group)
+        session.save()
+    }
+
+    /// The trip goes away; its photos become "Not in a trip" and its trip
+    /// memories stay stored under its id, back if undone.
+    @MainActor
+    static func delete(_ trip: Trip, session: Session) {
+        session.record(trip)
+        for item in trip.items { session.move(item, to: nil) }
+        session.save()
+        session.context.delete(trip)
+        session.save()
+    }
+
+    static func plan(for chapterID: String, start: Date, end: Date, members: [Member], calendar: Calendar) -> Plan {
+        plan(
+            tripID: chapterID,
+            first: dayKey(min(start, end), calendar: calendar),
+            last: dayKey(max(start, end), calendar: calendar),
+            members: members
+        )
+    }
+
+    private static func stretchChapter(_ group: UserGroup, toHold keys: [String], calendar: Calendar) {
+        guard let first = keys.min(), let last = keys.max() else { return }
+        var info = group.chapterInfo
+        if info.startDate.map({ first < dayKey($0, calendar: calendar) }) ?? true, let day = dayStart(first, calendar: calendar) {
+            info.startDate = day
+        }
+        if info.endDate.map({ last > dayKey($0, calendar: calendar) }) ?? true, let day = dayStart(last, calendar: calendar) {
+            info.endDate = endOfDay(day, calendar: calendar)
+        }
+        group.chapterInfo = info
     }
 }

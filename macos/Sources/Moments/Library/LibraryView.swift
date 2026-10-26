@@ -27,7 +27,8 @@ struct LibraryView: View {
     private var allPlaces: [Place]
     @Query(sort: \PlaceOverride.id)
     private var placeOverrides: [PlaceOverride]
-    @Query(sort: \UserGroup.name)
+    /// "My groups" only; chapters live on the Chapters page.
+    @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" }, sort: \UserGroup.name)
     private var allGroups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
     @Query(sort: \Person.name) private var people: [Person]

@@ -21,6 +21,16 @@ struct SettingsView: View {
     }
 }
 
+/// Settings is its own window, as on every Mac: one fixed width, and each
+/// tab as tall as its content so nothing scrolls. The window grows or
+/// shrinks to the tab (the system animates it) and can't be dragged larger.
+enum SettingsLayout {
+    static let width: CGFloat = 600
+    static let generalHeight: CGFloat = 520
+    static let aiHeight: CGFloat = 660
+    static let sharingHeight: CGFloat = 280
+}
+
 /// The open Settings tab; a link such as "AI model settings" picks its tab
 /// before it opens the window.
 enum SettingsTab: String {
@@ -80,7 +90,7 @@ struct GeneralSettingsView: View {
         .scrollContentBackground(.hidden)
         .background(Paper.canvas)
         .tint(Paper.accent)
-        .frame(width: 560)
+        .frame(width: SettingsLayout.width, height: SettingsLayout.generalHeight)
     }
 
     private func folderRow(_ title: String, url: URL?, identifier: String) -> some View {
@@ -124,7 +134,7 @@ struct SharingSettingsView: View {
                 .frame(maxWidth: 360)
         }
         .padding(40)
-        .frame(width: 560)
+        .frame(width: SettingsLayout.width, height: SettingsLayout.sharingHeight)
         .background(Paper.canvas)
         .accessibilityIdentifier("settings.sharing")
     }

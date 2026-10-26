@@ -6953,28 +6953,6 @@
         }
       }
     },
-    "This Mac can't run Apple's on-device model." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dieser Mac kann Apples Modell auf dem Gerät nicht ausführen."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This Mac can't run Apple's on-device model."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "这台 Mac 不能运行 Apple 的本机模型。"
-          }
-        }
-      }
-    },
     "This day" : {
       "localizations" : {
         "de" : {
@@ -8885,6 +8863,160 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这个人"
+          }
+        }
+      }
+    },
+    "%lld people" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Personen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld people"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 人"
+          }
+        }
+      }
+    },
+    "Back out to the globe with every country you visited" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zurück zum Globus mit allen besuchten Ländern"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Back out to the globe with every country you visited"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回到地球，看去过的所有国家"
+          }
+        }
+      }
+    },
+    "Not available on this Mac right now. Use a cloud model for now." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf diesem Mac gerade nicht verfügbar. Nutze vorerst ein Cloud-Modell."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not available on this Mac right now. Use a cloud model for now."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台 Mac 暂时用不了，可以先用云端模型。"
+          }
+        }
+      }
+    },
+    "Not available yet for this Mac's region or model. Use a cloud model for now." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für die Region oder das Modell dieses Mac noch nicht verfügbar. Nutze vorerst ein Cloud-Modell."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not available yet for this Mac's region or model. Use a cloud model for now."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台 Mac 所在的地区或机型暂不支持 Apple 智能，可以先用云端模型。"
+          }
+        }
+      }
+    },
+    "On-device Apple model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple-Modell auf dem Gerät"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On-device Apple model"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple 本机模型"
+          }
+        }
+      }
+    },
+    "Zoom in to the places your photos were taken" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zu den Orten zoomen, an denen deine Fotos entstanden sind"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zoom in to the places your photos were taken"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放大到你拍照的地方"
+          }
+        }
+      }
+    },
+    "Zoom to photos" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zu den Fotos"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zoom to photos"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放大到照片"
           }
         }
       }

@@ -100,35 +100,17 @@ struct MapScreen: View {
 
     var body: some View {
         let currentWorldInput = worldInput
-        ZStack(alignment: .top) {
-            GeometryReader { proxy in
-                mapView
-                    .onChange(of: proxy.size, initial: true) { _, size in
-                        mapSize = size
-                        refitGlobeOverview()
-                    }
-            }
-            // Map ignores the safe area. Flush against the floating sidebar or
-            // the title bar it would extend under them and centre the globe on
-            // the hidden part; a 1 pt gap keeps it inside its own frame.
-            .padding(.leading, 1)
-            .padding(.top, 1)
-            .clipped()
-            .overlay(alignment: .topLeading) {
-                if isWorldView, !world.snapshot.cityClusters.isEmpty { worldSummary }
-            }
-            .overlay(alignment: .topTrailing) { mapToolbar }
-            .overlay(alignment: .bottom) { bottomStrip }
-
-            if snapshot.isEmpty, cachedSnapshot != nil {
-                emptyState
-            }
-
-            if networkMonitor.isOffline {
-                mapStatus(text: "Map tiles unavailable", systemImage: "wifi.exclamationmark")
-                    .padding(.top, 12)
-            }
+        VStack(spacing: 0) {
+            // The same filters as the Library, kept in step with it: pick a
+            // person to see only the places you were with them.
+            LibraryFilterChips()
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Paper.well.opacity(0.45))
+                .accessibilityIdentifier("map.filters")
+            mapArea
         }
+        .background { LibraryFilterPublisher() }
         .navigationTitle("Map")
         .task(id: snapshotKey) {
             itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -158,6 +140,38 @@ struct MapScreen: View {
             if let selectedClusterID,
                !snapshot.clusters.contains(where: { $0.id == selectedClusterID }) {
                 self.selectedClusterID = nil
+            }
+        }
+    }
+
+    private var mapArea: some View {
+        ZStack(alignment: .top) {
+            GeometryReader { proxy in
+                mapView
+                    .onChange(of: proxy.size, initial: true) { _, size in
+                        mapSize = size
+                        refitGlobeOverview()
+                    }
+            }
+            // Map ignores the safe area. Flush against the floating sidebar or
+            // the title bar it would extend under them and centre the globe on
+            // the hidden part; a 1 pt gap keeps it inside its own frame.
+            .padding(.leading, 1)
+            .padding(.top, 1)
+            .clipped()
+            .overlay(alignment: .topLeading) {
+                if isWorldView, !world.snapshot.cityClusters.isEmpty { worldSummary }
+            }
+            .overlay(alignment: .topTrailing) { mapToolbar }
+            .overlay(alignment: .bottom) { bottomStrip }
+
+            if snapshot.isEmpty, cachedSnapshot != nil {
+                emptyState
+            }
+
+            if networkMonitor.isOffline {
+                mapStatus(text: "Map tiles unavailable", systemImage: "wifi.exclamationmark")
+                    .padding(.top, 12)
             }
         }
     }
@@ -295,18 +309,19 @@ struct MapScreen: View {
             .labelsHidden()
             .fixedSize()
 
+            // Two different jobs, so two buttons: back out to every country,
+            // or frame exactly the places the photos were taken.
             Button("Whole world", systemImage: "globe.europe.africa") {
                 showGlobe()
             }
-            .labelStyle(.iconOnly)
-            .help("Whole world")
+            .help("Back out to the globe with every country you visited")
             .accessibilityIdentifier("map.globe")
 
-            Button("Fit all", systemImage: "arrow.up.left.and.arrow.down.right") {
+            Button("Zoom to photos", systemImage: "photo.on.rectangle") {
                 fitAll()
             }
-            .labelStyle(.iconOnly)
-            .help("Fit all")
+            .help("Zoom in to the places your photos were taken")
+            .disabled(snapshot.stops.isEmpty)
             .accessibilityIdentifier("map.fit")
         }
         .padding(8)
@@ -609,6 +624,8 @@ struct MapScreen: View {
         selectedClusterID = snapshot.cluster(containing: itemID)?.id
     }
 
+    /// When the photos span half the world, fitting them is the globe
+    /// already, so there is nothing to zoom to.
     private func fitAll() {
         guard !snapshot.stops.isEmpty else { return }
         moveCamera(to: .region(viewModel.initialRegion(for: snapshot.stops)), isGlobe: false)

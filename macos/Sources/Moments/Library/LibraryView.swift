@@ -247,6 +247,8 @@ struct LibraryView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
         }
+        .navigationTitle(String(localized: "Library"))
+        .navigationSubtitle(String(format: String(localized: "%lld photos"), cachedVisibleCount))
     }
 
     /// "12 photos to confirm" under the filters; opens the review list.
@@ -277,35 +279,28 @@ struct LibraryView: View {
         .buttonStyle(.plain)
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.top, 10)
+        // Room before the first section title, so the banner never sits on it.
+        .padding(.bottom, 14)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("library.review-banner")
     }
 
+    /// The page name and photo count live in the window's title bar; the
+    /// page itself opens straight on its controls.
     private var libraryHeader: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .bottom, spacing: 22) {
-                libraryHeaderTitle
+            HStack(alignment: .center, spacing: 22) {
                 libraryTypePicker
                 Spacer(minLength: 8)
                 libraryGroupingPicker
             }
             VStack(alignment: .leading, spacing: 12) {
-                libraryHeaderTitle
-                HStack(alignment: .center, spacing: 22) {
-                    libraryTypePicker
-                    Spacer(minLength: 8)
-                    libraryGroupingPicker
-                }
-            }
-            VStack(alignment: .leading, spacing: 12) {
-                libraryHeaderTitle
                 libraryTypePicker
                 libraryGroupingPicker
             }
             // Narrowest: the picker scrolls rather than pushing the window
             // wider than it is.
             VStack(alignment: .leading, spacing: 12) {
-                libraryHeaderTitle
                 ScrollView(.horizontal) { libraryTypePicker }
                     .scrollIndicators(.hidden)
                 libraryGroupingPicker
@@ -313,32 +308,7 @@ struct LibraryView: View {
         }
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.top, PaperMetrics.screenTopInset)
-        .padding(.bottom, 18)
-    }
-
-    private var libraryHeaderTitle: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 9) {
-            Text(String(localized: "Library"))
-                .font(.system(size: 34, weight: .medium, design: .serif))
-                .foregroundStyle(LibraryPalette.ink)
-                .lineLimit(1)
-                .layoutPriority(1)
-                .minimumScaleFactor(0.7)
-            // A slot as wide as "888,888 photos", so the pickers beside it
-            // never move while the count changes (up to six digits).
-            ZStack(alignment: .leading) {
-                Text("\(888_888) \(String(localized: "photos"))")
-                    .hidden()
-                Text("\(cachedVisibleCount) \(String(localized: "photos"))")
-                    .foregroundStyle(LibraryPalette.muted)
-                    .accessibilityIdentifier("library.photoCount")
-                    .accessibilityValue(String(cachedVisibleCount))
-            }
-            .font(.caption.monospacedDigit())
-            .lineLimit(1)
-        }
-        // Never squeezed: a compressed title wraps one letter per line.
-        .fixedSize()
+        .padding(.bottom, 14)
     }
 
     private var libraryTypePicker: some View {
@@ -374,48 +344,16 @@ struct LibraryView: View {
 
     private var filterBar: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Chips never truncate; when they do not fit, scroll rather than clip.
-            ViewThatFits(in: .horizontal) {
-                filterChipRow
-                ScrollView(.horizontal) { filterChipRow }
-                    .scrollIndicators(.hidden)
-            }
-
-            if hasActiveFilters || selection.libraryScope != nil {
-                HStack(spacing: 7) {
-                    if let scope = selection.libraryScope {
-                        filterChip(scope.title) { selection.libraryScope = nil }
-                            .accessibilityIdentifier("library.scope-chip")
-                    }
-                    if let selectedPlaceName {
-                        filterChip("\(String(localized: "Place:")) \(selectedPlaceName)") { placeFilterID = "" }
-                    }
-                    if let selectedTripName {
-                        filterChip("\(String(localized: "Trip:")) \(selectedTripName)") { tripFilterKey = "" }
-                    }
-                    if let dateLabel = dateFilterLabel {
-                        filterChip(dateLabel) {
-                            fromDateInterval = 0
-                            toDateInterval = 0
-                        }
-                    }
-                    if selectedMemoryFilter != .all {
-                        filterChip(memoryFilterLabel(selectedMemoryFilter)) { memoryFilterRaw = LibraryMemoryFilter.all.rawValue }
-                    }
-                    if let selectedPersonName {
-                        filterChip("\(String(localized: "Person:")) \(selectedPersonName)") { personFilterID = "" }
-                    }
-                    Button(String(localized: "Clear filters")) { clearFilters() }
-                        .buttonStyle(.link)
-                        .font(.caption)
-                        .foregroundStyle(LibraryPalette.muted)
-                }
-            }
+            LibraryFilterChips(showsScope: true)
 
             HStack {
-                Text(String(format: String(localized: "Filtered count"), cachedVisibleCount))
+                Text(criteria.isFiltered || selection.libraryScope != nil
+                     ? String(format: String(localized: "Filtered count"), cachedVisibleCount)
+                     : String(format: String(localized: "%lld photos"), cachedVisibleCount))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(LibraryPalette.muted)
+                    .accessibilityIdentifier("library.photoCount")
+                    .accessibilityValue(String(cachedVisibleCount))
                 Spacer(minLength: 12)
                 // Only a real filter can become a smart group. Its own row
                 // keeps the chips at full width and the button on one line.
@@ -440,180 +378,6 @@ struct LibraryView: View {
         .sheet(isPresented: $showingSmartGroupEditor) {
             GroupEditorSheet(kind: .newSmart, group: nil, initialCriteria: criteria)
         }
-    }
-
-    private var filterChipRow: some View {
-        HStack(spacing: 8) {
-            filterMenu(label: String(localized: "Place"), selected: selectedPlaceName) {
-                Button(String(localized: "All places")) { placeFilterID = "" }
-                if !places.isEmpty { Divider() }
-                ForEach(places) { place in
-                    Button {
-                        placeFilterID = place.id
-                    } label: {
-                        filterMenuLabel(place.name, selected: place.id == placeFilterID)
-                    }
-                }
-            }
-
-            filterMenu(label: String(localized: "Trip"), selected: selectedTripName) {
-                Button(String(localized: "All trips")) { tripFilterKey = "" }
-                if !trips.isEmpty { Divider() }
-                ForEach(trips, id: \.self) { trip in
-                    Button {
-                        tripFilterKey = trip
-                    } label: {
-                        filterMenuLabel(selectedTripName(for: trip), selected: trip == tripFilterKey)
-                    }
-                }
-            }
-
-            dateFilterMenu
-            memoryFilterMenu
-            personFilterMenu
-
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func filterMenu<Content: View>(label: String, selected: String?, @ViewBuilder content: () -> Content) -> some View {
-        Menu {
-            content()
-        } label: {
-            HStack(spacing: 5) {
-                Text(selected.map(Self.chipTitle) ?? label)
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold))
-            }
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        // Chip labels read as ink; the app accent would turn every chip red.
-        .tint(LibraryPalette.ink)
-        .fixedSize()
-        .paperChip(selected: selected != nil)
-        .foregroundStyle(LibraryPalette.ink)
-    }
-
-    /// A long place or trip name would push the other chips out of the row;
-    /// the full name stays in the menu and in the active-filter chip below.
-    static func chipTitle(_ name: String) -> String {
-        name.count > 22 ? String(name.prefix(21)) + "…" : name
-    }
-
-    private func filterMenuLabel(_ text: String, selected: Bool) -> some View {
-        Label(text, systemImage: selected ? "checkmark" : "circle")
-    }
-
-    private var dateFilterMenu: some View {
-        Menu {
-            Toggle(String(localized: "From date"), isOn: Binding(
-                get: { fromDateInterval != 0 },
-                set: { enabled in
-                    fromDateInterval = enabled ? (fromDateInterval == 0 ? Date.now.timeIntervalSince1970 : fromDateInterval) : 0
-                }
-            ))
-            if fromDateInterval != 0 {
-                DatePicker(String(localized: "From date"), selection: fromDateBinding, displayedComponents: .date)
-            }
-            Toggle(String(localized: "To date"), isOn: Binding(
-                get: { toDateInterval != 0 },
-                set: { enabled in
-                    toDateInterval = enabled ? (toDateInterval == 0 ? Date.now.timeIntervalSince1970 : toDateInterval) : 0
-                }
-            ))
-            if toDateInterval != 0 {
-                DatePicker(String(localized: "To date"), selection: toDateBinding, displayedComponents: .date)
-            }
-            Divider()
-            Button(String(localized: "All dates")) {
-                fromDateInterval = 0
-                toDateInterval = 0
-            }
-        } label: {
-            filterMenuTitle(String(localized: "Date"), selected: dateFilterLabel != nil)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        // Chip labels read as ink; the app accent would turn every chip red.
-        .tint(LibraryPalette.ink)
-        .fixedSize()
-        .paperChip(selected: dateFilterLabel != nil)
-    }
-
-    private var memoryFilterMenu: some View {
-        Menu {
-            Button {
-                memoryFilterRaw = LibraryMemoryFilter.all.rawValue
-            } label: {
-                filterMenuLabel(String(localized: "All memories"), selected: selectedMemoryFilter == .all)
-            }
-            Button {
-                memoryFilterRaw = LibraryMemoryFilter.hasMemory.rawValue
-            } label: {
-                filterMenuLabel(String(localized: "Has memory"), selected: selectedMemoryFilter == .hasMemory)
-            }
-            Button {
-                memoryFilterRaw = LibraryMemoryFilter.noMemory.rawValue
-            } label: {
-                filterMenuLabel(String(localized: "No memory"), selected: selectedMemoryFilter == .noMemory)
-            }
-        } label: {
-            filterMenuTitle(String(localized: "Memory"), selected: selectedMemoryFilter != .all)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        // Chip labels read as ink; the app accent would turn every chip red.
-        .tint(LibraryPalette.ink)
-        .fixedSize()
-        .paperChip(selected: selectedMemoryFilter != .all)
-    }
-
-    private var personFilterMenu: some View {
-        Menu {
-            Button { personFilterID = "" } label: {
-                filterMenuLabel(String(localized: "All people"), selected: personFilterID.isEmpty)
-            }
-            if !visiblePeople.isEmpty { Divider() }
-            ForEach(visiblePeople, id: \.id) { person in
-                Button { personFilterID = person.id } label: {
-                    filterMenuLabel(person.name ?? String(localized: "Unnamed person"), selected: person.id == personFilterID)
-                }
-            }
-        } label: {
-            filterMenuTitle(String(localized: "Person"), selected: !personFilterID.isEmpty)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        // Chip labels read as ink; the app accent would turn every chip red.
-        .tint(LibraryPalette.ink)
-        .fixedSize()
-        .paperChip(selected: !personFilterID.isEmpty)
-    }
-
-    private func filterMenuTitle(_ label: String, selected: Bool) -> some View {
-        HStack(spacing: 5) {
-            Text(label)
-                .fontWeight(selected ? .semibold : .regular)
-            Image(systemName: "chevron.down")
-                .font(.caption2.weight(.semibold))
-        }
-        .foregroundStyle(selected ? LibraryPalette.accent : LibraryPalette.ink)
-    }
-
-    private func filterChip(_ text: String, remove: @escaping () -> Void) -> some View {
-        Button(action: remove) {
-            HStack(spacing: 5) {
-                Text(text)
-                Image(systemName: "xmark")
-                    .font(.caption2.weight(.bold))
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(LibraryPalette.accent, in: Capsule())
-        }
-        .buttonStyle(.plain)
     }
 
     private var results: some View {
@@ -700,20 +464,6 @@ struct LibraryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var fromDateBinding: Binding<Date> {
-        Binding(
-            get: { fromDateInterval == 0 ? .now : Date(timeIntervalSince1970: fromDateInterval) },
-            set: { fromDateInterval = $0.timeIntervalSince1970 }
-        )
-    }
-
-    private var toDateBinding: Binding<Date> {
-        Binding(
-            get: { toDateInterval == 0 ? .now : Date(timeIntervalSince1970: toDateInterval) },
-            set: { toDateInterval = $0.timeIntervalSince1970 }
-        )
     }
 
     private var dateFilterLabel: String? {
@@ -1520,15 +1270,6 @@ struct GroupDetailView: View {
         Group {
             if let group {
                 VStack(spacing: 0) {
-                    PaperScreenHeader(group.name) {
-                        Text("\(visibleItems.count) \(String(localized: "photos"))")
-                    } trailing: {
-                        Text(group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
-                            .font(.caption)
-                            .foregroundStyle(LibraryPalette.muted)
-                            .paperChip()
-                    }
-
                     if sections.isEmpty {
                         ContentUnavailableView(
                             String(localized: "This group is empty"),
@@ -1566,6 +1307,11 @@ struct GroupDetailView: View {
                     }
                 }
                 .background(LibraryPalette.content)
+                .navigationTitle(group.name)
+                .navigationSubtitle(
+                    String(format: String(localized: "%lld photos"), visibleItems.count) + " · "
+                        + (group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
+                )
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
                     ToolbarItemGroup {

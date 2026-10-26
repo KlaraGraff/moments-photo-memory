@@ -26,7 +26,7 @@ struct MomentsApp: App {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "-MomentsUITestWindowWidth"), index + 1 < arguments.count,
               let width = Double(arguments[index + 1]) else { return nil }
-        return width
+        return CGFloat(width)
     }
 
     private var isUITestDarkMode: Bool {

@@ -228,26 +228,17 @@ struct LibraryView: View {
     }
 
     private var libraryHeader: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .bottom, spacing: 22) {
+        // One fixed shape at every width: title and grouping on the first
+        // row, the type switcher at its natural width on the second. A
+        // ViewThatFits here switched between one, two and three rows while
+        // the sidebar animated, moving the whole grid up and down.
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 22) {
                 libraryHeaderTitle
-                libraryTypePicker
                 Spacer(minLength: 8)
                 libraryGroupingPicker
             }
-            VStack(alignment: .leading, spacing: 12) {
-                libraryHeaderTitle
-                HStack(alignment: .center, spacing: 22) {
-                    libraryTypePicker
-                    Spacer(minLength: 8)
-                    libraryGroupingPicker
-                }
-            }
-            VStack(alignment: .leading, spacing: 12) {
-                libraryHeaderTitle
-                libraryTypePicker
-                libraryGroupingPicker
-            }
+            libraryTypePicker
         }
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.top, PaperMetrics.screenTopInset)
@@ -289,8 +280,8 @@ struct LibraryView: View {
         // Always its natural width. Capped below it (English needs ~495 pt),
         // AppKit drew the control wider than its slot, over the photo count,
         // and every store save flipped it between the two widths; in a
-        // 900 pt window it also squeezed the sidebar. Narrow windows get the
-        // stacked layout above instead.
+        // 900 pt window it also squeezed the sidebar. It has its own row, so
+        // it fits the narrowest window.
         .fixedSize()
         .accessibilityIdentifier("library.type-filter")
     }

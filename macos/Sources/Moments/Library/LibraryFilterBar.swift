@@ -166,7 +166,7 @@ struct LibraryFilterChips: View {
                 }
             }
 
-            filterMenu(label: String(localized: "Trip"), systemImage: "suitcase", identifier: "filter.trip", selected: selectedTripName) {
+            filterMenu(label: String(localized: "Trip"), systemImage: "airplane.departure", identifier: "filter.trip", selected: selectedTripName) {
                 Button(String(localized: "All trips")) { tripFilterKey = "" }
                 if !trips.isEmpty { Divider() }
                 ForEach(trips, id: \.self) { trip in

@@ -38,6 +38,9 @@ targets:
     settings:
       base:
         INFOPLIST_KEY_CFBundleDisplayName: Moments
+        # The app's accent (terracotta) for selection, focus and controls,
+        # unless the person picked a fixed accent colour in System Settings.
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Moments needs access to your photo library to import photos without copying originals."
     postBuildScripts:

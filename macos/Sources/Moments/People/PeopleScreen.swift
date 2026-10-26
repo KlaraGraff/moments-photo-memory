@@ -834,12 +834,10 @@ struct PeopleScreen: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(String(localized: "People"))
-                    .font(.system(size: 34, weight: .medium, design: .serif))
-                    .foregroundStyle(Color(red: 0.227, green: 0.165, blue: 0.141))
-                Spacer()
+        VStack(alignment: .leading, spacing: 0) {
+            PaperScreenHeader(String(localized: "People")) {
+                if !namedPeople.isEmpty { Text("\(namedPeople.count)") }
+            } trailing: {
                 if lastFaceChange != nil {
                     // No ⌘Z: it would take text undo from the name fields.
                     Button(String(localized: "Undo")) { undoFaceChange() }
@@ -854,42 +852,46 @@ struct PeopleScreen: View {
                 .disabled(!scanner.isAvailable || scanner.isScanning)
             }
 
-            if !scanner.isAvailable {
-                Text(String(localized: "People scanning is unavailable on this device."))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else if scanner.isScanning || scanner.progress.total > 0 && scanner.progress.completed < scanner.progress.total {
-                HStack(spacing: 9) {
-                    if scanner.progress.isPaused { ProgressView().controlSize(.small) } else { ProgressView(value: Double(scanner.progress.completed), total: Double(max(scanner.progress.total, 1))).frame(width: 130) }
-                    Text(String(format: String(localized: "Finding faces progress"), scanner.progress.completed, scanner.progress.total))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                    if scanner.progress.skippedUnavailable > 0 {
-                        Text(String(format: String(localized: "Skipped unavailable"), scanner.progress.skippedUnavailable))
+            VStack(alignment: .leading, spacing: 20) {
+                if !scanner.isAvailable {
+                    Text(String(localized: "People scanning is unavailable on this device."))
+                        .font(.callout)
+                        .foregroundStyle(Paper.muted)
+                } else if scanner.isScanning || scanner.progress.total > 0 && scanner.progress.completed < scanner.progress.total {
+                    HStack(spacing: 9) {
+                        if scanner.progress.isPaused { ProgressView().controlSize(.small) } else { ProgressView(value: Double(scanner.progress.completed), total: Double(max(scanner.progress.total, 1))).frame(width: 130) }
+                        Text(String(format: String(localized: "Finding faces progress"), scanner.progress.completed, scanner.progress.total))
                             .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Paper.muted)
+                        if scanner.progress.skippedUnavailable > 0 {
+                            Text(String(format: String(localized: "Skipped unavailable"), scanner.progress.skippedUnavailable))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(Paper.muted)
+                        }
+                        if scanner.progress.isPaused { Text(String(localized: "Paused to save battery")).font(.caption).foregroundStyle(Paper.muted) }
+                        Button(String(localized: "Cancel")) { scanner.cancel() }.buttonStyle(.borderless)
                     }
-                    if scanner.progress.isPaused { Text(String(localized: "Paused to save battery")).font(.caption).foregroundStyle(.secondary) }
-                    Button(String(localized: "Cancel")) { scanner.cancel() }.buttonStyle(.borderless)
                 }
-            }
 
-            if !scanner.isAvailable {
-                Spacer(minLength: 0)
-            } else if namedPeople.isEmpty && unnamedClusters.isEmpty {
-                ContentUnavailableView(String(localized: "No people yet"), systemImage: "person.2", description: Text(String(localized: "Scan your library to find faces on this Mac.")))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 28) {
-                        if !namedPeople.isEmpty { namedSection }
-                        if !unnamedClusters.isEmpty { unnamedSection }
+                if !scanner.isAvailable {
+                    Spacer(minLength: 0)
+                } else if namedPeople.isEmpty && unnamedClusters.isEmpty {
+                    ContentUnavailableView(String(localized: "No people yet"), systemImage: "person.2", description: Text(String(localized: "Scan your library to find faces on this Mac.")))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 28) {
+                            if !namedPeople.isEmpty { namedSection }
+                            if !unnamedClusters.isEmpty { unnamedSection }
+                        }
                     }
                 }
             }
+            .padding(.horizontal, PaperMetrics.screenInset)
+            .padding(.bottom, PaperMetrics.screenInset)
         }
-        .padding(34)
-        .background(Color(red: 0.984, green: 0.945, blue: 0.918))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Paper.canvas)
         .onAppear {
             mergeSameNamedPeople()
             scanner.scanIfNeeded()
@@ -934,52 +936,51 @@ struct PeopleScreen: View {
 
     private var mergeSheet: some View {
         let source = people.first { $0.id == mergeSource }
-        return VStack(alignment: .leading, spacing: 14) {
-            Text(String(localized: "Merge two people")).font(.headline)
-            if let source {
-                HStack(spacing: 10) {
-                    if let face = PeopleFacePicker.cover(cachedFacesByPerson[source.id] ?? []) {
-                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
-                    }
-                    Text(source.name ?? String(localized: "Unnamed person")).font(.title3)
-                }
-                Divider()
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(namedPeople.filter { $0.id != mergeSource }, id: \.id) { person in
-                        Button {
-                            mergeTarget = person.id
-                            mergePeople()
-                        } label: {
-                            HStack(spacing: 10) {
-                                if let face = PeopleFacePicker.cover(cachedFacesByPerson[person.id] ?? []) {
-                                    FaceCropView(data: face.cropData, cacheKey: face.id, size: 44)
-                                }
-                                Text(person.name ?? String(localized: "Unnamed person"))
-                                Spacer(minLength: 0)
-                            }
-                            .contentShape(Rectangle())
+        return PaperSheet(String(localized: "Merge two people")) {
+            VStack(alignment: .leading, spacing: 14) {
+                if let source {
+                    HStack(spacing: 10) {
+                        if let face = PeopleFacePicker.cover(cachedFacesByPerson[source.id] ?? []) {
+                            FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
                         }
-                        .buttonStyle(.plain)
-                        .padding(.vertical, 2)
+                        Text(source.name ?? String(localized: "Unnamed person")).font(.title3)
                     }
                 }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(namedPeople.filter { $0.id != mergeSource }, id: \.id) { person in
+                            Button {
+                                mergeTarget = person.id
+                                mergePeople()
+                            } label: {
+                                HStack(spacing: 10) {
+                                    if let face = PeopleFacePicker.cover(cachedFacesByPerson[person.id] ?? []) {
+                                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 44)
+                                    }
+                                    Text(person.name ?? String(localized: "Unnamed person"))
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .paperWell(padding: 4)
+                .frame(maxHeight: 320)
             }
-            .frame(maxHeight: 320)
-            HStack {
-                Spacer()
-                Button(String(localized: "Cancel"), role: .cancel) { mergeSource = nil }
-                    .keyboardShortcut(.cancelAction)
-            }
+        } footer: {
+            Button(String(localized: "Cancel"), role: .cancel) { mergeSource = nil }
+                .keyboardShortcut(.cancelAction)
         }
-        .padding(20)
-        .frame(width: 340)
+        .frame(width: 360)
     }
 
     private var namedSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(String(localized: "Named people")).font(.headline)
+            Text(String(localized: "Named people")).font(.system(.title3, design: .serif).weight(.medium)).foregroundStyle(Paper.ink)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 14)], alignment: .leading, spacing: 14) {
                 ForEach(namedPeople, id: \.id) { person in namedCard(person) }
             }
@@ -996,8 +997,8 @@ struct PeopleScreen: View {
                     HStack {
                         if let cover = PeopleFacePicker.cover(faces) { FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72) }
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(person.name ?? String(localized: "Unnamed person")).font(.headline)
-                            Text(String(format: String(localized: "People photo count"), photoCount)).font(.caption).foregroundStyle(.secondary)
+                            Text(person.name ?? String(localized: "Unnamed person")).font(.headline).foregroundStyle(Paper.ink)
+                            Text(String(format: String(localized: "People photo count"), photoCount)).font(.caption.monospacedDigit()).foregroundStyle(Paper.muted)
                         }
                         Spacer(minLength: 0)
                     }
@@ -1050,14 +1051,13 @@ struct PeopleScreen: View {
                 }
             }
         }
-        .padding(12)
-        .background(Color.white.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
+        .paperCard(cornerRadius: 12, padding: 12)
     }
 
     private var unnamedSection: some View {
         // Lazy so a card's zoomed photo loads only when the card scrolls in.
         LazyVStack(alignment: .leading, spacing: 14) {
-            Text(String(localized: "Is this the same person?")).font(.headline)
+            Text(String(localized: "Is this the same person?")).font(.system(.title3, design: .serif).weight(.medium)).foregroundStyle(Paper.ink)
             ForEach(unnamedClusters) { cluster in
                 HStack(alignment: .top, spacing: 14) {
                     if let cover = PeopleFacePicker.cover(cluster.faces) {
@@ -1072,7 +1072,7 @@ struct PeopleScreen: View {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 8) {
                             TextField(String(localized: "Name this person"), text: Binding(get: { clusterNames[cluster.id] ?? "" }, set: { clusterNames[cluster.id] = $0 }))
-                                .textFieldStyle(.roundedBorder)
+                                .textFieldStyle(.paper)
                                 .onSubmit { name(cluster) }
                             Button(String(localized: "Save")) { name(cluster) }.buttonStyle(.borderedProminent)
                         }
@@ -1105,8 +1105,7 @@ struct PeopleScreen: View {
                         }
                     }
                 }
-                .padding(14)
-                .background(Color.white.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+                .paperCard(cornerRadius: 12, padding: 14)
             }
         }
     }

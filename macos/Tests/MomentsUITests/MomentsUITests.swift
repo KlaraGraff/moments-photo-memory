@@ -156,12 +156,15 @@ final class MomentsUITests: XCTestCase {
         // By type: the column's scroll view also answers to its children's identifiers.
         let place = app.textFields["viewer.place"]
         XCTAssertTrue(place.waitForExistence(timeout: launchTimeout))
-        place.click()
-        place.typeKey("a", modifierFlags: .command)
-        place.typeText("Harbour cafe\r")
+        // SwiftUI reports the field with its scroll view's frame, which has no
+        // hit point; click the place line by its position under the date.
+        let date = app.buttons["viewer.date"]
+        date.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 1)).withOffset(CGVector(dx: 30, dy: 47)).click()
+        app.typeKey("a", modifierFlags: .command)
+        app.typeText("Harbour cafe\r")
         expectation(for: NSPredicate(format: "value == %@", "Harbour cafe"), evaluatedWith: place)
         waitForExpectations(timeout: launchTimeout)
-        app.buttons["viewer.date"].click()
+        date.click()
         let dateDone = app.buttons["viewer.date.done"]
         XCTAssertTrue(dateDone.waitForExistence(timeout: launchTimeout), "Clicking the date did not open the date editor")
         capture(app, named: "grid-02d-viewer-date-evidence")

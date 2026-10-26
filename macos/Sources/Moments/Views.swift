@@ -21,13 +21,7 @@ enum GroupEditorKind: String, Equatable, Identifiable {
     var id: String { rawValue }
 }
 
-private enum MomentsPalette {
-    static let sidebar = Color(red: 0.969, green: 0.906, blue: 0.863)
-    static let content = Color(red: 0.984, green: 0.945, blue: 0.918)
-    static let ink = Color(red: 0.227, green: 0.165, blue: 0.141)
-    static let muted = Color(red: 0.478, green: 0.365, blue: 0.314)
-    static let accent = Color(red: 0.690, green: 0.290, blue: 0.184)
-}
+private typealias MomentsPalette = Paper
 
 struct ContentView: View {
     @State private var selection: MomentsSection? = .library
@@ -69,7 +63,7 @@ struct ContentView: View {
 
                     Section {
                         ForEach(groups, id: \.id) { group in
-                            HStack(spacing: 8) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Image(systemName: group.kind == .smart ? "sparkles" : "folder")
                                     .foregroundStyle(MomentsPalette.accent)
                                 Text(group.name)
@@ -125,11 +119,10 @@ struct ContentView: View {
                 .scrollContentBackground(.hidden)
                 .tint(MomentsPalette.accent)
 
-                Divider()
                 Button {
                     importController.chooseFolder()
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Image(systemName: "plus.circle")
                         Text(String(localized: "Import more photos…"))
                         Spacer()
@@ -146,24 +139,31 @@ struct ContentView: View {
             .navigationTitle("Moments")
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
         } detail: {
-            switch selection ?? .library {
-            case .library:
-                LibraryView(state: libraryState, firstLaunchCompleted: $firstLaunchCompleted)
-            case .review:
-                ReviewListView()
-            case .people:
-                PeopleScreen()
-            case .places:
-                PlacesScreen()
-            case .footprints:
-                FootprintsScreen()
-            case .timeline:
-                TimelineScreen()
-            case .group(let groupID):
-                GroupDetailView(groupID: groupID, state: libraryState)
+            Group {
+                switch selection ?? .library {
+                case .library:
+                    LibraryView(state: libraryState, firstLaunchCompleted: $firstLaunchCompleted)
+                case .review:
+                    ReviewListView()
+                case .people:
+                    PeopleScreen()
+                case .places:
+                    PlacesScreen()
+                case .footprints:
+                    FootprintsScreen()
+                case .timeline:
+                    TimelineScreen()
+                case .group(let groupID):
+                    GroupDetailView(groupID: groupID, state: libraryState)
+                }
             }
+            // The title bar continues the page's paper instead of a white strip.
+            .toolbarBackground(MomentsPalette.content, for: .windowToolbar)
+            .toolbarBackground(.visible, for: .windowToolbar)
         }
         .frame(minWidth: 900, minHeight: 600)
+        // One accent everywhere, sheets included: no system blue controls.
+        .tint(MomentsPalette.accent)
         .onChange(of: shared.requestedDestination) { _, destination in
             guard let destination else { return }
             switch destination {
@@ -297,7 +297,7 @@ struct ContentView: View {
         HStack(spacing: 8) {
             Label(LocalizedStringKey(title), systemImage: icon)
             Spacer(minLength: 4)
-            if let badge {
+            if let badge, badge > 0 {
                 Text("\(badge)")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(MomentsPalette.accent)

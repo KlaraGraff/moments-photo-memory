@@ -27,14 +27,14 @@ struct AISettingsView: View {
                         Text(String(localized: "On-device Apple model (recommended)"))
                         Text(String(localized: "Runs on this Mac; your words never leave it. Free, nothing to set up. Needs Apple Intelligence."))
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Paper.muted)
                     }
                     .tag(AIEngine.onDevice.rawValue)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(String(localized: "Cloud model"))
                         Text(String(localized: "Better with long notes. Uses your own API key; the provider bills you."))
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Paper.muted)
                     }
                     .tag(AIEngine.cloud.rawValue)
                 }
@@ -42,7 +42,7 @@ struct AISettingsView: View {
 
                 LabeledContent(String(localized: "On-device model")) {
                     if let reason = AppleOnDeviceOrganizer.unavailableReason() {
-                        Text(reason).foregroundStyle(.secondary)
+                        Text(reason).foregroundStyle(Paper.muted)
                     } else {
                         Label(String(localized: "Ready"), systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
@@ -67,10 +67,10 @@ struct AISettingsView: View {
                     set: { apiKey = $0; keyEdited = true }
                 ))
                     .onSubmit { storeKey(for: provider) }
-                HStack {
+                HStack(alignment: .firstTextBaseline) {
                     Text(String(localized: "The key is kept in your Mac's keychain."))
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Paper.muted)
                     Spacer()
                     if isTesting { ProgressView().controlSize(.small) }
                     Button(String(localized: "Test connection")) { test() }
@@ -79,11 +79,11 @@ struct AISettingsView: View {
                 if let testResult {
                     Text(testResult)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Paper.muted)
                 }
                 Text(String(localized: "Only the words you wrote, the photo's date and its place name are sent. Never the photo itself or GPS coordinates."))
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Paper.muted)
             }
 
             Section {
@@ -94,6 +94,9 @@ struct AISettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(Paper.canvas)
+        .tint(Paper.accent)
         .frame(width: 560)
         .onAppear { loadKey(for: provider) }
         .onChange(of: providerRaw) { oldValue, newValue in

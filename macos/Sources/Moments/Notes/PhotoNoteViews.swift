@@ -13,6 +13,8 @@ struct PhotoNoteSection: View {
     let item: MediaItem
     let state: LibraryViewState
     @FocusState private var isFocused: Bool
+    @State private var savedCount = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var draft: Binding<String> {
         Binding(
@@ -34,9 +36,11 @@ struct PhotoNoteSection: View {
             .focused($isFocused)
             .padding(.vertical, 4)
             .overlay(alignment: .bottom) {
+                // Focus deepens the ruled line instead of switching to a bright one.
                 Rectangle()
-                    .fill(isFocused ? LibraryPalette.accent : LibraryPalette.rule)
+                    .fill(isFocused ? LibraryPalette.muted.opacity(0.7) : LibraryPalette.rule)
                     .frame(height: isFocused ? 1.5 : 1)
+                    .animation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), value: isFocused)
             }
             // Return submits and Option-Return inserts a line break (the
             // vertical field's own behavior), so Return that confirms an input
@@ -55,6 +59,10 @@ struct PhotoNoteSection: View {
             .help(String(localized: "Places, corrections, descriptions, feelings: write anything. Return saves; your words are kept and AI organizes them. Option-Return starts a new line."))
             .accessibilityLabel(String(localized: "Note for this photo"))
             .accessibilityIdentifier("library.note.\(item.id)")
+            .overlay(alignment: .trailing) {
+                TransientCheckmark(trigger: savedCount, label: String(localized: "Saved"))
+                    .allowsHitTesting(false)
+            }
     }
 
     private func save() {
@@ -62,6 +70,7 @@ struct PhotoNoteSection: View {
         if service.save(text, for: item, context: modelContext) != nil {
             state.noteDrafts[item.id] = nil
             isFocused = false
+            savedCount += 1
         }
     }
 }
@@ -115,8 +124,9 @@ struct PhotoNoteBadge: View {
     @ViewBuilder
     private var label: some View {
         if isOrganizing {
-            HStack(spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 ProgressView().controlSize(.mini)
+                    .inlineIcon()
                 Text(String(localized: "Organizing…"))
             }
             .font(.caption)
@@ -171,12 +181,11 @@ private struct PhotoNoteDetails: View {
             ForEach(writtenNotes.reversed(), id: \.id) { note in
                 WrittenNoteView(note: note, item: item)
             }
-            if !openNotes.isEmpty || !writtenNotes.isEmpty {
-                Divider()
-            }
             Text(String(localized: "Original words"))
                 .font(.caption.weight(.medium))
                 .foregroundStyle(LibraryPalette.muted)
+                // Space, not a rule, sets the original words apart.
+                .padding(.top, openNotes.isEmpty && writtenNotes.isEmpty ? 0 : 6)
             ForEach(notes.reversed(), id: \.id) { note in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(note.text)
@@ -184,7 +193,7 @@ private struct PhotoNoteDetails: View {
                         .foregroundStyle(LibraryPalette.ink)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
                             .font(.caption2)
                             .foregroundStyle(LibraryPalette.muted)
@@ -306,7 +315,7 @@ private struct PhotoNoteStatusView: View {
 
     private var suggestionsPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(String(localized: "Organized into \(pendingCount) items. Nothing is written until you choose."))
                     .font(.caption.weight(.medium))
                     .foregroundStyle(LibraryPalette.ink)
@@ -318,7 +327,7 @@ private struct PhotoNoteStatusView: View {
                         .foregroundStyle(LibraryPalette.muted)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
-                        .overlay(Capsule().stroke(LibraryPalette.rule))
+                        .background(LibraryPalette.well, in: Capsule())
                 }
             }
             ForEach(note.suggestions.filter { $0.decision == .pending }) { suggestion in
@@ -369,10 +378,10 @@ private struct NoteSuggestionCard: View {
 
             if isEditing {
                 TextField("", text: $editedText, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.paper)
                     .lineLimit(1...6)
             } else {
-                NoteSuggestionContent(suggestion: suggestion)
+                NoteSuggestionContent(suggestion: suggestion, reveal: Date.now.timeIntervalSince(note.updatedAt) < 8)
             }
 
             if suggestion.kind == .placeCorrection, !suggestion.nearbyMediaIDs.isEmpty {
@@ -443,10 +452,7 @@ private struct NoteSuggestionCard: View {
                 }
             }
         }
-        .padding(10)
-        .background(Color.white.opacity(0.7))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(LibraryPalette.line))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .paperCard(cornerRadius: 8, padding: 10)
     }
 
     private func update(_ change: (inout NoteSuggestion) -> Void) {
@@ -460,8 +466,13 @@ private struct NoteSuggestionCard: View {
 }
 
 /// What a suggestion says, shared by the pending card and the written list.
+/// Words the AI has just written come in with the ink reveal.
 private struct NoteSuggestionContent: View {
     let suggestion: NoteSuggestion
+    var reveal = false
+    /// Decided once when the text first shows, so the person's own later
+    /// edits or toggles never replay it as if the AI had just written it.
+    @State private var revealsOnAppear: Bool?
 
     static func title(for suggestion: NoteSuggestion) -> String {
         switch suggestion.kind {
@@ -474,7 +485,7 @@ private struct NoteSuggestionContent: View {
     var body: some View {
         switch suggestion.kind {
         case .placeCorrection:
-            HStack(spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if let previous = suggestion.previousPlaceName {
                     Text(previous)
                         .strikethrough()
@@ -484,16 +495,28 @@ private struct NoteSuggestionContent: View {
                         .foregroundStyle(LibraryPalette.muted)
                         .accessibilityHidden(true)
                 }
-                Text(suggestion.text)
+                written
                     .foregroundStyle(LibraryPalette.ink)
             }
             .font(.system(.body, design: .serif))
         case .placeDescription, .memory:
-            Text(suggestion.text)
+            written
                 .font(.system(.body, design: .serif))
                 .foregroundStyle(LibraryPalette.ink)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    @ViewBuilder
+    private var written: some View {
+        Group {
+            if revealsOnAppear ?? reveal {
+                InkRevealText(text: suggestion.text)
+            } else {
+                Text(suggestion.text)
+            }
+        }
+        .onAppear { if revealsOnAppear == nil { revealsOnAppear = reveal } }
     }
 }
 
@@ -510,7 +533,7 @@ private struct WrittenNoteView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Label(String(localized: "Organized and saved"), systemImage: "sparkles")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(LibraryPalette.ink)
@@ -545,7 +568,7 @@ private struct WrittenSuggestionRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(NoteSuggestionContent.title(for: suggestion))
                     .font(.caption)
                     .foregroundStyle(LibraryPalette.accent)
@@ -566,7 +589,7 @@ private struct WrittenSuggestionRow: View {
             }
             if isEditing {
                 TextField("", text: $editedText, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.paper)
                     .lineLimit(1...6)
                     .onSubmit { commit() }
                     .onExitCommand { isEditing = false }
@@ -578,7 +601,7 @@ private struct WrittenSuggestionRow: View {
                         .controlSize(.small)
                 }
             } else {
-                NoteSuggestionContent(suggestion: suggestion)
+                NoteSuggestionContent(suggestion: suggestion, reveal: Date.now.timeIntervalSince(note.updatedAt) < 8)
             }
         }
         .padding(.leading, 10)
@@ -615,7 +638,7 @@ struct PhotoPlaceLine: View {
 
     var body: some View {
         if item.namedPlace != nil || item.effectiveCaptureDate != nil {
-            HStack(spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if let name = item.namedPlace {
                     Text(name)
                         .foregroundStyle(LibraryPalette.ink)
@@ -631,7 +654,7 @@ struct PhotoPlaceLine: View {
                         .lineLimit(1)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill(LibraryPalette.line.opacity(0.7)))
+                        .background(Capsule().fill(LibraryPalette.well))
                 }
                 if let description {
                     Button {

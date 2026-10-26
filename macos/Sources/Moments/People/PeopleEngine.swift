@@ -453,11 +453,7 @@ public actor PeopleScanPipeline {
         return values
     }
 
-    private static var shouldPause: Bool {
-        isOnBattery || ProcessInfo.processInfo.isLowPowerModeEnabled ||
-        ProcessInfo.processInfo.thermalState == .serious ||
-        ProcessInfo.processInfo.thermalState == .critical
-    }
+    private static var shouldPause: Bool { FaceClustering.isPowerPaused }
 
     private static var isOnBattery: Bool {
         let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()

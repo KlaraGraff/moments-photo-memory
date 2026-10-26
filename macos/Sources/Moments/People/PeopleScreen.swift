@@ -427,6 +427,9 @@ actor PeopleScanStore {
     }
 
     func save(results: [PeopleScanResult], scannedIDs: [String], version: Int) throws {
+        // A fresh context per call: a long-lived context would serve faces it
+        // inserted earlier from its cache, hiding edits made on the main context.
+        let modelContext = ModelContext(modelContainer)
         var keys = Set<String>()
         for mediaID in Set(results.map(\.mediaID)) {
             let predicate = #Predicate<FaceObservation> { $0.mediaID == mediaID }
@@ -460,6 +463,9 @@ actor PeopleScanStore {
     }
 
     func assignmentSnapshot() throws -> PeopleStoreAssignmentSnapshot {
+        // A fresh context per call: a long-lived context would serve faces it
+        // inserted earlier from its cache, hiding edits made on the main context.
+        let modelContext = ModelContext(modelContainer)
         var descriptor = FetchDescriptor<FaceObservation>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         descriptor.propertiesToFetch = [\.id, \.mediaID, \.embedding, \.personID, \.clusterID, \.confirmed, \.rejectedPersonIDs, \.assignmentSource, \.createdAt, \.updatedAt]
         let faces = try modelContext.fetch(descriptor).map {
@@ -482,6 +488,9 @@ actor PeopleScanStore {
     }
 
     func apply(assignments: [PeopleFaceAssignment], snapshots: [PeopleFaceSnapshot]) throws {
+        // A fresh context per call: a long-lived context would serve faces it
+        // inserted earlier from its cache, hiding edits made on the main context.
+        let modelContext = ModelContext(modelContainer)
         let snapshotsByID = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.id, $0) })
         // One fetch for every face in this write-back instead of one per face.
         let faceIDs = assignments.map(\.id)

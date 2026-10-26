@@ -268,6 +268,43 @@ final class PeopleEngineTests: XCTestCase {
         XCTAssertEqual(observation.assignmentSource, "user")
     }
 
+    func testUserConfirmationOfAScanInsertedFaceSurvivesWriteBack() async throws {
+        // On disk: an in-memory store shares one row cache and hides staleness.
+        let folder = FileManager.default.temporaryDirectory.appending(path: "people-race-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let container = try MomentsPersistence.makeContainer(url: folder.appending(path: "Moments.store"))
+        let person = Person(id: "synthetic-person", name: "Synthetic")
+        container.mainContext.insert(person)
+        try container.mainContext.save()
+        let store = PeopleScanStore(modelContainer: container)
+        // The scan inserts the face, then the user confirms it on the main context.
+        try await store.save(
+            results: [PeopleScanResult(mediaID: "synthetic-item", faces: [
+                FaceObservationDraft(rect: (0, 0, 1, 1), quality: 1, embedding: embedding([1, 0]), cropData: Data([1]))
+            ])],
+            scannedIDs: ["synthetic-item"],
+            version: 1
+        )
+        let face = try XCTUnwrap(container.mainContext.fetch(FetchDescriptor<FaceObservation>()).first)
+        face.personID = person.id
+        face.clusterID = nil
+        face.confirmed = true
+        face.assignmentSource = "user"
+        face.updatedAt = .now
+        try container.mainContext.save()
+
+        let snapshot = try await store.assignmentSnapshot()
+        try await store.apply(
+            assignments: [PeopleFaceAssignment(id: face.id, personID: nil, clusterID: "cluster-machine", confirmed: false, assignmentSource: "auto")],
+            snapshots: snapshot.faces
+        )
+        let stored = try XCTUnwrap(ModelContext(container).fetch(FetchDescriptor<FaceObservation>()).first)
+        XCTAssertEqual(stored.personID, person.id)
+        XCTAssertTrue(stored.confirmed)
+        XCTAssertEqual(stored.assignmentSource, "user")
+    }
+
     func testUnavailableEmbedderDoesNoDetectionWork() async {
         struct Unavailable: FaceEmbedder {
             let isAvailable = false

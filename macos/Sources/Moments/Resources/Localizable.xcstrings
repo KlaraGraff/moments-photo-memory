@@ -2,363 +2,720 @@
   "sourceLanguage" : "en",
   "strings" : {
     "Add a date" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Datum hinzufügen" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add a date" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加日期" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Datum hinzufügen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a date"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加日期"
+          }
+        }
       }
     },
     "Adjust date and time" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Datum und Uhrzeit anpassen" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Adjust date and time" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "调整日期和时间" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Datum und Uhrzeit anpassen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adjust date and time"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "调整日期和时间"
+          }
+        }
       }
     },
     "Edited" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Bearbeitet" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Edited" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已修改" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bearbeitet"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edited"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已修改"
+          }
+        }
       }
     },
     "Time" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Uhrzeit" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Time" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "时间" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uhrzeit"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Time"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "时间"
+          }
+        }
       }
     },
     "Original: %@" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Original: %@" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Original: %@" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "原始：%@" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Original: %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Original: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原始：%@"
+          }
+        }
       }
     },
     "Use original" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Original verwenden" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Use original" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "恢复原始" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Original verwenden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use original"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复原始"
+          }
+        }
       }
     },
     "Add a place" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Ort hinzufügen" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add a place" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加地点" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ort hinzufügen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a place"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加地点"
+          }
+        }
       }
     },
     "Type a place name. Return saves; empty goes back to the place found when importing." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Ortsnamen eingeben. Return sichert; leer stellt den beim Import erkannten Ort wieder her." } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Type a place name. Return saves; empty goes back to the place found when importing." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "输入地点名称。回车保存；清空则恢复导入时识别的地点。" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ortsnamen eingeben. Return sichert; leer stellt den beim Import erkannten Ort wieder her."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Type a place name. Return saves; empty goes back to the place found when importing."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输入地点名称。回车保存；清空则恢复导入时识别的地点。"
+          }
+        }
       }
     },
     "Not in a trip" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "In keiner Reise" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Not in a trip" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "不属于任何旅行" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In keiner Reise"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not in a trip"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不属于任何旅行"
+          }
+        }
       }
     },
     "Rename “%@”…" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "„%@“ umbenennen …" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Rename “%@”…" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重命名“%@”…" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "„%@“ umbenennen …"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rename “%@”…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重命名“%@”…"
+          }
+        }
       }
     },
     "Name" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Name" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Name" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "名字" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Name"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Name"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名字"
+          }
+        }
       }
     },
     "Who is this?" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Wer ist das?" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Who is this?" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这是谁？" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wer ist das?"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Who is this?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这是谁？"
+          }
+        }
       }
     },
     "New name…" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Neuer Name …" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "New name…" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "新名字…" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuer Name …"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New name…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新名字…"
+          }
+        }
       }
     },
     "Not %@" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nicht %@" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Not %@" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "不是%@" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nicht %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不是%@"
+          }
+        }
       }
     },
     "this person" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "diese Person" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "this person" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这个人" } }
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "diese Person"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "this person"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个人"
+          }
+        }
       }
     },
     "Zoom in" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vergrößern"
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vergrößern"
           }
         },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zoom in"
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zoom in"
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "放大"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "放大"
           }
         }
       }
     },
     "Zoom out" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Verkleinern"
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verkleinern"
           }
         },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zoom out"
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zoom out"
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "缩小"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "缩小"
           }
         }
       }
     },
     "Note" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Notiz"
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notiz"
           }
         },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Note"
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Note"
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "备注"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "备注"
           }
         }
       }
     },
     "Close (Esc)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Schließen (Esc)"
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schließen (Esc)"
           }
         },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Close (Esc)"
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close (Esc)"
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "关闭 (Esc)"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭 (Esc)"
           }
         }
       }
     },
     "Smaller thumbnails (⌘−)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kleinere Miniaturen (⌘−)"
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kleinere Miniaturen (⌘−)"
           }
         },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Smaller thumbnails (⌘−)"
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Smaller thumbnails (⌘−)"
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "缩小缩略图 (⌘−)"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "缩小缩略图 (⌘−)"
           }
         }
       }
     },
     "Larger thumbnails (⌘+)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Größere Miniaturen (⌘+)"
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Größere Miniaturen (⌘+)"
           }
         },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Larger thumbnails (⌘+)"
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Larger thumbnails (⌘+)"
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "放大缩略图 (⌘+)"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "放大缩略图 (⌘+)"
           }
         }
       }
     },
     "Thumbnail size" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Miniaturgröße"
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Miniaturgröße"
           }
         },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Thumbnail size"
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thumbnail size"
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "缩略图大小"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "缩略图大小"
           }
         }
       }
     },
     "Open" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Öffnen"
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Öffnen"
           }
         },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Open"
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open"
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "打开"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开"
           }
         }
       }
     },
     "Deselect" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Auswahl aufheben"
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auswahl aufheben"
           }
         },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Deselect"
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deselect"
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "取消选择"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消选择"
           }
         }
       }
     },
     "Previous photo" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vorheriges Foto"
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vorheriges Foto"
           }
         },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Previous photo"
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Previous photo"
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "上一张"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上一张"
           }
         }
       }
     },
     "Next photo" : {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nächstes Foto"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Next photo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下一张"
+          }
+        }
+      }
+    },
+    "Rename…" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nächstes Foto"
+            "value" : "Umbenennen …"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Next photo"
+            "value" : "Rename…"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "下一张"
+            "value" : "重命名…"
+          }
+        }
+      }
+    },
+    "Show this person's photos" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotos dieser Person zeigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show this person's photos"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示此人的照片"
+          }
+        }
+      }
+    },
+    "This is them" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das ist die Person"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This is them"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "是这个人"
+          }
+        }
+      }
+    },
+    "Not this person" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht diese Person"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not this person"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不是这个人"
+          }
+        }
+      }
+    },
+    "Same person" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieselbe Person"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Same person"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "是同一个人"
+          }
+        }
+      }
+    },
+    "Not the same person" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht dieselbe Person"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not the same person"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不是同一个人"
           }
         }
       }

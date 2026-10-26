@@ -426,13 +426,6 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "small-04-timeline-evidence")
     }
 
-    /// Not a check: the candidate sidebar icons, for picking one.
-    func testSidebarIconCandidates() {
-        let app = launch(language: "en", iconGallery: true)
-        XCTAssertTrue(element(in: app, identifier: "debug.icon-gallery").waitForExistence(timeout: launchTimeout))
-        capture(app, named: "icons-01-candidates-evidence")
-    }
-
     func testFootprintsGlobeFitsSmallWindow() {
         let app = launch(language: "en", smallWindow: true)
         assertGlobeFullyVisible(app, screenshot: "map-05-globe-small-window-evidence")
@@ -918,10 +911,9 @@ final class MomentsUITests: XCTestCase {
         element(in: app, identifier: "trips.back").click()
     }
 
-    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false, mapProbe: Bool = false, iconGallery: Bool = false) -> XCUIApplication {
+    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false, mapProbe: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language]
-        if iconGallery { app.launchArguments += ["-MomentsUITestIconGallery"] }
         if mapProbe { app.launchArguments += ["-MomentsUITestMapProbe"] }
         if reviewItems { app.launchArguments += ["-MomentsUITestReviewItems"] }
         if darkMode { app.launchArguments += ["-MomentsUITestDarkMode"] }

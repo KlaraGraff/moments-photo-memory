@@ -65,16 +65,28 @@ private struct LayoutProbeWindowSampler: NSViewRepresentable {
         private var lastValues: [String: String] = [:]
         private var timer: Timer?
         private var deadline = Date()
+        private var clickMonitor: Any?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             sample()
+            guard clickMonitor == nil else { return }
+            // Any click, not only sidebar ones: maple sees the window flash on clicks anywhere.
+            clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
+                LayoutProbe.log("mouse \(event.type == .leftMouseDown ? "down" : "up") in \(event.window?.title ?? "-")")
+                self?.startSampling()
+                return event
+            }
         }
 
         func select(_ trigger: String) {
             guard trigger != lastTrigger else { return }
             lastTrigger = trigger
             LayoutProbe.log("select \(trigger)")
+            startSampling()
+        }
+
+        private func startSampling() {
             deadline = Date().addingTimeInterval(1.2)
             sample()
             guard timer == nil else { return }
@@ -101,7 +113,17 @@ private struct LayoutProbeWindowSampler: NSViewRepresentable {
                 "window.title": window.title,
                 "window.toolbarItems": window.toolbar?.items.map { $0.itemIdentifier.rawValue }.joined(separator: ",") ?? "none",
                 "window.titlebarSeparator": "\(window.titlebarSeparatorStyle.rawValue)",
+                "window.appearance": window.appearance?.name.rawValue ?? "inherit",
+                "window.effectiveAppearance": window.effectiveAppearance.name.rawValue,
+                "app.appearance": NSApp.appearance?.name.rawValue ?? "system",
+                "app.effectiveAppearance": NSApp.effectiveAppearance.name.rawValue,
+                "window.isKey": "\(window.isKeyWindow)",
             ]
+            // Every app window, so the Settings window shows up too.
+            for other in NSApp.windows where other !== window && other.isVisible {
+                values["other[\(other.title)].appearance"] = other.appearance?.name.rawValue ?? "inherit"
+                values["other[\(other.title)].effectiveAppearance"] = other.effectiveAppearance.name.rawValue
+            }
             if let content = window.contentView {
                 collect(content, path: "content", depth: 0, into: &values)
             }
@@ -117,6 +139,9 @@ private struct LayoutProbeWindowSampler: NSViewRepresentable {
         /// Split view columns and scroll offsets, which is what visibly jumps.
         private func collect(_ view: NSView, path: String, depth: Int, into values: inout [String: String]) {
             guard depth < 40 else { return }
+            if let appearance = view.appearance {
+                values["\(path).appearance"] = appearance.name.rawValue
+            }
             if let split = view as? NSSplitView {
                 for (index, column) in split.arrangedSubviews.enumerated() {
                     values["\(path).column\(index)"] = LayoutProbe.describe(column.frame)

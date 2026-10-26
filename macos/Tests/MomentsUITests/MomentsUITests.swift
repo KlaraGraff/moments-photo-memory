@@ -223,7 +223,8 @@ final class MomentsUITests: XCTestCase {
     /// logs every geometry change after each click; CI prints the log.
     func testSidebarClicksLayoutProbe() {
         let app = XCUIApplication()
-        app.launchArguments = ["-MomentsUITesting", "-MomentsUITestLayoutProbe", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh-Hans"]
+        // A real Dark Mode Mac (maple's) rather than the NSApp.appearance stand-in.
+        app.launchArguments = ["-MomentsUITesting", "-MomentsUITestLayoutProbe", "-AppleInterfaceStyle", "Dark", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh-Hans"]
         app.launch()
         app.activate()
         requireFrontmostWindow(app)
@@ -241,6 +242,19 @@ final class MomentsUITests: XCTestCase {
             item.click()
             Thread.sleep(forTimeInterval: 1.5)
         }
+        // Clicks inside the Library and inside the Settings window.
+        photo.click()
+        Thread.sleep(forTimeInterval: 1.5)
+        app.windows.firstMatch.click()
+        Thread.sleep(forTimeInterval: 1.5)
+        app.typeKey(",", modifierFlags: .command)
+        let settings = app.windows.element(boundBy: 0)
+        XCTAssertTrue(settings.waitForExistence(timeout: launchTimeout))
+        Thread.sleep(forTimeInterval: 1.5)
+        settings.click()
+        Thread.sleep(forTimeInterval: 1.5)
+        settings.click()
+        Thread.sleep(forTimeInterval: 1.5)
         capture(app, named: "layout-probe-final-evidence")
     }
 

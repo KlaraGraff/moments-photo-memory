@@ -128,6 +128,45 @@ final class MomentsUITests: XCTestCase {
         expectation(for: paged, evaluatedWith: counter)
         waitForExpectations(timeout: launchTimeout)
         capture(app, named: "grid-02b-viewer-paged-evidence")
+
+        // ⌘= and the scroll wheel zoom in; a double click fits the photo again.
+        let image = element(in: app, identifier: "viewer.image")
+        XCTAssertEqual(image.value as? String, "100%")
+        // The photo sits under the hover paging buttons' row, so point at it
+        // by coordinate instead of asking for the element's hit point.
+        let photoCentre = image.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let zoomed = NSPredicate(format: "value != %@", "100%")
+        let fitted = NSPredicate(format: "value == %@", "100%")
+        app.typeKey("=", modifierFlags: .command)
+        expectation(for: zoomed, evaluatedWith: image)
+        waitForExpectations(timeout: launchTimeout)
+        photoCentre.doubleClick()
+        expectation(for: fitted, evaluatedWith: image)
+        waitForExpectations(timeout: launchTimeout)
+        XCUIElement.perform(withKeyModifiers: .command) { photoCentre.scroll(byDeltaX: 0, deltaY: 8) }
+        expectation(for: zoomed, evaluatedWith: image)
+        waitForExpectations(timeout: launchTimeout)
+        capture(app, named: "grid-02c-viewer-zoomed-evidence")
+        pauseLongerThanADoubleClick()
+        photoCentre.doubleClick()
+        expectation(for: fitted, evaluatedWith: image)
+        waitForExpectations(timeout: launchTimeout)
+
+        // The column edits in place: type over the place, adjust the date.
+        // By type: the column's scroll view also answers to its children's identifiers.
+        let place = app.textFields["viewer.place"]
+        XCTAssertTrue(place.waitForExistence(timeout: launchTimeout))
+        place.click()
+        place.typeKey("a", modifierFlags: .command)
+        place.typeText("Harbour cafe\r")
+        expectation(for: NSPredicate(format: "value == %@", "Harbour cafe"), evaluatedWith: place)
+        waitForExpectations(timeout: launchTimeout)
+        app.buttons["viewer.date"].click()
+        let dateDone = app.buttons["viewer.date.done"]
+        XCTAssertTrue(dateDone.waitForExistence(timeout: launchTimeout), "Clicking the date did not open the date editor")
+        capture(app, named: "grid-02d-viewer-date-evidence")
+        dateDone.click()
+        capture(app, named: "grid-02e-viewer-edited-evidence")
         app.typeKey(.escape, modifierFlags: [])
         let gone = NSPredicate(format: "exists == false")
         expectation(for: gone, evaluatedWith: viewer)

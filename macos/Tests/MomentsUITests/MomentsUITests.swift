@@ -281,6 +281,33 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "\(prefix)-02-place-on-map-evidence")
     }
 
+    /// People's + adds a person; the window's import + is not shown there.
+    func testPeoplePlusAddsAPerson() {
+        exercisePeoplePlus(launch(language: "en"), prefix: "people-plus")
+    }
+
+    func testPeoplePlusAddsAPersonInASmallWindow() {
+        exercisePeoplePlus(launch(language: "en", smallWindow: true), prefix: "people-plus-small")
+    }
+
+    private func exercisePeoplePlus(_ app: XCUIApplication, prefix: String) {
+        XCTAssertTrue(element(in: app, identifier: "toolbar.import").waitForExistence(timeout: launchTimeout))
+        element(in: app, identifier: "sidebar.people").click()
+        let add = element(in: app, identifier: "people.add")
+        XCTAssertTrue(add.waitForExistence(timeout: launchTimeout), "People has no Add person button")
+        XCTAssertTrue(element(in: app, identifier: "toolbar.import").waitForNonExistence(timeout: launchTimeout), "People still shows the import +")
+        add.click()
+        let name = element(in: app, identifier: "people.add.name")
+        XCTAssertTrue(name.waitForExistence(timeout: launchTimeout), "Add person did not open its sheet")
+        XCTAssertFalse(element(in: app, identifier: "people.add.save").isEnabled, "Add is enabled with no name and no faces")
+        capture(app, named: "\(prefix)-01-sheet-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(name.waitForNonExistence(timeout: launchTimeout))
+        // Back on the Library the import + returns.
+        element(in: app, identifier: "sidebar.library").click()
+        XCTAssertTrue(element(in: app, identifier: "toolbar.import").waitForExistence(timeout: launchTimeout))
+    }
+
     func testPlacesMapHasSyntheticMarkers() {
         let app = launch(language: "en")
         let map = openMapAtPhotos(app)

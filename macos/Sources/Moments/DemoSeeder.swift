@@ -144,6 +144,21 @@ public enum DemoSeeder {
         try seedIfNeeded(context: context, data: Data(contentsOf: url))
     }
 
+    #if DEBUG
+    /// UI tests: flags the demo photos that have no date or place, the way an
+    /// import would, so the Library's "to confirm" banner has something to show.
+    public static func flagUndatedDemoItemsForReview(context: ModelContext) throws {
+        for item in try context.fetch(FetchDescriptor<MediaItem>()) where item.source == .demo {
+            var reasons: [ImportReviewReason] = []
+            if item.captureDate == nil { reasons.append(.needsDate) }
+            if item.latitude == nil { reasons.append(.missingLocation) }
+            guard !reasons.isEmpty else { continue }
+            item.importReviewReasonsRaw = reasons.map(\.rawValue).joined(separator: ",")
+        }
+        try context.save()
+    }
+    #endif
+
     private static func safeID(_ value: String) -> String {
         value.lowercased().replacingOccurrences(of: " ", with: "-")
     }

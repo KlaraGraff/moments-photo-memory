@@ -36,7 +36,7 @@ final class MomentsFlashUITests: XCTestCase {
             let item = app.descendants(matching: .any).matching(identifier: "sidebar.\(name)").firstMatch
             XCTAssertTrue(item.waitForExistence(timeout: launchTimeout))
             item.click()
-            clicks.append((name, !["places", "footprints"].contains(name)))
+            clicks.append((name, name != "map"))
             Thread.sleep(forTimeInterval: 2)
         }
         func blank(_ name: String) {
@@ -45,7 +45,7 @@ final class MomentsFlashUITests: XCTestCase {
             clicks.append((name, true))
             Thread.sleep(forTimeInterval: 2)
         }
-        for name in ["review", "places", "footprints", "timeline", "library", "review", "library", "library"] {
+        for name in ["people", "map", "timeline", "library", "people", "library", "library"] {
             sidebar(name)
         }
         blank("blank")

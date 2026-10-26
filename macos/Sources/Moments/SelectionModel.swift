@@ -3,8 +3,7 @@ import Observation
 /// Sidebar destinations other screens can ask the window to switch to.
 enum SidebarDestination: Hashable {
     case library
-    case places
-    case footprints
+    case map
     case timeline
 }
 
@@ -26,7 +25,7 @@ struct LibraryScope: Equatable {
 /// window and read with `@Environment(SelectionModel.self)`.
 ///
 /// - Library owns `visibleItemIDs` (the result of its filters) and writes it
-///   whenever filters change; Places and Timeline only read it.
+///   whenever filters change; the Map and Timeline only read it.
 /// - Any screen may change the selection; `focusedItemID` is the one item the
 ///   other screens should reveal (fly the map to it, scroll to it).
 @MainActor

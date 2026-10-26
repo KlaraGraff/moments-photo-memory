@@ -76,10 +76,8 @@ final class MomentsVisualTourUITests: XCTestCase {
         }
 
         for (index, step) in [
-            ("sidebar.review", "review"),
             ("sidebar.people", "people"),
-            ("sidebar.places", "places"),
-            ("sidebar.footprints", "footprints"),
+            ("sidebar.map", "map"),
             ("sidebar.timeline", "timeline"),
         ].enumerated() {
             let item = element(app, step.0)
@@ -94,10 +92,15 @@ final class MomentsVisualTourUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.0)
         let settings = app.windows.element(boundBy: 0)
         if settings.exists, app.windows.count > 1 {
-            let attachment = XCTAttachment(screenshot: settings.screenshot())
-            attachment.name = "tour-11-settings-evidence"
-            attachment.lifetime = .keepAlways
-            add(attachment)
+            for (index, tab) in ["General", "AI Model", "Sharing"].enumerated() {
+                let button = settings.toolbars.buttons[tab]
+                if button.exists { button.click() }
+                Thread.sleep(forTimeInterval: 0.6)
+                let attachment = XCTAttachment(screenshot: app.windows.element(boundBy: 0).screenshot())
+                attachment.name = "tour-11\(["a", "b", "c"][index])-settings-\(tab.lowercased().replacingOccurrences(of: " ", with: "-"))-evidence"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
             app.typeKey("w", modifierFlags: .command)
         }
 

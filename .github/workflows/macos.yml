@@ -4,9 +4,10 @@ on:
   pull_request:
 
 # A new push to a pull request cancels that pull request's older run, so
-# superseded runs never hold one of the few hosted Macs.
+# superseded runs never hold one of the few hosted Macs. Manual runs
+# (probes, benchmarks) are never cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:

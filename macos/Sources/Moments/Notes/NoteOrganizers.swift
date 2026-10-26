@@ -24,17 +24,19 @@ public enum CloudProvider: String, CaseIterable, Sendable {
 
     public var defaultModel: String {
         switch self {
-        case .claude: return ClaudeModel.opus.rawValue
+        // Haiku did as well as Opus on our note test set, at about 1/40 the cost.
+        case .claude: return ClaudeModel.haiku.rawValue
         case .openAICompatible: return ""
         }
     }
 }
 
-/// The Claude models offered in Settings › AI Model, best first.
+/// The Claude models offered in Settings › AI Model before the key's own
+/// list arrives, the default first.
 public enum ClaudeModel: String, CaseIterable, Sendable {
-    case opus = "claude-opus-5-5"
-    case sonnet = "claude-sonnet-5-5"
     case haiku = "claude-haiku-5-5"
+    case sonnet = "claude-sonnet-5-5"
+    case opus = "claude-opus-5-5"
 
     public var displayName: String {
         switch self {

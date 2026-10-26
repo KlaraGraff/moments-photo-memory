@@ -422,7 +422,7 @@ final class PhotoNoteTests: XCTestCase {
         let custom = ClaudeOrganizer.requestBody(model: "claude-haiku-4-5", context: context)
         XCTAssertNil(custom["fallbacks"])
         XCTAssertNil((custom["output_config"] as? [String: Any])?["effort"])
-        XCTAssertEqual(AISettings().model, ClaudeModel.opus.rawValue)
+        XCTAssertEqual(AISettings().model, ClaudeModel.haiku.rawValue)
     }
 
     func testClaudeReadsTextAfterThinkingBlocks() async throws {

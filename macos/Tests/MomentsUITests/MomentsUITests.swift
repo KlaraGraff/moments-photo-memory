@@ -232,12 +232,17 @@ final class MomentsUITests: XCTestCase {
         let gear = element(in: app, identifier: "sidebar.settings")
         XCTAssertTrue(gear.waitForExistence(timeout: launchTimeout))
         let windowsBefore = app.windows.count
+        capture(app, named: "settings-00-before-gear-evidence")
         gear.click()
         // A whole-tree label search timed out on the runner; a new window is
         // enough to prove the Settings window opened.
         let deadline = Date().addingTimeInterval(launchTimeout)
         while app.windows.count <= windowsBefore && Date() < deadline {
             Thread.sleep(forTimeInterval: 0.3)
+        }
+        if app.windows.count <= windowsBefore {
+            capture(app, named: "settings-00b-gear-no-window-evidence")
+            print("SIDEBAR-GEAR frame=\(gear.frame) hittable=\(gear.isHittable) window=\(app.windows.firstMatch.frame)")
         }
         XCTAssertGreaterThan(app.windows.count, windowsBefore, "The AI model settings window did not open")
         capture(app, named: "settings-01-from-sidebar-evidence")

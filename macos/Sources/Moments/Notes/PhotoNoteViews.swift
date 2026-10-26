@@ -51,7 +51,12 @@ struct PhotoNoteSection: View {
                 isFocused = false
             }
             .onChange(of: isFocused) { _, focused in
-                if !focused { save() }
+                if focused {
+                    state.focusedNoteItemID = item.id
+                } else {
+                    if state.focusedNoteItemID == item.id { state.focusedNoteItemID = nil }
+                    save()
+                }
             }
             // Clicking the sidebar can remove the cell in the same update
             // that ends editing; the words are still saved.

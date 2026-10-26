@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 import SwiftData
@@ -224,6 +225,9 @@ struct LibraryView: View {
             } else {
                 results
             }
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
         }
     }
 
@@ -559,6 +563,7 @@ struct LibraryView: View {
                 .scrollTargetLayout()
                 .padding(.horizontal, 34)
                 .padding(.vertical, 24)
+                .deselectsOnBackgroundClick(selection)
             }
             .scrollIndicators(.visible)
             // The scroll view opens at the section that was at the top when
@@ -568,6 +573,7 @@ struct LibraryView: View {
                 id: Binding(get: { state.topSectionScrollID }, set: { state.topSectionScrollID = $0 }),
                 anchor: .top
             )
+            .libraryGridInteraction(state: state, proxy: proxy)
             .onChange(of: selection.focusedItemID) { _, _ in
                 revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
             }
@@ -697,6 +703,7 @@ struct LibraryView: View {
         cachedVisibleCount = visible.count
         cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
         cachedSections = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
+        state.gridSections = cachedSections.map(\.itemIDs)
         hasGrouped = true
         let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
         selection.visibleItemIDs = publishedVisible
@@ -811,8 +818,12 @@ private struct LibrarySectionView: View {
     @Query private var placeNotes: [PlaceNote]
     @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
+    @AppStorage(LibraryThumbnailSize.storageKey) private var sizeLevel = LibraryThumbnailSize.defaultLevel
+
+    private var size: LibraryThumbnailSize { LibraryThumbnailSize(level: sizeLevel) }
+
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 175, maximum: 300), spacing: 24, alignment: .top)]
+        [GridItem(.adaptive(minimum: size.minimumWidth, maximum: size.maximumWidth), spacing: size.spacing, alignment: .top)]
     }
 
     var body: some View {
@@ -832,11 +843,12 @@ private struct LibrarySectionView: View {
 
             CollectionMemoryLines(memories: sectionMemories)
 
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 28) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: size.rowSpacing) {
                 ForEach(items, id: \.id) { item in
-                    LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes)
+                    LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact)
                 }
             }
+            .measuresLibraryGridColumns(state, minimum: size.minimumWidth, spacing: size.spacing)
         }
     }
 
@@ -873,25 +885,54 @@ private struct LibraryPhotoCell: View {
     let groupItems: [UserGroupItem]
     var group: UserGroup? = nil
     var placeNotes: [PlaceNote] = []
+    /// The smallest zoom levels: a dense grid of photos only; place, memory
+    /// and note are read and written in the large viewer.
+    var isCompact = false
+    @State private var isHovering = false
 
     private var showsMemoryEditor: Bool {
         state.memoryDrafts[item.id] != nil
             || item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
+    /// A photo with a memory shows just that memory; its note line appears
+    /// while the pointer is over the photo or the line is in use. It keeps
+    /// its space, so the grid never shifts.
+    private var showsNoteLine: Bool {
+        !showsMemoryEditor || isHovering || state.focusedNoteItemID == item.id
+            || !(state.noteDrafts[item.id] ?? "").isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             ZStack(alignment: .topLeading) {
                 Button {
-                    selection.select(item.id)
+                    click()
                 } label: {
-                    ThumbnailView(item: item, width: 560, height: 420)
-                        .aspectRatio(1.33, contentMode: .fit)
-                        .padding(5)
-                        // A print's white mat, lifted by a warm two-layer shadow.
-                        .background(Color.white)
-                        .shadow(color: Paper.shadow.opacity(0.08), radius: 1, y: 1)
-                        .shadow(color: Paper.shadow.opacity(0.10), radius: 8, y: 5)
+                    if isCompact {
+                        ThumbnailView(item: item, width: 280, height: 280)
+                            .aspectRatio(1, contentMode: .fit)
+                            .overlay {
+                                if selection.isSelected(item.id) {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .strokeBorder(LibraryPalette.accent, lineWidth: 3)
+                                }
+                            }
+                    } else {
+                        ThumbnailView(item: item, width: 560, height: 420)
+                            .aspectRatio(1.33, contentMode: .fit)
+                            .padding(5)
+                            // A print's white mat, lifted by a warm two-layer shadow.
+                            .background(Color.white)
+                            // Selected photos get an accent frame, like Photos.
+                            .overlay {
+                                if selection.isSelected(item.id) {
+                                    Rectangle().strokeBorder(LibraryPalette.accent, lineWidth: 3)
+                                }
+                            }
+                            .shadow(color: Paper.shadow.opacity(0.08), radius: 1, y: 1)
+                            .shadow(color: Paper.shadow.opacity(0.10), radius: 8, y: 5)
+                    }
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("library.photo.\(item.id)")
@@ -904,10 +945,10 @@ private struct LibraryPhotoCell: View {
 
                 HStack(spacing: 6) {
                     Button {
-                        selection.toggle(item.id)
+                        selection.click(item.id, command: true)
                     } label: {
                         Image(systemName: selection.isSelected(item.id) ? "checkmark.circle.fill" : "circle")
-                            .font(.title3)
+                            .font(isCompact ? .body : .title3)
                             .symbolRenderingMode(.palette)
                             .foregroundStyle(.white, Paper.shadow.opacity(0.45))
                             .shadow(color: Paper.shadow.opacity(0.35), radius: 2)
@@ -923,7 +964,7 @@ private struct LibraryPhotoCell: View {
                         try? modelContext.save()
                     } label: {
                         Image(systemName: item.isFavorite ? "star.fill" : "star")
-                            .font(.title3)
+                            .font(isCompact ? .body : .title3)
                             .foregroundStyle(item.isFavorite ? .yellow : .white)
                             .shadow(color: Paper.shadow.opacity(0.35), radius: 2)
                             // Confirmations get one small, friendly bounce.
@@ -932,23 +973,32 @@ private struct LibraryPhotoCell: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel(String(localized: "Favorite"))
                 }
-                .padding(11)
+                .padding(isCompact ? 6 : 11)
+                // In the dense grid the marks show on hover, or when they mean something.
+                .opacity(!isCompact || isHovering || selection.isSelected(item.id) || item.isFavorite ? 1 : 0)
             }
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                PhotoPlaceLine(item: item, placeNotes: placeNotes)
-                Spacer(minLength: 0)
-                PhotoNoteBadge(item: item)
+            if !isCompact {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    PhotoPlaceLine(item: item, placeNotes: placeNotes)
+                    Spacer(minLength: 0)
+                    PhotoNoteBadge(item: item)
+                }
+                // A written memory stays editable here; the ruled line below is
+                // where new words go, so an empty photo shows only that one line.
+                if showsMemoryEditor {
+                    MemoryEditor(item: item, state: state)
+                }
+                PhotoNoteSection(item: item, state: state)
+                    .opacity(showsNoteLine ? 1 : 0)
             }
-            // A written memory stays editable here; the ruled line below is
-            // where new words go, so an empty photo shows only that one line.
-            if showsMemoryEditor {
-                MemoryEditor(item: item, state: state)
-            }
-            PhotoNoteSection(item: item, state: state)
         }
+        .onHover { isHovering = $0 }
         .contextMenu {
-            Button(String(localized: "Select")) { selection.select(item.id) }
+            Button(String(localized: "Open")) { open() }
+            Button(selection.isSelected(item.id) ? String(localized: "Deselect") : String(localized: "Select")) {
+                selection.toggle(item.id)
+            }
             if let group {
                 Button(String(localized: "Remove from this group")) {
                     UserGroupRuleEngine.remove(item, from: group, memberships: groupItems, context: modelContext)
@@ -970,9 +1020,35 @@ private struct LibraryPhotoCell: View {
         }
         .onDrag { NSItemProvider(object: item.id as NSString) }
     }
+
+    /// One click selects, a second click on the only selected photo
+    /// deselects it, Command and Shift extend; a double click opens it.
+    private func click() {
+        let event = NSApp.currentEvent
+        // clickCount exists only on mouse events; a keyboard press of the
+        // button (Full Keyboard Access, VoiceOver) is a single click.
+        let isMouse = event?.type == .leftMouseUp || event?.type == .leftMouseDown
+        if isMouse, (event?.clickCount ?? 1) >= 2 {
+            open()
+            return
+        }
+        // A click on a photo ends note editing, so the keys that follow move
+        // through the grid instead of typing into the note.
+        if NSApp.keyWindow?.firstResponder is NSTextView {
+            NSApp.keyWindow?.makeFirstResponder(nil)
+        }
+        let flags = event?.modifierFlags ?? []
+        selection.click(item.id, command: flags.contains(.command), shift: flags.contains(.shift), order: state.orderedItemIDs)
+    }
+
+    private func open() {
+        selection.select(item.id)
+        selection.anchorItemID = item.id
+        selection.openViewer(item.id, in: state.orderedItemIDs)
+    }
 }
 
-private struct MemoryEditor: View {
+struct MemoryEditor: View {
     @Environment(\.modelContext) private var modelContext
 
     let item: MediaItem
@@ -1242,6 +1318,7 @@ struct ReviewListView: View {
 struct GroupDetailView: View {
     let groupID: String
     let state: LibraryViewState
+    @Environment(SelectionModel.self) private var selection
 
     @Environment(\.modelContext) private var modelContext
     @Query private var groups: [UserGroup]
@@ -1334,6 +1411,7 @@ struct GroupDetailView: View {
             .sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) > ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
         cachedVisibleItemIDs = sorted.map(\.id)
         cachedVisibleItemsByID = Dictionary(uniqueKeysWithValues: sorted.map { ($0.id, $0) })
+        state.gridSections = sections.map(\.itemIDs)
     }
 
     private var sections: [LibrarySection] {
@@ -1367,26 +1445,31 @@ struct GroupDetailView: View {
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 34) {
-                                ForEach(sections) { section in
-                                    LibrarySectionView(
-                                        section: section,
-                                        items: section.itemIDs.compactMap { cachedVisibleItemsByID[$0] },
-                                        state: state,
-                                        allGroups: groups,
-                                        groupItems: memberships,
-                                        group: group
-                                    )
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 34) {
+                                    ForEach(sections) { section in
+                                        LibrarySectionView(
+                                            section: section,
+                                            items: section.itemIDs.compactMap { cachedVisibleItemsByID[$0] },
+                                            state: state,
+                                            allGroups: groups,
+                                            groupItems: memberships,
+                                            group: group
+                                        )
+                                    }
                                 }
+                                .padding(.horizontal, PaperMetrics.screenInset)
+                                .padding(.vertical, 24)
+                                .deselectsOnBackgroundClick(selection)
                             }
-                            .padding(.horizontal, PaperMetrics.screenInset)
-                            .padding(.vertical, 24)
+                            .libraryGridInteraction(state: state, proxy: proxy)
                         }
                     }
                 }
                 .background(LibraryPalette.content)
                 .toolbar {
+                    ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
                     ToolbarItemGroup {
                         Button(String(localized: "Edit")) { showingEditor = true }
                         if group.kind == .smart {

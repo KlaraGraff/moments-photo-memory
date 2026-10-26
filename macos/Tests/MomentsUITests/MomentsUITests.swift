@@ -88,6 +88,78 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "library-03-note-saved")
     }
 
+    func testClickSelectsSecondClickDeselectsDoubleClickOpensTheViewer() {
+        let app = launch(language: "en")
+        let photos = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+        let first = photos.element(boundBy: 0)
+        let second = photos.element(boundBy: 1)
+        XCTAssertTrue(second.waitForExistence(timeout: launchTimeout))
+
+        // One click selects, a second (separate) click deselects.
+        first.click()
+        XCTAssertEqual(first.value as? String, "Selected")
+        pauseLongerThanADoubleClick()
+        first.click()
+        XCTAssertEqual(first.value as? String, "Not selected", "A second click did not deselect the photo")
+
+        // Command-click adds, Esc clears.
+        pauseLongerThanADoubleClick()
+        first.click()
+        XCUIElement.perform(withKeyModifiers: .command) { second.click() }
+        XCTAssertEqual(first.value as? String, "Selected")
+        XCTAssertEqual(second.value as? String, "Selected")
+        capture(app, named: "grid-01-two-selected-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertEqual(first.value as? String, "Not selected", "Esc did not clear the selection")
+        XCTAssertEqual(second.value as? String, "Not selected")
+
+        // Double click opens the large viewer; the right arrow pages, Esc closes.
+        pauseLongerThanADoubleClick()
+        first.doubleClick()
+        let viewer = element(in: app, identifier: "viewer")
+        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout), "Double click did not open the photo")
+        let counter = element(in: app, identifier: "viewer.counter")
+        XCTAssertTrue(counter.waitForExistence(timeout: launchTimeout))
+        let start = counter.value as? String
+        capture(app, named: "grid-02-viewer-evidence")
+        app.typeKey(.rightArrow, modifierFlags: [])
+        let paged = NSPredicate(format: "value != %@", start ?? "")
+        expectation(for: paged, evaluatedWith: counter)
+        waitForExpectations(timeout: launchTimeout)
+        capture(app, named: "grid-02b-viewer-paged-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        let gone = NSPredicate(format: "exists == false")
+        expectation(for: gone, evaluatedWith: viewer)
+        waitForExpectations(timeout: launchTimeout)
+
+        // Back in the grid, Space opens the selected photo again.
+        app.typeKey(" ", modifierFlags: [])
+        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout), "Space did not open the selected photo")
+        app.typeKey(" ", modifierFlags: [])
+        expectation(for: gone, evaluatedWith: viewer)
+        waitForExpectations(timeout: launchTimeout)
+
+        // ⌘− twice: the dense grid has photos only, no note lines.
+        let photoID = String(first.identifier.dropFirst("library.photo.".count))
+        let note = element(in: app, identifier: "library.note.\(photoID)")
+        XCTAssertTrue(note.exists)
+        app.typeKey("-", modifierFlags: .command)
+        app.typeKey("-", modifierFlags: .command)
+        let noteGone = NSPredicate(format: "exists == false")
+        expectation(for: noteGone, evaluatedWith: note)
+        waitForExpectations(timeout: launchTimeout)
+        capture(app, named: "grid-03-compact-evidence")
+        app.typeKey("=", modifierFlags: .command)
+        app.typeKey("=", modifierFlags: .command)
+        XCTAssertTrue(note.waitForExistence(timeout: launchTimeout), "⌘+ did not bring the print size back")
+    }
+
+    /// Two clicks closer together than the double-click interval are a double click.
+    private func pauseLongerThanADoubleClick() {
+        RunLoop.current.run(until: Date().addingTimeInterval(NSEvent.doubleClickInterval + 0.3))
+    }
+
     func testPlacesMapHasSyntheticMarkers() {
         let app = launch(language: "en")
         element(in: app, identifier: "sidebar.places").click()

@@ -60,11 +60,40 @@ final class SelectionModel {
     func openViewer(_ itemID: String, in itemIDs: [String]) {
         viewerRequest = ViewerRequest(itemIDs: itemIDs.isEmpty ? [itemID] : itemIDs, itemID: itemID)
     }
+    /// Where a Shift-click range starts: the last item clicked without Shift.
+    var anchorItemID: String?
 
     /// Set by `showInLibrary`; cleared from the Library's chip.
     var libraryScope: LibraryScope?
 
     init() {}
+
+    /// A click on a photo, the way Photos and Finder grids handle it:
+    /// a plain click selects just that photo and a second plain click
+    /// deselects it, Command adds or removes one photo, and Shift selects
+    /// everything between the anchor and this photo in `order`.
+    func click(_ id: String, command: Bool = false, shift: Bool = false, order: [String] = []) {
+        if shift {
+            if let anchor = anchorItemID ?? focusedItemID,
+               let from = order.firstIndex(of: anchor), let to = order.firstIndex(of: id) {
+                selectedItemIDs.formUnion(order[min(from, to)...max(from, to)])
+            } else {
+                // No visible anchor: Shift-click adds this photo and starts a new range.
+                selectedItemIDs.insert(id)
+                anchorItemID = id
+            }
+            focusedItemID = id
+            return
+        }
+        anchorItemID = id
+        if command {
+            toggle(id)
+        } else if selectedItemIDs == [id] {
+            clear()
+        } else {
+            select(id)
+        }
+    }
 
     /// Replaces the selection and reveals `focus` (or the first id).
     func select(_ ids: some Sequence<String>, focus: String? = nil) {
@@ -108,6 +137,7 @@ final class SelectionModel {
     func clear() {
         selectedItemIDs = []
         focusedItemID = nil
+        anchorItemID = nil
         shouldRevealSelectionInLibrary = false
     }
 

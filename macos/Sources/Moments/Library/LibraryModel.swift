@@ -473,10 +473,20 @@ final class LibraryViewState {
     /// Scroll ID of the section at the top of the Library, restored on return.
     var topSectionScrollID: String?
     var focusedMemoryItemID: String?
+    /// The photo whose note line is being typed in.
+    var focusedNoteItemID: String?
     /// The card a reveal request is waiting for; lazy grids build cards only
     /// near the viewport, so the final scroll happens when this card appears.
     var pendingRevealItemID: String?
     var appearedRevealItemID: String?
+    /// The grid's photos section by section, in on-screen order, for
+    /// Shift-click ranges, arrow keys and paging in the viewer.
+    var gridSections: [[String]] = [] {
+        didSet { orderedItemIDs = gridSections.flatMap { $0 } }
+    }
+    private(set) var orderedItemIDs: [String] = []
+    /// Columns in the grid at its current width, for the up and down arrows.
+    var gridColumns = 1
 
     func draft(for item: MediaItem) -> String {
         memoryDrafts[item.id] ?? item.latestMemory?.text ?? ""
@@ -497,4 +507,69 @@ extension MediaItem {
             lhs.updatedAt < rhs.updatedAt
         }
     }
+}
+
+/// Arrow-key movement through a grid made of sections, like Photos: left and
+/// right step through the photos in order, up and down keep the column and
+/// cross into the neighbouring section at its edge.
+enum LibraryGridNavigation {
+    enum Direction { case left, right, up, down }
+
+    static func move(from current: String?, _ direction: Direction, sections: [[String]], columns: Int) -> String? {
+        let sections = sections.filter { !$0.isEmpty }
+        guard let first = sections.first?.first else { return nil }
+        guard let current,
+              let s = sections.firstIndex(where: { $0.contains(current) }),
+              let i = sections[s].firstIndex(of: current) else { return first }
+        let columns = max(1, columns)
+        let section = sections[s]
+        switch direction {
+        case .left:
+            if i > 0 { return section[i - 1] }
+            return s > 0 ? sections[s - 1].last : current
+        case .right:
+            if i + 1 < section.count { return section[i + 1] }
+            return s + 1 < sections.count ? sections[s + 1].first : current
+        case .down:
+            if i + columns < section.count { return section[i + columns] }
+            // A short last row: go to its last photo before leaving the section.
+            if i / columns < (section.count - 1) / columns { return section[section.count - 1] }
+            guard s + 1 < sections.count else { return current }
+            let next = sections[s + 1]
+            return next[min(i % columns, next.count - 1)]
+        case .up:
+            if i >= columns { return section[i - columns] }
+            guard s > 0 else { return current }
+            let previous = sections[s - 1]
+            let lastRowStart = (previous.count - 1) / columns * columns
+            return previous[min(lastRowStart + i % columns, previous.count - 1)]
+        }
+    }
+
+    /// Columns an adaptive grid lays out in `width`.
+    static func columns(width: CGFloat, minimum: CGFloat, spacing: CGFloat) -> Int {
+        max(1, Int((width + spacing) / (minimum + spacing)))
+    }
+}
+
+/// The Library's zoom levels, smallest first. The two smallest are a dense
+/// grid of photos only, like Photos; the larger ones are prints with their
+/// place, memory and note line.
+struct LibraryThumbnailSize: Equatable {
+    static let storageKey = "moments.library.thumbnailSize"
+    static let minimumWidths: [CGFloat] = [92, 130, 175, 240]
+    static let defaultLevel = 2
+    static var maximumLevel: Int { minimumWidths.count - 1 }
+
+    let level: Int
+
+    init(level: Int) {
+        self.level = min(max(level, 0), Self.maximumLevel)
+    }
+
+    var minimumWidth: CGFloat { Self.minimumWidths[level] }
+    var maximumWidth: CGFloat { (minimumWidth * 1.7).rounded() }
+    var isCompact: Bool { level < 2 }
+    var spacing: CGFloat { isCompact ? 6 : 24 }
+    var rowSpacing: CGFloat { isCompact ? 6 : 28 }
 }

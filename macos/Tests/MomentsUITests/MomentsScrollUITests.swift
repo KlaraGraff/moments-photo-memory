@@ -1,8 +1,8 @@
 import XCTest
 
-/// Scrolling a large Library must stay smooth. The app measures its own frame
-/// callbacks while scrolling (ScrollProbe, -MomentsUITestScrollProbe) and
-/// writes a report on a key press; the CI workflow prints the reports.
+/// Scrolling a large Library must stay smooth. The app scrolls the Library
+/// down and back up itself and measures its own frame callbacks (ScrollProbe,
+/// -MomentsUITestScrollProbe); the CI workflow prints the reports.
 final class MomentsScrollUITests: XCTestCase {
     private let launchTimeout: TimeInterval = 30
 
@@ -29,22 +29,15 @@ final class MomentsScrollUITests: XCTestCase {
         XCTAssertTrue(anyPhoto.waitForExistence(timeout: launchTimeout))
         Thread.sleep(forTimeInterval: 2)
 
-        let scrollView = app.scrollViews.firstMatch
-        XCTAssertTrue(scrollView.waitForExistence(timeout: launchTimeout))
-        // First pass: thumbnails are made for the first time.
-        for _ in 0..<40 {
-            scrollView.scroll(byDeltaX: 0, deltaY: -600)
+        // The app scrolls itself ("s"): this test must not query it while
+        // it measures, since accessibility queries block its main thread.
+        app.typeKey("s", modifierFlags: [])
+        let deadline = Date().addingTimeInterval(45)
+        let secondReport = folderURL.appending(path: "scroll-report-2.txt")
+        while !FileManager.default.fileExists(atPath: secondReport.path), Date() < deadline {
+            Thread.sleep(forTimeInterval: 1)
         }
-        attachScreenshot(app, named: "scroll-first-pass-evidence")
-        app.typeKey("1", modifierFlags: [])
-        Thread.sleep(forTimeInterval: 1)
-        // Second pass back up: thumbnails come from the caches.
-        for _ in 0..<40 {
-            scrollView.scroll(byDeltaX: 0, deltaY: 600)
-        }
-        attachScreenshot(app, named: "scroll-second-pass-evidence")
-        app.typeKey("2", modifierFlags: [])
-        Thread.sleep(forTimeInterval: 1)
+        attachScreenshot(app, named: "scroll-after-evidence")
 
         var reports: [String] = []
         for index in 1...2 {

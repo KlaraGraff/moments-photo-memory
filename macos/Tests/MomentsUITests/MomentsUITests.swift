@@ -226,6 +226,24 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "map-03-panel-closed")
     }
 
+    /// The AI model settings are reachable from the sidebar, not only via ⌘,.
+    func testSidebarOpensAIModelSettings() {
+        let app = launch(language: "en")
+        let gear = element(in: app, identifier: "sidebar.settings")
+        XCTAssertTrue(gear.waitForExistence(timeout: launchTimeout))
+        let windowsBefore = app.windows.count
+        gear.click()
+        // A whole-tree label search timed out on the runner; a new window is
+        // enough to prove the Settings window opened.
+        let deadline = Date().addingTimeInterval(launchTimeout)
+        while app.windows.count <= windowsBefore && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+        XCTAssertGreaterThan(app.windows.count, windowsBefore, "The AI model settings window did not open")
+        capture(app, named: "settings-01-from-sidebar-evidence")
+        app.typeKey("w", modifierFlags: .command)
+    }
+
     func testFootprintsGlobeOpens() {
         let app = launch(language: "en")
         assertGlobeFullyVisible(app, screenshot: "map-04-globe-evidence")

@@ -58,6 +58,35 @@ private struct PeopleClusterSnapshot: Identifiable {
     let faces: [FaceObservation]
 }
 
+/// A face's state before ✓ or ✗, so the change can be taken back.
+private struct FaceUndoSnapshot {
+    let faceID: String
+    let personID: String?
+    let clusterID: String?
+    let confirmed: Bool
+    let assignmentSource: String
+    let rejectedPersonIDs: String
+    /// Set when removing the last face hid this person.
+    var hiddenPersonID: String?
+
+    init(_ face: FaceObservation) {
+        faceID = face.id
+        personID = face.personID
+        clusterID = face.clusterID
+        confirmed = face.confirmed
+        assignmentSource = face.assignmentSource
+        rejectedPersonIDs = face.rejectedPersonIDs
+    }
+}
+
+private struct PendingRename: Identifiable {
+    let personID: String
+    let name: String
+    let targetID: String
+    let targetName: String
+    var id: String { personID }
+}
+
 /// A cluster name that matches an existing person, waiting for the user to
 /// choose between merging and keeping the two apart.
 private struct PendingNameMerge: Identifiable {
@@ -432,7 +461,7 @@ enum PeopleStoreActions {
         Set(defaults.stringArray(forKey: keepSeparateKey) ?? [])
     }
 
-    private static func setKeepSeparate(_ personID: String, _ isSeparate: Bool, defaults: UserDefaults) {
+    static func setKeepSeparate(_ personID: String, _ isSeparate: Bool, defaults: UserDefaults = .standard) {
         var ids = keepSeparateIDs(defaults)
         let changed = isSeparate ? ids.insert(personID).inserted : ids.remove(personID) != nil
         guard changed else { return }
@@ -771,6 +800,12 @@ struct PeopleScreen: View {
     @State private var pendingNameMerge: PendingNameMerge?
     @State private var cachedFacesByPerson: [String: [FaceObservation]] = [:]
     @State private var cachedUnnamedClusters: [PeopleClusterSnapshot] = []
+    @State private var lastFaceChange: FaceUndoSnapshot?
+    @State private var renamingPersonID: String?
+    @State private var renameText = ""
+    @State private var pendingRename: PendingRename?
+    @Environment(SelectionModel.self) private var selection
+    @AppStorage("moments.library.person") private var libraryPersonFilterID = ""
 
     private var namedPeople: [Person] {
         people.filter { !$0.hidden && $0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
@@ -844,6 +879,13 @@ struct PeopleScreen: View {
         .navigationTitle(String(localized: "People"))
         .navigationSubtitle(namedPeople.isEmpty ? "" : String(format: String(localized: "%lld people"), namedPeople.count))
         .toolbar {
+            if lastFaceChange != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    // No ⌘Z: it would take text undo from the name fields.
+                    Button(String(localized: "Undo")) { undoFaceChange() }
+                        .accessibilityIdentifier("people.undo")
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     scanner.start()
@@ -874,6 +916,25 @@ struct PeopleScreen: View {
                 .keyboardShortcut(.defaultAction)
             Button(String(localized: "Keep separate")) { commitName(pending, merge: false) }
             Button(String(localized: "Cancel"), role: .cancel) { pendingNameMerge = nil }
+        }
+        .alert(
+            String(localized: "Rename"),
+            isPresented: Binding(get: { renamingPersonID != nil }, set: { if !$0 { renamingPersonID = nil } })
+        ) {
+            TextField(String(localized: "Name this person"), text: $renameText)
+            Button(String(localized: "Save")) { rename() }
+                .keyboardShortcut(.defaultAction)
+            Button(String(localized: "Cancel"), role: .cancel) { renamingPersonID = nil }
+        }
+        .alert(
+            String(format: String(localized: "Merge with existing %@?"), pendingRename?.targetName ?? ""),
+            isPresented: Binding(get: { pendingRename != nil }, set: { if !$0 { pendingRename = nil } }),
+            presenting: pendingRename
+        ) { pending in
+            Button(String(localized: "Merge")) { commitRename(pending, merge: true) }
+                .keyboardShortcut(.defaultAction)
+            Button(String(localized: "Keep separate")) { commitRename(pending, merge: false) }
+            Button(String(localized: "Cancel"), role: .cancel) { pendingRename = nil }
         }
     }
 
@@ -935,13 +996,28 @@ struct PeopleScreen: View {
         let photoCount = Set(faces.map(\.mediaID)).count
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                if let cover = PeopleFacePicker.cover(faces) { FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72) }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(person.name ?? String(localized: "Unnamed person")).font(.headline).foregroundStyle(Paper.ink)
-                    Text(String(format: String(localized: "People photo count"), photoCount)).font(.caption.monospacedDigit()).foregroundStyle(Paper.muted)
+                // The face and name open this person's photos in the Library.
+                Button { showPhotos(of: person) } label: {
+                    HStack {
+                        if let cover = PeopleFacePicker.cover(faces) { FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72) }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(person.name ?? String(localized: "Unnamed person")).font(.headline).foregroundStyle(Paper.ink)
+                            Text(String(format: String(localized: "People photo count"), photoCount)).font(.caption.monospacedDigit()).foregroundStyle(Paper.muted)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
                 }
-                Spacer()
+                .buttonStyle(.plain)
+                .help(String(localized: "Show this person's photos"))
+                .accessibilityIdentifier("people.person.\(person.id)")
                 Menu {
+                    Button(String(localized: "Show this person's photos")) { showPhotos(of: person) }
+                    Button(String(localized: "Rename…")) {
+                        renameText = person.name ?? ""
+                        renamingPersonID = person.id
+                    }
+                    Divider()
                     Button(String(localized: "Merge two people")) { mergeSource = person.id }
                     Button(String(localized: "Hide a person")) { PeopleStoreActions.hide(person: person); try? modelContext.save() }
                 } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton)
@@ -950,24 +1026,30 @@ struct PeopleScreen: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 6) {
                         ForEach(faces, id: \.id) { face in
-                            FaceCropView(data: face.cropData, cacheKey: face.id, size: 40)
+                            FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
                                 .overlay(alignment: .topTrailing) {
                                     VStack(spacing: 2) {
                                         if !face.confirmed || face.assignmentSource != "user" {
-                                            Button {
-                                                face.confirmed = true
-                                                face.assignmentSource = "user"
-                                                face.updatedAt = .now
-                                                try? modelContext.save()
-                                            } label: {
-                                                Image(systemName: "checkmark.circle.fill").font(.caption)
+                                            Button { confirm(face) } label: {
+                                                Image(systemName: "checkmark.circle.fill").font(.body)
+                                                    .frame(width: 22, height: 22)
+                                                    .contentShape(Rectangle())
                                             }
                                             .buttonStyle(.plain)
                                             .foregroundStyle(.white, .green)
+                                            .help(String(localized: "This is them"))
                                         }
-                                        Button { remove(face) } label: { Image(systemName: "minus.circle.fill").font(.caption) }.buttonStyle(.plain).foregroundStyle(.white, .red)
+                                        Button { remove(face) } label: {
+                                            Image(systemName: "minus.circle.fill").font(.body)
+                                                .frame(width: 22, height: 22)
+                                                .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .foregroundStyle(.white, .red)
+                                        .help(String(localized: "Not this person"))
                                     }
                                 }
+                                .frame(width: 56, height: 56)
                         }
                     }
                 }
@@ -1003,9 +1085,23 @@ struct PeopleScreen: View {
                                 ForEach(cluster.faces, id: \.id) { face in
                                     VStack(spacing: 4) {
                                         FaceCropView(data: face.cropData, cacheKey: face.id, size: 64)
-                                        HStack(spacing: 6) {
-                                            Button { face.confirmed = true; face.assignmentSource = "user"; face.updatedAt = .now; try? modelContext.save() } label: { Image(systemName: "checkmark") }.buttonStyle(.borderless).foregroundStyle(.green)
-                                            Button { remove(face) } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).foregroundStyle(.red)
+                                        HStack(spacing: 4) {
+                                            Button { confirm(face) } label: {
+                                                Image(systemName: "checkmark").font(.body.weight(.semibold))
+                                                    .frame(width: 28, height: 24)
+                                                    .contentShape(Rectangle())
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .foregroundStyle(.green)
+                                            .help(String(localized: "Same person"))
+                                            Button { remove(face) } label: {
+                                                Image(systemName: "xmark").font(.body.weight(.semibold))
+                                                    .frame(width: 28, height: 24)
+                                                    .contentShape(Rectangle())
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .foregroundStyle(.red)
+                                            .help(String(localized: "Not the same person"))
                                         }
                                     }
                                 }
@@ -1056,13 +1152,82 @@ struct PeopleScreen: View {
         try? modelContext.save()
     }
 
+    private func confirm(_ face: FaceObservation) {
+        lastFaceChange = FaceUndoSnapshot(face)
+        face.confirmed = true
+        face.assignmentSource = "user"
+        face.updatedAt = .now
+        try? modelContext.save()
+    }
+
     private func remove(_ face: FaceObservation) {
+        var snapshot = FaceUndoSnapshot(face)
         let personID = face.personID
         PeopleStoreActions.remove(face: face)
         if let personID,
            !observations.contains(where: { $0 !== face && $0.personID == personID }),
            let person = people.first(where: { $0.id == personID }) {
             PeopleStoreActions.hide(person: person)
+            snapshot.hiddenPersonID = person.id
+        }
+        lastFaceChange = snapshot
+        try? modelContext.save()
+    }
+
+    private func undoFaceChange() {
+        guard let snapshot = lastFaceChange else { return }
+        lastFaceChange = nil
+        guard let face = observations.first(where: { $0.id == snapshot.faceID }) else { return }
+        // A merge since then may have deleted that person; leave the face
+        // where it is rather than pointing it at nobody.
+        if let personID = snapshot.personID, !people.contains(where: { $0.id == personID }) { return }
+        face.personID = snapshot.personID
+        face.clusterID = snapshot.clusterID
+        face.confirmed = snapshot.confirmed
+        face.assignmentSource = snapshot.assignmentSource
+        face.rejectedPersonIDs = snapshot.rejectedPersonIDs
+        face.updatedAt = .now
+        if let hiddenID = snapshot.hiddenPersonID, let person = people.first(where: { $0.id == hiddenID }) {
+            person.hidden = false
+            person.updatedAt = .now
+        }
+        try? modelContext.save()
+    }
+
+    /// Opens the Library filtered to this person, like a person in Photos.
+    private func showPhotos(of person: Person) {
+        libraryPersonFilterID = person.id
+        selection.clear()
+        selection.requestedDestination = .library
+        selection.shouldRevealSelectionInLibrary = false
+    }
+
+    private func rename() {
+        guard let personID = renamingPersonID else { return }
+        renamingPersonID = nil
+        let value = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, let person = people.first(where: { $0.id == personID }) else { return }
+        // Same name as someone else: offer the merge, as naming a group does.
+        if let target = PeopleStoreActions.mergeCandidate(forName: value, people: people, excluding: personID) {
+            let pending = PendingRename(personID: personID, name: value, targetID: target.id, targetName: target.name ?? value)
+            // Present after the rename alert has gone, or AppKit drops it.
+            DispatchQueue.main.async { pendingRename = pending }
+            return
+        }
+        person.name = value
+        person.updatedAt = .now
+        try? modelContext.save()
+    }
+
+    private func commitRename(_ pending: PendingRename, merge: Bool) {
+        pendingRename = nil
+        if merge {
+            PeopleStoreActions.merge(sourceID: pending.personID, into: pending.targetID, people: people, observations: observations, context: modelContext)
+        } else if let person = people.first(where: { $0.id == pending.personID }) {
+            person.name = pending.name
+            person.updatedAt = .now
+            // Otherwise the same-name sweep would fold them together later.
+            PeopleStoreActions.setKeepSeparate(person.id, true)
         }
         try? modelContext.save()
     }

@@ -10,7 +10,9 @@ import SwiftUI
 /// screen showed; Esc, Space or a click outside the card closes it.
 struct PhotoViewer: View {
     @Environment(SelectionModel.self) private var selection
+    @Environment(PhotoStackModel.self) private var stacks
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.undoManager) private var undoManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let request: ViewerRequest
     let libraryState: LibraryViewState
@@ -38,6 +40,8 @@ struct PhotoViewer: View {
     @State private var lastSwipeStep: CGFloat = 0
     @State private var lastWheelPage = Date.distantPast
     @State private var isEditingInfo = false
+    /// The shots of the open photo's stack, oldest first.
+    @State private var stackMembers: [MediaItem] = []
     @FocusState private var isFocused: Bool
 
     /// A text field in the column has the keyboard: Esc and the arrows are its own.
@@ -54,9 +58,42 @@ struct PhotoViewer: View {
     /// taken when it was installed, whose `request` never changes; the model
     /// is shared, so reading through it is always current.
     private var live: ViewerRequest { selection.viewerRequest ?? request }
-    private var index: Int? { live.itemIDs.firstIndex(of: live.itemID) }
-    private var hasPrevious: Bool { (index ?? 0) > 0 }
-    private var hasNext: Bool { (index ?? live.itemIDs.count) < live.itemIDs.count - 1 }
+
+    /// The burst the open photo belongs to, if any.
+    private var stack: PhotoStack? { stacks.stack(containing: live.itemID) }
+
+    /// Where the open photo sits in the order. A stack is one place in the
+    /// order, whichever of its shots is open.
+    private var index: Int? {
+        if let index = live.itemIDs.firstIndex(of: live.itemID) { return index }
+        guard let stack else { return nil }
+        return live.itemIDs.firstIndex { stack.memberIDs.contains($0) }
+    }
+
+    /// The open shot's place in its stack.
+    private var stackPosition: Int? { stack?.memberIDs.firstIndex(of: live.itemID) }
+
+    private var hasPrevious: Bool { neighbourID(-1) != nil }
+    private var hasNext: Bool { neighbourID(1) != nil }
+
+    /// The photo an arrow or swipe leads to. Inside a stack that is its next
+    /// shot, as the strip shows them, then the next place in the order;
+    /// stepping into a stack starts at the end it is entered from.
+    private func neighbourID(_ offset: Int) -> String? {
+        if let stack, let position = stackPosition, stack.memberIDs.indices.contains(position + offset) {
+            return stack.memberIDs[position + offset]
+        }
+        guard let index else { return nil }
+        var target = index + offset
+        // An order that lists every shot (a trip page) skips past this stack's.
+        if let stack {
+            while live.itemIDs.indices.contains(target), stack.memberIDs.contains(live.itemIDs[target]) { target += offset }
+        }
+        guard live.itemIDs.indices.contains(target) else { return nil }
+        let id = live.itemIDs[target]
+        guard let next = stacks.stack(containing: id) else { return id }
+        return offset > 0 ? next.memberIDs.first ?? id : next.memberIDs.last ?? id
+    }
 
     var body: some View {
         ZStack {
@@ -107,6 +144,8 @@ struct PhotoViewer: View {
             return .handled
         }
         .task(id: request.itemID) { await load(request.itemID) }
+        // Taken apart, a shot taken out, or Undo: the strip follows.
+        .onChange(of: stack?.memberIDs ?? []) { _, _ in loadStackMembers() }
         .onDisappear {
             stopVideo()
             removeEventMonitor()
@@ -132,6 +171,9 @@ struct PhotoViewer: View {
                 .disabled(!hasPrevious)
             headerButton("chevron.right", label: String(localized: "Next photo"), identifier: "viewer.next") { page(1) }
                 .disabled(!hasNext)
+            if let stack {
+                stackActions(stack)
+            }
             if let item {
                 Button {
                     item.setFavorite(!item.isFavorite, context: modelContext)
@@ -168,6 +210,42 @@ struct PhotoViewer: View {
         .accessibilityIdentifier(identifier)
     }
 
+    /// For a burst: make the open shot the cover, take it out, or show all
+    /// shots one by one. Icons only, with their names on hover.
+    @ViewBuilder
+    private func stackActions(_ stack: PhotoStack) -> some View {
+        let isCover = stack.coverID == live.itemID
+        let coverLabel = isCover ? String(localized: "Cover photo") : String(localized: "Set as cover")
+        Divider().frame(height: 18)
+        headerButton(isCover ? "star.square.on.square.fill" : "star.square.on.square", label: coverLabel, identifier: "viewer.stack.setCover") {
+            stacks.setCover(live.itemID, of: stack, context: modelContext, undoManager: undoManager)
+        }
+        .disabled(isCover)
+        .help(coverLabel)
+        headerButton("rectangle.badge.minus", label: String(localized: "Remove from stack"), identifier: "viewer.stack.remove") {
+            let removed = live.itemID
+            stacks.remove(removed, from: stack, context: modelContext, undoManager: undoManager)
+            keepInOrder([removed], replacing: stack)
+        }
+        .help(String(localized: "Remove from stack"))
+        headerButton("rectangle.stack.badge.minus", label: String(localized: "Unstack"), identifier: "viewer.stack.unstack") {
+            stacks.unstack(stack, context: modelContext, undoManager: undoManager)
+            keepInOrder(stack.memberIDs, replacing: stack)
+        }
+        .help(String(localized: "Unstack"))
+        Divider().frame(height: 18)
+    }
+
+    /// After a stack changes, its shots get their own places in the order
+    /// the viewer pages through, where the stack was.
+    private func keepInOrder(_ ids: [String], replacing stack: PhotoStack) {
+        guard var order = selection.viewerRequest?.itemIDs,
+              let at = order.firstIndex(where: { stack.memberIDs.contains($0) }) else { return }
+        let added = ids.filter { !order.contains($0) }
+        order.insert(contentsOf: added, at: at + 1)
+        selection.viewerRequest?.itemIDs = order
+    }
+
     /// The photo, fitted with room around it; zoom makes it scroll.
     private var imageArea: some View {
         ZStack(alignment: .bottom) {
@@ -191,13 +269,25 @@ struct PhotoViewer: View {
                         }
                 }
             }
-            if player == nil, image != nil {
-                zoomBar.padding(.bottom, 16)
+            VStack(spacing: 10) {
+                StackChangeUndoBar()
+                if player == nil, image != nil {
+                    zoomBar
+                }
             }
+            .padding(.bottom, 16)
         }
         .background(Paper.well)
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let stack, stackMembers.count > 1 {
+                ViewerStackStrip(stack: stack, members: stackMembers, currentID: live.itemID) { id in
+                    showShot(id)
+                }
+                .background(Paper.well)
+            }
+        }
     }
 
     /// A small floating bar under the photo, like Claude's file preview.
@@ -380,7 +470,7 @@ struct PhotoViewer: View {
     @discardableResult
     private func page(_ direction: Int) -> Bool {
         finishPendingPage()
-        guard let index, live.itemIDs.indices.contains(index + direction) else {
+        guard neighbourID(direction) != nil else {
             settleBack()
             return false
         }
@@ -565,17 +655,28 @@ struct PhotoViewer: View {
         return date.formatted(date: .long, time: .shortened)
     }
 
-    /// Moves to the neighbouring photo; false at either end.
+    /// Moves to the neighbouring photo (see `neighbourID`); false at either end.
     private func step(_ offset: Int) -> Bool {
-        guard let index else { return false }
-        let target = index + offset
-        guard live.itemIDs.indices.contains(target) else { return false }
-        let id = live.itemIDs[target]
+        guard let id = neighbourID(offset) else { return false }
+        show(id)
+        return true
+    }
+
+    /// A shot picked in the strip: its picture at once from a cache when
+    /// there is one, so the old shot doesn't linger while it loads.
+    private func showShot(_ id: String) {
+        guard id != live.itemID else { return }
+        stopVideo()
+        image = PhotoViewerImageCache.shared.image(for: id) ?? ThumbnailCache.shared.cachedImage(for: id, width: 560, height: 420)
+        zoom = ViewerZoom()
+        show(id)
+    }
+
+    private func show(_ id: String) {
         selection.select(id)
         selection.anchorItemID = id
         selection.viewerRequest?.itemID = id
         isFocused = true
-        return true
     }
 
     private func close() {
@@ -592,6 +693,7 @@ struct PhotoViewer: View {
             return
         }
         item = found
+        loadStackMembers()
         zoom = ViewerZoom()
         // Neighbours start loading now, alongside this photo, so a quick second
         // swipe already has something to slide in.
@@ -613,13 +715,23 @@ struct PhotoViewer: View {
         await neighbours
     }
 
+    private func loadStackMembers() {
+        guard let stack else {
+            stackMembers = []
+            return
+        }
+        guard stackMembers.map(\.id) != stack.memberIDs else { return }
+        let ids = stack.memberIDs
+        let found = (try? modelContext.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { ids.contains($0.id) }))) ?? []
+        let byID = Dictionary(found.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        stackMembers = ids.compactMap { byID[$0] }
+    }
+
     /// The photos either side, so a swipe can slide them in at once: a
     /// thumbnail first when the full image isn't ready.
     private func loadNeighbours() async {
-        guard let index else { return }
-        let ids = live.itemIDs
-        let nextID = ids.indices.contains(index + 1) ? ids[index + 1] : nil
-        let previousID = ids.indices.contains(index - 1) ? ids[index - 1] : nil
+        let nextID = neighbourID(1)
+        let previousID = neighbourID(-1)
         async let next: Void = fillNeighbour(nextID, isNext: true)
         async let previous: Void = fillNeighbour(previousID, isNext: false)
         _ = await (next, previous)

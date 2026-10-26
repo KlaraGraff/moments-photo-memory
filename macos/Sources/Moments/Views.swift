@@ -30,7 +30,8 @@ struct ContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(ImportController.self) private var importController
     @Query private var items: [MediaItem]
-    @Query(sort: \UserGroup.name) private var groups: [UserGroup]
+    /// "My groups" only; stack records are not groups anyone made.
+    @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "stack" }, sort: \UserGroup.name) private var groups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
     @Query private var faceObservations: [FaceObservation]
     @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]

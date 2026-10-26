@@ -11,7 +11,9 @@ struct TimelineScreen: View {
     @Query private var trips: [Trip]
     @Query private var places: [Place]
     @Query(sort: \CollectionMemory.createdAt) private var memories: [CollectionMemory]
+    @Query(filter: #Predicate<UserGroup> { $0.kindRaw == "stack" }) private var stackRecords: [UserGroup]
     @Environment(SelectionModel.self) private var selection
+    @Environment(PhotoStackModel.self) private var stacks
     /// Rebuilt only when the inputs change, not on every selection change or render.
     @State private var months: [TimelineMonth] = []
     @State private var itemByID: [String: MediaItem] = [:]
@@ -44,6 +46,11 @@ struct TimelineScreen: View {
         for place in places {
             hasher.combine(place.id)
             hasher.combine(PlaceDisplayName.resolvedName(of: place))
+        }
+        hasher.combine(stacks.analysisRevision)
+        for record in stackRecords {
+            hasher.combine(record.id)
+            hasher.combine(record.rulesData)
         }
         return hasher.finalize()
     }
@@ -131,7 +138,9 @@ struct TimelineScreen: View {
         let undated = days.filter { $0.date == nil }
         months = TimelineMonth.group(dated, calendar: .autoupdatingCurrent)
             + (undated.isEmpty ? [] : [TimelineMonth(id: "undated", date: nil, days: undated)])
-        viewerOrder = months.flatMap { $0.days.flatMap { $0.places.flatMap(\.itemIDs) } }
+        // A burst is one stop in the viewer, as in the grid (see TripPlaceBlock).
+        stacks.update(items: items, decisions: stackRecords)
+        viewerOrder = stacks.collapse(months.flatMap { $0.days.flatMap { $0.places.flatMap(\.itemIDs) } }).map(\.id)
         itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var links: [String: TripLink] = [:]
         for trip in trips {

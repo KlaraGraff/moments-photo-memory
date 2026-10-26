@@ -2437,7 +2437,10 @@ public enum SchemaV4: VersionedSchema {
 @Model
 public final class UserGroup {
     public enum Kind: String, Codable, CaseIterable, Hashable, Sendable {
-        case manual, smart
+        /// `stack`: what someone changed about a burst of similar photos (its
+        /// cover, unstacked, photos taken out), as a `StackDecision` in
+        /// `rulesData`. Not a "My groups" entry; see `PhotoStackModel`.
+        case manual, smart, stack
     }
 
     public var id: String

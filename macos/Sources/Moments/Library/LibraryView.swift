@@ -522,13 +522,20 @@ struct LibraryView: View {
                             groupItems: groupItems
                         )
                         .id(LibraryScrollTarget.section(section.id))
-                        .onAppear { state.lastVisibleSectionID = section.id }
                     }
                 }
+                .scrollTargetLayout()
                 .padding(.horizontal, 34)
                 .padding(.vertical, 24)
             }
             .scrollIndicators(.visible)
+            // The scroll view opens at the section that was at the top when
+            // the user left, in its first layout. Scrolling there after
+            // onAppear showed the top first and then jumped.
+            .scrollPosition(
+                id: Binding(get: { state.topSectionScrollID }, set: { state.topSectionScrollID = $0 }),
+                anchor: .top
+            )
             .onChange(of: selection.focusedItemID) { _, _ in
                 revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
             }
@@ -552,11 +559,6 @@ struct LibraryView: View {
             .onAppear {
                 if selection.shouldRevealSelectionInLibrary {
                     revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
-                } else if let anchor = state.lastVisibleSectionID,
-                          cachedSections.contains(where: { $0.id == anchor }) {
-                    DispatchQueue.main.async {
-                        proxy.scrollTo(LibraryScrollTarget.section(anchor), anchor: .center)
-                    }
                 }
             }
         }
@@ -679,7 +681,10 @@ struct LibraryView: View {
         state.pendingRevealItemID = focus
         state.appearedRevealItemID = nil
         // Bring the section start into view so the lazy grid builds its cards;
-        // the card's onAppear then triggers the final centring scroll.
+        // the card's onAppear then triggers the final centring scroll. The
+        // scroll-position binding gets the same section so its restore of
+        // the previous position cannot win over the reveal.
+        state.topSectionScrollID = LibraryScrollTarget.section(target.id)
         proxy.scrollTo(LibraryScrollTarget.section(target.id), anchor: .top)
         let selectionModel = selection
         let viewState = state

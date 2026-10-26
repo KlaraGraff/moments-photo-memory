@@ -13,6 +13,14 @@ struct ViewerRequest: Equatable {
     var itemID: String
 }
 
+/// Photos another screen asked the Library to show on their own, such as one
+/// city from Footprints. It narrows only the Library grid (shown there as a
+/// removable chip); the maps keep following the regular Library filters.
+struct LibraryScope: Equatable {
+    var title: String
+    var itemIDs: Set<String>
+}
+
 /// Shared cross-screen state, injected once with `.environment(_:)` on the
 /// window and read with `@Environment(SelectionModel.self)`.
 ///
@@ -36,6 +44,9 @@ final class SelectionModel {
         didSet {
             if requestedDestination == .library {
                 shouldRevealSelectionInLibrary = true
+                // A reveal jump must not land in an older scope that hides
+                // the photo; showInLibrary sets its own scope afterwards.
+                libraryScope = nil
             }
         }
     }
@@ -50,6 +61,9 @@ final class SelectionModel {
     }
     /// Where a Shift-click range starts: the last item clicked without Shift.
     var anchorItemID: String?
+
+    /// Set by `showInLibrary`; cleared from the Library's chip.
+    var libraryScope: LibraryScope?
 
     init() {}
 
@@ -101,6 +115,18 @@ final class SelectionModel {
             selectedItemIDs.insert(id)
             focusedItemID = id
         }
+    }
+
+    /// Switches to the Library showing only `ids`, scrolled to the top.
+    func showInLibrary(_ ids: some Sequence<String>, title: String) {
+        let set = Set(ids)
+        guard !set.isEmpty else { return }
+        selectedItemIDs = []
+        focusedItemID = nil
+        requestedDestination = .library
+        libraryScope = LibraryScope(title: title, itemIDs: set)
+        // Nothing to reveal: the scoped grid opens at its top.
+        shouldRevealSelectionInLibrary = false
     }
 
     func isSelected(_ id: String) -> Bool {

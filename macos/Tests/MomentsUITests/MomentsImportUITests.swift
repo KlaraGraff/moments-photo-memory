@@ -94,6 +94,37 @@ final class MomentsImportUITests: XCTestCase {
         } else {
             recordSkipped("The quick-memory field was unavailable, so persistence of that optional edit was not asserted.")
         }
+
+        exerciseToReviewList(in: app)
+    }
+
+    /// The Library's "to confirm" banner opens the review list, which
+    /// confirms a flagged photo and can take it back.
+    private func exerciseToReviewList(in app: XCUIApplication) {
+        element(in: app, identifier: "sidebar.library").click()
+        let banner = element(in: app, identifier: "library.review-banner")
+        guard banner.waitForExistence(timeout: 5) else {
+            recordSkipped("No photo was left to review after the import, so the To review actions were not exercised.")
+            return
+        }
+        banner.click()
+        let confirm = app.buttons
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "review.confirm."))
+            .firstMatch
+        guard confirm.waitForExistence(timeout: 5) else {
+            recordSkipped("No photo was left to review after the import, so the To review actions were not exercised.")
+            return
+        }
+        capture(app, named: "import-19-to-review-evidence")
+        let confirmedID = String(confirm.identifier.dropFirst("review.confirm.".count))
+        confirm.click()
+        XCTAssertTrue(element(in: app, identifier: "review.confirm.\(confirmedID)").waitForNonExistence(timeout: 5), "A confirmed photo should leave the list")
+        let undo = element(in: app, identifier: "review.undo")
+        XCTAssertTrue(undo.waitForExistence(timeout: timeout), "Confirming should offer Undo")
+        capture(app, named: "import-20-to-review-confirmed-evidence")
+        undo.click()
+        XCTAssertTrue(element(in: app, identifier: "review.confirm.\(confirmedID)").waitForExistence(timeout: timeout), "Undo should bring the photo back")
+        element(in: app, identifier: "review.done").click()
     }
 
     private func launch(storeDirectory: URL) -> XCUIApplication {

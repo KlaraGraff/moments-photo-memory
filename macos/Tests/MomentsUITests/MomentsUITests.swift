@@ -127,6 +127,7 @@ final class MomentsUITests: XCTestCase {
         let paged = NSPredicate(format: "value != %@", start ?? "")
         expectation(for: paged, evaluatedWith: counter)
         waitForExpectations(timeout: launchTimeout)
+        capture(app, named: "grid-02b-viewer-paged-evidence")
         app.typeKey(.escape, modifierFlags: [])
         let gone = NSPredicate(format: "exists == false")
         expectation(for: gone, evaluatedWith: viewer)
@@ -138,6 +139,20 @@ final class MomentsUITests: XCTestCase {
         app.typeKey(" ", modifierFlags: [])
         expectation(for: gone, evaluatedWith: viewer)
         waitForExpectations(timeout: launchTimeout)
+
+        // ⌘− twice: the dense grid has photos only, no note lines.
+        let photoID = String(first.identifier.dropFirst("library.photo.".count))
+        let note = element(in: app, identifier: "library.note.\(photoID)")
+        XCTAssertTrue(note.exists)
+        app.typeKey("-", modifierFlags: .command)
+        app.typeKey("-", modifierFlags: .command)
+        let noteGone = NSPredicate(format: "exists == false")
+        expectation(for: noteGone, evaluatedWith: note)
+        waitForExpectations(timeout: launchTimeout)
+        capture(app, named: "grid-03-compact-evidence")
+        app.typeKey("=", modifierFlags: .command)
+        app.typeKey("=", modifierFlags: .command)
+        XCTAssertTrue(note.waitForExistence(timeout: launchTimeout), "⌘+ did not bring the print size back")
     }
 
     /// Two clicks closer together than the double-click interval are a double click.
@@ -325,27 +340,90 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: launchTimeout))
     }
 
-    func testTimelinePlaceSelectsLibraryItem() {
+    func testTimelinePlaceShowsItsPhotosInLibrary() {
         let app = launch(language: "en")
+        timelineJumpShowsPlaceInLibrary(app)
+    }
+
+    /// The Library restores where the user left it; a Timeline jump must still win.
+    func testTimelinePlaceShowsItsPhotosInLibraryAfterScrolling() {
+        let app = launch(language: "en")
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+            .firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
+        photo.scroll(byDeltaX: 0, deltaY: -1500)
+        Thread.sleep(forTimeInterval: 1)
+        timelineJumpShowsPlaceInLibrary(app)
+    }
+
+    private func timelineJumpShowsPlaceInLibrary(_ app: XCUIApplication) {
+        let allCount = libraryPhotoCount(app)
         element(in: app, identifier: "sidebar.timeline").click()
 
         let place = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.place.")).firstMatch
         XCTAssertTrue(place.waitForExistence(timeout: launchTimeout), "Timeline place row was not exposed")
         place.click()
 
-        let selectedPhoto = element(in: app, identifier: "library.photo.D0001")
-        XCTAssertTrue(selectedPhoto.waitForExistence(timeout: launchTimeout))
-        XCTAssertEqual(selectedPhoto.value as? String, "Selected")
-        XCTAssertTrue(selectedPhoto.isHittable, "Timeline jump should scroll the selected Library card into view")
+        let chip = element(in: app, identifier: "library.scope-chip")
+        XCTAssertTrue(chip.waitForExistence(timeout: launchTimeout), "Library should show the place as a removable chip")
+        let scopedCount = libraryPhotoCount(app)
+        XCTAssertGreaterThan(scopedCount, 0)
+        XCTAssertLessThan(scopedCount, allCount, "Only the place's photos should be listed")
+
+        let photo = element(in: app, identifier: "library.photo.D0001")
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(photo.isHittable, "The place's photos should be in view")
         // A sliver at the edge counts as hittable; the whole card must be visible
-        // below the filter bar and inside the window.
+        // below the filter chips and inside the window.
         let window = app.windows.firstMatch.frame
-        let filterBar = element(in: app, identifier: "library.add-filter")
-        let visibleTop = filterBar.exists ? filterBar.frame.maxY : window.minY
-        let card = selectedPhoto.frame
-        XCTAssertGreaterThanOrEqual(card.minY, visibleTop - 1, "The selected card is cut off at the top (card \(card), visible top \(visibleTop))")
-        XCTAssertLessThanOrEqual(card.maxY, window.maxY + 1, "The selected card is cut off at the bottom (card \(card), window \(window))")
-        capture(app, named: "timeline-01-place-selected-in-library")
+        let card = photo.frame
+        XCTAssertGreaterThanOrEqual(card.minY, chip.frame.maxY - 1, "The card is cut off at the top (card \(card), chip \(chip.frame))")
+        XCTAssertLessThanOrEqual(card.maxY, window.maxY + 1, "The card is cut off at the bottom (card \(card), window \(window))")
+        capture(app, named: "timeline-01-place-in-library-evidence")
+
+        chip.click()
+        XCTAssertTrue(chip.waitForNonExistence(timeout: 5), "Clicking the chip should remove the scope")
+        XCTAssertEqual(libraryPhotoCount(app), allCount)
+    }
+
+    /// A country on the Map's globe lists its photos in the Library.
+    func testMapCountryShowsItsPhotosInLibrary() {
+        let app = launch(language: "en")
+        let allCount = libraryPhotoCount(app)
+        element(in: app, identifier: "sidebar.map").click()
+        let stats = element(in: app, identifier: "map.stats")
+        XCTAssertTrue(stats.waitForExistence(timeout: 30), "The globe has no countries card")
+        stats.click()
+        let button = app.buttons
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "map.country.photos."))
+            .firstMatch
+        XCTAssertTrue(button.waitForExistence(timeout: launchTimeout), "Country row has no photos button")
+        button.click()
+        XCTAssertTrue(element(in: app, identifier: "library.scope-chip").waitForExistence(timeout: launchTimeout))
+        let scopedCount = libraryPhotoCount(app)
+        XCTAssertGreaterThan(scopedCount, 0)
+        XCTAssertLessThanOrEqual(scopedCount, allCount)
+        capture(app, named: "map-06-country-in-library-evidence")
+    }
+
+    /// "Save as smart group" is offered only once a filter is set.
+    func testSmartGroupButtonOnlyWithFilter() {
+        let app = launch(language: "en")
+        XCTAssertTrue(element(in: app, identifier: "library.type-filter").waitForExistence(timeout: launchTimeout))
+        XCTAssertFalse(element(in: app, identifier: "library.save-smart-group").exists)
+        XCTAssertFalse(element(in: app, identifier: "library.add-filter").exists, "The dead Add filter stub is gone")
+        app.radioButtons["Photos"].firstMatch.click()
+        XCTAssertTrue(element(in: app, identifier: "library.save-smart-group").waitForExistence(timeout: launchTimeout))
+        app.radioButtons["All"].firstMatch.click()
+    }
+
+    private func libraryPhotoCount(_ app: XCUIApplication) -> Int {
+        let count = element(in: app, identifier: "library.photoCount")
+        XCTAssertTrue(count.waitForExistence(timeout: launchTimeout))
+        // Let a regroup after a scope change publish its count.
+        Thread.sleep(forTimeInterval: 0.5)
+        return Int(count.value as? String ?? "") ?? -1
     }
 
     private func navigateAndCapture(_ app: XCUIApplication, prefix: String, settleMap: Bool) {

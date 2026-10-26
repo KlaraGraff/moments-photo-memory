@@ -369,31 +369,48 @@ struct MapScreen: View {
                         .padding(.bottom, 6)
                 }
                 ForEach(world.countrySummaries) { country in
-                    Button {
-                        showingCountries = false
-                        guard let center = country.firstCenter else { return }
-                        flyTo(center, latitudeDelta: 8)
-                    } label: {
-                        HStack(spacing: 10) {
-                            Text(country.flag)
-                                .font(.title3)
-                                .frame(width: 28)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(country.name)
-                                    .foregroundStyle(Paper.ink)
-                                Text("\(country.photoCount) \(String(localized: "photos"))")
-                                    .font(.caption)
-                                    .foregroundStyle(Paper.muted)
+                    HStack(spacing: 0) {
+                        Button {
+                            showingCountries = false
+                            guard let center = country.firstCenter else { return }
+                            flyTo(center, latitudeDelta: 8)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Text(country.flag)
+                                    .font(.title3)
+                                    .frame(width: 28)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(country.name)
+                                        .foregroundStyle(Paper.ink)
+                                    Text("\(country.photoCount) \(String(localized: "photos"))")
+                                        .font(.caption)
+                                        .foregroundStyle(Paper.muted)
+                                }
+                                Spacer(minLength: 8)
                             }
-                            Spacer(minLength: 8)
+                            .padding(.leading, 16)
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 7)
-                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .help("Show on the map")
+                        .accessibilityIdentifier("map.country.\(country.id)")
+                        Button {
+                            showingCountries = false
+                            selection.showInLibrary(itemIDs(of: country), title: country.name)
+                        } label: {
+                            Image(systemName: "photo.on.rectangle")
+                                .font(.callout)
+                                .foregroundStyle(Paper.muted)
+                                .frame(width: 32, height: 32)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        .padding(.trailing, 8)
+                        .help(String(format: String(localized: "Show photos from %@"), country.name))
+                        .accessibilityLabel(String(format: String(localized: "Show photos from %@"), country.name))
+                        .accessibilityIdentifier("map.country.photos.\(country.id)")
                     }
-                    .buttonStyle(.plain)
-                    .help("Show on the map")
-                    .accessibilityIdentifier("map.country.\(country.id)")
                 }
             }
             .padding(.bottom, 10)
@@ -426,6 +443,14 @@ struct MapScreen: View {
                     .foregroundStyle(Paper.muted)
                     .fixedSize()
                     Spacer(minLength: 8)
+                    Button {
+                        selection.showInLibrary(selectedItems.map(\.id), title: clusterDisplayName(selectedCluster))
+                    } label: {
+                        Label("Show in Library", systemImage: "photo.on.rectangle")
+                            .font(.callout)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("map.panel.show-in-library")
                     Button {
                         closePanel()
                     } label: {
@@ -636,6 +661,13 @@ struct MapScreen: View {
         world.geocoding = batch.results
         world.isGeocoding = false
         world.didEncounterGeocodingError = batch.didEncounterError
+    }
+
+    private func itemIDs(of country: FootprintsCountrySummary) -> [String] {
+        let clusterIDs = Set(country.clusterIDs)
+        return world.snapshot.cityClusters
+            .filter { clusterIDs.contains($0.id) }
+            .flatMap(\.stopIDs)
     }
 
     private func midpoint(_ from: GeoPoint, _ to: GeoPoint) -> CLLocationCoordinate2D {

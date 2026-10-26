@@ -179,8 +179,50 @@ private struct FrontLayer<ID: Hashable, Content: View>: NSViewRepresentable {
     }
 }
 
-/// Takes the click that also makes the window key: right after a sheet
-/// closes, the first click on Undo should undo, not only focus the window.
+/// Takes the clicks inside it itself. AppKit asks the views behind first
+/// once the Library has redrawn after a change (its scroll view then sits
+/// above this view for clicks), so the bar was drawn and in reach but a
+/// click went to the photos under it. Also takes the click that makes the
+/// window key, so the first click after a sheet closes undoes.
 private final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+    private var monitor: Any?
+    private var isTrackingClick = false
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        // Off the window (the bar has gone): no monitor left behind.
+        guard window != nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            // Local monitors run on the main thread.
+            MainActor.assumeIsolated { self?.take(event) ?? false } ? nil : event
+        }
+    }
+
+    /// True when the event was handled here.
+    private func take(_ event: NSEvent) -> Bool {
+        switch event.type {
+        case .leftMouseDown:
+            guard let window, event.window === window, window.attachedSheet == nil,
+                  !isHiddenOrHasHiddenAncestor, alphaValue > 0 else { return false }
+            // The capsule, not the clear room around it for its shadow.
+            let capsule = convert(bounds.insetBy(dx: 12, dy: 12), to: nil)
+            guard capsule.contains(event.locationInWindow) else { return false }
+            isTrackingClick = true
+            mouseDown(with: event)
+            return true
+        case .leftMouseDragged where isTrackingClick:
+            mouseDragged(with: event)
+            return true
+        case .leftMouseUp where isTrackingClick:
+            isTrackingClick = false
+            mouseUp(with: event)
+            return true
+        default:
+            return false
+        }
+    }
 }

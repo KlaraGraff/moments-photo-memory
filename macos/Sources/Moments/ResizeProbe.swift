@@ -15,6 +15,8 @@ import SwiftUI
 @MainActor
 enum ResizeProbe {
     private enum Phase: String, CaseIterable {
+        /// Nothing changes: the frame rate this Mac manages anyway.
+        case idle = "idle"
         case hideSidebar = "hide sidebar"
         case showSidebar = "show sidebar"
         case dragWider = "drag divider wider"
@@ -32,6 +34,12 @@ enum ResizeProbe {
     private static var grid: [(columns: Int, width: CGFloat)] = []
     private static var dragFrom: CGFloat = 0
     private static var report = ""
+    /// Main-thread time spent handling events, layout and drawing in this
+    /// phase. Busy close to elapsed: the app's own work is the bottleneck;
+    /// far below: the frames wait on rendering outside the main thread.
+    private static var busy: TimeInterval = 0
+    private static var wokeAt: TimeInterval = 0
+    private static var observer: CFRunLoopObserver?
 
     static func startIfRequested() {
         let arguments = ProcessInfo.processInfo.arguments
@@ -63,6 +71,19 @@ enum ResizeProbe {
         link.add(to: .main, forMode: .common)
         self.target = target
         displayLink = link
+        let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { _, activity in
+            let now = CACurrentMediaTime()
+            MainActor.assumeIsolated {
+                if activity == .afterWaiting {
+                    ResizeProbe.wokeAt = now
+                } else if ResizeProbe.wokeAt > 0 {
+                    ResizeProbe.busy += now - ResizeProbe.wokeAt
+                    ResizeProbe.wokeAt = 0
+                }
+            }
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+        self.observer = observer
         begin()
     }
 
@@ -80,8 +101,11 @@ enum ResizeProbe {
         intervals = []
         grid = []
         lastFrame = 0
+        busy = 0
         phaseStart = CACurrentMediaTime()
         switch phase {
+        case .idle:
+            break
         case .hideSidebar, .showSidebar:
             // What the toolbar's sidebar button sends.
             NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
@@ -97,6 +121,8 @@ enum ResizeProbe {
         guard let phase = phases.first else { return }
         let elapsed = now - phaseStart
         switch phase {
+        case .idle:
+            guard elapsed > 0.8 else { return }
         case .hideSidebar, .showSidebar:
             // The system animation takes about a quarter of a second.
             guard elapsed > 0.8 else { return }
@@ -121,6 +147,8 @@ enum ResizeProbe {
         displayLink = nil
         target = nil
         window = nil
+        if let observer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
+        observer = nil
         guard let folder else { return }
         try? FileManager.default.removeItem(at: folder.appending(path: "resizing"))
         try? report.write(to: folder.appending(path: "resize-report.txt"), atomically: true, encoding: .utf8)
@@ -131,8 +159,10 @@ enum ResizeProbe {
         let sorted = intervals.sorted()
         let late = intervals.filter { $0 > frame * 1.5 }
         let worst = (sorted.last ?? 0) * 1000
-        report += String(format: "%@: %d frames, late %d, worst %.1f ms, stalls>50ms %d\n",
-                         phase.rawValue, intervals.count, late.count, worst, intervals.filter { $0 > 0.05 }.count)
+        let elapsed = CACurrentMediaTime() - phaseStart
+        report += String(format: "%@: %d frames, late %d, worst %.1f ms, stalls>50ms %d, main thread busy %.0f of %.0f ms\n",
+                         phase.rawValue, intervals.count, late.count, worst, intervals.filter { $0 > 0.05 }.count,
+                         busy * 1000, elapsed * 1000)
         // Frame by frame, so a long one can be lined up with the grid change.
         report += "  frames ms: " + intervals.map { String(format: "%.0f", $0 * 1000) }.joined(separator: " ") + "\n"
         let columns = grid.map(\.columns)

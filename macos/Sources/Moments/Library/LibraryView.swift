@@ -225,6 +225,11 @@ struct LibraryView: View {
                     libraryGroupingPicker
                 }
             }
+            VStack(alignment: .leading, spacing: 10) {
+                libraryHeaderTitle
+                libraryTypePicker
+                libraryGroupingPicker
+            }
         }
         .padding(.horizontal, 34)
         .padding(.top, 28)

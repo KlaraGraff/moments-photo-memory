@@ -35,7 +35,10 @@ enum AppLanguage: String, CaseIterable, Identifiable {
               let first = languages.first else {
             return .system
         }
-        return AppLanguage(rawValue: first) ?? .system
+        // System Settings › Language & Region › Applications may have
+        // written a regional variant such as "de-DE" or "zh-Hans-CN".
+        return [AppLanguage.chineseSimplified, .german, .english]
+            .first { first == $0.rawValue || first.hasPrefix($0.rawValue + "-") } ?? .system
     }
 
     static func choose(_ language: AppLanguage, in defaults: UserDefaults = .standard) {
@@ -57,7 +60,9 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         // Wait for this process to exit so two copies never hold the store.
         script.arguments = [
             "-c",
-            "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"",
+            // Gives up after 30 s, so a quit that was cancelled never opens
+            // a second copy later.
+            "for _ in $(/usr/bin/seq 150); do /bin/kill -0 \"$1\" 2>/dev/null || exec /usr/bin/open \"$2\"; /bin/sleep 0.2; done",
             "relaunch",
             String(ProcessInfo.processInfo.processIdentifier),
             Bundle.main.bundleURL.path

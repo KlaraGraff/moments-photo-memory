@@ -402,8 +402,9 @@ final class MomentsUITests: XCTestCase {
         ]
         for (language, smallWindow, countPattern, languageLabel) in cases {
             let app = launch(language: language, smallWindow: smallWindow, extraArguments: ["-moments.settings.tab", "general"])
-            let count = app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", countPattern)).firstMatch
-            XCTAssertTrue(count.waitForExistence(timeout: launchTimeout), "No translated photo count in \(language)")
+            let count = element(in: app, identifier: "library.photoCount")
+            XCTAssertTrue(count.waitForExistence(timeout: launchTimeout))
+            XCTAssertNotNil(count.label.range(of: countPattern, options: .regularExpression), "Photo count reads \"\(count.label)\" in \(language)")
             app.typeKey(",", modifierFlags: .command)
             let picker = element(in: app, identifier: "settings.language")
             XCTAssertTrue(picker.waitForExistence(timeout: launchTimeout), "Settings › General has no language picker (\(language))")

@@ -31,5 +31,13 @@ final class LocalizationTests: XCTestCase {
         AppLanguage.choose(.system, in: defaults)
         XCTAssertEqual(AppLanguage.chosen(in: defaults, domain: suite), .system)
         XCTAssertNil(defaults.persistentDomain(forName: suite)?[AppLanguage.defaultsKey])
+
+        // A regional variant written by System Settings still counts.
+        defaults.set(["zh-Hans-CN"], forKey: AppLanguage.defaultsKey)
+        XCTAssertEqual(AppLanguage.chosen(in: defaults, domain: suite), .chineseSimplified)
+        defaults.set(["de-DE"], forKey: AppLanguage.defaultsKey)
+        XCTAssertEqual(AppLanguage.chosen(in: defaults, domain: suite), .german)
+        defaults.set(["fr"], forKey: AppLanguage.defaultsKey)
+        XCTAssertEqual(AppLanguage.chosen(in: defaults, domain: suite), .system)
     }
 }

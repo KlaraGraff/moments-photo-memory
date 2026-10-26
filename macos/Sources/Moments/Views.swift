@@ -30,7 +30,9 @@ struct ContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(ImportController.self) private var importController
     @Query private var items: [MediaItem]
-    @Query(sort: \UserGroup.name) private var groups: [UserGroup]
+    /// "My groups" only; chapters live on the Chapters page.
+    @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" }, sort: \UserGroup.name)
+    private var groups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
     @Query private var faceObservations: [FaceObservation]
     @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
@@ -51,7 +53,7 @@ struct ContentView: View {
                         sidebarRow("People", icon: "person.2", section: .people, identifier: "sidebar.people")
                         sidebarRow("Map", icon: "globe.europe.africa", section: .map, identifier: "sidebar.map")
                         sidebarRow("Timeline", icon: "point.topleft.down.to.point.bottomright.curvepath", section: .timeline, identifier: "sidebar.timeline")
-                        sidebarRow("Trips", icon: "airplane.departure", section: .trips, identifier: "sidebar.trips")
+                        sidebarRow("Chapters", icon: "book.pages", section: .trips, identifier: "sidebar.trips")
                     }
 
                     Section {

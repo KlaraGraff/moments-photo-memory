@@ -255,6 +255,99 @@ final class TripEditsTests: XCTestCase {
         XCTAssertEqual(trip.startDate, day(8, hour: 0))
     }
 
+    func testCreatingATripGathersFreePhotosAndUndoRemovesIt() throws {
+        let context = try makeContext()
+        let other = Trip(id: "o", name: "Other", startDate: day(12), endDate: day(12))
+        context.insert(other)
+        photo("free", on: day(11), trip: nil, in: context)
+        photo("theirs", on: day(12), trip: other, in: context)
+        photo("far", on: day(20), trip: nil, in: context)
+        try context.save()
+
+        let edit = session(context)
+        let created = TripEdits.create(named: "  Weekend  ", start: day(11), end: day(12), session: edit, locked: [])
+        XCTAssertEqual(created.trip.effectiveName, "Weekend")
+        XCTAssertEqual(try tripID(of: "free", in: context), created.trip.id)
+        XCTAssertEqual(try tripID(of: "theirs", in: context), "o")
+        XCTAssertEqual(created.outcome.elsewhere.map(\.tripID), ["o"])
+
+        TripEdits.undo(edit.undo, context: context, defaults: defaults)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Trip>()).map(\.id), ["o"])
+        XCTAssertNil(try tripID(of: "free", in: context))
+    }
+
+    func testWorldOutlineShipsWithTheApp() {
+        let outline = WorldOutline.shared
+        XCTAssertGreaterThan(outline.rings.count, 100, "The base map file is missing from the app bundle")
+        let morocco = outline.rings(longitudes: -8 ... -4, latitudes: 31...34)
+        XCTAssertFalse(morocco.isEmpty)
+        for ring in outline.rings {
+            for (previous, next) in zip(ring.points, ring.points.dropFirst()) {
+                XCTAssertLessThanOrEqual(abs(next.x - previous.x), 180, "A ring jumps across the 180° meridian")
+            }
+        }
+        // Northern Iceland must not catch a band of Russia's far east.
+        let iceland = outline.rings(longitudes: -20 ... -16, latitudes: 64...67)
+        XCTAssertFalse(iceland.contains { $0.maxLongitude - $0.minLongitude > 300 })
+        XCTAssertFalse(outline.rings(longitudes: -179 ... -172, latitudes: 64...70).isEmpty, "Chukotka still shows west of the line")
+    }
+
+    // MARK: Chapters that are not trips
+
+    func testAChapterSharesPhotosWithATripAndKeepsHandRemovalsOut() throws {
+        let context = try makeContext()
+        let trip = Trip(id: "t", name: "t", startDate: day(10), endDate: day(14))
+        context.insert(trip)
+        photo("a", on: day(11), trip: trip, in: context)
+        photo("b", on: day(12), trip: trip, in: context)
+        photo("c", on: day(13), trip: nil, in: context)
+        try context.save()
+
+        let edit = session(context)
+        let birthday = TripEdits.createChapter(named: "Birthday", type: .celebration, symbol: nil, start: day(11), end: day(12), session: edit)
+        XCTAssertTrue(birthday.isChapter)
+        XCTAssertEqual(birthday.chapterType, .celebration)
+        XCTAssertEqual(TripEdits.memberIDs(of: birthday, context: context), ["a", "b"])
+        XCTAssertEqual(try tripID(of: "a", in: context), "t", "The photo stays in its trip too")
+
+        TripEdits.removeDay(PhotoNoteDay.key(for: day(12)), from: birthday, session: session(context))
+        XCTAssertEqual(TripEdits.memberIDs(of: birthday, context: context), ["a"])
+        let widened = TripEdits.changeDates(of: birthday, start: day(11), end: day(13), session: session(context))
+        XCTAssertEqual(widened.joined, 1)
+        XCTAssertEqual(TripEdits.memberIDs(of: birthday, context: context), ["a", "c"], "A day taken out by hand stays out")
+
+        TripEdits.undo(edit.undo, context: context, defaults: defaults)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<UserGroup>()).filter(\.isChapter).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<UserGroupItem>()).isEmpty, "No rows left for a chapter that is gone")
+    }
+
+    func testDeletingAChapterCanBeUndone() throws {
+        let context = try makeContext()
+        photo("a", on: day(11), trip: nil, in: context)
+        try context.save()
+        let group = TripEdits.createChapter(named: "", type: .custom("Moving house"), symbol: "house", start: day(10), end: day(12), session: session(context))
+        XCTAssertTrue(group.name.hasPrefix("Moving house"))
+        XCTAssertEqual(group.chapterSymbol, "house")
+        let groupID = group.id
+
+        let edit = session(context)
+        TripEdits.delete(group, session: edit)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<UserGroup>()).isEmpty)
+        TripEdits.undo(edit.undo, context: context, defaults: defaults)
+        let restored = try XCTUnwrap(try context.fetch(FetchDescriptor<UserGroup>()).first { $0.id == groupID })
+        XCTAssertEqual(restored.chapterType, .custom("Moving house"))
+        XCTAssertEqual(TripEdits.memberIDs(of: restored, context: context), ["a"])
+    }
+
+    func testChapterKindsRoundTrip() {
+        for type in ChapterType.presets + [.custom("Exams")] {
+            XCTAssertEqual(ChapterType(raw: type.raw), type)
+        }
+        let info = ChapterInfo(type: "event", symbol: "star", startDate: day(1), endDate: day(2))
+        XCTAssertEqual(ChapterInfo.decode(info.encoded()), info)
+        XCTAssertNil(ChapterInfo.decode(Data("{\"mode\":\"all\",\"rules\":[]}".utf8)), "Smart-group rules are never read as a chapter")
+    }
+
     // MARK: Route map
 
     func testRouteMapKeepsStopsInsideTheBoxAndInOrder() {
@@ -271,6 +364,12 @@ final class TripEditsTests: XCTestCase {
         }
         XCTAssertLessThan(points[1].y, points[0].y, "North is up")
         XCTAssertGreaterThan(points[2].x, points[1].x, "East is right")
-        XCTAssertEqual(TripRouteMap.layout([stops[0]], in: box), [CGPoint(x: box.midX, y: box.midY)])
+        let single = TripRouteMap.layout([stops[0]], in: box)
+        XCTAssertEqual(single.count, 1)
+        XCTAssertEqual(single[0].x, box.midX, accuracy: 0.01)
+        XCTAssertEqual(single[0].y, box.midY, accuracy: 0.01)
+        XCTAssertNotNil(TripRouteMap.projection(stops, in: box), "Cities apart get a base map")
+        let nearby = [TripRouteStop(name: "A", latitude: 31.2, longitude: 121.4), TripRouteStop(name: "B", latitude: 31.25, longitude: 121.5)]
+        XCTAssertNil(TripRouteMap.projection(nearby, in: box), "Spots in one city are spread out instead")
     }
 }

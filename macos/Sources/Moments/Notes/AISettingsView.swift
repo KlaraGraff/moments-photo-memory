@@ -82,7 +82,7 @@ struct AISettingsView: View {
                         .font(.caption)
                         .foregroundStyle(Paper.muted)
                     if provider == .claude {
-                        Link(String(localized: "Get a key"), destination: URL(string: "https://console.anthropic.com/settings/keys")!)
+                        Link(String(localized: "Get a key"), destination: URL(string: "https://platform.claude.com/settings/keys")!)
                             .font(.caption)
                     }
                     Spacer()

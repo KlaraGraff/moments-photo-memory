@@ -46,6 +46,11 @@ struct FootprintsScreen: View {
                             refitGlobeOverview()
                         }
                 }
+                // Map ignores the safe area. Flush against the floating
+                // sidebar it would extend under it and centre the globe on
+                // the hidden part; a 1 pt gap keeps it inside its own frame.
+                .padding(.leading, 1)
+                .clipped()
                 Divider()
                 countryPanel
                     .frame(minWidth: 250, idealWidth: 290, maxWidth: 340)

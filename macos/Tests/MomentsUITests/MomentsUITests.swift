@@ -160,8 +160,14 @@ final class MomentsUITests: XCTestCase {
         // Ignore the compass and scale overlays near the corners: scan the middle third.
         let row = height / 2
         let column = width / 2
-        let bright = (0..<width).filter { luminance($0, row) > threshold }
-        let brightRows = (0..<height).filter { luminance(column, $0) > threshold }
+        // Stars are single bright pixels; the globe is a run of them.
+        func runs(_ count: Int, _ value: (Int) -> Double) -> [Int] {
+            (0..<count).filter { start in
+                start + 4 <= count && (start..<start + 4).allSatisfy { value($0) > threshold }
+            }
+        }
+        let bright = runs(width) { luminance($0, row) }.flatMap { [$0, $0 + 3] }
+        let brightRows = runs(height) { luminance(column, $0) }.flatMap { [$0, $0 + 3] }
         let samples = [0.0, 0.25, 0.5, 0.75, 1.0].map { fraction -> String in
             let x = min(width - 1, Int(Double(width - 1) * fraction))
             return String(format: "%.2f", luminance(x, row))
@@ -177,6 +183,9 @@ final class MomentsUITests: XCTestCase {
         XCTAssertLessThan(right, width - 1 - marginX, "The globe is cut off on the right", file: file, line: line)
         XCTAssertGreaterThan(top, marginY, "The globe is cut off at the top", file: file, line: line)
         XCTAssertLessThan(bottom, height - 1 - marginY, "The globe is cut off at the bottom", file: file, line: line)
+        // A globe pushed sideways (the map drawing under the sidebar) is off centre.
+        let centreOffset = abs(Double(left + right) / 2 - Double(width) / 2)
+        XCTAssertLessThan(centreOffset, Double(width) * 0.08, "The globe is not centred in the map (offset \(centreOffset) px)", file: file, line: line)
     }
 
     private func log(_ message: String) {

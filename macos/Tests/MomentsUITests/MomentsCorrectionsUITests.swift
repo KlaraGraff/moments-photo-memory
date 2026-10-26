@@ -51,6 +51,10 @@ final class MomentsCorrectionsUITests: XCTestCase {
         XCTAssertTrue(element(in: app, identifier: "date.editor.shift").waitForExistence(timeout: timeout), "The sheet does not say how far the photos move")
         capture(app, named: "\(prefix)-02-shift-evidence")
         done.click()
+        // The bar is up before the sheet has finished closing; the window
+        // takes no clicks until it has.
+        XCTAssertTrue(done.waitForNonExistence(timeout: timeout), "The date sheet did not close")
+        XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: timeout), "A sheet is still open")
 
         let bar = element(in: app, identifier: "correction.bar")
         XCTAssertTrue(bar.waitForExistence(timeout: timeout), "No Undo bar after adjusting the date")
@@ -187,10 +191,21 @@ final class MomentsCorrectionsUITests: XCTestCase {
         let undo = element(in: app, identifier: "correction.undo")
         XCTAssertTrue(undo.waitForExistence(timeout: timeout), "The bar has no Undo button")
         let before = "undo \(undo.frame) hittable \(undo.isHittable), bar \(bar.frame), window \(app.windows.firstMatch.frame)"
+        let focused = app.debugDescription.split(separator: "\n").filter { $0.contains("Keyboard Focused") && !$0.contains("Cell,") }
         undo.click()
         let closed = bar.waitForNonExistence(timeout: timeout)
-        if !closed { capture(app, named: "\(prefix)-undo-still-open-evidence") }
-        XCTAssertTrue(closed, "Undo did not close the bar (\(before)): \(bar.debugDescription)")
+        var after = ""
+        if !closed {
+            capture(app, named: "\(prefix)-undo-still-open-evidence")
+            // What would have worked, to tell a lost first click from a dead button.
+            undo.click()
+            after = bar.waitForNonExistence(timeout: 3) ? "a second click closed it" : "a second click did not close it"
+            if bar.exists {
+                app.typeKey("z", modifierFlags: .command)
+                after += bar.waitForNonExistence(timeout: 3) ? "; Command-Z closed it" : "; Command-Z did not close it"
+            }
+        }
+        XCTAssertTrue(closed, "Undo did not close the bar (\(before), focused \(focused)); \(after): \(bar.debugDescription)")
     }
 
     private func launch(smallWindow: Bool = false, people: Bool = false) -> XCUIApplication {

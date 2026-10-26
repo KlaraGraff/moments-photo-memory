@@ -22,6 +22,8 @@ struct FootprintsScreen: View {
     /// The overview is refitted on resize; after the user flies to a country
     /// the camera stays where they put it.
     @State private var isShowingGlobeOverview = true
+    /// Distance of the last camera this screen set, to tell user moves apart.
+    @State private var lastSetDistance: Double?
 
     /// Created once per screen; a stored `let` would re-read the cache file
     /// from disk every time SwiftUI re-creates this view value.
@@ -129,6 +131,13 @@ struct FootprintsScreen: View {
             }
         }
         .mapStyle(.imagery(elevation: .realistic))
+        .onMapCameraChange(frequency: .onEnd) { context in
+            guard isShowingGlobeOverview, let lastSetDistance else { return }
+            // Zooming by hand changes the distance; keep the user's camera.
+            if abs(context.camera.distance - lastSetDistance) > lastSetDistance * 0.05 {
+                isShowingGlobeOverview = false
+            }
+        }
         .mapControls {
             MapCompass()
             MapScaleView()
@@ -237,6 +246,7 @@ struct FootprintsScreen: View {
         let distance = target.isGlobeOverview
             ? FootprintsCameraTarget.globeDistance(fitting: mapSize)
             : target.distanceMetres
+        lastSetDistance = distance
         let position = MapCameraPosition.camera(
             MapCamera(
                 centerCoordinate: target.coordinate,

@@ -385,7 +385,8 @@ struct PlacesScreen: View {
     }
 
     private func closePanel() {
-        guard selectedCluster != nil else { return }
+        // A selection made in another screen with no visible panel stays.
+        guard selectedCluster != nil, !selectedItems.isEmpty else { return }
         selectedClusterID = nil
         selection.clear()
     }

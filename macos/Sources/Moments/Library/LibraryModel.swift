@@ -258,7 +258,7 @@ enum LibraryFilterEngine {
                 let overrideName = String(placeID.dropFirst("override:".count))
                 guard item.effectivePlaceName == overrideName else { return false }
             } else {
-                guard item.place?.id == placeID else { return false }
+                guard PlaceDisplayName.place(item.place, isWithin: placeID) else { return false }
             }
         }
         if criteria.mediaType != .all,

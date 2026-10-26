@@ -88,8 +88,10 @@ struct LibraryView: View {
     private var places: [LibraryPlaceOption] {
         var options: [String: LibraryPlaceOption] = [:]
         for item in allItems {
-            if let place = item.place {
-                options[place.id] = LibraryPlaceOption(id: place.id, name: place.displayName)
+            // One row per name: unnamed spots are listed under the area or
+            // city that names them, and the filter matches all of them.
+            if let place = item.place, let named = PlaceDisplayName.namingPlace(of: place) {
+                options[named.id] = LibraryPlaceOption(id: named.id, name: named.displayName)
             }
             if let override = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
                 options["override:\(override)"] = LibraryPlaceOption(id: "override:\(override)", name: override)
@@ -276,47 +278,13 @@ struct LibraryView: View {
 
     private var filterBar: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                filterMenu(label: String(localized: "Place"), selected: selectedPlaceName) {
-                    Button(String(localized: "All places")) { placeFilterID = "" }
-                    if !places.isEmpty { Divider() }
-                    ForEach(places) { place in
-                        Button {
-                            placeFilterID = place.id
-                        } label: {
-                            filterMenuLabel(place.name, selected: place.id == placeFilterID)
-                        }
-                    }
-                }
-
-                filterMenu(label: String(localized: "Trip"), selected: selectedTripName) {
-                    Button(String(localized: "All trips")) { tripFilterKey = "" }
-                    if !trips.isEmpty { Divider() }
-                    ForEach(trips, id: \.self) { trip in
-                        Button {
-                            tripFilterKey = trip
-                        } label: {
-                            filterMenuLabel(selectedTripName(for: trip), selected: trip == tripFilterKey)
-                        }
-                    }
-                }
-
-                dateFilterMenu
-                memoryFilterMenu
-
-                Button {
-                    // The filter builder is intentionally a disabled stub until #30.
-                } label: {
-                    Label(String(localized: "Add filter"), systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(LibraryPalette.muted)
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 3])).foregroundStyle(LibraryPalette.muted.opacity(0.5)))
-                .disabled(true)
-                .accessibilityIdentifier("library.add-filter")
-
-                Spacer(minLength: 0)
+            // Chips never truncate; when they do not fit, drop the disabled
+            // "Add filter" stub, then scroll rather than clip.
+            ViewThatFits(in: .horizontal) {
+                filterChipRow(showsAddFilter: true)
+                filterChipRow(showsAddFilter: false)
+                ScrollView(.horizontal) { filterChipRow(showsAddFilter: false) }
+                    .scrollIndicators(.hidden)
             }
 
             if hasActiveFilters {
@@ -366,6 +334,53 @@ struct LibraryView: View {
         .overlay(alignment: .bottom) { Rectangle().fill(LibraryPalette.line).frame(height: 1) }
         .sheet(isPresented: $showingSmartGroupEditor) {
             GroupEditorSheet(kind: .newSmart, group: nil, initialCriteria: criteria)
+        }
+    }
+
+    private func filterChipRow(showsAddFilter: Bool) -> some View {
+        HStack(spacing: 8) {
+            filterMenu(label: String(localized: "Place"), selected: selectedPlaceName) {
+                Button(String(localized: "All places")) { placeFilterID = "" }
+                if !places.isEmpty { Divider() }
+                ForEach(places) { place in
+                    Button {
+                        placeFilterID = place.id
+                    } label: {
+                        filterMenuLabel(place.name, selected: place.id == placeFilterID)
+                    }
+                }
+            }
+
+            filterMenu(label: String(localized: "Trip"), selected: selectedTripName) {
+                Button(String(localized: "All trips")) { tripFilterKey = "" }
+                if !trips.isEmpty { Divider() }
+                ForEach(trips, id: \.self) { trip in
+                    Button {
+                        tripFilterKey = trip
+                    } label: {
+                        filterMenuLabel(selectedTripName(for: trip), selected: trip == tripFilterKey)
+                    }
+                }
+            }
+
+            dateFilterMenu
+            memoryFilterMenu
+
+            if showsAddFilter {
+                Button {
+                    // The filter builder is intentionally a disabled stub until #30.
+                } label: {
+                    Label(String(localized: "Add filter"), systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(LibraryPalette.muted)
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 3])).foregroundStyle(LibraryPalette.muted.opacity(0.5)))
+                .disabled(true)
+                .accessibilityIdentifier("library.add-filter")
+            }
+
+            Spacer(minLength: 0)
         }
     }
 

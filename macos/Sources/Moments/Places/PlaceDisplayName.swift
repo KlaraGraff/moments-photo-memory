@@ -18,13 +18,27 @@ enum PlaceDisplayName {
 
     /// The place's own name, else its closest parent with a real name, else nil.
     static func resolvedName(of place: Place) -> String? {
+        // Parent chains are spot → area → city.
+        namingPlace(of: place)?.name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Written by the import, in the language it ran in, when a reverse
+    /// lookup returned no area or city name.
+    private static let importFallbackNames: Set<String> = [
+        "Unknown area", "Unbekanntes Gebiet", "未知区域",
+        "Unknown city", "Unbekannte Stadt", "未知城市",
+        String(localized: "Unknown area"), String(localized: "Unknown city")
+    ]
+
+    /// The place that supplies `resolvedName`, so filters can match every
+    /// unnamed spot under it.
+    static func namingPlace(of place: Place) -> Place? {
         var current: Place? = place
         var depth = 0
-        // Depth guard: parent chains are spot → area → city.
         while let candidate = current, depth < 4 {
             if !isPlaceholder(candidate.name, placeID: candidate.id),
-               !isUnknownArea(candidate.name) {
-                return candidate.name.trimmingCharacters(in: .whitespacesAndNewlines)
+               !importFallbackNames.contains(candidate.name) {
+                return candidate
             }
             current = candidate.parent
             depth += 1
@@ -32,9 +46,16 @@ enum PlaceDisplayName {
         return nil
     }
 
-    /// The import writes this when a reverse lookup returned no area name.
-    private static func isUnknownArea(_ name: String) -> Bool {
-        name == String(localized: "Unknown area") || name == "Unknown area"
+    /// True when `placeID` is `place` or one of its parents.
+    static func place(_ place: Place?, isWithin placeID: String) -> Bool {
+        var current = place
+        var depth = 0
+        while let candidate = current, depth < 4 {
+            if candidate.id == placeID { return true }
+            current = candidate.parent
+            depth += 1
+        }
+        return false
     }
 }
 

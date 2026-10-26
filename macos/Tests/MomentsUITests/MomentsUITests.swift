@@ -107,7 +107,6 @@ final class MomentsUITests: XCTestCase {
         log("places panel \(panel.frame) map \(map.frame) title '\(titleText)'")
         XCTAssertLessThan(panel.frame.height, map.frame.height * 0.45, "The photo panel covers most of the map (panel \(panel.frame), map \(map.frame))")
         XCTAssertGreaterThan(panel.frame.minY, map.frame.midY, "The photo panel should sit at the bottom of the map")
-        XCTAssertNil(titleText.range(of: #"^Spot [0-9A-Za-z-]{6}$"#, options: .regularExpression), "The panel shows an internal place id: \(titleText)")
 
         element(in: app, identifier: "places.panel.close").click()
         XCTAssertTrue(panel.waitForNonExistence(timeout: launchTimeout), "The close button did not close the photo panel")

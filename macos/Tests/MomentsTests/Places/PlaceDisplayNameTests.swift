@@ -32,5 +32,20 @@ final class PlaceDisplayNameTests: XCTestCase {
         XCTAssertEqual(spot.displayName, "Synthetic Town")
         XCTAssertEqual(orphan.displayName, String(localized: "Unknown place"))
         XCTAssertEqual(city.displayName, "Synthetic Town")
+        XCTAssertTrue(PlaceDisplayName.place(spot, isWithin: "city-1"), "A city filter must match the spots under it")
+        XCTAssertFalse(PlaceDisplayName.place(orphan, isWithin: "city-1"))
+    }
+
+    func testImportFallbackNamesInAnyLanguageAreSkipped() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let city = Place(id: "city-2", name: "未知城市", kind: .city)
+        let area = Place(id: "area-2", name: "Unbekanntes Gebiet", kind: .area, parent: city)
+        let spot = Place(id: "spot-aaa111", name: "Ort aaa111", kind: .spot, parent: area)
+        [city, area, spot].forEach(context.insert)
+        try context.save()
+
+        XCTAssertNil(PlaceDisplayName.namingPlace(of: spot))
+        XCTAssertEqual(spot.displayName, String(localized: "Unknown place"))
     }
 }

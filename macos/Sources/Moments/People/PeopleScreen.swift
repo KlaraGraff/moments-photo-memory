@@ -26,6 +26,9 @@ struct PeopleFaceSnapshot: Sendable {
     let embedding: Data
     var createdAt: Date = .distantPast
     var updatedAt: Date = .distantPast
+    /// The photo the face was found in. Empty means unknown, which turns off
+    /// the one-face-per-photo rule for that face.
+    var mediaID: String = ""
 }
 
 struct PeoplePersonSnapshot: Sendable {
@@ -325,7 +328,10 @@ final class PeopleScanController {
         }
         let limitedIndices = Array(clusteringIndices.prefix(3_000))
         let vectors = limitedIndices.compactMap { decode(faces[$0].embedding) }
-        guard vectors.count == limitedIndices.count else { return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false) }
+        guard vectors.count == limitedIndices.count else {
+            separateSamePhotoFaces(&assignments, faces: faces)
+            return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false)
+        }
         let result = FaceClustering.averageLinkResult(vectors, shouldStop: stop)
         if result.stopped {
             return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
@@ -336,7 +342,63 @@ final class PeopleScanController {
             let clusterID = "cluster-\(assignments[firstIndex].id)"
             for member in cluster { assignments[limitedIndices[member]].clusterID = clusterID }
         }
+        separateSamePhotoFaces(&assignments, faces: faces)
         return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false)
+    }
+
+    /// One person appears at most once in a photo, so two faces from the same
+    /// photo never share a suggested person or an unnamed group. In each group
+    /// the face closest to the group's mean stays; the others move to groups of
+    /// their own. Faces the user confirmed are never moved.
+    nonisolated static func separateSamePhotoFaces(_ assignments: inout [PeopleFaceAssignment], faces: [PeopleFaceSnapshot]) {
+        func isUserConfirmed(_ index: Int) -> Bool {
+            assignments[index].confirmed && assignments[index].assignmentSource == "user"
+        }
+        func groupKey(_ index: Int) -> String? {
+            guard !faces[index].mediaID.isEmpty else { return nil }
+            if let personID = assignments[index].personID { return "person:\(personID)" }
+            if let clusterID = assignments[index].clusterID, !clusterID.hasPrefix("pending-") { return "cluster:\(clusterID)" }
+            return nil
+        }
+        func unit(_ vector: [Float]) -> [Float] {
+            let norm = sqrt(vector.reduce(Float.zero) { $0 + $1 * $1 })
+            return norm > 0 ? vector.map { $0 / norm } : vector
+        }
+        var groups: [String: [Int]] = [:]
+        for index in assignments.indices {
+            if let key = groupKey(index) { groups[key, default: []].append(index) }
+        }
+        for members in groups.values {
+            let byPhoto = Dictionary(grouping: members, by: { faces[$0].mediaID })
+            guard byPhoto.values.contains(where: { $0.count > 1 }) else { continue }
+            let vectors = Dictionary(uniqueKeysWithValues: members.compactMap { index in decode(faces[index].embedding).map { (index, unit($0)) } })
+            // Confirmed faces define the person when there are any.
+            let anchors = members.filter(isUserConfirmed).isEmpty ? members : members.filter(isUserConfirmed)
+            let anchorVectors = anchors.compactMap { vectors[$0] }
+            var mean: [Float] = []
+            if let dimension = anchorVectors.first?.count {
+                mean = [Float](repeating: 0, count: dimension)
+                for vector in anchorVectors where vector.count == dimension {
+                    for d in 0..<dimension { mean[d] += vector[d] }
+                }
+            }
+            func similarity(_ index: Int) -> Float {
+                guard let vector = vectors[index], vector.count == mean.count else { return -.infinity }
+                return zip(vector, mean).reduce(Float.zero) { $0 + $1.0 * $1.1 }
+            }
+            for (_, photoFaces) in byPhoto where photoFaces.count > 1 {
+                let confirmed = photoFaces.filter(isUserConfirmed)
+                let keep: Set<Int> = confirmed.isEmpty
+                    ? [photoFaces.max { (similarity($0), faces[$1].id) < (similarity($1), faces[$0].id) }!]
+                    : Set(confirmed)
+                for index in photoFaces where !keep.contains(index) {
+                    assignments[index].personID = nil
+                    assignments[index].clusterID = "cluster-solo-\(assignments[index].id)"
+                    assignments[index].confirmed = false
+                    assignments[index].assignmentSource = "auto"
+                }
+            }
+        }
     }
 
     nonisolated static func makeAssignments(faces: [PeopleFaceSnapshot], people: [PeoplePersonSnapshot]) -> [PeopleFaceAssignment] {
@@ -531,9 +593,24 @@ actor PeopleScanStore {
         itemsDescriptor.propertiesToFetch = [\.id, \.kindRaw]
         let needsFaceScan = try modelContext.fetch(itemsDescriptor).contains { $0.kind != .video && !completedIDs.contains($0.id) }
         var facesDescriptor = FetchDescriptor<FaceObservation>()
-        facesDescriptor.propertiesToFetch = [\.personID, \.clusterID]
-        let needsClustering = try modelContext.fetch(facesDescriptor).contains { $0.personID == nil && $0.clusterID?.hasPrefix("pending-") == true }
-        return needsFaceScan || needsClustering
+        facesDescriptor.propertiesToFetch = [\.mediaID, \.personID, \.clusterID, \.confirmed, \.assignmentSource]
+        let faces = try modelContext.fetch(facesDescriptor)
+        let needsClustering = faces.contains { $0.personID == nil && $0.clusterID?.hasPrefix("pending-") == true }
+        return needsFaceScan || needsClustering || Self.hasSamePhotoSuggestions(faces)
+    }
+
+    /// True when an unnamed group or a machine-suggested person holds two faces
+    /// from one photo, as groups made before the one-face-per-photo rule can.
+    static func hasSamePhotoSuggestions(_ faces: [FaceObservation]) -> Bool {
+        var seen = Set<String>()
+        for face in faces where !(face.confirmed && face.assignmentSource == "user") {
+            let group: String
+            if let personID = face.personID { group = "person:\(personID)" }
+            else if let clusterID = face.clusterID, !clusterID.hasPrefix("pending-") { group = "cluster:\(clusterID)" }
+            else { continue }
+            if !seen.insert("\(group)|\(face.mediaID)").inserted { return true }
+        }
+        return false
     }
 
     func pendingDescriptors() throws -> [PeopleMediaDescriptor] {
@@ -602,7 +679,8 @@ actor PeopleScanStore {
                 rejectedPersonIDs: $0.rejectedPersonIDs,
                 embedding: $0.embedding,
                 createdAt: $0.createdAt,
-                updatedAt: $0.updatedAt
+                updatedAt: $0.updatedAt,
+                mediaID: $0.mediaID
             )
         }
         var peopleDescriptor = FetchDescriptor<Person>()
@@ -891,7 +969,13 @@ struct PeopleScreen: View {
             ForEach(unnamedClusters) { cluster in
                 HStack(alignment: .top, spacing: 14) {
                     if let cover = PeopleFacePicker.cover(cluster.faces) {
-                        FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 112)
+                        FaceInPhotoView(
+                            faceID: cover.id,
+                            faceRect: CGRect(x: cover.rectX, y: cover.rectY, width: cover.rectWidth, height: cover.rectHeight),
+                            descriptor: mediaDescriptor(for: cover.mediaID),
+                            fallbackCrop: cover.cropData,
+                            size: 150
+                        )
                     }
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 8) {
@@ -978,6 +1062,12 @@ struct PeopleScreen: View {
         mergeTarget = nil
     }
 
+    private func mediaDescriptor(for mediaID: String) -> PeopleMediaDescriptor? {
+        var descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == mediaID })
+        descriptor.fetchLimit = 1
+        return (try? modelContext.fetch(descriptor))?.first.map(PeopleMediaDescriptor.init)
+    }
+
     private func personFilterIsValid(ids: [String]) -> Bool {
         let value = UserDefaults.standard.string(forKey: "moments.library.person") ?? ""
         return value.isEmpty || ids.contains(value)
@@ -1027,6 +1117,82 @@ private struct FaceCropView: View {
             guard let decoded = decodedData.flatMap(NSImage.init(data:)) else { return }
             Self.cache.setObject(decoded, forKey: key)
             image = decoded
+        }
+    }
+}
+
+enum PeopleFaceZoom {
+    /// How much of the photo around the face to keep, as a multiple of the
+    /// face's longer side: enough to recognise the person, little enough that
+    /// a neighbour in a group photo stays at the edge.
+    static let context: CGFloat = 1.8
+
+    /// The square pixel rect that zooms a photo to one face. `faceRect` is
+    /// Vision's normalized, y-up bounding box; the result is in y-down pixels,
+    /// shifted to stay inside the image and shrunk only if the image is smaller.
+    static func cropRect(faceRect: CGRect, imageSize: CGSize) -> CGRect {
+        let face = CGRect(
+            x: faceRect.minX * imageSize.width,
+            y: (1 - faceRect.maxY) * imageSize.height,
+            width: faceRect.width * imageSize.width,
+            height: faceRect.height * imageSize.height
+        )
+        let side = min(max(face.width, face.height) * context, imageSize.width, imageSize.height)
+        let x = min(max(face.midX - side / 2, 0), imageSize.width - side)
+        let y = min(max(face.midY - side / 2, 0), imageSize.height - side)
+        return CGRect(x: x, y: y, width: side, height: side).integral
+    }
+}
+
+/// The photo a face was found in, zoomed to that one face, the way Photos
+/// asks "who is this". Falls back to the aligned face crop when the original
+/// photo can't be read.
+private struct FaceInPhotoView: View {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 64
+        return cache
+    }()
+    let faceID: String
+    let faceRect: CGRect
+    let descriptor: PeopleMediaDescriptor?
+    let fallbackCrop: Data
+    let size: CGFloat
+    @State private var image: NSImage?
+    @State private var loadFailed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else if loadFailed {
+                FaceCropView(data: fallbackCrop, cacheKey: faceID, size: size)
+            } else {
+                Color.gray.opacity(0.18)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.7), lineWidth: 1))
+        .accessibilityHidden(true)
+        .task(id: faceID) {
+            let key = faceID as NSString
+            if let cached = Self.cache.object(forKey: key) {
+                image = cached
+                return
+            }
+            guard let descriptor, let photo = await PeopleImageLoader.load(descriptor) else {
+                loadFailed = true
+                return
+            }
+            let rect = PeopleFaceZoom.cropRect(faceRect: faceRect, imageSize: CGSize(width: photo.width, height: photo.height))
+            guard !Task.isCancelled, let cropped = photo.cropping(to: rect) else {
+                loadFailed = true
+                return
+            }
+            let zoomed = NSImage(cgImage: cropped, size: NSSize(width: cropped.width, height: cropped.height))
+            Self.cache.setObject(zoomed, forKey: key)
+            image = zoomed
         }
     }
 }

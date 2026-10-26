@@ -198,6 +198,7 @@ struct LibraryView: View {
             }
         }
         .background(LibraryPalette.content)
+        .endsTextEditingOnOutsideClick()
         .onChange(of: allItems.count, initial: true) { _, count in
             if count > 0 { firstLaunchCompleted = true }
         }
@@ -939,7 +940,11 @@ private struct LibraryPhotoCell: View {
                 .padding(11)
             }
 
-            PhotoPlaceLine(item: item, placeNotes: placeNotes)
+            HStack(spacing: 6) {
+                PhotoPlaceLine(item: item, placeNotes: placeNotes)
+                Spacer(minLength: 0)
+                PhotoNoteBadge(item: item)
+            }
             // A written memory stays editable here; the ruled line below is
             // where new words go, so an empty photo shows only that one line.
             if showsMemoryEditor {

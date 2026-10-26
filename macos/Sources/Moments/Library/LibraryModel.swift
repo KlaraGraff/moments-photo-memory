@@ -470,8 +470,6 @@ final class LibraryViewState {
     var memoryDrafts: [String: String] = [:]
     /// Unsaved words on a photo's note line, by media ID.
     var noteDrafts: [String: String] = [:]
-    /// Notes whose suggestions the person put off with "Later".
-    var collapsedNoteIDs: Set<String> = []
     var lastVisibleSectionID: String?
     var focusedMemoryItemID: String?
     /// The card a reveal request is waiting for; lazy grids build cards only

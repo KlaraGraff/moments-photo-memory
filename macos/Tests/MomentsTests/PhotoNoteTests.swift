@@ -128,6 +128,22 @@ final class PhotoNoteTests: XCTestCase {
         XCTAssertEqual(NoteApplier.nearbyMediaIDs(for: item, among: all), ["close", "samePlace"])
     }
 
+    func testNotesNeverSeeTheImportsInternalSpotHandle() throws {
+        let context = try makeContext()
+        let city = Place(id: "city-1", name: "Marrakesh", kind: .city)
+        let spot = Place(id: "spot-26b47e", name: "Spot 26b47e", parent: city)
+        let orphan = Place(id: "spot-6cd466", name: "Spot 6cd466")
+        for place in [city, spot, orphan] { context.insert(place) }
+        let named = insertItem("named", place: spot, in: context)
+        let unnamed = insertItem("unnamed", place: orphan, in: context)
+
+        XCTAssertEqual(named.namedPlace, "Marrakesh")
+        XCTAssertNil(unnamed.namedPlace)
+        XCTAssertNil(NoteApplier.context(for: PhotoNote(mediaID: "unnamed", text: "x"), item: unnamed).placeName)
+        context.insert(PlaceOverride(mediaID: "unnamed", nameOverride: "Riad", mediaItem: unnamed))
+        XCTAssertEqual(unnamed.namedPlace, "Riad")
+    }
+
     // MARK: Applying and undoing
 
     func testPlaceCorrectionCoversNearbyPhotosAndUndoRestoresThem() throws {

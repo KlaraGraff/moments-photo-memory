@@ -5362,28 +5362,6 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已跳过（不可用）：%d" } }
       }
     },
-    "%lld suggestions waiting" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld Vorschläge warten"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld suggestions waiting"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "有 %lld 条整理建议"
-          }
-        }
-      }
-    },
     "AI Model" : {
       "localizations" : {
         "de" : {
@@ -5666,28 +5644,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "请在 设置 › AI 模型 里填写接口地址和模型。"
-          }
-        }
-      }
-    },
-    "Hide original words" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Originaltext ausblenden"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hide original words"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "收起原话"
           }
         }
       }
@@ -5978,28 +5934,6 @@
         }
       }
     },
-    "Original words (%lld)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Originaltext (%lld)"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Original words (%lld)"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "原话（%lld）"
-          }
-        }
-      }
-    },
     "Place correction" : {
       "localizations" : {
         "de" : {
@@ -6018,28 +5952,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "地点更正"
-          }
-        }
-      }
-    },
-    "Places, corrections, descriptions, feelings: write anything. Your words are kept and AI organizes them." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Orte, Korrekturen, Beschreibungen, Gefühle: schreib einfach. Dein Text bleibt erhalten, die KI ordnet ihn."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Places, corrections, descriptions, feelings: write anything. Your words are kept and AI organizes them."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "地点、更正、介绍、感受，随便写。保存后原话留着，AI 会帮你整理"
           }
         }
       }
@@ -6106,50 +6018,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在这台 Mac 上运行，文字不离开电脑。免费，不用设置。需要开启 Apple 智能。"
-          }
-        }
-      }
-    },
-    "Save (⌘↩)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sichern (⌘↩)"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Save (⌘↩)"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存（⌘↩）"
-          }
-        }
-      }
-    },
-    "Saved. There was nothing to organize, so only your words were kept." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Gesichert. Es gab nichts zu ordnen, nur dein Text wurde behalten."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Saved. There was nothing to organize, so only your words were kept."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已保存。没有需要整理的内容，只存了原话。"
           }
         }
       }
@@ -6638,28 +6506,6 @@
         }
       }
     },
-    "Written from your note." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aus deiner Notiz übernommen."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Written from your note."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已按随手记写入。"
-          }
-        }
-      }
-    },
     "Your original words are saved under this photo." : {
       "localizations" : {
         "de" : {
@@ -6722,6 +6568,182 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "原话已保存，正在整理…"
+          }
+        }
+      }
+    },
+    "Add a note…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notiz hinzufügen …"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add a note…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加随手记…"
+          }
+        }
+      }
+    },
+    "Places, corrections, descriptions, feelings: write anything. Return saves; your words are kept and AI organizes them. Option-Return starts a new line." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orte, Korrekturen, Beschreibungen, Gefühle: Schreib einfach los. Return sichert; deine Worte bleiben erhalten und die KI ordnet sie. Wahl-Return beginnt eine neue Zeile."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Places, corrections, descriptions, feelings: write anything. Return saves; your words are kept and AI organizes them. Option-Return starts a new line."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "地点、更正、描述、感受，随便写。回车保存，原话会保留，AI 帮你整理。⌥回车换行。"
+          }
+        }
+      }
+    },
+    "Organizing…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wird geordnet …"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Organizing…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整理中…"
+          }
+        }
+      }
+    },
+    "%lld suggestions" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Vorschläge"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld suggestions"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 条建议"
+          }
+        }
+      }
+    },
+    "Not organized yet" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch nicht geordnet"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not organized yet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没整理"
+          }
+        }
+      }
+    },
+    "Notes on this photo" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notizen zu diesem Foto"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notes on this photo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这张照片的随手记"
+          }
+        }
+      }
+    },
+    "Original words" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Originalworte"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original words"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原话"
+          }
+        }
+      }
+    },
+    "Nothing to organize" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nichts zu ordnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing to organize"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有可整理的内容"
           }
         }
       }

@@ -1,24 +1,17 @@
+import AppKit
 import SwiftUI
 import SwiftData
 
-/// The ruled line under a photo: type anything, press Save, and the words are
-/// kept and handed to the AI model. Its suggestions appear right here, under
-/// the same photo, and nothing is written until the person accepts it.
+/// The ruled line under a photo, edited in place like a caption in Photos:
+/// click and type, Return saves, Option-Return starts a new line, Escape
+/// cancels, and clicking elsewhere saves. Saving keeps the words and hands
+/// them to the AI model; its suggestions wait behind `PhotoNoteBadge`.
 struct PhotoNoteSection: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PhotoNoteService.self) private var service
     let item: MediaItem
     let state: LibraryViewState
-    @Query private var notes: [PhotoNote]
     @FocusState private var isFocused: Bool
-    @State private var showingOriginals = false
-
-    init(item: MediaItem, state: LibraryViewState) {
-        self.item = item
-        self.state = state
-        let mediaID = item.id
-        _notes = Query(filter: #Predicate<PhotoNote> { $0.mediaID == mediaID }, sort: \PhotoNote.createdAt)
-    }
 
     private var draft: Binding<String> {
         Binding(
@@ -31,131 +24,36 @@ struct PhotoNoteSection: View {
         !(state.noteDrafts[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Notes that still need something: suggestions to decide, or organizing
-    /// that is running, waiting or failed.
-    private var openNotes: [PhotoNote] {
-        let open: Set<PhotoNoteStatus> = [.organizing, .ready, .waiting, .failed]
-        return notes.filter { open.contains($0.status) }
-    }
-
-    private var latestClosedNote: PhotoNote? {
-        guard let latest = notes.last, latest.status == .done || latest.status == .nothingFound else { return nil }
-        return latest
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(openNotes, id: \.id) { note in
-                PhotoNoteStatusView(note: note, item: item, state: state)
+        TextField("", text: draft, prompt: Text(String(localized: "Add a note…")), axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.system(.body, design: .serif))
+            .foregroundStyle(LibraryPalette.ink)
+            .lineLimit(1...6)
+            .focused($isFocused)
+            .padding(.vertical, 4)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(isFocused ? LibraryPalette.accent : LibraryPalette.rule)
+                    .frame(height: isFocused ? 1.5 : 1)
             }
-            if let note = latestClosedNote {
-                closedNoteLine(note)
+            // Return saves; Option-Return falls through and inserts a line break.
+            .onKeyPress(.return, phases: .down) { press in
+                guard press.modifiers.isDisjoint(with: [.option, .shift, .control]) else { return .ignored }
+                save()
+                return .handled
             }
-            composer
-            if showingOriginals {
-                originals
+            .onSubmit { save() }
+            .onExitCommand {
+                state.noteDrafts[item.id] = nil
+                isFocused = false
             }
-        }
-    }
-
-    private var composer: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            TextField("", text: draft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(.body, design: .serif))
-                .foregroundStyle(LibraryPalette.ink)
-                .lineLimit(1...8)
-                .focused($isFocused)
-                .padding(.vertical, 4)
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(isFocused ? LibraryPalette.accent : LibraryPalette.rule)
-                        .frame(height: isFocused ? 1.5 : 1)
-                }
-                .onKeyPress(.return, phases: .down) { press in
-                    guard press.modifiers.contains(.command) else { return .ignored }
-                    save()
-                    return .handled
-                }
-                .accessibilityLabel(String(localized: "Note for this photo"))
-                .accessibilityIdentifier("library.note.\(item.id)")
-
-            if isFocused || hasDraft {
-                HStack(spacing: 10) {
-                    Text(String(localized: "Places, corrections, descriptions, feelings: write anything. Your words are kept and AI organizes them."))
-                        .font(.caption)
-                        .foregroundStyle(LibraryPalette.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 4)
-                    Button(String(localized: "Save")) { save() }
-                        .buttonStyle(.borderedProminent)
-                        .tint(LibraryPalette.accent)
-                        .controlSize(.small)
-                        .disabled(!hasDraft)
-                        .help(String(localized: "Save (⌘↩)"))
-                        .accessibilityIdentifier("library.note.save.\(item.id)")
-                }
+            .onChange(of: isFocused) { _, focused in
+                if !focused { save() }
             }
-
-            if !notes.isEmpty {
-                Button(showingOriginals ? String(localized: "Hide original words") : String(localized: "Original words (\(notes.count))")) {
-                    showingOriginals.toggle()
-                }
-                .buttonStyle(.link)
-                .font(.caption)
-                .foregroundStyle(LibraryPalette.muted)
-            }
-        }
-    }
-
-    private var originals: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(notes.reversed(), id: \.id) { note in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(note.text)
-                        .font(.system(.callout, design: .serif))
-                        .foregroundStyle(LibraryPalette.ink)
-                        .textSelection(.enabled)
-                    HStack(spacing: 8) {
-                        Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption2)
-                            .foregroundStyle(LibraryPalette.muted)
-                        if !note.undoRecord.isEmpty {
-                            Button(String(localized: "Undo")) { undo(note) }
-                                .buttonStyle(.link)
-                                .font(.caption2)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(.leading, 10)
-        .overlay(alignment: .leading) { Rectangle().fill(LibraryPalette.rule).frame(width: 2) }
-    }
-
-    @ViewBuilder
-    private func closedNoteLine(_ note: PhotoNote) -> some View {
-        let record = note.undoRecord
-        if note.status == .nothingFound {
-            Text(String(localized: "Saved. There was nothing to organize, so only your words were kept."))
-                .font(.caption)
-                .foregroundStyle(LibraryPalette.muted)
-        } else if !record.isEmpty {
-            HStack(spacing: 8) {
-                Text(String(localized: "Written from your note."))
-                    .font(.caption)
-                    .foregroundStyle(LibraryPalette.muted)
-                Button(String(localized: "Undo")) { undo(note) }
-                .buttonStyle(.link)
-                .font(.caption)
-                .accessibilityIdentifier("library.note.undo.\(item.id)")
-            }
-        }
-    }
-
-    private func undo(_ note: PhotoNote) {
-        try? NoteApplier.undo(note, context: modelContext)
-        try? modelContext.save()
+            .help(String(localized: "Places, corrections, descriptions, feelings: write anything. Return saves; your words are kept and AI organizes them. Option-Return starts a new line."))
+            .accessibilityLabel(String(localized: "Note for this photo"))
+            .accessibilityIdentifier("library.note.\(item.id)")
     }
 
     private func save() {
@@ -167,6 +65,180 @@ struct PhotoNoteSection: View {
     }
 }
 
+/// A small mark at the end of the place line once a photo has notes: a spinner
+/// while organizing, the number of suggestions waiting, or a warning. Clicking
+/// it opens the suggestions and the original words in a popover, so the grid
+/// cell never grows around them.
+struct PhotoNoteBadge: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(PhotoNoteService.self) private var service
+    let item: MediaItem
+    @Query private var notes: [PhotoNote]
+    @State private var showingDetails = false
+
+    init(item: MediaItem) {
+        self.item = item
+        let mediaID = item.id
+        _notes = Query(filter: #Predicate<PhotoNote> { $0.mediaID == mediaID }, sort: \PhotoNote.createdAt)
+    }
+
+    private var pendingCount: Int {
+        notes.filter { $0.status == .ready }
+            .reduce(0) { $0 + $1.suggestions.filter { $0.decision == .pending }.count }
+    }
+
+    private var isOrganizing: Bool {
+        notes.contains { service.isRunning($0) }
+    }
+
+    private var needsAttention: Bool {
+        notes.contains { $0.status == .failed || $0.status == .waiting || ($0.status == .organizing && !service.isRunning($0)) }
+    }
+
+    var body: some View {
+        if !notes.isEmpty {
+            Button {
+                showingDetails.toggle()
+            } label: {
+                label
+            }
+            .buttonStyle(.plain)
+            .help(String(localized: "Notes on this photo"))
+            .accessibilityIdentifier("library.note.badge.\(item.id)")
+            .popover(isPresented: $showingDetails, arrowEdge: .bottom) {
+                PhotoNoteDetails(item: item, notes: notes) { showingDetails = false }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var label: some View {
+        if isOrganizing {
+            HStack(spacing: 4) {
+                ProgressView().controlSize(.mini)
+                Text(String(localized: "Organizing…"))
+            }
+            .font(.caption)
+            .foregroundStyle(LibraryPalette.muted)
+        } else if pendingCount > 0 {
+            Label(String(localized: "\(pendingCount) suggestions"), systemImage: "sparkles")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(LibraryPalette.accent))
+        } else if needsAttention {
+            Image(systemName: "exclamationmark.circle")
+                .font(.caption)
+                .foregroundStyle(LibraryPalette.accent)
+                .accessibilityLabel(String(localized: "Not organized yet"))
+        } else {
+            Image(systemName: "text.bubble")
+                .font(.caption)
+                .foregroundStyle(LibraryPalette.muted)
+                .accessibilityLabel(String(localized: "Notes on this photo"))
+        }
+    }
+}
+
+/// The popover behind `PhotoNoteBadge`: open suggestions, then every note's
+/// original words with Undo for what it wrote.
+private struct PhotoNoteDetails: View {
+    @Environment(\.modelContext) private var modelContext
+    let item: MediaItem
+    let notes: [PhotoNote]
+    let close: () -> Void
+
+    private var openNotes: [PhotoNote] {
+        let open: Set<PhotoNoteStatus> = [.organizing, .ready, .waiting, .failed]
+        return notes.filter { open.contains($0.status) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(openNotes, id: \.id) { note in
+                PhotoNoteStatusView(note: note, item: item, close: close)
+            }
+            if !openNotes.isEmpty {
+                Divider()
+            }
+            Text(String(localized: "Original words"))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(LibraryPalette.muted)
+            ForEach(notes.reversed(), id: \.id) { note in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(note.text)
+                        .font(.system(.callout, design: .serif))
+                        .foregroundStyle(LibraryPalette.ink)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption2)
+                            .foregroundStyle(LibraryPalette.muted)
+                        if note.status == .nothingFound {
+                            Text(String(localized: "Nothing to organize"))
+                                .font(.caption2)
+                                .foregroundStyle(LibraryPalette.muted)
+                        }
+                        if !note.undoRecord.isEmpty {
+                            Button(String(localized: "Undo")) {
+                                try? NoteApplier.undo(note, context: modelContext)
+                                try? modelContext.save()
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption2)
+                            .accessibilityIdentifier("library.note.undo.\(note.id)")
+                        }
+                    }
+                }
+                .padding(.leading, 10)
+                .overlay(alignment: .leading) { Rectangle().fill(LibraryPalette.rule).frame(width: 2) }
+            }
+        }
+        .padding(16)
+        .frame(width: 360, alignment: .leading)
+        .background(LibraryPalette.content)
+    }
+}
+
+extension View {
+    /// Clicking anywhere that isn't a text field ends text editing, as in
+    /// other Mac apps; SwiftUI otherwise keeps a field focused until the
+    /// person clicks another field.
+    func endsTextEditingOnOutsideClick() -> some View {
+        modifier(EndTextEditingOnOutsideClick())
+    }
+}
+
+private struct EndTextEditingOnOutsideClick: ViewModifier {
+    @State private var monitor: Any?
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                guard monitor == nil else { return }
+                monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+                    // Local monitors run on the main thread.
+                    MainActor.assumeIsolated {
+                        guard let window = event.window,
+                              window.firstResponder is NSTextView,
+                              let frameView = window.contentView?.superview else { return }
+                        let hit = frameView.hitTest(event.locationInWindow)
+                        if !(hit is NSTextView || hit is NSTextField) {
+                            window.makeFirstResponder(nil)
+                        }
+                    }
+                    return event
+                }
+            }
+            .onDisappear {
+                if let monitor { NSEvent.removeMonitor(monitor) }
+                monitor = nil
+            }
+    }
+}
+
 /// One note's state under the photo: organizing, the suggestions, or why it
 /// could not be organized yet.
 private struct PhotoNoteStatusView: View {
@@ -174,7 +246,7 @@ private struct PhotoNoteStatusView: View {
     @Environment(PhotoNoteService.self) private var service
     let note: PhotoNote
     let item: MediaItem
-    let state: LibraryViewState
+    let close: () -> Void
 
     var body: some View {
         switch note.status {
@@ -186,16 +258,7 @@ private struct PhotoNoteStatusView: View {
                     .foregroundStyle(LibraryPalette.muted)
             }
         case .ready:
-            if state.collapsedNoteIDs.contains(note.id) {
-                Button(String(localized: "\(pendingCount) suggestions waiting")) {
-                    state.collapsedNoteIDs.remove(note.id)
-                }
-                .buttonStyle(.link)
-                .font(.caption)
-                .foregroundStyle(LibraryPalette.accent)
-            } else {
-                suggestionsPanel
-            }
+            suggestionsPanel
         default:
             notOrganized
         }
@@ -271,9 +334,7 @@ private struct PhotoNoteStatusView: View {
                     .buttonStyle(.link)
                     .controlSize(.small)
                 }
-                Button(String(localized: "Later")) {
-                    state.collapsedNoteIDs.insert(note.id)
-                }
+                Button(String(localized: "Later")) { close() }
                 .controlSize(.small)
                 Button(String(localized: "Use all")) {
                     let ids = Set(note.suggestions.filter { $0.decision == .pending }.map(\.id))
@@ -436,7 +497,7 @@ struct PhotoPlaceLine: View {
     @State private var showingDescription = false
 
     private var description: String? {
-        guard let name = item.effectivePlaceName else { return nil }
+        guard let name = item.namedPlace else { return nil }
         let key = PlaceNote.key(for: name)
         let texts = placeNotes.filter { $0.placeKey == key }.map(\.text).filter { !$0.isEmpty }
         return texts.isEmpty ? nil : texts.joined(separator: "\n")
@@ -444,14 +505,14 @@ struct PhotoPlaceLine: View {
 
     private var correctedFrom: String? {
         guard let override = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty,
-              let original = item.place?.name, original != override else { return nil }
+              let original = item.place.flatMap(PlaceDisplayName.resolvedName(of:)), original != override else { return nil }
         return original
     }
 
     var body: some View {
-        if item.effectivePlaceName != nil || item.effectiveCaptureDate != nil {
+        if item.namedPlace != nil || item.effectiveCaptureDate != nil {
             HStack(spacing: 6) {
-                if let name = item.effectivePlaceName {
+                if let name = item.namedPlace {
                     Text(name)
                         .foregroundStyle(LibraryPalette.ink)
                         .lineLimit(1)

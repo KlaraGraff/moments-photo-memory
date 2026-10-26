@@ -58,7 +58,7 @@ final class PhotoNoteService {
             do {
                 let result = try await organizer.organize(request)
                 let nearby = try NoteApplier.nearbyMediaIDs(for: item, among: context.fetch(FetchDescriptor<MediaItem>()))
-                let suggestions = NoteSuggestionBuilder.suggestions(from: result, currentPlaceName: item.effectivePlaceName, nearbyMediaIDs: nearby)
+                let suggestions = NoteSuggestionBuilder.suggestions(from: result, currentPlaceName: item.namedPlace, nearbyMediaIDs: nearby)
                 note.suggestions = suggestions
                 note.organizerLabel = organizer.label
                 note.status = suggestions.isEmpty ? .nothingFound : .ready

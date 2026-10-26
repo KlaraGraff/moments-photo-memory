@@ -294,7 +294,7 @@ struct MapScreen: View {
         .contentShape(Rectangle())
         .help(clusterDisplayName(cluster))
         .accessibilityLabel(clusterDisplayName(cluster))
-        .accessibilityValue(Text("\(cluster.stopIDs.count) photos"))
+        .accessibilityValue(Text(String(localized: "\(cluster.stopIDs.count) photos")))
         .accessibilityIdentifier("map.marker.\(cluster.stopIDs.first ?? cluster.id)")
     }
 

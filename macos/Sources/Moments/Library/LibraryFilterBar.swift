@@ -100,6 +100,8 @@ struct LibraryFilterChips: View {
         for place in allPlaces {
             hasher.combine(place.id)
             hasher.combine(place.name)
+            // A spot is listed under the place that names it.
+            hasher.combine(place.parent?.id)
         }
         return hasher.finalize()
     }

@@ -1246,7 +1246,7 @@ struct PeopleScreen: View {
     }
 }
 
-private struct FaceCropView: View {
+struct FaceCropView: View {
     private static let cache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 256

@@ -111,7 +111,8 @@ final class TimelineGroupingTests: XCTestCase {
             TimelineItemSnapshot(id: "p1", date: date("2025-03-01T09:00:00Z"), latitude: 0, longitude: 0, tripID: "trip", placeHint: "Alpha", dayKey: "2025-03-01"),
             TimelineItemSnapshot(id: "p2", date: date("2025-03-02T10:00:00Z"), latitude: 0, longitude: 10, tripID: "trip", placeHint: "Beta"),
             TimelineItemSnapshot(id: "p3", date: date("2025-03-03T10:00:00Z"), latitude: 0, longitude: 0, tripID: "trip", placeHint: "Alpha"),
-            TimelineItemSnapshot(id: "loose", date: date("2025-04-01T10:00:00Z"))
+            TimelineItemSnapshot(id: "loose", date: date("2025-04-01T10:00:00Z")),
+            TimelineItemSnapshot(id: "ghost", date: date("2025-04-02T10:00:00Z"), tripID: "deleted-trip")
         ]
         let trip = TimelineSourceTrip(id: "trip", name: "Route", itemIDs: ["v", "p1", "p2", "p3"])
 
@@ -133,6 +134,8 @@ final class TimelineGroupingTests: XCTestCase {
 
         XCTAssertEqual(document.trips.last?.id, TimelineBuilder.unassignedTripID)
         XCTAssertTrue(document.trips.last?.isUnsorted ?? false)
+        XCTAssertEqual(document.trips.count, 2, "A photo whose trip is gone joins the photos in no trip")
+        XCTAssertEqual(document.trips.last?.orderedItems.map(\.id), ["loose", "ghost"])
     }
 
     func testDayMemoryKeyFollowsThePhotosLocalDay() {
@@ -141,6 +144,7 @@ final class TimelineGroupingTests: XCTestCase {
         let document = TimelineBuilder(calendar: testCalendar(timeZone: "UTC"))
             .build(items: [item], trips: [TimelineSourceTrip(id: "trip", name: "T", itemIDs: ["late"])])
         XCTAssertEqual(document.trips[0].days[0].memoryKey, "2025-03-01")
+        XCTAssertEqual(document.trips[0].days[0].date, date("2025-03-01T00:00:00Z"), "The header shows the local day")
     }
 
     private func snapshot(

@@ -24,7 +24,7 @@ struct TripsScreen: View {
         var hasher = Hasher()
         for item in items {
             hasher.combine(item.id)
-            hasher.combine(item.captureDate)
+            hasher.combine(item.effectiveCaptureDate)
             hasher.combine(item.localDayKey)
             hasher.combine(item.latitude)
             hasher.combine(item.longitude)
@@ -39,7 +39,10 @@ struct TripsScreen: View {
             hasher.combine(trip.effectiveName)
             hasher.combine(trip.items.count)
         }
-        hasher.combine(places.count)
+        for place in places {
+            hasher.combine(place.id)
+            hasher.combine(PlaceDisplayName.resolvedName(of: place))
+        }
         return hasher.finalize()
     }
 
@@ -84,6 +87,9 @@ struct TripsScreen: View {
                     systemImage: "suitcase",
                     description: Text("Import photos and each trip gets its own card here.")
                 )
+            } else if document.trips.isEmpty {
+                // Built on appear; until then show the bare page, not "0 trips".
+                Paper.canvas
             } else if let trip = openTrip {
                 TripDetailView(
                     trip: trip,

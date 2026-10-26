@@ -44,7 +44,7 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
         self.init(
             id: item.id,
             title: item.title,
-            date: item.captureDate,
+            date: item.effectiveCaptureDate,
             latitude: item.latitude,
             longitude: item.longitude,
             kindRaw: item.kind.rawValue,

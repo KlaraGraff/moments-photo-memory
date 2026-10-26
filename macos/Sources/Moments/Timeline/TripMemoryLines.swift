@@ -119,6 +119,7 @@ struct TripMemoryLines: View {
     }
 
     private func beginEditing(_ memory: CollectionMemory) {
+        saveEdit()
         saveNew()
         editText = memory.text
         editingID = memory.id

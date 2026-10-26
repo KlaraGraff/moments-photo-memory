@@ -23,22 +23,18 @@ struct TimelineBuilder {
             }
         }
 
-        var definitions = trips
-        let assignedIDs = Set(itemTripIDs.keys)
-        let unassignedItems = uniqueItems.values.filter { item in
-            !assignedIDs.contains(item.id) && item.tripID == nil
-        }
-        if !unassignedItems.isEmpty {
-            definitions.append(TimelineSourceTrip(id: Self.unassignedTripID, name: "Unsorted memories"))
-        }
-
+        // Photos whose trip is missing join the photos that are in no trip.
+        let knownTripIDs = Set(trips.map(\.id))
         var itemsByTrip: [String: [TimelineItemSnapshot]] = [:]
         for item in uniqueItems.values {
-            let tripID = itemTripIDs[item.id] ?? item.tripID ?? Self.unassignedTripID
-            if !definitions.contains(where: { $0.id == tripID }) {
-                definitions.append(TimelineSourceTrip(id: tripID, name: "Unsorted memories"))
-            }
+            var tripID = itemTripIDs[item.id] ?? item.tripID ?? Self.unassignedTripID
+            if !knownTripIDs.contains(tripID) { tripID = Self.unassignedTripID }
             itemsByTrip[tripID, default: []].append(item)
+        }
+
+        var definitions = trips
+        if itemsByTrip[Self.unassignedTripID] != nil, !knownTripIDs.contains(Self.unassignedTripID) {
+            definitions.append(TimelineSourceTrip(id: Self.unassignedTripID, name: "Unsorted memories"))
         }
 
         let builtTrips = definitions.map { definition in
@@ -62,7 +58,7 @@ struct TimelineBuilder {
 
         var dayGroups: [DayKey: [PlaceGroup]] = [:]
         for item in orderedItems {
-            let dayKey = DayKey(date: item.date.map { calendar.startOfDay(for: $0) })
+            let dayKey = makeDayKey(for: item)
             let spot = item.photoStop.flatMap { spotByItemID[$0.id] }
             let placeKey = spot?.id ?? fallbackPlaceKey(for: item)
             let city = item.photoStop.flatMap { cityByItemID[$0.id] }
@@ -134,13 +130,11 @@ struct TimelineBuilder {
                 events.append(contentsOf: travel.map(TimelineEvent.travel))
                 events.append(.place(place))
             }
-            let memoryKey = dayGroups[dayKey]?.flatMap(\.items).compactMap(\.dayKey).first
-                ?? dayKey.date.map { PhotoNoteDay.key(for: $0, calendar: calendar) }
             return TimelineDay(
                 id: "\(definition.id)|day|\(dayKey.id)",
                 date: dayKey.date,
                 events: events,
-                memoryKey: memoryKey
+                memoryKey: dayKey.key
             )
         }
 
@@ -150,6 +144,24 @@ struct TimelineBuilder {
             days: dayValues,
             startDate: definition.startDate ?? orderedItems.compactMap(\.date).min()
         )
+    }
+
+    /// Days follow the photo's own local day (the key day memories are stored
+    /// under), so a trip abroad is not split or merged by the Mac's time zone.
+    /// Photos without one fall back to the builder's calendar.
+    private func makeDayKey(for item: TimelineItemSnapshot) -> DayKey {
+        if let key = item.dayKey, let date = dayStart(fromKey: key) {
+            return DayKey(date: date, key: key)
+        }
+        guard let date = item.date else { return DayKey(date: nil, key: nil) }
+        let start = calendar.startOfDay(for: date)
+        return DayKey(date: start, key: PhotoNoteDay.key(for: start, calendar: calendar))
+    }
+
+    private func dayStart(fromKey key: String) -> Date? {
+        let parts = key.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
     }
 
     private func placeID(tripID: String, dayKey: DayKey, placeKey: String) -> String {
@@ -222,11 +234,12 @@ struct TimelineBuilder {
 }
 
 private struct DayKey: Hashable {
+    /// Start of the day in the builder's calendar, for headers and ordering.
     let date: Date?
+    /// `yyyy-MM-dd`, the key day memories are stored under.
+    let key: String?
 
-    var id: String {
-        date.map { String($0.timeIntervalSinceReferenceDate) } ?? "undated"
-    }
+    var id: String { key ?? "undated" }
 }
 
 private struct PlaceGroup {

@@ -112,7 +112,13 @@ struct AISettingsView: View {
         .background(Paper.canvas)
         .tint(Paper.accent)
         .frame(width: 560)
-        .onAppear { loadKey(for: provider) }
+        .onAppear {
+            loadKey(for: provider)
+            // An empty model from the old text field already meant the default.
+            if provider == .claude, model.trimmingCharacters(in: .whitespaces).isEmpty {
+                model = CloudProvider.claude.defaultModel
+            }
+        }
         .onChange(of: providerRaw) { oldValue, newValue in
             if let old = CloudProvider(rawValue: oldValue) { storeKey(for: old) }
             let new = CloudProvider(rawValue: newValue) ?? .claude

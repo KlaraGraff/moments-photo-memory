@@ -94,7 +94,11 @@ final class PeopleSamePhotoTests: XCTestCase {
     func testZoomCropIsASquareAroundTheFace() {
         // Vision rect (normalized, y-up) at the centre of a 1000×500 photo.
         let rect = PeopleFaceZoom.cropRect(faceRect: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2), imageSize: CGSize(width: 1000, height: 500))
-        XCTAssertEqual(rect, CGRect(x: 320, y: 70, width: 360, height: 360))
+        // Normalized inputs carry float error, and the pixel rect rounds outward.
+        XCTAssertEqual(rect.minX, 320, accuracy: 1)
+        XCTAssertEqual(rect.minY, 70, accuracy: 1)
+        XCTAssertEqual(rect.width, 360, accuracy: 2)
+        XCTAssertEqual(rect.width, rect.height)
     }
 
     func testZoomCropStaysInsideThePhoto() {

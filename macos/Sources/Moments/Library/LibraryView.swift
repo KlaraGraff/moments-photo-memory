@@ -136,6 +136,7 @@ struct LibraryView: View {
         hasher.combine(memoryFilterRaw)
         hasher.combine(personFilterID)
         hasher.combine(state.focusedMemoryItemID)
+        hasher.combine(selection.libraryScope?.itemIDs)
         for item in items {
             hasher.combine(item.id)
             hasher.combine(item.captureDate)
@@ -298,17 +299,19 @@ struct LibraryView: View {
 
     private var filterBar: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Chips never truncate; when they do not fit, drop the disabled
-            // "Add filter" stub, then scroll rather than clip.
+            // Chips never truncate; when they do not fit, scroll rather than clip.
             ViewThatFits(in: .horizontal) {
-                filterChipRow(showsAddFilter: true)
-                filterChipRow(showsAddFilter: false)
-                ScrollView(.horizontal) { filterChipRow(showsAddFilter: false) }
+                filterChipRow
+                ScrollView(.horizontal) { filterChipRow }
                     .scrollIndicators(.hidden)
             }
 
-            if hasActiveFilters {
+            if hasActiveFilters || selection.libraryScope != nil {
                 HStack(spacing: 7) {
+                    if let scope = selection.libraryScope {
+                        filterChip(scope.title) { selection.libraryScope = nil }
+                            .accessibilityIdentifier("library.scope-chip")
+                    }
                     if let selectedPlaceName {
                         filterChip("\(String(localized: "Place:")) \(selectedPlaceName)") { placeFilterID = "" }
                     }
@@ -339,17 +342,20 @@ struct LibraryView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(LibraryPalette.muted)
                 Spacer(minLength: 12)
-                // Its own row keeps the filter chips at full width and the
-                // button on one line in the smallest window.
-                Button(String(localized: "Save this filter as a smart group")) {
-                    showingSmartGroupEditor = true
+                // Only a real filter can become a smart group. Its own row
+                // keeps the chips at full width and the button on one line.
+                // A scope is a one-off list, not a rule a smart group could keep.
+                if criteria.isFiltered && selection.libraryScope == nil {
+                    Button(String(localized: "Save this filter as a smart group")) {
+                        showingSmartGroupEditor = true
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .foregroundStyle(LibraryPalette.accent)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .accessibilityIdentifier("library.save-smart-group")
                 }
-                .buttonStyle(.link)
-                .font(.caption)
-                .foregroundStyle(LibraryPalette.accent)
-                .lineLimit(1)
-                .fixedSize()
-                .accessibilityIdentifier("library.save-smart-group")
             }
         }
         .padding(.horizontal, PaperMetrics.screenInset)
@@ -361,7 +367,7 @@ struct LibraryView: View {
         }
     }
 
-    private func filterChipRow(showsAddFilter: Bool) -> some View {
+    private var filterChipRow: some View {
         HStack(spacing: 8) {
             filterMenu(label: String(localized: "Place"), selected: selectedPlaceName) {
                 Button(String(localized: "All places")) { placeFilterID = "" }
@@ -390,20 +396,6 @@ struct LibraryView: View {
             dateFilterMenu
             memoryFilterMenu
             personFilterMenu
-
-            if showsAddFilter {
-                Button {
-                    // The filter builder is intentionally a disabled stub until #30.
-                } label: {
-                    Label(String(localized: "Add filter"), systemImage: "plus")
-                }
-                .buttonStyle(.plain)
-                .paperChip()
-                .foregroundStyle(LibraryPalette.muted)
-                .opacity(0.55)
-                .disabled(true)
-                .accessibilityIdentifier("library.add-filter")
-            }
 
             Spacer(minLength: 0)
         }
@@ -605,13 +597,14 @@ struct LibraryView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 13) {
+        let isFiltered = criteria.isFiltered || selection.libraryScope != nil
+        return VStack(spacing: 13) {
             ContentUnavailableView(
-                criteria.isFiltered ? String(localized: "No matching photos") : String(localized: "No photos yet"),
-                systemImage: criteria.isFiltered ? "line.3.horizontal.decrease.circle" : "photo.on.rectangle",
-                description: Text(criteria.isFiltered ? String(localized: "Try changing your filters.") : String(localized: "Add a photo or import a folder to begin."))
+                isFiltered ? String(localized: "No matching photos") : String(localized: "No photos yet"),
+                systemImage: isFiltered ? "line.3.horizontal.decrease.circle" : "photo.on.rectangle",
+                description: Text(isFiltered ? String(localized: "Try changing your filters.") : String(localized: "Add a photo or import a folder to begin."))
             )
-            if !criteria.isFiltered {
+            if !isFiltered {
                 Button {
                     importController.chooseFolder()
                 } label: {
@@ -683,14 +676,20 @@ struct LibraryView: View {
         memoryFilterRaw = LibraryMemoryFilter.all.rawValue
         personFilterID = ""
         typeRaw = LibraryMediaTypeFilter.all.rawValue
+        selection.libraryScope = nil
     }
 
     private func regroup() {
         let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
         cachedPersonIndex = personIndex
-        let filtered = LibraryFilterEngine.filteredItems(items, by: criteria, personIDsByMediaID: personIndex)
+        // A scope from another screen narrows the grid only; the published
+        // ids below stay on the regular filters so the maps do not shrink.
+        let scopedItems = selection.libraryScope.map { scope in
+            items.filter { scope.itemIDs.contains($0.id) }
+        } ?? items
+        let filtered = LibraryFilterEngine.filteredItems(scopedItems, by: criteria, personIDsByMediaID: personIndex)
         let visible = LibraryFilterEngine.filteredItems(
-            items,
+            scopedItems,
             by: criteria,
             preservingEditingItemID: state.focusedMemoryItemID,
             personIDsByMediaID: personIndex
@@ -1138,6 +1137,10 @@ private struct MemoryEditor: View {
 
 struct ReviewListView: View {
     @Query private var items: [MediaItem]
+    @Environment(\.modelContext) private var modelContext
+    @Environment(SelectionModel.self) private var selection
+    /// The last confirmation, so it can be taken back.
+    @State private var lastConfirmed: [(id: String, decision: ImportReviewDecision)] = []
 
     private var pending: [MediaItem] {
         items
@@ -1148,9 +1151,20 @@ struct ReviewListView: View {
     }
 
     var body: some View {
+        let pending = self.pending
         VStack(alignment: .leading, spacing: 0) {
             PaperScreenHeader(String(localized: "To review")) {
                 if !pending.isEmpty { Text("\(pending.count)") }
+            } trailing: {
+                if !lastConfirmed.isEmpty {
+                    Button(String(localized: "Undo")) { undo() }
+                        .keyboardShortcut("z", modifiers: .command)
+                        .accessibilityIdentifier("review.undo")
+                }
+                if pending.count > 1 {
+                    Button(String(localized: "Confirm all")) { confirm(pending) }
+                        .accessibilityIdentifier("review.confirm-all")
+                }
             }
             if pending.isEmpty {
                 ContentUnavailableView(String(localized: "Nothing to review"), systemImage: "checkmark.circle", description: Text(String(localized: "Import review items will appear here.")))
@@ -1160,9 +1174,17 @@ struct ReviewListView: View {
                     LazyVStack(alignment: .leading, spacing: 8) {
                         ForEach(pending, id: \.id) { item in
                             HStack(spacing: 14) {
-                                ThumbnailView(item: item, width: 90, height: 70)
-                                    .frame(width: 90, height: 70)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                Button {
+                                    selection.select(item.id)
+                                    selection.openViewer(item.id, in: pending.map(\.id))
+                                } label: {
+                                    ThumbnailView(item: item, width: 180, height: 140)
+                                        .frame(width: 90, height: 70)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                                .help(String(localized: "Open photo"))
+                                .accessibilityIdentifier("review.photo.\(item.id)")
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(item.title.isEmpty ? item.id : item.title)
                                         .foregroundStyle(LibraryPalette.ink)
@@ -1170,7 +1192,16 @@ struct ReviewListView: View {
                                         .font(.caption)
                                         .foregroundStyle(LibraryPalette.muted)
                                 }
-                                Spacer(minLength: 0)
+                                Spacer(minLength: 8)
+                                Button(String(localized: "Show in Library")) {
+                                    selection.select(item.id)
+                                    selection.requestedDestination = .library
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityIdentifier("review.show.\(item.id)")
+                                Button(String(localized: "Confirm")) { confirm([item]) }
+                                    .buttonStyle(.bordered)
+                                    .accessibilityIdentifier("review.confirm.\(item.id)")
                             }
                             .paperCard(cornerRadius: 10, padding: 10)
                         }
@@ -1182,6 +1213,29 @@ struct ReviewListView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(LibraryPalette.content)
+    }
+
+    /// Confirming keeps Moments' suggestion as it is and clears the flag.
+    private func confirm(_ confirmed: [MediaItem]) {
+        lastConfirmed = confirmed.map { ($0.id, $0.importDecision) }
+        for item in confirmed {
+            item.importDecision = .accepted
+            item.updatedAt = .now
+            item.updatedBy = MomentsAccount.localID
+        }
+        try? modelContext.save()
+    }
+
+    private func undo() {
+        let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for entry in lastConfirmed {
+            guard let item = byID[entry.id] else { continue }
+            item.importDecision = entry.decision
+            item.updatedAt = .now
+            item.updatedBy = MomentsAccount.localID
+        }
+        try? modelContext.save()
+        lastConfirmed = []
     }
 }
 

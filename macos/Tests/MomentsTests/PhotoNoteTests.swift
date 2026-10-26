@@ -445,7 +445,8 @@ final class PhotoNoteTests: XCTestCase {
             "data": [
                 ["type": "model", "id": "claude-opus-5-5", "display_name": "Claude Opus 5.5"],
                 ["type": "model", "id": "claude-haiku-5-5", "display_name": ""],
-                ["type": "model", "display_name": "No id"]
+                ["type": "model", "display_name": "No id"],
+                ["type": "model", "id": "claude-old", "capabilities": ["structured_outputs": ["supported": false]]]
             ],
             "has_more": false
         ])

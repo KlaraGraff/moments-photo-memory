@@ -265,11 +265,11 @@ struct ClaudeOrganizer: NoteOrganizing {
         return request
     }
 
-    func organize(_ context: NoteOrganizerContext) async throws -> NoteOrganizerResult {
-        guard let apiKey else { throw NoteOrganizerError.missingKey }
-        let object: [String: Any]
+    /// Sends a request to Anthropic, turning a bad key or a refused network
+    /// into words the person can act on.
+    static func send(_ request: URLRequest, session: URLSession) async throws -> [String: Any] {
         do {
-            object = try await CloudHTTP.send(try makeRequest(context, apiKey: apiKey), session: session)
+            return try await CloudHTTP.send(request, session: session)
         } catch NoteOrganizerError.http(401, _) {
             throw NoteOrganizerError.http(401, String(localized: "The API key was not accepted. Check it in Settings › AI Model."))
         } catch NoteOrganizerError.http(403, let detail) {
@@ -277,6 +277,11 @@ struct ClaudeOrganizer: NoteOrganizing {
             let hint = String(localized: "Anthropic doesn't accept requests from this network. Turn on a proxy for the whole Mac, then try again.")
             throw NoteOrganizerError.http(403, detail.isEmpty ? hint : "\(hint) (\(detail))")
         }
+    }
+
+    func organize(_ context: NoteOrganizerContext) async throws -> NoteOrganizerResult {
+        guard let apiKey else { throw NoteOrganizerError.missingKey }
+        let object = try await Self.send(try makeRequest(context, apiKey: apiKey), session: session)
         if object["stop_reason"] as? String == "refusal" { throw NoteOrganizerError.refused }
         let blocks = object["content"] as? [[String: Any]] ?? []
         let text = blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined()
@@ -300,19 +305,16 @@ enum AnthropicModelList {
         request.timeoutInterval = 30
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue("2026-10-21", forHTTPHeaderField: "anthropic-version")
-        let object: [String: Any]
-        do {
-            object = try await CloudHTTP.send(request, session: session)
-        } catch NoteOrganizerError.http(401, _) {
-            throw NoteOrganizerError.http(401, String(localized: "The API key was not accepted. Check it in Settings › AI Model."))
-        }
-        return parse(object)
+        return parse(try await ClaudeOrganizer.send(request, session: session))
     }
 
     static func parse(_ object: [String: Any]) -> [CloudModelOption] {
         let data = object["data"] as? [[String: Any]] ?? []
         return data.compactMap { entry in
             guard let id = entry["id"] as? String, !id.isEmpty else { return nil }
+            // Notes need structured output; leave out models that say they lack it.
+            let capabilities = entry["capabilities"] as? [String: Any]
+            if (capabilities?["structured_outputs"] as? [String: Any])?["supported"] as? Bool == false { return nil }
             let name = (entry["display_name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id
             return CloudModelOption(id: id, displayName: name)
         }

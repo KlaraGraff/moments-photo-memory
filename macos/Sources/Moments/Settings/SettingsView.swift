@@ -21,14 +21,12 @@ struct SettingsView: View {
     }
 }
 
-/// Settings is its own window, as on every Mac: one fixed width, and each
-/// tab as tall as its content so nothing scrolls. The window grows or
-/// shrinks to the tab (the system animates it) and can't be dragged larger.
+/// Settings is its own window, as on every Mac: one fixed size for every
+/// tab, so switching tabs never resizes the window. It fits General; a
+/// shorter tab sits at the top, a longer one scrolls.
 enum SettingsLayout {
     static let width: CGFloat = 600
-    static let generalHeight: CGFloat = 520
-    static let aiHeight: CGFloat = 660
-    static let sharingHeight: CGFloat = 280
+    static let height: CGFloat = 470
 }
 
 /// The open Settings tab; a link such as "AI model settings" picks its tab
@@ -90,7 +88,7 @@ struct GeneralSettingsView: View {
         .scrollContentBackground(.hidden)
         .background(Paper.canvas)
         .tint(Paper.accent)
-        .frame(width: SettingsLayout.width, height: SettingsLayout.generalHeight)
+        .frame(width: SettingsLayout.width, height: SettingsLayout.height)
     }
 
     private func folderRow(_ title: String, url: URL?, identifier: String) -> some View {
@@ -133,8 +131,9 @@ struct SharingSettingsView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
         }
-        .padding(40)
-        .frame(width: SettingsLayout.width, height: SettingsLayout.sharingHeight)
+        .padding(.horizontal, 40)
+        .padding(.top, 48)
+        .frame(width: SettingsLayout.width, height: SettingsLayout.height, alignment: .top)
         .background(Paper.canvas)
         .accessibilityIdentifier("settings.sharing")
     }

@@ -100,19 +100,11 @@ struct MapScreen: View {
 
     var body: some View {
         let currentWorldInput = worldInput
-        VStack(spacing: 0) {
-            // The same filters as the Library, kept in step with it: pick a
-            // person to see only the places you were with them.
-            LibraryFilterChips()
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(Paper.well.opacity(0.45))
-                // A container, so the menus inside keep their own identifiers.
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("map.filters")
-            mapArea
-        }
-        .background { LibraryFilterPublisher() }
+        // The Library's filters, kept in step with it, behind a search field
+        // and a Filter button: pick a person to see only the places you
+        // were with them.
+        mapArea
+        .compactLibraryFilters()
         .navigationTitle("Map")
         .task(id: snapshotKey) {
             itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -172,10 +164,7 @@ struct MapScreen: View {
             .padding(.leading, 1)
             .padding(.top, 1)
             .clipped()
-            .overlay(alignment: .topLeading) {
-                if isWorldView, !world.snapshot.cityClusters.isEmpty { worldSummary }
-            }
-            .overlay(alignment: .topTrailing) { mapToolbar }
+            .overlay(alignment: .top) { topBar }
             .overlay(alignment: .bottom) { bottomStrip }
 
             if snapshot.isEmpty, cachedSnapshot != nil {
@@ -311,35 +300,77 @@ struct MapScreen: View {
 
     // MARK: Overlays
 
-    private var mapToolbar: some View {
-        HStack(spacing: 8) {
-            Picker("Map style", selection: $mapStyle) {
-                ForEach(MapScreenStyle.allCases) { style in
-                    Text(style.title).tag(style)
-                }
+    /// The countries card and the map controls share one row, so they can
+    /// never overlap: when the window is narrow the buttons drop their words
+    /// first, then the map style becomes a small menu.
+    private var topBar: some View {
+        HStack(alignment: .top, spacing: 10) {
+            if isWorldView, !world.snapshot.cityClusters.isEmpty {
+                worldSummary.fixedSize()
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
+            Spacer(minLength: 0)
+            ViewThatFits(in: .horizontal) {
+                mapToolbar(.full)
+                mapToolbar(.iconButtons)
+                mapToolbar(.compact)
+            }
+        }
+        .padding(14)
+    }
+
+    private enum ToolbarFit { case full, iconButtons, compact }
+
+    private func mapToolbar(_ fit: ToolbarFit) -> some View {
+        HStack(spacing: 8) {
+            if fit == .compact {
+                Menu {
+                    Picker("Map style", selection: $mapStyle) {
+                        ForEach(MapScreenStyle.allCases) { style in
+                            Text(style.title).tag(style)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Image(systemName: "map")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Map style")
+            } else {
+                Picker("Map style", selection: $mapStyle) {
+                    ForEach(MapScreenStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
 
             // Two different jobs, so two buttons: back out to every country,
             // or frame exactly the places the photos were taken.
-            Button("Whole world", systemImage: "globe.europe.africa") {
-                showGlobe()
-            }
-            .help("Back out to the globe with every country you visited")
-            .accessibilityIdentifier("map.globe")
+            Group {
+                Button("Whole world", systemImage: "globe.europe.africa") {
+                    showGlobe()
+                }
+                .help("Back out to the globe with every country you visited")
+                .accessibilityIdentifier("map.globe")
 
-            Button("Zoom to photos", systemImage: "photo.on.rectangle") {
-                fitAll()
+                Button("Zoom to photos", systemImage: "photo.on.rectangle") {
+                    fitAll()
+                }
+                .help("Zoom in to the places your photos were taken")
+                .disabled(snapshot.stops.isEmpty)
+                .accessibilityIdentifier("map.fit")
             }
-            .help("Zoom in to the places your photos were taken")
-            .disabled(snapshot.stops.isEmpty)
-            .accessibilityIdentifier("map.fit")
+            .labelStyle(fit == .full ? AnyLabelStyle(.titleAndIcon) : AnyLabelStyle(.iconOnly))
         }
+        .fixedSize()
         .padding(8)
         .paperFloatingPanel(cornerRadius: 10)
-        .padding(14)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("map.toolbar")
     }
 
     /// Countries, cities and distance, in a corner the globe never reaches.
@@ -369,7 +400,6 @@ struct MapScreen: View {
         }
         .buttonStyle(.plain)
         .paperFloatingPanel(cornerRadius: 10)
-        .padding(14)
         .help("Visited countries")
         .accessibilityIdentifier("map.stats")
         .popover(isPresented: $showingCountries, arrowEdge: .bottom) {
@@ -546,16 +576,32 @@ struct MapScreen: View {
         }
     }
 
+    /// No pins: either nothing has a location yet, or the filters left out
+    /// every photo that does. Each says so, and the second offers a way back.
     private var emptyState: some View {
-        ContentUnavailableView(
-            "No geotagged photos",
-            systemImage: "mappin.slash",
-            description: Text("Add a location to see places and routes.")
-        )
+        Group {
+            if items.contains(where: { !$0.isScreenshot && $0.latitude != nil && $0.longitude != nil }) {
+                ContentUnavailableView {
+                    Label("No photos match these filters", systemImage: "line.3.horizontal.decrease.circle")
+                } description: {
+                    Text("Change or clear the filters above to see more places.")
+                } actions: {
+                    Button("Clear filters") { LibraryFilterKeys.clearAll() }
+                        .accessibilityIdentifier("map.clear-filters")
+                }
+            } else {
+                ContentUnavailableView(
+                    "No geotagged photos",
+                    systemImage: "mappin.slash",
+                    description: Text("Add a location to see places and routes.")
+                )
+            }
+        }
         .frame(maxWidth: 320)
         .padding(24)
         .paperFloatingPanel()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .accessibilityIdentifier("map.empty")
     }
 
     private func mapStatus(text: LocalizedStringKey, systemImage: String) -> some View {
@@ -650,8 +696,6 @@ struct MapScreen: View {
         selectedClusterID = snapshot.cluster(containing: itemID)?.id
     }
 
-    /// When the photos span half the world, fitting them is the globe
-    /// already, so there is nothing to zoom to.
     private func fitAll() {
         guard !snapshot.stops.isEmpty else { return }
         moveCamera(to: .region(viewModel.initialRegion(for: snapshot.stops)), isGlobe: false)
@@ -812,5 +856,18 @@ private final class MapNetworkMonitor: ObservableObject, @unchecked Sendable {
 
     deinit {
         monitor.cancel()
+    }
+}
+
+/// Lets one control switch between label styles depending on the room it has.
+private struct AnyLabelStyle: LabelStyle {
+    private let make: (Configuration) -> AnyView
+
+    init<S: LabelStyle>(_ style: S) {
+        make = { AnyView(style.makeBody(configuration: $0)) }
+    }
+
+    func makeBody(configuration: Configuration) -> some View {
+        make(configuration)
     }
 }

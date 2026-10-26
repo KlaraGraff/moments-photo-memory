@@ -99,6 +99,34 @@ final class PhotoInfoEditingTests: XCTestCase {
         XCTAssertEqual(summer.effectiveName, "Trip 2026-08-20")
     }
 
+    func testNewTripHoldsThePhotoAndSpansItsDay() throws {
+        let context = try makeContext()
+        let item = MediaItem(id: "a", captureDate: base)
+        context.insert(item)
+        XCTAssertNil(PhotoInfoEditing.moveToNewTrip(named: "  ", item: item, context: context))
+        let trip = try XCTUnwrap(PhotoInfoEditing.moveToNewTrip(named: "Fes Aug 21", item: item, context: context))
+        XCTAssertEqual(item.trip?.id, trip.id)
+        XCTAssertEqual(item.tripID, trip.id)
+        XCTAssertEqual(trip.startDate, base)
+        XCTAssertEqual(trip.endDate, base)
+        XCTAssertFalse(trip.isSuggestion)
+    }
+
+    func testSwipeTurnsThePageWhenFarOrFastEnough() {
+        // Slid a third of the way: next photo.
+        XCTAssertEqual(ViewerSwipe.direction(offset: -200, width: 600, lastStep: -1, hasPrevious: true, hasNext: true), 1)
+        XCTAssertEqual(ViewerSwipe.direction(offset: 200, width: 600, lastStep: 1, hasPrevious: true, hasNext: true), -1)
+        // A short, slow slide springs back.
+        XCTAssertEqual(ViewerSwipe.direction(offset: -30, width: 600, lastStep: -2, hasPrevious: true, hasNext: true), 0)
+        // A short quick flick still turns.
+        XCTAssertEqual(ViewerSwipe.direction(offset: -30, width: 600, lastStep: -12, hasPrevious: true, hasNext: true), 1)
+        // Far enough wins over a last flick back; a short slide flicked back does not turn.
+        XCTAssertEqual(ViewerSwipe.direction(offset: -200, width: 600, lastStep: 12, hasPrevious: true, hasNext: true), 1)
+        XCTAssertEqual(ViewerSwipe.direction(offset: -30, width: 600, lastStep: 12, hasPrevious: true, hasNext: true), 0)
+        // Nothing past the last photo.
+        XCTAssertEqual(ViewerSwipe.direction(offset: -300, width: 600, lastStep: -12, hasPrevious: true, hasNext: false), 0)
+    }
+
     // A 400×300 photo fitted into a 400×300 area.
     private let fitted = CGSize(width: 400, height: 300)
     private let area = CGSize(width: 400, height: 300)

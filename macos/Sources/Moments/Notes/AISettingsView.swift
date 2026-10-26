@@ -101,7 +101,7 @@ struct AISettingsView: View {
         .scrollContentBackground(.hidden)
         .background(Paper.canvas)
         .tint(Paper.accent)
-        .frame(width: SettingsLayout.width, height: SettingsLayout.aiHeight)
+        .frame(width: SettingsLayout.width, height: SettingsLayout.height)
         .onAppear { loadKey(for: provider) }
         .onChange(of: providerRaw) { oldValue, newValue in
             if let old = CloudProvider(rawValue: oldValue) { storeKey(for: old) }

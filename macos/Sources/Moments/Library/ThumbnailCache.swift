@@ -117,6 +117,8 @@ final class ThumbnailCache {
     private let cache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 600
+        // Decoded bitmaps are about 1 MB each at Library size.
+        cache.totalCostLimit = 200 * 1024 * 1024
         return cache
     }()
 
@@ -171,7 +173,7 @@ final class ThumbnailCache {
         }
         guard let result else { return nil }
         let image = NSImage(cgImage: result.image, size: NSSize(width: result.image.width, height: result.image.height))
-        if result.isFinal { cache.setObject(image, forKey: key) }
+        if result.isFinal { cache.setObject(image, forKey: key, cost: result.image.bytesPerRow * result.image.height) }
         return image
     }
 
@@ -255,9 +257,13 @@ final class ThumbnailCache {
     }
 
     nonisolated private static func writeJPEG(_ image: CGImage, to url: URL) {
-        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else { return }
+        // Encoded in memory and written atomically: a reader never sees a
+        // half-written file, and a killed app leaves none behind.
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return }
         CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.82] as CFDictionary)
-        CGImageDestinationFinalize(destination)
+        guard CGImageDestinationFinalize(destination) else { return }
+        try? (data as Data).write(to: url, options: .atomic)
     }
 
     /// Photos identifiers contain "/", which cannot be in a file name.
@@ -322,7 +328,10 @@ struct ThumbnailView: View {
                     return
                 }
                 image = nil
-                image = await ThumbnailCache.shared.image(for: source, width: width, height: height)
+                let loaded = await ThumbnailCache.shared.image(for: source, width: width, height: height)
+                // A newer task may already have set this view's image.
+                guard !Task.isCancelled else { return }
+                image = loaded
             }
     }
 }

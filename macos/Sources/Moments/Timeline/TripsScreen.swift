@@ -6,12 +6,18 @@ import MomentsCore
 /// place by place, with the trip's and each day's memories written right
 /// there. Browsing and filtering every photo stays in the Library, so this
 /// screen ignores the Library filters.
+///
+/// A trip's photos can be changed here: new dates re-sort them, a day can
+/// be added or taken out, a trip split or merged. Each change shows a short
+/// note at the bottom with Undo (also on ⌘Z).
 struct TripsScreen: View {
     @Query private var items: [MediaItem]
     @Query private var trips: [Trip]
     @Query private var places: [Place]
     @Query(sort: \CollectionMemory.createdAt) private var memories: [CollectionMemory]
     @Environment(SelectionModel.self) private var selection
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.undoManager) private var undoManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The card to scroll back to when leaving a trip.
     @State private var returnTripID: String?
@@ -19,6 +25,10 @@ struct TripsScreen: View {
     @State private var document = TimelineDocument(trips: [])
     /// Thumbnails need the models; looked up by id, rebuilt with `document`.
     @State private var itemByID: [String: MediaItem] = [:]
+    /// The last change, with its Undo.
+    @State private var notice: TripNotice?
+    /// Covers chosen by hand, by trip id; kept on this Mac.
+    @AppStorage(TripCoverChoice.defaultsKey) private var coverStore = ""
 
     private var inputKey: Int {
         var hasher = Hasher()
@@ -38,6 +48,8 @@ struct TripsScreen: View {
             hasher.combine(trip.id)
             hasher.combine(trip.effectiveName)
             hasher.combine(trip.items.count)
+            hasher.combine(trip.startDate)
+            hasher.combine(trip.endDate)
         }
         for place in places {
             hasher.combine(place.id)
@@ -79,12 +91,16 @@ struct TripsScreen: View {
         return document.trips.first { $0.id == id }
     }
 
+    private var tripByID: [String: Trip] {
+        Dictionary(trips.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
     var body: some View {
         Group {
             if items.isEmpty {
                 ContentUnavailableView(
                     "No trips yet",
-                    systemImage: "suitcase",
+                    systemImage: "airplane.departure",
                     description: Text("Import photos and each trip gets its own card here.")
                 )
             } else if document.trips.isEmpty {
@@ -93,21 +109,46 @@ struct TripsScreen: View {
             } else if let trip = openTrip {
                 TripDetailView(
                     trip: trip,
+                    model: tripByID[trip.id],
+                    otherTrips: mergeCandidates(for: trip),
+                    around: daysAround(trip),
                     itemByID: itemByID,
                     memories: memories,
+                    actions: actions,
                     onBack: closeTrip
                 )
                 .transition(.opacity)
             } else {
                 TripShelfView(
                     trips: shelf,
+                    models: tripByID,
                     itemByID: itemByID,
+                    covers: TripCoverChoice.decode(coverStore),
                     memories: memories,
                     returnTripID: returnTripID,
+                    actions: actions,
                     onOpen: open
                 )
                 .transition(.opacity)
             }
+        }
+        .overlay(alignment: .bottom) {
+            if let notice {
+                TripNoticeBar(notice: notice, onUndo: { undo(notice) }, onAdopt: { adopt(notice) }, onClose: { self.notice = nil })
+                    .padding(.bottom, 18)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), value: notice?.id)
+        // ⌘Z already put things back; the note and its offer no longer apply.
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { _ in
+            notice = nil
+        }
+        .task(id: notice?.id) {
+            // A note without a question goes away by itself.
+            guard let notice, notice.offer == nil else { return }
+            try? await Task.sleep(for: .seconds(10))
+            if self.notice?.id == notice.id { self.notice = nil }
         }
         .task(id: inputKey) {
             document = buildDocument()
@@ -129,6 +170,118 @@ struct TripsScreen: View {
         }
     }
 
+    // MARK: Changes
+
+    private var actions: TripActions {
+        TripActions(
+            changeDates: changeDates,
+            addPhotos: { ids, trip in
+                edit(String(localized: "Added to the trip")) { TripEdits.add(ids, to: trip, session: $0) }
+            },
+            removeDay: { day, trip in
+                edit(String(localized: "Day taken out of the trip")) { TripEdits.removeDay(day, from: trip, session: $0) }
+            },
+            split: { day, trip in
+                let session = TripEdits.Session(context: modelContext)
+                guard let part = TripEdits.split(trip, at: day, session: session) else { return }
+                post(TripNotice(message: String(localized: "Split off “\(part.effectiveName)”"), undo: session.undo))
+            },
+            merge: { other, trip in
+                let name = other.effectiveName
+                edit(String(localized: "Merged “\(name)” into this trip")) { TripEdits.merge(other, into: trip, session: $0) }
+            },
+            setCover: { tripID, itemID in
+                var choices = TripCoverChoice.decode(coverStore)
+                choices[tripID] = itemID
+                coverStore = TripCoverChoice.encode(choices)
+            }
+        )
+    }
+
+    private func edit(_ message: String, _ change: (TripEdits.Session) -> Void) {
+        let session = TripEdits.Session(context: modelContext)
+        change(session)
+        guard !session.undo.isEmpty else { return }
+        post(TripNotice(message: message, undo: session.undo))
+    }
+
+    private func changeDates(_ trip: Trip, start: Date, end: Date) {
+        let session = TripEdits.Session(context: modelContext)
+        let outcome = TripEdits.changeDates(of: trip, start: start, end: end, session: session)
+        var notice = TripNotice(
+            message: String(localized: "Dates changed · \(outcome.joined) added · \(outcome.left) taken out"),
+            undo: outcome.undo
+        )
+        let others = outcome.elsewhere.flatMap(\.itemIDs)
+        if !others.isEmpty {
+            let names = outcome.elsewhere.map { "“\($0.name)”" }.joined(separator: ", ")
+            notice.offer = TripNotice.Offer(
+                tripID: trip.id,
+                text: String(localized: "Photos in these dates that belong to \(names): \(others.count)"),
+                itemIDs: others
+            )
+        }
+        post(notice)
+    }
+
+    private func adopt(_ notice: TripNotice) {
+        guard let offer = notice.offer, let trip = tripByID[offer.tripID] else { return }
+        let session = TripEdits.Session(context: modelContext, continuing: notice.undo)
+        TripEdits.add(offer.itemIDs, to: trip, session: session)
+        post(TripNotice(message: String(localized: "Added to the trip"), undo: session.undo))
+    }
+
+    private func undo(_ notice: TripNotice) {
+        undoManager?.removeAllActions(withTarget: selection)
+        TripEdits.undo(notice.undo, context: modelContext)
+        self.notice = nil
+    }
+
+    /// Shows the note and puts the change on ⌘Z, replacing the previous one.
+    private func post(_ notice: TripNotice) {
+        undoManager?.removeAllActions(withTarget: selection)
+        let context = modelContext
+        let undo = notice.undo
+        undoManager?.registerUndo(withTarget: selection) { _ in
+            MainActor.assumeIsolated { TripEdits.undo(undo, context: context) }
+        }
+        undoManager?.setActionName(notice.message)
+        self.notice = notice
+    }
+
+    // MARK: Lookups
+
+    /// Other trips, nearest in time first, for "Merge with".
+    private func mergeCandidates(for trip: TimelineTrip) -> [TripLink] {
+        guard !trip.isUnsorted else { return [] }
+        let anchor = trip.startDate ?? .distantPast
+        return shelf
+            .filter { !$0.isUnsorted && $0.id != trip.id }
+            .sorted { abs(($0.startDate ?? .distantPast).timeIntervalSince(anchor)) < abs(($1.startDate ?? .distantPast).timeIntervalSince(anchor)) }
+            .prefix(8)
+            .map { TripLink(id: $0.id, name: TripText.name($0)) }
+    }
+
+    /// Photos in no trip from the three days before and after the trip, by day.
+    private func daysAround(_ trip: TimelineTrip) -> [TripNearbyDay] {
+        guard !trip.isUnsorted, let start = trip.startDate ?? trip.orderedItems.compactMap(\.date).min() else { return [] }
+        let end = trip.endDate ?? start
+        let calendar = Calendar.autoupdatingCurrent
+        guard let from = calendar.date(byAdding: .day, value: -3, to: calendar.startOfDay(for: start)),
+              let to = calendar.date(byAdding: .day, value: 4, to: calendar.startOfDay(for: end)) else { return [] }
+        let first = calendar.startOfDay(for: start)
+        let last = TripEdits.endOfDay(end, calendar: calendar)
+        var byDay: [Date: [MediaItem]] = [:]
+        for item in items where item.trip == nil && item.tripID == nil {
+            guard let date = item.effectiveCaptureDate, date >= from, date < to, date < first || date > last else { continue }
+            byDay[calendar.startOfDay(for: date), default: []].append(item)
+        }
+        return byDay.keys.sorted().map { day in
+            let photos = byDay[day, default: []].sorted { ($0.effectiveCaptureDate ?? .distantPast) < ($1.effectiveCaptureDate ?? .distantPast) }
+            return TripNearbyDay(date: day, isBefore: day < first, itemIDs: photos.map(\.id))
+        }
+    }
+
     private func nearestPlaceName(for item: MediaItem) -> String? {
         guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
         let coordinate = GeoPoint(latitude: latitude, longitude: longitude)
@@ -144,13 +297,102 @@ struct TripsScreen: View {
     }
 }
 
+/// What the Trips pages can change, handed down to the views that offer it.
+struct TripActions {
+    var changeDates: (Trip, Date, Date) -> Void
+    var addPhotos: ([String], Trip) -> Void
+    /// Days by their `yyyy-MM-dd` key, as the page groups them.
+    var removeDay: (String, Trip) -> Void
+    var split: (String, Trip) -> Void
+    /// The first trip merges into the second.
+    var merge: (Trip, Trip) -> Void
+    var setCover: (String, String) -> Void
+}
+
+/// The last change to a trip, with its Undo and sometimes a question.
+struct TripNotice: Identifiable {
+    struct Offer {
+        let tripID: String
+        let text: String
+        let itemIDs: [String]
+    }
+
+    let id = UUID()
+    let message: String
+    let undo: TripEdits.Undo
+    var offer: Offer?
+}
+
+/// Photos in no trip from one day just before or after a trip.
+struct TripNearbyDay: Identifiable {
+    let date: Date
+    let isBefore: Bool
+    let itemIDs: [String]
+    var id: Date { date }
+}
+
+/// A slim bar at the bottom of the page: what changed, Undo, and when
+/// photos of other trips fall in the new dates, the offer to move them.
+private struct TripNoticeBar: View {
+    let notice: TripNotice
+    let onUndo: () -> Void
+    let onAdopt: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Paper.accent)
+                Text(notice.message)
+                    .foregroundStyle(Paper.ink)
+                    .lineLimit(2)
+                    .accessibilityIdentifier("trips.notice")
+                Spacer(minLength: 8)
+                Button(String(localized: "Undo"), action: onUndo)
+                    .accessibilityIdentifier("trips.notice.undo")
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Paper.muted)
+                }
+                .buttonStyle(.plain)
+                .help(String(localized: "Close"))
+                .accessibilityLabel(String(localized: "Close"))
+            }
+            if let offer = notice.offer {
+                HStack(spacing: 12) {
+                    Text(offer.text)
+                        .font(.callout)
+                        .foregroundStyle(Paper.muted)
+                        .lineLimit(2)
+                    Spacer(minLength: 8)
+                    Button(String(localized: "Move them here"), action: onAdopt)
+                        .accessibilityIdentifier("trips.notice.adopt")
+                }
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .frame(maxWidth: 560)
+        .background(Paper.raised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .shadow(color: Paper.shadow.opacity(0.06), radius: 1, y: 1)
+        .shadow(color: Paper.shadow.opacity(0.12), radius: 14, y: 5)
+        .padding(.horizontal, 16)
+    }
+}
+
 // MARK: - Shelf
 
 private struct TripShelfView: View {
     let trips: [TimelineTrip]
+    let models: [String: Trip]
     let itemByID: [String: MediaItem]
+    let covers: [String: String]
     let memories: [CollectionMemory]
     let returnTripID: String?
+    let actions: TripActions
     let onOpen: (TimelineTrip) -> Void
 
     private var tripCount: Int { trips.filter { !$0.isUnsorted }.count }
@@ -158,17 +400,21 @@ private struct TripShelfView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 22) {
+                LazyVStack(alignment: .center, spacing: 18) {
                     ForEach(trips) { trip in
                         TripCoverCard(
                             trip: trip,
-                            covers: trip.covers.compactMap { itemByID[$0.id] },
+                            model: models[trip.id],
+                            covers: covers(for: trip),
+                            photos: trip.orderedItems.compactMap { itemByID[$0.id] },
                             memory: memories.first { $0.scope == .trip && $0.scopeKey == trip.id }?.text,
+                            actions: actions,
                             onOpen: { onOpen(trip) }
                         )
                         .id(trip.id)
                     }
                 }
+                .frame(maxWidth: .infinity)
                 .padding(.horizontal, PaperMetrics.screenInset)
                 .padding(.top, PaperMetrics.screenTopInset)
                 .padding(.bottom, 32)
@@ -183,84 +429,186 @@ private struct TripShelfView: View {
             }
         }
     }
+
+    /// The chosen cover in front, if it is still in the trip; the usual pair otherwise.
+    private func covers(for trip: TimelineTrip) -> [MediaItem] {
+        let automatic = trip.covers.compactMap { itemByID[$0.id] }
+        guard let chosenID = covers[trip.id],
+              trip.orderedItems.contains(where: { $0.id == chosenID }),
+              let chosen = itemByID[chosenID] else { return automatic }
+        let second = automatic.first { $0.id != chosenID }
+        return [chosen] + (second.map { [$0] } ?? [])
+    }
 }
 
-/// One trip as a wide card, like the import's suggested trips: two photos
-/// laid on top of each other like prints on the left; dates and length, the
-/// serif name, the route and the counts on the right; the trip's first
-/// memory in a quiet column at the end. One tone lighter than the page, no
-/// outline.
+/// One trip as a card in three parts: two photos laid on each other like
+/// prints; the dates, the serif name, the route and the counts; and a small
+/// drawn map of the route. One tone lighter than the page, no outline.
+/// Narrow windows drop the map first, then shrink the prints.
 private struct TripCoverCard: View {
     let trip: TimelineTrip
+    let model: Trip?
     let covers: [MediaItem]
+    let photos: [MediaItem]
     let memory: String?
+    let actions: TripActions
     let onOpen: () -> Void
     @Environment(\.locale) private var locale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
+    @State private var isPickingCover = false
 
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 8, style: .continuous) }
+    private var stops: [TripRouteStop] { trip.routeStops }
 
     var body: some View {
-        Button(action: onOpen) {
-            HStack(alignment: .top, spacing: 26) {
-                TripPrints(covers: covers, lifted: isHovering)
-                    .frame(width: 262, height: 186)
-
-                VStack(alignment: .leading, spacing: 9) {
-                    if let span = TripText.dateSpan(trip, locale: locale) {
-                        Text(TripText.dateLine(span: span, trip: trip))
-                            .font(.callout)
-                            .foregroundStyle(Paper.muted)
-                    }
-                    Text(TripText.name(trip))
-                        .font(.system(size: 28, weight: .medium, design: .serif))
-                        .foregroundStyle(Paper.ink)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .padding(.bottom, 5)
-                        .overlay(alignment: .bottom) {
-                            Rectangle()
-                                .stroke(Paper.rule, style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
-                                .frame(height: 1)
-                        }
-                    if !trip.cityNames.isEmpty {
-                        Text(trip.cityNames.joined(separator: " → "))
-                            .font(.callout)
-                            .foregroundStyle(Paper.ink)
-                            .lineLimit(2)
-                    }
-                    Text(TripText.counts(trip))
-                        .font(.callout.monospacedDigit())
-                        .foregroundStyle(Paper.muted)
-                }
-                .padding(.top, 6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                if let memory {
-                    Text(memory)
-                        .font(.system(.callout, design: .serif))
-                        .foregroundStyle(Paper.ink)
-                        .lineLimit(5)
-                        .frame(width: 220, alignment: .topLeading)
-                        .padding(.top, 8)
-                }
-            }
-            .padding(.horizontal, 22)
-            .padding(.vertical, 20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(trip.isUnsorted ? Paper.well.opacity(0.6) : Paper.raised, in: shape)
-            .contentShape(shape)
-            .shadow(color: Paper.shadow.opacity(isHovering ? 0.07 : 0.04), radius: 1, y: 1)
-            .shadow(color: Paper.shadow.opacity(isHovering ? 0.08 : 0.03), radius: isHovering ? 12 : 6, y: isHovering ? 4 : 2)
+        ViewThatFits(in: .horizontal) {
+            content(printScale: 0.8, showsMap: !stops.isEmpty)
+            content(printScale: 0.8, showsMap: false)
+            content(printScale: 0.62, showsMap: false)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+        .frame(maxWidth: 880, alignment: .leading)
+        .background(trip.isUnsorted ? Paper.well.opacity(0.6) : Paper.raised, in: shape)
+        .contentShape(shape)
+        .onTapGesture(perform: onOpen)
+        .shadow(color: Paper.shadow.opacity(isHovering ? 0.07 : 0.04), radius: 1, y: 1)
+        .shadow(color: Paper.shadow.opacity(isHovering ? 0.08 : 0.03), radius: isHovering ? 12 : 6, y: isHovering ? 4 : 2)
         .onHover { hovering in
             withAnimation(Motion.animation(Motion.settle, reduceMotion: reduceMotion)) { isHovering = hovering }
         }
         .help(String(localized: "Open this trip"))
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(TripText.name(trip)))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onOpen() }
         .accessibilityIdentifier("trips.card.\(trip.id)")
+    }
+
+    private func content(printScale: CGFloat, showsMap: Bool) -> some View {
+        HStack(alignment: .top, spacing: 22 * printScale) {
+            prints(scale: printScale)
+
+            VStack(alignment: .leading, spacing: 7) {
+                if let span = TripText.dateSpan(trip, locale: locale) {
+                    dates(span: span)
+                }
+                Text(TripText.name(trip))
+                    .font(.system(size: 22, weight: .medium, design: .serif))
+                    .foregroundStyle(Paper.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .padding(.bottom, 4)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .stroke(Paper.rule, style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                            .frame(height: 1)
+                    }
+                    .accessibilityIdentifier("trips.card.name.\(trip.id)")
+                if !trip.cityNames.isEmpty {
+                    Text(trip.cityNames.joined(separator: " → "))
+                        .font(.subheadline)
+                        .foregroundStyle(Paper.ink)
+                        .lineLimit(2)
+                }
+                Text(TripText.counts(trip))
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(Paper.muted)
+                    .lineLimit(1)
+                if let memory {
+                    Text(memory)
+                        .font(.system(.footnote, design: .serif).italic())
+                        .foregroundStyle(Paper.muted)
+                        .lineLimit(2)
+                        .padding(.top, 2)
+                }
+            }
+            .padding(.top, 4)
+            // A fixed ideal width lets ViewThatFits judge by the layout, not by how long the name is.
+            .frame(minWidth: 210, idealWidth: 230, maxWidth: .infinity, alignment: .leading)
+
+            if showsMap {
+                TripRouteMap(stops: stops)
+                    .frame(width: 200, height: 148 * printScale / 0.8)
+            }
+        }
+    }
+
+    /// The prints; clicking them picks another cover.
+    @ViewBuilder
+    private func prints(scale: CGFloat) -> some View {
+        let printsView = TripPrints(covers: covers, lifted: isHovering, scale: scale)
+            .frame(width: 262 * scale, height: 186 * scale)
+        if trip.isUnsorted || photos.count < 2 {
+            printsView
+        } else {
+            Button { isPickingCover = true } label: { printsView.contentShape(Rectangle()) }
+                .buttonStyle(.plain)
+                .help(String(localized: "Choose the cover"))
+                .accessibilityLabel(String(localized: "Choose the cover"))
+                .accessibilityIdentifier("trips.cover.\(trip.id)")
+                .popover(isPresented: $isPickingCover, arrowEdge: .trailing) {
+                    TripCoverPicker(photos: photos, current: covers.first?.id) { item in
+                        actions.setCover(trip.id, item.id)
+                        isPickingCover = false
+                    }
+                }
+        }
+    }
+
+    @ViewBuilder
+    private func dates(span: String) -> some View {
+        let line = Text(TripText.dateLine(span: span, trip: trip))
+            .font(.footnote)
+            .foregroundStyle(Paper.muted)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+        if let model {
+            TripDatesControl(
+                trip: model,
+                photoDates: trip.orderedItems.compactMap(\.date),
+                identifier: "trips.card.dates.\(trip.id)",
+                onApply: { actions.changeDates(model, $0, $1) }
+            ) { line }
+        } else {
+            line
+        }
+    }
+}
+
+/// Every photo of the trip, to pick the one in front.
+private struct TripCoverPicker: View {
+    let photos: [MediaItem]
+    let current: String?
+    let onPick: (MediaItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PaperFormLabel(String(localized: "Choose the cover"))
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(76), spacing: 6), count: 4), spacing: 6) {
+                    ForEach(photos, id: \.id) { item in
+                        Button { onPick(item) } label: {
+                            ThumbnailView(item: item, width: 76, height: 76)
+                                .frame(width: 76, height: 76)
+                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                                .overlay {
+                                    if item.id == current {
+                                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                            .stroke(Paper.accent, lineWidth: 2.5)
+                                    }
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(item.title)
+                        .accessibilityIdentifier("trips.cover.pick.\(item.id)")
+                    }
+                }
+            }
+            .frame(width: 4 * 76 + 3 * 6, height: min(CGFloat((photos.count + 3) / 4) * 82, 330))
+        }
+        .padding(14)
     }
 }
 
@@ -269,33 +617,34 @@ private struct TripCoverCard: View {
 private struct TripPrints: View {
     let covers: [MediaItem]
     let lifted: Bool
+    var scale: CGFloat = 1
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             if covers.count > 1 {
                 printed(covers[1])
-                    .frame(width: 186, height: 150)
+                    .frame(width: 186 * scale, height: 150 * scale)
                     .rotationEffect(.degrees(lifted ? -4 : -2.5))
-                    .offset(x: lifted ? 0 : 4, y: 6)
+                    .offset(x: (lifted ? 0 : 4) * scale, y: (6) * scale)
                 printed(covers[0])
-                    .frame(width: 192, height: 156)
+                    .frame(width: 192 * scale, height: 156 * scale)
                     .rotationEffect(.degrees(lifted ? 2.5 : 1.5))
-                    .offset(x: 70, y: lifted ? 22 : 24)
+                    .offset(x: (70) * scale, y: (lifted ? 22 : 24) * scale)
             } else if let only = covers.first {
                 printed(only)
-                    .frame(width: 214, height: 164)
+                    .frame(width: 214 * scale, height: 164 * scale)
                     .rotationEffect(.degrees(-1.5))
-                    .offset(x: 22, y: 10)
+                    .offset(x: (22) * scale, y: (10) * scale)
             } else {
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(Paper.well)
                     .overlay {
-                        Image(systemName: "suitcase")
+                        Image(systemName: "airplane.departure")
                             .font(.title2)
                             .foregroundStyle(Paper.muted)
                     }
-                    .frame(width: 214, height: 164)
-                    .offset(x: 22, y: 10)
+                    .frame(width: 214 * scale, height: 164 * scale)
+                    .offset(x: (22) * scale, y: (10) * scale)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -316,10 +665,16 @@ private struct TripPrints: View {
 
 private struct TripDetailView: View {
     let trip: TimelineTrip
+    /// The stored trip, for changing it; `nil` for photos in no trip.
+    let model: Trip?
+    let otherTrips: [TripLink]
+    let around: [TripNearbyDay]
     let itemByID: [String: MediaItem]
     let memories: [CollectionMemory]
+    let actions: TripActions
     let onBack: () -> Void
     @Environment(SelectionModel.self) private var selection
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.locale) private var locale
 
     /// Day numbers count dated days only, from the trip's first day.
@@ -333,15 +688,35 @@ private struct TripDetailView: View {
         return numbers
     }
 
+    private var firstDatedDayID: String? { trip.days.first { $0.date != nil }?.id }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 10) {
-                    // The trip's name is in the title bar; its dates lead the page.
+                    // The trip's name is in the title bar; its dates lead the page
+                    // and change when clicked.
                     if let span = TripText.dateSpan(trip, locale: locale) {
-                        Text(span)
-                            .font(.system(size: 21, weight: .medium, design: .serif))
-                            .foregroundStyle(Paper.ink)
+                        let heading = HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(span)
+                                .font(.system(size: 21, weight: .medium, design: .serif))
+                                .foregroundStyle(Paper.ink)
+                            if model != nil {
+                                Image(systemName: "calendar")
+                                    .font(.callout)
+                                    .foregroundStyle(Paper.accent)
+                            }
+                        }
+                        if let model {
+                            TripDatesControl(
+                                trip: model,
+                                photoDates: trip.orderedItems.compactMap(\.date),
+                                identifier: "trips.dates",
+                                onApply: { actions.changeDates(model, $0, $1) }
+                            ) { heading }
+                        } else {
+                            heading
+                        }
                     }
                     Text(TripText.summary(trip))
                         .font(.caption.monospacedDigit())
@@ -374,18 +749,27 @@ private struct TripDetailView: View {
                                 memories.filter { $0.scope != .trip && $0.scopeKey == key }
                             } ?? [],
                             itemByID: itemByID,
-                            onOpen: open
+                            onOpen: open,
+                            dayActions: dayActions(for: day)
                         )
                     }
+                }
+
+                if let model, !around.isEmpty {
+                    TripAroundSection(days: around, itemByID: itemByID) { day in
+                        actions.addPhotos(day.itemIDs, model)
+                    }
+                    .padding(.top, 48)
                 }
             }
             .padding(.horizontal, PaperMetrics.screenInset)
             .padding(.top, PaperMetrics.screenTopInset)
-            .padding(.bottom, 40)
+            .padding(.bottom, 80)
         }
         .scrollIndicators(.automatic)
         .background(Paper.canvas)
-        .navigationTitle(TripText.name(trip))
+        // The title bar holds the trip's name; double-click it to rename.
+        .modifier(TripWindowTitle(name: TripText.name(trip), model: model))
         .navigationSubtitle(String(localized: "Trips"))
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -396,13 +780,115 @@ private struct TripDetailView: View {
                 .keyboardShortcut("[", modifiers: .command)
                 .accessibilityIdentifier("trips.back")
             }
+            if let model, !otherTrips.isEmpty {
+                ToolbarItem {
+                    Menu {
+                        Section(String(localized: "Merge with")) {
+                            ForEach(otherTrips) { other in
+                                Button(other.name) { merge(other, into: model) }
+                                    .accessibilityIdentifier("trips.merge.\(other.id)")
+                            }
+                        }
+                    } label: {
+                        Label(String(localized: "Merge with"), systemImage: "arrow.triangle.merge")
+                    }
+                    .help(String(localized: "Merge another trip into this one"))
+                    .accessibilityIdentifier("trips.merge")
+                }
+            }
         }
+    }
+
+    private func dayActions(for day: TimelineDay) -> TripDayActions? {
+        guard let model, day.date != nil, let key = day.memoryKey else { return nil }
+        return TripDayActions(
+            remove: { actions.removeDay(key, model) },
+            split: day.id == firstDatedDayID ? nil : { actions.split(key, model) }
+        )
+    }
+
+    private func merge(_ link: TripLink, into model: Trip) {
+        guard let other = try? modelContext.fetch(FetchDescriptor<Trip>()).first(where: { $0.id == link.id }) else { return }
+        actions.merge(other, model)
     }
 
     /// A photo opens in the large viewer, paging through the whole trip.
     private func open(_ itemID: String) {
         selection.select(itemID)
         selection.openViewer(itemID, in: trip.orderedItems.map(\.id))
+    }
+}
+
+/// What a day inside a trip offers in its menu.
+struct TripDayActions {
+    let remove: () -> Void
+    /// `nil` on the first day, which cannot start a new trip.
+    let split: (() -> Void)?
+}
+
+/// The days just before and after the trip whose photos are in no trip,
+/// each with a button to add it.
+private struct TripAroundSection: View {
+    let days: [TripNearbyDay]
+    let itemByID: [String: MediaItem]
+    let onAdd: (TripNearbyDay) -> Void
+    @Environment(\.locale) private var locale
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Around this trip")
+                    .font(.system(size: 17, weight: .medium, design: .serif))
+                    .foregroundStyle(Paper.ink)
+                Text("Photos from the days just before and after that are in no trip.")
+                    .font(.caption)
+                    .foregroundStyle(Paper.muted)
+            }
+            ForEach(days) { day in
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(day.date, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day().locale(locale))
+                            .font(.callout)
+                            .foregroundStyle(Paper.ink)
+                        Text(day.isBefore ? String(localized: "Before") : String(localized: "After"))
+                            .font(.caption2)
+                            .foregroundStyle(Paper.muted)
+                    }
+                    .frame(width: 92, alignment: .leading)
+                    HStack(spacing: 4) {
+                        ForEach(day.itemIDs.prefix(6), id: \.self) { id in
+                            if let item = itemByID[id] {
+                                ThumbnailView(item: item, width: 44, height: 44)
+                                    .frame(width: 44, height: 44)
+                                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                            }
+                        }
+                        if day.itemIDs.count > 6 {
+                            Text(verbatim: "+\(day.itemIDs.count - 6)")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(Paper.muted)
+                                .padding(.leading, 4)
+                        }
+                    }
+                    .accessibilityHidden(true)
+                    Spacer(minLength: 8)
+                    Button {
+                        onAdd(day)
+                    } label: {
+                        Label(String(localized: "Add to trip"), systemImage: "plus")
+                    }
+                    .accessibilityIdentifier("trips.around.add.\(TripAroundSection.key(day.date))")
+                }
+                .padding(10)
+                .background(Paper.well.opacity(0.6), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+        }
+        .frame(maxWidth: 720, alignment: .leading)
+    }
+
+    static func key(_ date: Date) -> String {
+        let parts = Calendar.autoupdatingCurrent.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
     }
 }
 
@@ -418,6 +904,8 @@ struct TripDaySection: View {
     /// Trips this day belongs to, shown as links on the Timeline.
     var trips: [TripLink] = []
     var onOpenTrip: (String) -> Void = { _ in }
+    /// Inside a trip: take the day out, or start a new trip from it.
+    var dayActions: TripDayActions? = nil
     @Environment(\.locale) private var locale
 
     private var photoCount: Int { day.places.reduce(0) { $0 + $1.photoCount } }
@@ -448,7 +936,7 @@ struct TripDaySection: View {
                 }
                 ForEach(trips) { trip in
                     Button { onOpenTrip(trip.id) } label: {
-                        Label(trip.name, systemImage: "suitcase")
+                        Label(trip.name, systemImage: "airplane.departure")
                             .font(.caption)
                             .foregroundStyle(Paper.accent)
                     }
@@ -460,6 +948,23 @@ struct TripDaySection: View {
                 Text(String(localized: "\(photoCount) photos"))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(Paper.muted)
+                if let dayActions {
+                    Menu {
+                        Button(String(localized: "Take this day out of the trip"), action: dayActions.remove)
+                        if let split = dayActions.split {
+                            Button(String(localized: "Start a new trip from this day"), action: split)
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .foregroundStyle(Paper.muted)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help(String(localized: "Change this day"))
+                    .accessibilityLabel(String(localized: "Change this day"))
+                    .accessibilityIdentifier("trips.day.menu.\(day.memoryKey ?? day.id)")
+                }
             }
 
             if let key = day.memoryKey {
@@ -613,6 +1118,123 @@ struct TripTravelRow: View {
     }
 }
 
+/// The trip's dates, shown as the label and changed in a popover: pick a
+/// start and an end, see which photos would join or leave, then Apply.
+/// Nothing changes until Apply; Escape or clicking away cancels.
+private struct TripDatesControl<Content: View>: View {
+    @Environment(\.modelContext) private var modelContext
+    let trip: Trip
+    let photoDates: [Date]
+    let identifier: String
+    let onApply: (Date, Date) -> Void
+    @ViewBuilder let label: () -> Content
+    @State private var isEditing = false
+    @State private var start = Date.now
+    @State private var end = Date.now
+    /// Gathered when the popover opens, so the preview follows the pickers cheaply.
+    @State private var members: [TripEdits.Member] = []
+
+    var body: some View {
+        Button {
+            start = trip.startDate ?? photoDates.min() ?? .now
+            end = trip.endDate ?? photoDates.max() ?? start
+            members = TripEdits.members(context: modelContext)
+            isEditing = true
+        } label: {
+            label().contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(String(localized: "Change the trip's dates"))
+        .accessibilityIdentifier(identifier)
+        .popover(isPresented: $isEditing, arrowEdge: .bottom) {
+            popover
+        }
+    }
+
+    private var calendar: Calendar { .current }
+
+    private var isUnchanged: Bool {
+        guard let current = trip.startDate, let currentEnd = trip.endDate else { return false }
+        return calendar.isDate(current, inSameDayAs: start) && calendar.isDate(currentEnd, inSameDayAs: end)
+    }
+
+    private var popover: some View {
+        let plan = TripEdits.plan(for: trip, start: start, end: max(start, end), members: members, calendar: calendar)
+        let elsewhere = plan.elsewhere.values.reduce(0) { $0 + $1.count }
+        return VStack(alignment: .leading, spacing: 14) {
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                GridRow {
+                    PaperFormLabel(String(localized: "Starts"))
+                    DatePicker("", selection: $start, displayedComponents: .date)
+                        .labelsHidden()
+                        .accessibilityIdentifier("trips.dates.start")
+                }
+                GridRow {
+                    PaperFormLabel(String(localized: "Ends"))
+                    DatePicker("", selection: $end, in: start..., displayedComponents: .date)
+                        .labelsHidden()
+                        .accessibilityIdentifier("trips.dates.end")
+                }
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                if plan.joining.isEmpty && plan.leaving.isEmpty {
+                    Text("No photos change")
+                } else {
+                    Text("Will add \(plan.joining.count) · will take out \(plan.leaving.count)")
+                }
+                if elsewhere > 0 {
+                    Text("\(elsewhere) in other trips stay there")
+                        .foregroundStyle(Paper.muted)
+                }
+            }
+            .font(.callout.monospacedDigit())
+            .foregroundStyle(Paper.ink)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("trips.dates.preview")
+            HStack {
+                Button(String(localized: "Use photo dates")) {
+                    if let first = photoDates.min(), let last = photoDates.max() {
+                        start = first
+                        end = last
+                    }
+                }
+                .disabled(photoDates.isEmpty)
+                Spacer(minLength: 16)
+                Button(String(localized: "Cancel")) { isEditing = false }
+                    .keyboardShortcut(.cancelAction)
+                Button(String(localized: "Apply")) {
+                    isEditing = false
+                    onApply(start, max(start, end))
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(isUnchanged)
+                .accessibilityIdentifier("trips.dates.apply")
+            }
+        }
+        .padding(16)
+        .frame(minWidth: 320)
+    }
+}
+
+/// The window title is the trip's name, editable in place like a document
+/// title; photos in no trip get a plain title.
+private struct TripWindowTitle: ViewModifier {
+    @Environment(\.modelContext) private var modelContext
+    let name: String
+    let model: Trip?
+
+    func body(content: Content) -> some View {
+        if let model {
+            content.navigationTitle(Binding(
+                get: { name },
+                set: { TripRenaming.rename(model, to: $0, context: modelContext) }
+            ))
+        } else {
+            content.navigationTitle(name)
+        }
+    }
+}
+
 /// A trip a Timeline day belongs to.
 struct TripLink: Identifiable, Hashable {
     let id: String
@@ -628,7 +1250,7 @@ private enum TripText {
     }
 
     static func dateSpan(_ trip: TimelineTrip, locale: Locale) -> String? {
-        guard let start = trip.orderedItems.compactMap(\.date).min() ?? trip.startDate else { return nil }
+        guard let start = trip.startDate ?? trip.orderedItems.compactMap(\.date).min() else { return nil }
         let formatter = DateIntervalFormatter()
         formatter.locale = locale
         formatter.dateStyle = .medium
@@ -638,8 +1260,17 @@ private enum TripText {
 
     /// "Apr 20 – 25, 2026 · 6 days"
     static func dateLine(span: String, trip: TimelineTrip) -> String {
-        guard trip.datedDayCount > 0 else { return span }
-        return "\(span) · \(String(localized: "\(trip.datedDayCount) days"))"
+        let days = dayCount(trip)
+        guard days > 0 else { return span }
+        return "\(span) · \(String(localized: "\(days) days"))"
+    }
+
+    /// Calendar days from the trip's start to its end, both included.
+    static func dayCount(_ trip: TimelineTrip, calendar: Calendar = .current) -> Int {
+        guard let start = trip.startDate, let end = trip.endDate else { return trip.datedDayCount }
+        let from = calendar.startOfDay(for: start)
+        let to = calendar.startOfDay(for: max(start, end))
+        return (calendar.dateComponents([.day], from: from, to: to).day ?? 0) + 1
     }
 
     /// "128 photos · 156 videos"; videos only when there are any.

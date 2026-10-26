@@ -67,6 +67,9 @@ struct MomentsApp: App {
             let testStoreURL = testStoreDirectory?.appending(path: "Moments.store")
             let isUITesting = ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
                 || (isUnitTestHost && testStoreURL == nil)
+            // Filters live in user defaults; a test run starts without the
+            // ones a previous run left behind.
+            if isUITesting { LibraryFilterKeys.clearAll() }
             let container: ModelContainer
             if isUITesting || testStoreURL != nil {
                 container = try MomentsPersistence.makeContainer(inMemory: isUITesting, url: testStoreURL)
@@ -87,7 +90,7 @@ struct MomentsApp: App {
                     try? DemoSeeder.seedPeopleForUITests(context: container.mainContext)
                 }
             }
-            if let count = Self.uiTestStressCount {
+            if isUITesting || testStoreURL != nil, let count = Self.uiTestStressCount {
                 try? DemoSeeder.generateSyntheticLibrary(count: count, context: container.mainContext)
             }
             #endif

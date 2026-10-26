@@ -14,6 +14,8 @@ enum LibraryMediaTypeFilter: String, CaseIterable, Sendable {
     case video
     case live
     case screenshot
+    /// Starred items of any kind; a top-row choice next to All.
+    case favorite
 }
 
 enum LibraryMemoryFilter: String, CaseIterable, Sendable {
@@ -67,6 +69,9 @@ struct LibraryFilterCriteria: Equatable, Sendable {
     /// by the caller from FaceObservation records so the media schema stays
     /// independent from the private People data.
     var personID: String?
+    /// Words typed in the search field; matched against place, trip, memory
+    /// and tags.
+    var searchText: String
 
     init(
         fromDate: Date? = nil,
@@ -78,18 +83,21 @@ struct LibraryFilterCriteria: Equatable, Sendable {
         screenshotFilter: LibraryScreenshotFilter = .all,
         memoryFilter: LibraryMemoryFilter = .all,
         tagID: String? = nil,
-        personID: String? = nil
+        personID: String? = nil,
+        searchText: String = ""
     ) {
         self.fromDate = fromDate
         self.toDate = toDate
         self.placeID = placeID
-        self.mediaType = mediaType
-        self.favoritesOnly = favoritesOnly
+        // Favorites is picked like a media type but filters by the star.
+        self.mediaType = mediaType == .favorite ? .all : mediaType
+        self.favoritesOnly = favoritesOnly || mediaType == .favorite
         self.tripKey = tripKey
         self.screenshotFilter = screenshotFilter
         self.memoryFilter = memoryFilter
         self.tagID = tagID
         self.personID = personID
+        self.searchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static let `default` = LibraryFilterCriteria()
@@ -286,6 +294,7 @@ enum LibraryFilterEngine {
            !personIDsByMediaID[item.id, default: []].contains(personID) {
             return false
         }
+        if !criteria.searchText.isEmpty, !matchesSearch(item, criteria.searchText) { return false }
         switch criteria.memoryFilter {
         case .all:
             break
@@ -295,6 +304,20 @@ enum LibraryFilterEngine {
             guard item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return false }
         }
         return true
+    }
+
+    /// Every word must appear somewhere: place, trip, memory or a tag.
+    static func matchesSearch(_ item: MediaItem, _ text: String) -> Bool {
+        let haystack = [
+            item.effectivePlaceName,
+            item.displayPlaceName,
+            item.trip?.effectiveName,
+            item.latestMemory?.text,
+        ].compactMap { $0 } + item.tags.map(\.displayName)
+        let words = text.split(whereSeparator: \.isWhitespace)
+        return words.allSatisfy { word in
+            haystack.contains { $0.localizedStandardContains(word) }
+        }
     }
 
     static func filteredItems(

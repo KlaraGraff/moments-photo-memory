@@ -96,12 +96,14 @@ private struct PendingNameMerge: Identifiable {
     let targetName: String
 }
 
-private enum PeopleFacePicker {
-    /// The face that represents a group: a user-confirmed face if there is one,
-    /// then the sharpest. Every People surface shows this face's aligned crop,
-    /// never the whole source photo, so a multi-person photo shows one face.
-    static func cover(_ faces: [FaceObservation]) -> FaceObservation? {
-        faces.max { lhs, rhs in
+enum PeopleFacePicker {
+    /// The face that represents a group: the key photo the user chose, else a
+    /// user-confirmed face, then the sharpest. Every People surface shows this
+    /// face's aligned crop, never the whole source photo, so a multi-person
+    /// photo shows one face.
+    static func cover(_ faces: [FaceObservation], keyFaceID: String? = nil) -> FaceObservation? {
+        if let keyFaceID, let key = faces.first(where: { $0.id == keyFaceID }) { return key }
+        return faces.max { lhs, rhs in
             let left = lhs.confirmed && lhs.assignmentSource == "user"
             let right = rhs.confirmed && rhs.assignmentSource == "user"
             if left != right { return !left }
@@ -447,6 +449,18 @@ enum PeopleStoreActions {
     /// Local person IDs the user chose to keep apart from a same-named person.
     /// Only opaque IDs are stored here, never names, faces or embeddings.
     static let keepSeparateKey = "moments.people.keepSeparate"
+    /// Person ID → face ID of the key photo the user picked. Opaque IDs only.
+    static let keyFacesKey = "moments.people.keyFaces"
+
+    static func keyFaceID(for personID: String, defaults: UserDefaults = .standard) -> String? {
+        (defaults.dictionary(forKey: keyFacesKey) as? [String: String])?[personID]
+    }
+
+    static func setKeyFace(_ faceID: String?, for personID: String, defaults: UserDefaults = .standard) {
+        var faces = (defaults.dictionary(forKey: keyFacesKey) as? [String: String]) ?? [:]
+        faces[personID] = faceID
+        if faces.isEmpty { defaults.removeObject(forKey: keyFacesKey) } else { defaults.set(faces, forKey: keyFacesKey) }
+    }
 
     /// Two person names are the same when they match after trimming, ignoring
     /// case and full-width/half-width forms (so "Ａｌｉｃｅ" equals "alice").
@@ -574,6 +588,7 @@ enum PeopleStoreActions {
             defaults.set(targetID, forKey: key)
         }
         setKeepSeparate(sourceID, false, defaults: defaults)
+        setKeyFace(nil, for: sourceID, defaults: defaults)
         if let source = people.first(where: { $0.id == sourceID }) { context.delete(source) }
     }
 
@@ -804,6 +819,14 @@ struct PeopleScreen: View {
     @State private var renamingPersonID: String?
     @State private var renameText = ""
     @State private var pendingRename: PendingRename?
+    /// The person whose key-photo picker is open.
+    @State private var keyPhotoPersonID: String?
+    /// Bumped when a key photo changes; UserDefaults alone does not redraw.
+    @State private var keyPhotoRevision = 0
+    @State private var addingPerson = false
+    @State private var addPersonName = ""
+    /// The unnamed groups picked in the Add person sheet.
+    @State private var addPersonClusters: Set<String> = []
     @Environment(SelectionModel.self) private var selection
     @AppStorage("moments.library.person") private var libraryPersonFilterID = ""
 
@@ -859,8 +882,15 @@ struct PeopleScreen: View {
                 if !scanner.isAvailable {
                     Spacer(minLength: 0)
                 } else if namedPeople.isEmpty && unnamedClusters.isEmpty {
-                    ContentUnavailableView(String(localized: "No people yet"), systemImage: "person.2", description: Text(String(localized: "Scan your library to find faces on this Mac.")))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ContentUnavailableView {
+                        Label(String(localized: "No people yet"), systemImage: "person.2")
+                    } description: {
+                        Text(String(localized: "Scan your library to find faces on this Mac."))
+                    } actions: {
+                        Button(String(localized: "Scan for people")) { scanner.start() }
+                            .disabled(scanner.isScanning)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 28) {
@@ -877,7 +907,7 @@ struct PeopleScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Paper.canvas)
         .navigationTitle(String(localized: "People"))
-        .navigationSubtitle(namedPeople.isEmpty ? "" : String(format: String(localized: "%lld people"), namedPeople.count))
+        .navigationSubtitle(namedPeople.isEmpty ? "" : String(localized: "\(namedPeople.count) people"))
         .toolbar {
             if lastFaceChange != nil {
                 ToolbarItem(placement: .primaryAction) {
@@ -886,14 +916,18 @@ struct PeopleScreen: View {
                         .accessibilityIdentifier("people.undo")
                 }
             }
+            // Faces are found on their own after each import, so the page's
+            // + adds a person: name faces that have no name yet.
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    scanner.start()
+                    addPersonName = ""
+                    addPersonClusters = []
+                    addingPerson = true
                 } label: {
-                    Label(String(localized: "Scan for people"), systemImage: "person.crop.circle.badge.magnifyingglass")
+                    Label(String(localized: "Add person"), systemImage: "plus")
                 }
-                .help(String(localized: "Scan for people"))
-                .disabled(!scanner.isAvailable || scanner.isScanning)
+                .help(String(localized: "Add person"))
+                .accessibilityIdentifier("people.add")
             }
         }
         .onAppear {
@@ -906,6 +940,9 @@ struct PeopleScreen: View {
         }
         .sheet(isPresented: Binding(get: { mergeSource != nil }, set: { if !$0 { mergeSource = nil } })) {
             mergeSheet
+        }
+        .sheet(isPresented: $addingPerson) {
+            addPersonSheet
         }
         .alert(
             String(format: String(localized: "Merge with existing %@?"), pendingNameMerge?.targetName ?? ""),
@@ -938,13 +975,91 @@ struct PeopleScreen: View {
         }
     }
 
+    /// Picks one or more unnamed face groups and names them as one person,
+    /// like Add People in Photos. A name that already exists adds to that person.
+    private var addPersonSheet: some View {
+        let trimmed = addPersonName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return PaperSheet(String(localized: "Add person")) {
+            VStack(alignment: .leading, spacing: 14) {
+                TextField(String(localized: "Name this person"), text: $addPersonName)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("people.add.name")
+                if unnamedClusters.isEmpty {
+                    Text(String(localized: "Every face found so far has a name. New faces appear here after the next import."))
+                        .font(.callout)
+                        .foregroundStyle(Paper.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("people.add.empty")
+                } else {
+                    Text(String(localized: "Choose the faces of this person"))
+                        .font(.callout)
+                        .foregroundStyle(Paper.muted)
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 10)], spacing: 10) {
+                            ForEach(unnamedClusters) { cluster in
+                                if let face = PeopleFacePicker.cover(cluster.faces) {
+                                    let picked = addPersonClusters.contains(cluster.id)
+                                    Button {
+                                        if picked { addPersonClusters.remove(cluster.id) } else { addPersonClusters.insert(cluster.id) }
+                                    } label: {
+                                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
+                                            .overlay(Circle().stroke(picked ? Paper.accent : .clear, lineWidth: 3).padding(-3))
+                                            .overlay(alignment: .bottomTrailing) {
+                                                if picked {
+                                                    Image(systemName: "checkmark.circle.fill")
+                                                        .foregroundStyle(.white, Paper.accent)
+                                                        .font(.body)
+                                                }
+                                            }
+                                            .padding(4)
+                                            .contentShape(Circle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help(String(localized: "\(cluster.faces.count) photos"))
+                                    .accessibilityIdentifier("people.add.face.\(cluster.id)")
+                                }
+                            }
+                        }
+                        .padding(6)
+                    }
+                    .paperWell(padding: 4)
+                    .frame(maxHeight: 300)
+                }
+            }
+            .frame(width: 380)
+        } footer: {
+            Button(String(localized: "Cancel"), role: .cancel) { addingPerson = false }
+                .keyboardShortcut(.cancelAction)
+            Button(String(localized: "Add")) { addPerson(named: trimmed) }
+                .keyboardShortcut(.defaultAction)
+                .disabled(trimmed.isEmpty || addPersonClusters.isEmpty)
+                .accessibilityIdentifier("people.add.save")
+        }
+    }
+
+    private func addPerson(named name: String) {
+        let faces = cachedUnnamedClusters.filter { addPersonClusters.contains($0.id) }.flatMap(\.faces)
+        guard !name.isEmpty, !faces.isEmpty else { return }
+        PeopleStoreActions.name(
+            faces: faces,
+            as: name,
+            mergingInto: PeopleStoreActions.mergeCandidate(forName: name, people: people),
+            keepSeparate: false,
+            people: people,
+            observations: observations,
+            context: modelContext
+        )
+        try? modelContext.save()
+        addingPerson = false
+    }
+
     private var mergeSheet: some View {
         let source = people.first { $0.id == mergeSource }
         return PaperSheet(String(localized: "Merge two people")) {
             VStack(alignment: .leading, spacing: 14) {
                 if let source {
                     HStack(spacing: 10) {
-                        if let face = PeopleFacePicker.cover(cachedFacesByPerson[source.id] ?? []) {
+                        if let face = coverFace(of: source) {
                             FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
                         }
                         Text(source.name ?? String(localized: "Unnamed person")).font(.title3)
@@ -958,7 +1073,7 @@ struct PeopleScreen: View {
                                 mergePeople()
                             } label: {
                                 HStack(spacing: 10) {
-                                    if let face = PeopleFacePicker.cover(cachedFacesByPerson[person.id] ?? []) {
+                                    if let face = coverFace(of: person) {
                                         FaceCropView(data: face.cropData, cacheKey: face.id, size: 44)
                                     }
                                     Text(person.name ?? String(localized: "Unnamed person"))
@@ -996,10 +1111,26 @@ struct PeopleScreen: View {
         let photoCount = Set(faces.map(\.mediaID)).count
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                // The face and name open this person's photos in the Library.
+                // Like Photos: the big face picks the key photo, the name
+                // opens this person's photos.
+                if let cover = coverFace(of: person) {
+                    Button { keyPhotoPersonID = person.id } label: {
+                        FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Choose key photo"))
+                    .accessibilityLabel(String(localized: "Choose key photo"))
+                    .accessibilityIdentifier("people.keyphoto.\(person.id)")
+                    .popover(isPresented: Binding(
+                        get: { keyPhotoPersonID == person.id },
+                        set: { if !$0 { keyPhotoPersonID = nil } }
+                    ), arrowEdge: .bottom) {
+                        keyPhotoPicker(for: person, faces: faces, current: cover.id)
+                    }
+                }
                 Button { showPhotos(of: person) } label: {
                     HStack {
-                        if let cover = PeopleFacePicker.cover(faces) { FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72) }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(person.name ?? String(localized: "Unnamed person")).font(.headline).foregroundStyle(Paper.ink)
                             Text(String(format: String(localized: "People photo count"), photoCount)).font(.caption.monospacedDigit()).foregroundStyle(Paper.muted)
@@ -1027,7 +1158,11 @@ struct PeopleScreen: View {
                     LazyHStack(spacing: 6) {
                         ForEach(faces, id: \.id) { face in
                             FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
-                                .contextMenu { faceCorrectionMenu(face, current: person) }
+                                .contextMenu {
+                                    Button(String(localized: "Make Key Photo")) { setKeyPhoto(face, for: person) }
+                                    Divider()
+                                    faceCorrectionMenu(face, current: person)
+                                }
                                 .accessibilityIdentifier("people.face.\(face.id)")
                                 .overlay(alignment: .topTrailing) {
                                     VStack(spacing: 2) {
@@ -1058,6 +1193,59 @@ struct PeopleScreen: View {
             }
         }
         .paperCard(cornerRadius: 12, padding: 12)
+    }
+
+    private func coverFace(of person: Person) -> FaceObservation? {
+        _ = keyPhotoRevision
+        return PeopleFacePicker.cover(
+            cachedFacesByPerson[person.id] ?? [],
+            keyFaceID: PeopleStoreActions.keyFaceID(for: person.id)
+        )
+    }
+
+    private func setKeyPhoto(_ face: FaceObservation, for person: Person) {
+        PeopleStoreActions.setKeyFace(face.id, for: person.id)
+        keyPhotoRevision += 1
+        keyPhotoPersonID = nil
+    }
+
+    /// The person's faces; picking one makes it the key photo.
+    private func keyPhotoPicker(for person: Person, faces: [FaceObservation], current: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(String(localized: "Choose key photo"))
+                .font(.headline)
+                .foregroundStyle(Paper.ink)
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 72, maximum: 72), spacing: 10)], spacing: 10) {
+                    ForEach(faces, id: \.id) { face in
+                        Button { setKeyPhoto(face, for: person) } label: {
+                            FaceCropView(data: face.cropData, cacheKey: face.id, size: 72)
+                                .overlay {
+                                    if face.id == current {
+                                        Circle().stroke(Color.accentColor, lineWidth: 3)
+                                    }
+                                }
+                                .overlay(alignment: .bottomTrailing) {
+                                    if face.id == current {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.body)
+                                            .symbolRenderingMode(.palette)
+                                            .foregroundStyle(.white, Color.accentColor)
+                                    }
+                                }
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(face.id == current ? .isSelected : [])
+                        .accessibilityIdentifier("people.keyphoto.option.\(face.id)")
+                    }
+                }
+                .padding(2)
+            }
+            .frame(maxHeight: 340)
+        }
+        .padding(16)
+        .frame(width: min(CGFloat(max(faces.count, 3)) * 82 + 32, 440))
     }
 
     private var unnamedSection: some View {

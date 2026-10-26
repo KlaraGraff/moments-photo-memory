@@ -49,9 +49,9 @@ struct ContentView: View {
                     Section {
                         sidebarRow("Library", icon: "photo.on.rectangle.angled", section: .library, identifier: "sidebar.library")
                         sidebarRow("People", icon: "person.2", section: .people, identifier: "sidebar.people")
-                        sidebarRow("Map", icon: "map", section: .map, identifier: "sidebar.map")
-                        sidebarRow("Timeline", icon: "calendar", section: .timeline, identifier: "sidebar.timeline")
-                        sidebarRow("Trips", icon: "suitcase", section: .trips, identifier: "sidebar.trips")
+                        sidebarRow("Map", icon: "globe.europe.africa", section: .map, identifier: "sidebar.map")
+                        sidebarRow("Timeline", icon: "point.topleft.down.to.point.bottomright.curvepath", section: .timeline, identifier: "sidebar.timeline")
+                        sidebarRow("Trips", icon: "airplane.departure", section: .trips, identifier: "sidebar.trips")
                     }
 
                     Section {
@@ -145,7 +145,7 @@ struct ContentView: View {
             }
             .background(MomentsPalette.sidebar)
             .navigationTitle("Moments")
-            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
         } detail: {
             Group {
                 switch selection ?? .library {
@@ -170,8 +170,11 @@ struct ContentView: View {
                 if shared.viewerRequest == nil { CorrectionUndoBar() }
             }
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    ImportToolbarButton()
+                // Each page's + adds that page's thing; People and Trips bring their own.
+                if selection != .people && selection != .trips {
+                    ToolbarItem(placement: .primaryAction) {
+                        ImportToolbarButton()
+                    }
                 }
             }
             #if DEBUG
@@ -200,6 +203,11 @@ struct ContentView: View {
         )) {
             DateAdjustmentSheet(itemIDs: shared.dateAdjustmentItemIDs ?? [])
         }
+        #if DEBUG
+        .overlay {
+            if SidebarIconGallery.isEnabled { SidebarIconGallery() }
+        }
+        #endif
         // One accent everywhere, sheets included: no system blue controls.
         .tint(MomentsPalette.accent)
         .onChange(of: selection) { _, _ in
@@ -389,6 +397,73 @@ private struct MapViewProbe: View {
             (view is MKMapView ? 1 : 0) + view.subviews.reduce(0) { $0 + count($1) }
         }
         return NSApp.windows.compactMap(\.contentView?.superview).reduce(0) { $0 + count($1) }
+    }
+}
+#endif
+
+#if DEBUG
+/// UI tests only: the candidate sidebar icons side by side, as they would
+/// look in the sidebar, so a screenshot can be shown for picking one.
+private struct SidebarIconGallery: View {
+    static let isEnabled = ProcessInfo.processInfo.arguments.contains("-MomentsUITestIconGallery")
+
+    private let rows: [(String, [(String, String)])] = [
+        ("Chapters", [("now", "airplane.departure"), ("A", "book.pages"), ("B", "bookmark"), ("C", "book.closed")]),
+        ("Map", [("now", "globe.europe.africa"), ("A", "globe.desk"), ("B", "mappin.circle"), ("C", "map.circle")]),
+        ("Timeline", [("now", "point.topleft.down.to.point.bottomright.curvepath"), ("A", "point.forward.to.point.capsulepath"), ("B", "timeline.selection"), ("C", "sparkles")]),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            ForEach(rows, id: \.0) { row in
+                let (title, candidates) = row
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(title).font(.headline).foregroundStyle(MomentsPalette.ink)
+                    HStack(spacing: 18) {
+                        ForEach(candidates, id: \.0) { candidate in
+                            let (tag, symbol) = candidate
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label(title, systemImage: symbol)
+                                    .font(.body)
+                                    .foregroundStyle(MomentsPalette.ink)
+                                    .symbolRenderingMode(.monochrome)
+                                    .labelStyle(GalleryLabelStyle())
+                                    .padding(.horizontal, 10)
+                                    .frame(width: 190, height: 34, alignment: .leading)
+                                    .background(MomentsPalette.sidebar, in: RoundedRectangle(cornerRadius: 8))
+                                Label(title, systemImage: symbol)
+                                    .font(.body)
+                                    .labelStyle(GalleryLabelStyle(iconColor: .white))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 10)
+                                    .frame(width: 190, height: 34, alignment: .leading)
+                                    .background(MomentsPalette.accent, in: RoundedRectangle(cornerRadius: 8))
+                                Text(tag == "now" ? "Now" : tag)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(MomentsPalette.muted)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(MomentsPalette.content)
+        .accessibilityIdentifier("debug.icon-gallery")
+    }
+}
+
+private struct GalleryLabelStyle: LabelStyle {
+    var iconColor = MomentsPalette.accent
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 8) {
+            configuration.icon
+                .foregroundStyle(iconColor)
+                .frame(width: 22)
+            configuration.title
+        }
     }
 }
 #endif

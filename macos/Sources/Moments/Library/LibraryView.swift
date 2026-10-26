@@ -3,6 +3,12 @@ import Foundation
 import SwiftUI
 import SwiftData
 
+private struct LibraryFilterOptions {
+    var places: [LibraryPlaceOption] = []
+    var trips: [String] = []
+    var tripNames: [String: String] = [:]
+}
+
 private enum LibraryScrollTarget {
     static func section(_ id: String) -> String { "section:\(id)" }
     static func item(_ id: String) -> String { "item:\(id)" }
@@ -37,6 +43,7 @@ struct LibraryView: View {
     @Binding var firstLaunchCompleted: Bool
 
     @AppStorage("moments.library.type") private var typeRaw = LibraryMediaTypeFilter.all.rawValue
+    @AppStorage(LibraryFilterKeys.query) private var query = ""
     @AppStorage("moments.library.grouping") private var groupingRaw = LibraryGrouping.trip.rawValue
     @AppStorage("moments.library.fromDate") private var fromDateInterval = 0.0
     @AppStorage("moments.library.toDate") private var toDateInterval = 0.0
@@ -54,6 +61,7 @@ struct LibraryView: View {
     /// Photos the import flagged for a look; shown as a banner, not a sidebar row.
     @State private var cachedReviewCount = 0
     @State private var showingReview = false
+    @State private var cachedFilterOptions = LibraryFilterOptions()
 
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
@@ -68,7 +76,8 @@ struct LibraryView: View {
             mediaType: LibraryMediaTypeFilter(rawValue: typeRaw) ?? .all,
             tripKey: tripFilterKey.isEmpty ? nil : tripFilterKey,
             memoryFilter: LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all,
-            personID: personFilterID.isEmpty ? nil : personFilterID
+            personID: personFilterID.isEmpty ? nil : personFilterID,
+            searchText: query
         )
     }
 
@@ -84,15 +93,28 @@ struct LibraryView: View {
         LibraryGrouping(rawValue: groupingRaw) ?? .trip
     }
 
-    /// One row per name: unnamed spots are listed under the area or city
-    /// that names them, places with the same name are one row, and the
-    /// filter matches all of them.
-    private var places: [LibraryPlaceOption] {
-        PlaceNames.options(for: allItems)
-    }
+    /// The Place and Trip menus' rows, rebuilt with the sections in regroup().
+    /// Computing them here walked every item and its place on each render,
+    /// which showed up as a stall when the Library re-rendered mid-scroll.
+    private var places: [LibraryPlaceOption] { cachedFilterOptions.places }
 
-    private var trips: [String] {
-        Array(Set(allItems.compactMap(\.tripID))).sorted()
+    private var trips: [String] { cachedFilterOptions.trips }
+
+    private static func filterOptions(for items: [MediaItem]) -> LibraryFilterOptions {
+        var tripNames: [String: String] = [:]
+        for item in items {
+            if let tripID = item.tripID, tripNames[tripID] == nil {
+                tripNames[tripID] = item.trip?.effectiveName ?? tripID
+            }
+        }
+        return LibraryFilterOptions(
+            // One row per name: unnamed spots are listed under the area or
+            // city that names them, places with the same name are one row,
+            // and the filter matches all of them.
+            places: PlaceNames.options(for: items),
+            trips: tripNames.keys.sorted(),
+            tripNames: tripNames
+        )
     }
 
     private var selectedPlaceName: String? {
@@ -101,7 +123,7 @@ struct LibraryView: View {
 
     private var selectedTripName: String? {
         guard !tripFilterKey.isEmpty else { return nil }
-        return allItems.first(where: { $0.tripID == tripFilterKey })?.trip?.effectiveName ?? tripFilterKey
+        return selectedTripName(for: tripFilterKey)
     }
 
     private var selectedMemoryFilter: LibraryMemoryFilter {
@@ -134,13 +156,18 @@ struct LibraryView: View {
         hasher.combine(tripFilterKey)
         hasher.combine(memoryFilterRaw)
         hasher.combine(personFilterID)
+        hasher.combine(query)
         hasher.combine(state.focusedMemoryItemID)
         hasher.combine(selection.libraryScope?.itemIDs)
-        for item in items {
+        // All items, not just the visible type: the Place and Trip menus
+        // are built from both.
+        for item in allItems {
             hasher.combine(item.id)
             hasher.combine(item.captureDate)
             hasher.combine(item.userCorrectedCaptureDateUTC)
             hasher.combine(item.isScreenshot)
+            // Only read the stars while Favorites is shown; it faults a relation.
+            if typeRaw == LibraryMediaTypeFilter.favorite.rawValue { hasher.combine(item.isFavorite) }
             hasher.combine(item.kindRaw)
             hasher.combine(item.tripID)
             hasher.combine(item.place?.id)
@@ -242,8 +269,9 @@ struct LibraryView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
         }
+        .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search places, trips, notes")))
         .navigationTitle(String(localized: "Library"))
-        .navigationSubtitle(String(format: String(localized: "%lld photos"), cachedVisibleCount))
+        .navigationSubtitle(String(localized: "\(cachedVisibleCount) photos"))
     }
 
     /// "12 photos to confirm" under the filters; opens the review list.
@@ -283,16 +311,13 @@ struct LibraryView: View {
     /// The page name and photo count live in the window's title bar; the
     /// page itself opens straight on its controls.
     private var libraryHeader: some View {
-        // One fixed shape at every width, so the grid never moves while the
+        // One fixed row at every width, so the grid never moves while the
         // sidebar animates (a ViewThatFits here switched between one, two and
-        // three rows). The page title is in the window's title bar. Narrower
-        // than the switcher's natural width, it scrolls instead of pushing
-        // the window wider.
+        // three rows). The page title is in the window's title bar; the type
+        // bar is short enough to share the row with Group by.
         HStack(alignment: .center, spacing: 22) {
-            ScrollView(.horizontal) { libraryTypePicker }
-                .scrollIndicators(.hidden)
-                .scrollBounceBehavior(.basedOnSize)
-                .fixedSize(horizontal: false, vertical: true)
+            libraryTypePicker
+            Spacer(minLength: 8)
             libraryGroupingPicker
         }
         .padding(.horizontal, PaperMetrics.screenInset)
@@ -300,25 +325,48 @@ struct LibraryView: View {
         .padding(.bottom, 14)
     }
 
+    /// The everyday choices as segments; Live Photos and Screenshots, picked
+    /// rarely, wait in More. Fixed size, so the control never turns into a
+    /// scrolling strip.
     private var libraryTypePicker: some View {
-        Picker(String(localized: "Media type"), selection: $typeRaw) {
-            Text(String(localized: "All")).tag(LibraryMediaTypeFilter.all.rawValue)
-            Text(String(localized: "Photos")).tag(LibraryMediaTypeFilter.photo.rawValue)
-            Text(String(localized: "Videos")).tag(LibraryMediaTypeFilter.video.rawValue)
-            Text(String(localized: "Live Photos")).tag(LibraryMediaTypeFilter.live.rawValue)
-            Text(String(localized: "Screenshots")).tag(LibraryMediaTypeFilter.screenshot.rawValue)
+        let lessUsed: [(LibraryMediaTypeFilter, String)] = [
+            (.live, String(localized: "Live Photos")),
+            (.screenshot, String(localized: "Screenshots")),
+        ]
+        let pickedLessUsed = lessUsed.first { $0.0.rawValue == typeRaw }
+        return HStack(spacing: 8) {
+            Picker(String(localized: "Media type"), selection: $typeRaw) {
+                Text(String(localized: "All")).tag(LibraryMediaTypeFilter.all.rawValue)
+                Label(String(localized: "Favorites"), systemImage: "star").tag(LibraryMediaTypeFilter.favorite.rawValue)
+                Text(String(localized: "Photos")).tag(LibraryMediaTypeFilter.photo.rawValue)
+                Text(String(localized: "Videos")).tag(LibraryMediaTypeFilter.video.rawValue)
+                if let pickedLessUsed {
+                    Text(pickedLessUsed.1).tag(pickedLessUsed.0.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            // The segments name themselves; a visible "Media type" label wrapped
+            // onto two lines in narrow windows. VoiceOver still reads it.
+            .labelsHidden()
+            .fixedSize()
+            .accessibilityIdentifier("library.type-filter")
+
+            Menu {
+                ForEach(lessUsed, id: \.0) { option in
+                    Button {
+                        typeRaw = option.0.rawValue
+                    } label: {
+                        Label(option.1, systemImage: typeRaw == option.0.rawValue ? "checkmark" : "circle")
+                    }
+                }
+            } label: {
+                Text(String(localized: "More"))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help(String(localized: "Live Photos and Screenshots"))
+            .accessibilityIdentifier("library.type-more")
         }
-        .pickerStyle(.segmented)
-        // The segments name themselves; a visible "Media type" label wrapped
-        // onto two lines in narrow windows. VoiceOver still reads it.
-        .labelsHidden()
-        // Always its natural width. Capped below it (English needs ~495 pt),
-        // AppKit drew the control wider than its slot, over the photo count,
-        // and every store save flipped it between the two widths; in a
-        // 900 pt window it also squeezed the sidebar. It has its own row, so
-        // it fits the narrowest window.
-        .fixedSize()
-        .accessibilityIdentifier("library.type-filter")
     }
 
     private var libraryGroupingPicker: some View {
@@ -338,19 +386,14 @@ struct LibraryView: View {
         VStack(alignment: .leading, spacing: 10) {
             LibraryFilterChips(showsScope: true)
 
-            HStack {
-                Text(criteria.isFiltered || selection.libraryScope != nil
-                     ? String(format: String(localized: "Filtered count"), cachedVisibleCount)
-                     : String(format: String(localized: "%lld photos"), cachedVisibleCount))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(LibraryPalette.muted)
-                    .accessibilityIdentifier("library.photoCount")
-                    .accessibilityValue(String(cachedVisibleCount))
-                Spacer(minLength: 12)
-                // Only a real filter can become a smart group. Its own row
-                // keeps the chips at full width and the button on one line.
-                // A scope is a one-off list, not a rule a smart group could keep.
-                if criteria.isFiltered && selection.libraryScope == nil {
+            // The count is in the title bar; this row only appears for a
+            // filter that could become a smart group. A scope is a one-off
+            // list, not a rule a smart group could keep.
+            // Favorites and search have no smart-group rule yet, so a filter
+            // using them can't be saved without losing part of it.
+            if criteria.isFiltered && !criteria.favoritesOnly && criteria.searchText.isEmpty && selection.libraryScope == nil {
+                HStack {
+                    Spacer(minLength: 12)
                     Button(String(localized: "Save this filter as a smart group")) {
                         showingSmartGroupEditor = true
                     }
@@ -362,6 +405,15 @@ struct LibraryView: View {
                     .accessibilityIdentifier("library.save-smart-group")
                 }
             }
+        }
+        // Tests read the count here; people see it in the title bar.
+        .background(alignment: .topLeading) {
+            Text(String(cachedVisibleCount))
+                .font(.system(size: 1))
+                .foregroundStyle(.clear)
+                .allowsHitTesting(false)
+                .accessibilityValue(String(cachedVisibleCount))
+                .accessibilityIdentifier("library.photoCount")
         }
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.vertical, 13)
@@ -484,7 +536,7 @@ struct LibraryView: View {
     }
 
     private func selectedTripName(for tripID: String) -> String {
-        allItems.first(where: { $0.tripID == tripID })?.trip?.effectiveName ?? tripID
+        cachedFilterOptions.tripNames[tripID] ?? tripID
     }
 
     private func clearFilters() {
@@ -521,6 +573,7 @@ struct LibraryView: View {
         cachedSections = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
         state.gridSections = cachedSections.map(\.itemIDs)
         hasGrouped = true
+        cachedFilterOptions = Self.filterOptions(for: allItems)
         let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
         selection.visibleItemIDs = publishedVisible
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
@@ -648,25 +701,34 @@ private struct LibrarySectionView: View {
         section.id.hasPrefix("trip:") ? String(section.id.dropFirst("trip:".count)) : nil
     }
 
+    private func selectSection() {
+        selection.select(section.itemIDs, focus: section.itemIDs.first)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 // Like a moment title in Photos: click selects the section's
-                // photos, and the menu goes to the trip or the map.
-                Button {
-                    selection.select(section.itemIDs, focus: section.itemIDs.first)
-                } label: {
-                    Text(section.title)
-                        .font(.system(size: 21, weight: .medium, design: .serif))
-                        .foregroundStyle(LibraryPalette.ink)
+                // photos, and the menu goes to the trip or the map. A trip's
+                // name also changes in place on double-click.
+                HStack(spacing: 0) {
+                    if let tripID = sectionTripID, section.id != "trip:unassigned" {
+                        EditableTripTitle(tripID: tripID, title: section.title, onClick: selectSection)
+                            .accessibilityAction(named: Text(String(localized: "Select these photos"))) { selectSection() }
+                    } else {
+                        Button { selectSection() } label: {
+                            Text(section.title)
+                                .font(.system(size: 21, weight: .medium, design: .serif))
+                                .foregroundStyle(LibraryPalette.ink)
+                        }
+                        .buttonStyle(.plain)
+                        .help(String(localized: "Select these photos"))
+                    }
                 }
-                .buttonStyle(.plain)
-                .help(String(localized: "Select these photos"))
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("library.section.\(section.id)")
                 .contextMenu {
-                    Button(String(localized: "Select these photos")) {
-                        selection.select(section.itemIDs, focus: section.itemIDs.first)
-                    }
+                    Button(String(localized: "Select these photos")) { selectSection() }
                     Button(String(localized: "Show only these photos")) {
                         selection.showInLibrary(section.itemIDs, title: section.title)
                     }
@@ -1350,7 +1412,7 @@ struct GroupDetailView: View {
                 .background(LibraryPalette.content)
                 .navigationTitle(group.name)
                 .navigationSubtitle(
-                    String(format: String(localized: "%lld photos"), visibleItems.count) + " · "
+                    String(localized: "\(visibleItems.count) photos") + " · "
                         + (group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
                 )
                 .toolbar {

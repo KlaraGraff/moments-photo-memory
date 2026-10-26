@@ -66,6 +66,18 @@ enum PhotoInfoEditing {
         touch(item, now: now)
     }
 
+    /// Starts a trip with this photo in it, spanning the photo's day.
+    @discardableResult
+    static func moveToNewTrip(named name: String, item: MediaItem, context: ModelContext, now: Date = .now) -> Trip? {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        let date = item.effectiveCaptureDate
+        let trip = Trip(name: value, startDate: date, endDate: date, updatedAt: now, updatedBy: MomentsAccount.localID)
+        context.insert(trip)
+        setTrip(trip, on: item, now: now)
+        return trip
+    }
+
     /// Renames a trip; an empty name goes back to the name it was given.
     static func renameTrip(_ trip: Trip, to name: String, now: Date = .now) {
         let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -127,5 +139,24 @@ struct ViewerZoom: Equatable {
         let limitY = max(0, (fitted.height * scale - area.height) / 2)
         offset.width = min(max(offset.width, -limitX), limitX)
         offset.height = min(max(offset.height, -limitY), limitY)
+    }
+}
+
+enum SwipeAxis {
+    case undecided, horizontal, vertical
+}
+
+/// Where a sideways swipe over the viewer's photo ends up.
+enum ViewerSwipe {
+    /// 1 for the next photo, -1 for the previous one, 0 to spring back.
+    /// `offset` is how far the photo slid (negative: towards the next one);
+    /// `lastStep` is the fingers' last movement, so a quick flick turns the
+    /// page even when it travelled only a little.
+    static func direction(offset: CGFloat, width: CGFloat, lastStep: CGFloat, hasPrevious: Bool, hasNext: Bool) -> Int {
+        let threshold = max(width * 0.18, 40)
+        let flick = abs(lastStep) > 6
+        if hasNext, offset < 0, offset < -threshold || (flick && lastStep < 0) { return 1 }
+        if hasPrevious, offset > 0, offset > threshold || (flick && lastStep > 0) { return -1 }
+        return 0
     }
 }

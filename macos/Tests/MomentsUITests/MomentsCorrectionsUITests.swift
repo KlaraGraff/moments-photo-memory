@@ -101,22 +101,28 @@ final class MomentsCorrectionsUITests: XCTestCase {
 
         // The Map's filter lists the merged place once.
         element(in: app, identifier: "sidebar.map").click()
-        let filters = element(in: app, identifier: "map.filters")
-        XCTAssertTrue(filters.waitForExistence(timeout: 30), "The Map has no filter bar")
-        // The menu's label becomes the chosen place, so find it by identifier.
-        let place = filters.descendants(matching: .any).matching(identifier: "filter.place").firstMatch
-        XCTAssertTrue(place.waitForExistence(timeout: timeout), "The Map's filter bar has no Place filter: \(filters.debugDescription)")
+        let filterButton = element(in: app, identifier: "toolbar.filter")
+        XCTAssertTrue(filterButton.waitForExistence(timeout: 30), "The Map has no Filter button")
+        filterButton.click()
+        let popover = app.popovers.firstMatch
+        XCTAssertTrue(popover.waitForExistence(timeout: timeout), "Filter did not open its options")
+        let place = popover.descendants(matching: .any).matching(identifier: "filter.place").firstMatch
+        XCTAssertTrue(place.waitForExistence(timeout: timeout), "The Map's filters have no Place filter: \(popover.debugDescription)")
         place.click()
         let merged = app.menuItems["Demo place 1"].firstMatch
         XCTAssertTrue(merged.waitForExistence(timeout: timeout), "The Map's Place filter does not list the merged place: \(app.menus.firstMatch.debugDescription)")
         XCTAssertFalse(app.menuItems["Demo place 2"].exists, "The Map still lists the merged place")
         merged.click()
+        app.typeKey(.escape, modifierFlags: [])
         Thread.sleep(forTimeInterval: 1.5)
         capture(app, named: "\(prefix)-04-map-evidence")
 
         // Filters are saved settings: leave none behind for the next test.
+        filterButton.click()
+        XCTAssertTrue(place.waitForExistence(timeout: timeout))
         place.click()
         app.menuItems["All places"].firstMatch.click()
+        app.typeKey(.escape, modifierFlags: [])
     }
 
     private func openPlacesEditor(_ app: XCUIApplication) {

@@ -517,7 +517,7 @@ final class MomentsUITests: XCTestCase {
         let popover = app.popovers.firstMatch
         XCTAssertTrue(popover.waitForExistence(timeout: launchTimeout), "Filter did not open its options")
         capture(app, named: "map-06-filter-popover-evidence")
-        let trip = popover.menuButtons["Trip"].firstMatch
+        let trip = popover.descendants(matching: .any).matching(identifier: "filter.trip").firstMatch
         XCTAssertTrue(trip.waitForExistence(timeout: launchTimeout))
         trip.click()
         let journey = app.menuItems["journeyA"].firstMatch

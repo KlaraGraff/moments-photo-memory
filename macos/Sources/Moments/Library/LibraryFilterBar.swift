@@ -154,7 +154,7 @@ struct LibraryFilterChips: View {
 
     private var chipRow: some View {
         HStack(spacing: 8) {
-            filterMenu(label: String(localized: "Place"), systemImage: "mappin.and.ellipse", selected: selectedPlaceName) {
+            filterMenu(label: String(localized: "Place"), systemImage: "mappin.and.ellipse", identifier: "filter.place", selected: selectedPlaceName) {
                 Button(String(localized: "All places")) { placeFilterID = "" }
                 if !places.isEmpty { Divider() }
                 ForEach(places) { place in
@@ -166,7 +166,7 @@ struct LibraryFilterChips: View {
                 }
             }
 
-            filterMenu(label: String(localized: "Trip"), systemImage: "suitcase", selected: selectedTripName) {
+            filterMenu(label: String(localized: "Trip"), systemImage: "suitcase", identifier: "filter.trip", selected: selectedTripName) {
                 Button(String(localized: "All trips")) { tripFilterKey = "" }
                 if !trips.isEmpty { Divider() }
                 ForEach(trips, id: \.self) { trip in
@@ -186,7 +186,7 @@ struct LibraryFilterChips: View {
         }
     }
 
-    private func filterMenu<Content: View>(label: String, systemImage: String, selected: String?, @ViewBuilder content: () -> Content) -> some View {
+    private func filterMenu<Content: View>(label: String, systemImage: String, identifier: String, selected: String?, @ViewBuilder content: () -> Content) -> some View {
         Menu {
             content()
         } label: {
@@ -206,6 +206,7 @@ struct LibraryFilterChips: View {
         .fixedSize()
         .paperChip(selected: selected != nil)
         .foregroundStyle(LibraryPalette.ink)
+        .accessibilityIdentifier(identifier)
     }
 
     /// A long place or trip name would push the other chips out of the row;
@@ -450,7 +451,6 @@ struct CompactLibraryFilters: ViewModifier {
                         LibraryFilterChips()
                             .padding(16)
                             .frame(width: 560, alignment: .leading)
-                            .accessibilityIdentifier("filter.popover")
                     }
                 }
             }

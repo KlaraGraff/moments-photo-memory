@@ -377,7 +377,7 @@ final class PhotoNoteTests: XCTestCase {
         XCTAssertEqual(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in nil }).count, 2)
         settings.engine = .cloud
         let cloudOnly = NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in "k" })
-        XCTAssertEqual(cloudOnly.map(\.label), ["Claude"])
+        XCTAssertEqual(cloudOnly.map(\.label), ["Anthropic"])
     }
 
     func testOpenAICompatibleEndpoint() {
@@ -436,6 +436,34 @@ final class PhotoNoteTests: XCTestCase {
         let organizer = ClaudeOrganizer(apiKey: "k", model: ClaudeModel.opus.rawValue, session: StubURLProtocol.session())
         let result = try await organizer.organize(NoteOrganizerContext(noteText: "x"))
         XCTAssertEqual(result, NoteOrganizerResult(placeName: nil, placeDescription: "Quiet in the afternoon.", memory: "We sat by the river.", memoryScope: "photo"))
+    }
+
+    func testAnthropicModelListReadsIDsAndNames() async throws {
+        StubURLProtocol.failure = nil
+        StubURLProtocol.status = 200
+        StubURLProtocol.body = try JSONSerialization.data(withJSONObject: [
+            "data": [
+                ["type": "model", "id": "claude-opus-5-5", "display_name": "Claude Opus 5.5"],
+                ["type": "model", "id": "claude-haiku-5-5", "display_name": ""],
+                ["type": "model", "display_name": "No id"]
+            ],
+            "has_more": false
+        ])
+        let models = try await AnthropicModelList.fetch(apiKey: "k", session: StubURLProtocol.session())
+        XCTAssertEqual(models, [
+            CloudModelOption(id: "claude-opus-5-5", displayName: "Claude Opus 5.5"),
+            CloudModelOption(id: "claude-haiku-5-5", displayName: "claude-haiku-5-5")
+        ])
+
+        StubURLProtocol.status = 401
+        StubURLProtocol.body = try JSONSerialization.data(withJSONObject: ["type": "error", "error": ["type": "authentication_error", "message": "invalid x-api-key"]])
+        do {
+            _ = try await AnthropicModelList.fetch(apiKey: "bad", session: StubURLProtocol.session())
+            XCTFail("Expected a 401")
+        } catch {
+            guard case .http(401, let message)? = error as? NoteOrganizerError else { return XCTFail("\(error)") }
+            XCTAssertTrue(message.contains("Settings"), message)
+        }
     }
 
     func testClaudeExplainsKeyRegionAndNetworkFailures() async throws {

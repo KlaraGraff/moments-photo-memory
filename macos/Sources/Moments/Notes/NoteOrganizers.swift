@@ -230,7 +230,7 @@ struct ClaudeOrganizer: NoteOrganizing {
     let model: String
     var session: URLSession = .shared
 
-    var label: String { "Claude" }
+    var label: String { "Anthropic" }
 
     /// Splitting a short note is easy work: low effort keeps it quick and
     /// cheap. Only the models we list get the newer options; a hand-typed
@@ -281,6 +281,41 @@ struct ClaudeOrganizer: NoteOrganizing {
         let blocks = object["content"] as? [[String: Any]] ?? []
         let text = blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined()
         return try NoteOrganizerParser.parse(text)
+    }
+}
+
+/// A model the person can pick in Settings › AI Model.
+public struct CloudModelOption: Identifiable, Equatable, Sendable {
+    public var id: String
+    public var displayName: String
+}
+
+/// Lists the models an Anthropic API key can use (newest first), so the
+/// person picks from what their account actually has.
+enum AnthropicModelList {
+    static let endpoint = URL(string: "https://api.anthropic.com/v1/models?limit=1000")!
+
+    static func fetch(apiKey: String, session: URLSession = .shared) async throws -> [CloudModelOption] {
+        var request = URLRequest(url: endpoint)
+        request.timeoutInterval = 30
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2026-10-21", forHTTPHeaderField: "anthropic-version")
+        let object: [String: Any]
+        do {
+            object = try await CloudHTTP.send(request, session: session)
+        } catch NoteOrganizerError.http(401, _) {
+            throw NoteOrganizerError.http(401, String(localized: "The API key was not accepted. Check it in Settings › AI Model."))
+        }
+        return parse(object)
+    }
+
+    static func parse(_ object: [String: Any]) -> [CloudModelOption] {
+        let data = object["data"] as? [[String: Any]] ?? []
+        return data.compactMap { entry in
+            guard let id = entry["id"] as? String, !id.isEmpty else { return nil }
+            let name = (entry["display_name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id
+            return CloudModelOption(id: id, displayName: name)
+        }
     }
 }
 

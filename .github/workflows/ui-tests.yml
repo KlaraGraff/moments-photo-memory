@@ -30,14 +30,6 @@ jobs:
           TEST_RUNNER_MOMENTS_FLASH_DIR: ${{ runner.temp }}/flash
           TEST_RUNNER_MOMENTS_SCROLL_DIR: ${{ runner.temp }}/scroll
         run: |
-          # While the scroll test scrolls, sample the app's call stacks so a
-          # stall can be traced to the code that caused it. Without sudo,
-          # sample writes a report with an empty call graph.
-          scroll_dir="$RUNNER_TEMP/scroll"
-          ( for _ in $(seq 1 6000); do
-              [ -f "$scroll_dir/scrolling" ] && { sudo sample Moments 10 -mayDie -file "$RUNNER_TEMP/scroll-sample.txt" >/dev/null 2>&1; break; }
-              sleep 0.2
-            done ) &
           # Ad-hoc signing is enough for the test runner on the hosted Mac.
           xcodebuild \
             -project macos/Moments.xcodeproj \
@@ -51,12 +43,6 @@ jobs:
         if: always()
         run: |
           cat "$RUNNER_TEMP"/scroll/scroll-report-*.txt 2>/dev/null || echo "no scroll report"
-          sample="$RUNNER_TEMP/scroll-sample.txt"
-          [ -f "$sample" ] || { echo "no scroll sample"; exit 0; }
-          # Compressed so the whole call graph fits in the job log for a reviewer.
-          echo "SAMPLE-BEGIN"
-          sudo chmod a+r "$sample"; gzip -9c "$sample" | base64 | fold -w 4000
-          echo "SAMPLE-END"
       - name: Print flash report
         if: always()
         run: |

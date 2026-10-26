@@ -84,7 +84,7 @@ struct MomentsApp: App {
                     try? DemoSeeder.flagUndatedDemoItemsForReview(context: container.mainContext)
                 }
             }
-            if let count = Self.uiTestStressCount {
+            if isUITesting || testStoreURL != nil, let count = Self.uiTestStressCount {
                 try? DemoSeeder.generateSyntheticLibrary(count: count, context: container.mainContext)
             }
             #endif

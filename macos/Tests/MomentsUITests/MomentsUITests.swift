@@ -497,6 +497,17 @@ final class MomentsUITests: XCTestCase {
             .firstMatch
         XCTAssertTrue(tripCard.waitForExistence(timeout: launchTimeout))
         capture(app, named: "\(prefix)-05-trips-evidence")
+
+        // One trip, by day and place.
+        tripCard.click()
+        let tripMemory = element(in: app, identifier: "trips.memory.trip")
+        XCTAssertTrue(tripMemory.waitForExistence(timeout: launchTimeout))
+        capture(app, named: "\(prefix)-06-trip-evidence")
+        element(in: app, identifier: "trips.dates").click()
+        XCTAssertTrue(element(in: app, identifier: "trips.dates.start").waitForExistence(timeout: launchTimeout), "The trip's dates cannot be changed")
+        capture(app, named: "\(prefix)-07-trip-dates-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        element(in: app, identifier: "trips.back").click()
     }
 
     private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false) -> XCUIApplication {

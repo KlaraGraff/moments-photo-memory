@@ -114,7 +114,10 @@ struct TimelineTrip: Identifiable {
     let id: String
     let name: String
     let days: [TimelineDay]
+    /// The trip's own start, else its first photo's.
     let startDate: Date?
+    /// The trip's own end when it has one; `endDate` falls back to the last photo.
+    var plannedEndDate: Date? = nil
 
     var itemCount: Int {
         days.reduce(into: 0) { result, day in
@@ -132,7 +135,7 @@ struct TimelineTrip: Identifiable {
         days.flatMap { $0.places.flatMap(\.items) }
     }
 
-    var endDate: Date? { orderedItems.compactMap(\.date).max() }
+    var endDate: Date? { plannedEndDate ?? orderedItems.compactMap(\.date).max() }
 
     var datedDayCount: Int { days.filter { $0.date != nil }.count }
 

@@ -38,6 +38,8 @@ struct TripsScreen: View {
             hasher.combine(trip.id)
             hasher.combine(trip.effectiveName)
             hasher.combine(trip.items.count)
+            hasher.combine(trip.startDate)
+            hasher.combine(trip.endDate)
         }
         for place in places {
             hasher.combine(place.id)
@@ -93,6 +95,7 @@ struct TripsScreen: View {
             } else if let trip = openTrip {
                 TripDetailView(
                     trip: trip,
+                    model: trips.first { $0.id == trip.id },
                     itemByID: itemByID,
                     memories: memories,
                     onBack: closeTrip
@@ -203,48 +206,12 @@ private struct TripCoverCard: View {
 
     var body: some View {
         Button(action: onOpen) {
-            HStack(alignment: .top, spacing: 26) {
-                TripPrints(covers: covers, lifted: isHovering)
-                    .frame(width: 262, height: 186)
-
-                VStack(alignment: .leading, spacing: 9) {
-                    if let span = TripText.dateSpan(trip, locale: locale) {
-                        Text(TripText.dateLine(span: span, trip: trip))
-                            .font(.callout)
-                            .foregroundStyle(Paper.muted)
-                    }
-                    Text(TripText.name(trip))
-                        .font(.system(size: 28, weight: .medium, design: .serif))
-                        .foregroundStyle(Paper.ink)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .padding(.bottom, 5)
-                        .overlay(alignment: .bottom) {
-                            Rectangle()
-                                .stroke(Paper.rule, style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
-                                .frame(height: 1)
-                        }
-                    if !trip.cityNames.isEmpty {
-                        Text(trip.cityNames.joined(separator: " → "))
-                            .font(.callout)
-                            .foregroundStyle(Paper.ink)
-                            .lineLimit(2)
-                    }
-                    Text(TripText.counts(trip))
-                        .font(.callout.monospacedDigit())
-                        .foregroundStyle(Paper.muted)
-                }
-                .padding(.top, 6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                if let memory {
-                    Text(memory)
-                        .font(.system(.callout, design: .serif))
-                        .foregroundStyle(Paper.ink)
-                        .lineLimit(5)
-                        .frame(width: 220, alignment: .topLeading)
-                        .padding(.top, 8)
-                }
+            // Narrow windows drop the memory column first, then use smaller
+            // prints, so the text never runs under them.
+            ViewThatFits(in: .horizontal) {
+                content(printScale: 1, showsMemory: true)
+                content(printScale: 1, showsMemory: false)
+                content(printScale: 0.72, showsMemory: false)
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 20)
@@ -262,6 +229,56 @@ private struct TripCoverCard: View {
         .accessibilityLabel(Text(TripText.name(trip)))
         .accessibilityIdentifier("trips.card.\(trip.id)")
     }
+
+    private func content(printScale: CGFloat, showsMemory: Bool) -> some View {
+        HStack(alignment: .top, spacing: 26 * printScale) {
+            TripPrints(covers: covers, lifted: isHovering, scale: printScale)
+                .frame(width: 262 * printScale, height: 186 * printScale)
+
+            VStack(alignment: .leading, spacing: 9) {
+                if let span = TripText.dateSpan(trip, locale: locale) {
+                    Text(TripText.dateLine(span: span, trip: trip))
+                        .font(.callout)
+                        .foregroundStyle(Paper.muted)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+                Text(TripText.name(trip))
+                    .font(.system(size: 28, weight: .medium, design: .serif))
+                    .foregroundStyle(Paper.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.bottom, 5)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .stroke(Paper.rule, style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                            .frame(height: 1)
+                    }
+                if !trip.cityNames.isEmpty {
+                    Text(trip.cityNames.joined(separator: " → "))
+                        .font(.callout)
+                        .foregroundStyle(Paper.ink)
+                        .lineLimit(2)
+                }
+                Text(TripText.counts(trip))
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(Paper.muted)
+                    .lineLimit(1)
+            }
+            .padding(.top, 6)
+            // A fixed ideal width lets ViewThatFits judge by the layout, not by how long the name is.
+            .frame(minWidth: 220, idealWidth: 220, maxWidth: .infinity, alignment: .leading)
+
+            if showsMemory, let memory {
+                Text(memory)
+                    .font(.system(.callout, design: .serif))
+                    .foregroundStyle(Paper.ink)
+                    .lineLimit(5)
+                    .frame(width: 220, alignment: .topLeading)
+                    .padding(.top, 8)
+            }
+        }
+    }
 }
 
 /// Two photos as prints with a white border, the second laid over the first,
@@ -269,23 +286,24 @@ private struct TripCoverCard: View {
 private struct TripPrints: View {
     let covers: [MediaItem]
     let lifted: Bool
+    var scale: CGFloat = 1
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             if covers.count > 1 {
                 printed(covers[1])
-                    .frame(width: 186, height: 150)
+                    .frame(width: 186 * scale, height: 150 * scale)
                     .rotationEffect(.degrees(lifted ? -4 : -2.5))
-                    .offset(x: lifted ? 0 : 4, y: 6)
+                    .offset(x: (lifted ? 0 : 4) * scale, y: (6) * scale)
                 printed(covers[0])
-                    .frame(width: 192, height: 156)
+                    .frame(width: 192 * scale, height: 156 * scale)
                     .rotationEffect(.degrees(lifted ? 2.5 : 1.5))
-                    .offset(x: 70, y: lifted ? 22 : 24)
+                    .offset(x: (70) * scale, y: (lifted ? 22 : 24) * scale)
             } else if let only = covers.first {
                 printed(only)
-                    .frame(width: 214, height: 164)
+                    .frame(width: 214 * scale, height: 164 * scale)
                     .rotationEffect(.degrees(-1.5))
-                    .offset(x: 22, y: 10)
+                    .offset(x: (22) * scale, y: (10) * scale)
             } else {
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(Paper.well)
@@ -294,8 +312,8 @@ private struct TripPrints: View {
                             .font(.title2)
                             .foregroundStyle(Paper.muted)
                     }
-                    .frame(width: 214, height: 164)
-                    .offset(x: 22, y: 10)
+                    .frame(width: 214 * scale, height: 164 * scale)
+                    .offset(x: (22) * scale, y: (10) * scale)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -316,6 +334,8 @@ private struct TripPrints: View {
 
 private struct TripDetailView: View {
     let trip: TimelineTrip
+    /// The stored trip, for editing its dates; `nil` for photos in no trip.
+    let model: Trip?
     let itemByID: [String: MediaItem]
     let memories: [CollectionMemory]
     let onBack: () -> Void
@@ -338,10 +358,15 @@ private struct TripDetailView: View {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 10) {
                     // The trip's name is in the title bar; its dates lead the page.
-                    if let span = TripText.dateSpan(trip, locale: locale) {
-                        Text(span)
-                            .font(.system(size: 21, weight: .medium, design: .serif))
-                            .foregroundStyle(Paper.ink)
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        if let span = TripText.dateSpan(trip, locale: locale) {
+                            Text(span)
+                                .font(.system(size: 21, weight: .medium, design: .serif))
+                                .foregroundStyle(Paper.ink)
+                        }
+                        if let model {
+                            TripDatesButton(trip: model, photoDates: trip.orderedItems.compactMap(\.date))
+                        }
                     }
                     Text(TripText.summary(trip))
                         .font(.caption.monospacedDigit())
@@ -613,6 +638,88 @@ struct TripTravelRow: View {
     }
 }
 
+/// The trip's start and end, changed in a small popover. They start as the
+/// first and last photo's days; "Use photo dates" goes back to those.
+private struct TripDatesButton: View {
+    @Environment(\.modelContext) private var modelContext
+    let trip: Trip
+    let photoDates: [Date]
+    @State private var isEditing = false
+
+    private var calendar: Calendar { .current }
+
+    private var start: Binding<Date> {
+        Binding(
+            get: { trip.startDate ?? photoDates.min() ?? .now },
+            set: { value in
+                let day = calendar.startOfDay(for: value)
+                trip.startDate = day
+                if let end = trip.endDate, end < day { trip.endDate = endOfDay(day) }
+                saved()
+            }
+        )
+    }
+
+    private var end: Binding<Date> {
+        Binding(
+            get: { trip.endDate ?? photoDates.max() ?? start.wrappedValue },
+            set: { value in
+                trip.endDate = endOfDay(max(value, start.wrappedValue))
+                saved()
+            }
+        )
+    }
+
+    var body: some View {
+        Button {
+            isEditing.toggle()
+        } label: {
+            Image(systemName: "calendar.badge.clock")
+                .foregroundStyle(Paper.accent)
+        }
+        .buttonStyle(.plain)
+        .help(String(localized: "Change the trip's dates"))
+        .accessibilityLabel(String(localized: "Change the trip's dates"))
+        .accessibilityIdentifier("trips.dates")
+        .popover(isPresented: $isEditing, arrowEdge: .bottom) {
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                GridRow {
+                    PaperFormLabel(String(localized: "Starts"))
+                    DatePicker("", selection: start, displayedComponents: .date)
+                        .labelsHidden()
+                        .accessibilityIdentifier("trips.dates.start")
+                }
+                GridRow {
+                    PaperFormLabel(String(localized: "Ends"))
+                    DatePicker("", selection: end, in: start.wrappedValue..., displayedComponents: .date)
+                        .labelsHidden()
+                        .accessibilityIdentifier("trips.dates.end")
+                }
+                GridRow {
+                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                    Button(String(localized: "Use photo dates")) {
+                        trip.startDate = photoDates.min()
+                        trip.endDate = photoDates.max()
+                        saved()
+                    }
+                    .disabled(photoDates.isEmpty)
+                }
+            }
+            .padding(16)
+        }
+    }
+
+    private func endOfDay(_ date: Date) -> Date {
+        let next = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date)) ?? date
+        return next.addingTimeInterval(-1)
+    }
+
+    private func saved() {
+        trip.updatedAt = .now
+        try? modelContext.save()
+    }
+}
+
 /// A trip a Timeline day belongs to.
 struct TripLink: Identifiable, Hashable {
     let id: String
@@ -628,7 +735,7 @@ private enum TripText {
     }
 
     static func dateSpan(_ trip: TimelineTrip, locale: Locale) -> String? {
-        guard let start = trip.orderedItems.compactMap(\.date).min() ?? trip.startDate else { return nil }
+        guard let start = trip.startDate ?? trip.orderedItems.compactMap(\.date).min() else { return nil }
         let formatter = DateIntervalFormatter()
         formatter.locale = locale
         formatter.dateStyle = .medium
@@ -638,8 +745,17 @@ private enum TripText {
 
     /// "Apr 20 – 25, 2026 · 6 days"
     static func dateLine(span: String, trip: TimelineTrip) -> String {
-        guard trip.datedDayCount > 0 else { return span }
-        return "\(span) · \(String(localized: "\(trip.datedDayCount) days"))"
+        let days = dayCount(trip)
+        guard days > 0 else { return span }
+        return "\(span) · \(String(localized: "\(days) days"))"
+    }
+
+    /// Calendar days from the trip's start to its end, both included.
+    static func dayCount(_ trip: TimelineTrip, calendar: Calendar = .current) -> Int {
+        guard let start = trip.startDate, let end = trip.endDate else { return trip.datedDayCount }
+        let from = calendar.startOfDay(for: start)
+        let to = calendar.startOfDay(for: max(start, end))
+        return (calendar.dateComponents([.day], from: from, to: to).day ?? 0) + 1
     }
 
     /// "128 photos · 156 videos"; videos only when there are any.

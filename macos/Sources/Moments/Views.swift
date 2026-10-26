@@ -96,8 +96,20 @@ struct ContentView: View {
                                 groupEditorKind = .newSmart
                             }
                         } label: {
-                            Label(String(localized: "New group"), systemImage: "plus")
+                            // A quiet row like the ones above it, not a bordered button.
+                            Label {
+                                Text(String(localized: "New group"))
+                                    .foregroundStyle(MomentsPalette.muted)
+                            } icon: {
+                                Image(systemName: "plus")
+                                    .foregroundStyle(MomentsPalette.accent)
+                            }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                         }
+                        .menuStyle(.button)
+                        .buttonStyle(.plain)
+                        .menuIndicator(.hidden)
                         .accessibilityIdentifier("sidebar.new-group")
                     } header: {
                         Text(String(localized: "My groups"))

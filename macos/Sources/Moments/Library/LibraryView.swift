@@ -277,6 +277,8 @@ struct LibraryView: View {
         .buttonStyle(.plain)
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.top, 10)
+        // Room before the first section title, so the banner never sits on it.
+        .padding(.bottom, 14)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("library.review-banner")
     }

@@ -10,6 +10,9 @@ struct EditableTripTitle: View {
     let tripID: String
     let title: String
     var font: Font = .system(size: 21, weight: .medium, design: .serif)
+    /// A single click; it waits until the click cannot become a double-click,
+    /// so starting a rename never runs it.
+    var onClick: (() -> Void)? = nil
     @State private var isEditing = false
     @State private var draft = ""
     @FocusState private var isFocused: Bool
@@ -45,6 +48,7 @@ struct EditableTripTitle: View {
                     draft = title
                     isEditing = true
                 }
+                .onTapGesture(count: 1) { onClick?() }
                 .help(String(localized: "Double-click to rename"))
                 .accessibilityIdentifier("trip.title.\(tripID)")
                 .accessibilityAction(named: Text(String(localized: "Rename"))) {

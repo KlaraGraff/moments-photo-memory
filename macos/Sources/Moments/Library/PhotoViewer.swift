@@ -14,19 +14,49 @@ struct PhotoViewer: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let request: ViewerRequest
     let libraryState: LibraryViewState
-    @Query private var placeNotes: [PlaceNote]
     @State private var item: MediaItem?
     @State private var image: NSImage?
     @State private var player: AVPlayer?
     @State private var scopedURL: URL?
     @State private var isHovering = false
-    @State private var peopleNames: [String] = []
-    @State private var zoom: CGFloat = 1
+    @State private var zoom = ViewerZoom()
+    /// The zoom at the start of a pinch, and the offset at the start of a drag.
+    @State private var gestureBase: ViewerZoom?
+    @State private var hoverLocation: CGPoint?
+    @State private var areaSize: CGSize = .zero
+    @State private var eventMonitor: Any?
+    /// The neighbouring photos, ready to slide in beside the open one.
+    @State private var previousImage: NSImage?
+    @State private var nextImage: NSImage?
+    /// How far the strip of photos has slid sideways: follows two fingers on
+    /// the trackpad, then animates a whole page or springs back.
+    @State private var pageOffset: CGFloat = 0
+    /// The page turn being animated, finished at once if another one starts.
+    @State private var pendingPage: Int?
+    @State private var pageToken = UUID()
+    @State private var swipeAxis = SwipeAxis.undecided
+    @State private var lastSwipeStep: CGFloat = 0
+    @State private var lastWheelPage = Date.distantPast
+    @State private var isEditingInfo = false
     @FocusState private var isFocused: Bool
 
-    private var index: Int? { request.itemIDs.firstIndex(of: request.itemID) }
+    /// A text field in the column has the keyboard: Esc and the arrows are its own.
+    private var isEditingText: Bool {
+        isEditingInfo || libraryState.focusedNoteItemID != nil
+    }
+
+    /// A text field or text view in this window is being typed in.
+    private var isTyping: Bool {
+        isEditingText || NSApp.keyWindow?.firstResponder is NSText
+    }
+
+    /// The request as it is now. The event monitor keeps the copy of this view
+    /// taken when it was installed, whose `request` never changes; the model
+    /// is shared, so reading through it is always current.
+    private var live: ViewerRequest { selection.viewerRequest ?? request }
+    private var index: Int? { live.itemIDs.firstIndex(of: live.itemID) }
     private var hasPrevious: Bool { (index ?? 0) > 0 }
-    private var hasNext: Bool { (index ?? request.itemIDs.count) < request.itemIDs.count - 1 }
+    private var hasNext: Bool { (index ?? live.itemIDs.count) < live.itemIDs.count - 1 }
 
     var body: some View {
         ZStack {
@@ -41,7 +71,7 @@ struct PhotoViewer: View {
                 HStack(spacing: 0) {
                     imageArea
                     infoPanel
-                        .frame(width: 300)
+                        .frame(width: 340)
                         .frame(maxHeight: .infinity, alignment: .top)
                         .background(Paper.raised)
                 }
@@ -59,16 +89,28 @@ struct PhotoViewer: View {
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onAppear { isFocused = true }
-        .onKeyPress(.leftArrow) { step(-1) ? .handled : .ignored }
-        .onKeyPress(.rightArrow) { step(1) ? .handled : .ignored }
+        .onAppear {
+            isFocused = true
+            installEventMonitor()
+        }
+        // When a field in the column lets go of the keyboard, the arrows page again.
+        .onChange(of: isEditingText) { _, editing in
+            if !editing { isFocused = true }
+        }
+        // Key presses reach these handlers even while a field in the column
+        // has the keyboard; then the keys are the field's own.
+        .onKeyPress(.leftArrow) { !isTyping && page(-1) ? .handled : .ignored }
+        .onKeyPress(.rightArrow) { !isTyping && page(1) ? .handled : .ignored }
         .onKeyPress(.space) {
+            guard !isTyping else { return .ignored }
             close()
             return .handled
         }
-        .onExitCommand { close() }
         .task(id: request.itemID) { await load(request.itemID) }
-        .onDisappear { stopVideo() }
+        .onDisappear {
+            stopVideo()
+            removeEventMonitor()
+        }
     }
 
     /// Across the top of the card: the date, where it sits in the set, and the actions.
@@ -86,9 +128,9 @@ struct PhotoViewer: View {
                     .accessibilityIdentifier("viewer.counter")
                     .accessibilityValue("\(index + 1)")
             }
-            headerButton("chevron.left", label: String(localized: "Previous photo"), identifier: "viewer.previous") { _ = step(-1) }
+            headerButton("chevron.left", label: String(localized: "Previous photo"), identifier: "viewer.previous") { page(-1) }
                 .disabled(!hasPrevious)
-            headerButton("chevron.right", label: String(localized: "Next photo"), identifier: "viewer.next") { _ = step(1) }
+            headerButton("chevron.right", label: String(localized: "Next photo"), identifier: "viewer.next") { page(1) }
                 .disabled(!hasNext)
             if let item {
                 Button {
@@ -106,8 +148,6 @@ struct PhotoViewer: View {
                 .accessibilityLabel(String(localized: "Favorite"))
             }
             headerButton("xmark", label: String(localized: "Close"), identifier: "viewer.close") { close() }
-                // Esc closes wherever the keyboard focus is.
-                .keyboardShortcut(.cancelAction)
                 .help(String(localized: "Close (Esc)"))
         }
         .padding(.leading, 18)
@@ -136,6 +176,21 @@ struct PhotoViewer: View {
                 pagingButtons
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Tracked on the whole area, not the photo, so it survives the
+            // photo being replaced while paging.
+            .onContinuousHover { phase in
+                if case .active(let location) = phase { hoverLocation = location } else { hoverLocation = nil }
+            }
+            .background {
+                GeometryReader { geometry in
+                    Color.clear
+                        .onAppear { areaSize = geometry.size }
+                        .onChange(of: geometry.size) { _, size in
+                            areaSize = size
+                            zoom.clampOffset(fitted: fittedSize, area: size)
+                        }
+                }
+            }
             if player == nil, image != nil {
                 zoomBar.padding(.bottom, 16)
             }
@@ -148,9 +203,9 @@ struct PhotoViewer: View {
     /// A small floating bar under the photo, like Claude's file preview.
     private var zoomBar: some View {
         HStack(spacing: 2) {
-            zoomButton("minus.magnifyingglass", label: String(localized: "Zoom out"), enabled: zoom > 1) { setZoom(zoom / 2) }
+            zoomButton("minus.magnifyingglass", label: String(localized: "Zoom out"), enabled: zoom.isZoomed) { zoomStep(1 / 1.5) }
                 .keyboardShortcut("-", modifiers: .command)
-            zoomButton("plus.magnifyingglass", label: String(localized: "Zoom in"), enabled: zoom < Self.maximumZoom) { setZoom(zoom * 2) }
+            zoomButton("plus.magnifyingglass", label: String(localized: "Zoom in"), enabled: zoom.scale < ViewerZoom.maximum) { zoomStep(1.5) }
                 .keyboardShortcut("=", modifiers: .command)
         }
         .padding(4)
@@ -172,100 +227,302 @@ struct PhotoViewer: View {
         .accessibilityLabel(label)
     }
 
-    private static let maximumZoom: CGFloat = 4
+ 
+    private var fittedSize: CGSize {
+        guard let image else { return .zero }
+        return Self.fittedSize(image.size, in: CGSize(width: areaSize.width - 56, height: areaSize.height - 56))
+    }
 
-    private func setZoom(_ value: CGFloat) {
-        let clamped = min(max(value, 1), Self.maximumZoom)
+    private var areaCenter: CGPoint {
+        CGPoint(x: areaSize.width / 2, y: areaSize.height / 2)
+    }
+
+    /// The zoom buttons and ⌘− / ⌘= zoom around the centre of what is shown.
+    private func zoomStep(_ factor: CGFloat) {
+        animateZoom { $0.zoom(to: $0.scale * factor, anchor: areaCenter, fitted: fittedSize, area: areaSize) }
+    }
+
+    private func animateZoom(_ change: (inout ViewerZoom) -> Void) {
+        var next = zoom
+        change(&next)
         if reduceMotion {
-            zoom = clamped
+            zoom = next
         } else {
-            withAnimation(Motion.snap) { zoom = clamped }
+            withAnimation(Motion.snap) { zoom = next }
         }
     }
 
-    /// The right-hand column: where and when, who, and the words written for this photo.
-    private var infoPanel: some View {
-        ScrollView {
-            if let item {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(dateTitle)
-                            .font(.system(size: 20, weight: .medium, design: .serif))
-                            .foregroundStyle(LibraryPalette.ink)
-                        if let time = timeTitle {
-                            Text(time)
-                                .font(.callout)
-                                .foregroundStyle(LibraryPalette.muted)
-                        }
-                    }
-
-                    infoRow(String(localized: "Place")) {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            PhotoPlaceLine(item: item, placeNotes: placeNotes)
-                            Spacer(minLength: 0)
-                            PhotoNoteBadge(item: item)
-                        }
-                    }
-                    if let trip = item.trip?.effectiveName, !trip.isEmpty {
-                        infoRow(String(localized: "Trip")) {
-                            Text(trip).foregroundStyle(LibraryPalette.ink)
-                        }
-                    }
-                    if !peopleNames.isEmpty {
-                        infoRow(String(localized: "People")) {
-                            Text(peopleNames.joined(separator: ", ")).foregroundStyle(LibraryPalette.ink)
-                        }
-                    }
-                    if libraryState.memoryDrafts[item.id] != nil
-                        || item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                        infoRow(String(localized: "Memory")) {
-                            MemoryEditor(item: item, state: libraryState)
-                        }
-                    }
-                    infoRow(String(localized: "Note")) {
-                        PhotoNoteSection(item: item, state: libraryState)
-                    }
-                }
-                .padding(20)
+    /// Pinch on the trackpad zooms around the fingers.
+    private var magnify: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                let base = gestureBase ?? zoom
+                if gestureBase == nil { gestureBase = zoom }
+                var next = base
+                next.zoom(to: base.scale * value.magnification, anchor: value.startLocation, fitted: fittedSize, area: areaSize)
+                zoom = next
             }
+            .onEnded { _ in gestureBase = nil }
+    }
+
+    /// Dragging a zoomed photo moves it.
+    private var pan: some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { value in
+                guard zoom.isZoomed else { return }
+                let base = gestureBase ?? zoom
+                if gestureBase == nil { gestureBase = zoom }
+                var next = base
+                next.pan(by: value.translation, fitted: fittedSize, area: areaSize)
+                zoom = next
+            }
+            .onEnded { _ in gestureBase = nil }
+    }
+
+    /// Esc closes the viewer wherever the keyboard is, unless a text field
+    /// has it: then Esc is the field's own (cancel or end typing), and the
+    /// next Esc closes. The mouse wheel or ⌘-scroll zooms around the pointer;
+    /// two fingers on the trackpad move a zoomed photo, as in Preview.
+    private func installEventMonitor() {
+        guard eventMonitor == nil else { return }
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { event in
+            let consumed = MainActor.assumeIsolated { handle(event) }
+            return consumed ? nil : event
         }
     }
 
-    private func infoRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .textCase(.uppercase)
-                .foregroundStyle(LibraryPalette.muted)
-            content()
+    private func handle(_ event: NSEvent) -> Bool {
+        guard selection.viewerRequest != nil else { return false }
+        if event.type == .keyDown {
+            // 53 is Esc. Popovers (the date editor) and menus handle their own.
+            guard event.keyCode == 53, let window = event.window, window.styleMask.contains(.titled),
+                  !(window.firstResponder is NSText) else { return false }
+            close()
+            return true
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        guard let location = hoverLocation else { return false }
+        let wheel = !event.hasPreciseScrollingDeltas || (event.phase.isEmpty && event.momentumPhase.isEmpty)
+        let canZoom = player == nil && image != nil
+        if event.modifierFlags.contains(.command) {
+            guard canZoom else { return false }
+            let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * 12
+            guard delta != 0 else { return true }
+            var next = zoom
+            next.zoom(to: zoom.scale * exp(delta / 120), anchor: location, fitted: fittedSize, area: areaSize)
+            zoom = next
+            return true
+        }
+        if zoom.isZoomed, canZoom {
+            // A zoomed photo moves under two fingers or the wheel.
+            let factor: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
+            var next = zoom
+            next.pan(by: CGSize(width: event.scrollingDeltaX * factor, height: event.scrollingDeltaY * factor), fitted: fittedSize, area: areaSize)
+            zoom = next
+            return true
+        }
+        return wheel ? wheelPage(event) : swipe(event)
+    }
+
+    /// Each turn of the mouse wheel over the photo shows the next photo (towards
+    /// you) or the previous one (away from you).
+    private func wheelPage(_ event: NSEvent) -> Bool {
+        let delta = abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) ? event.scrollingDeltaY : event.scrollingDeltaX
+        guard abs(delta) > 0.1 else { return true }
+        // One page per notch, even when a fast spin sends a burst of them.
+        let now = Date.now
+        guard now.timeIntervalSince(lastWheelPage) > 0.2 else { return true }
+        lastWheelPage = now
+        let towardsYou = event.isDirectionInvertedFromDevice ? delta > 0 : delta < 0
+        page(towardsYou ? 1 : -1)
+        return true
+    }
+
+    /// Two fingers sideways on the trackpad slide the photos along with them,
+    /// as in Photos; letting go far or fast enough turns the page, otherwise
+    /// the photo springs back. Vertical swipes are left to the window.
+    private func swipe(_ event: NSEvent) -> Bool {
+        // The glide after the fingers lift belongs to the swipe that made it.
+        if !event.momentumPhase.isEmpty { return swipeAxis == .horizontal }
+        if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
+            finishPendingPage()
+            swipeAxis = .undecided
+            pageOffset = 0
+            lastSwipeStep = 0
+        }
+        if swipeAxis == .undecided, event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 {
+            swipeAxis = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) ? .horizontal : .vertical
+        }
+        guard swipeAxis == .horizontal else { return false }
+        // Positive when the fingers move right, whatever the scrolling direction setting.
+        let fingers = event.isDirectionInvertedFromDevice ? event.scrollingDeltaX : -event.scrollingDeltaX
+        if event.phase.contains(.changed) {
+            let next = pageOffset + fingers
+            // Past the first or last photo the strip gives only a little.
+            let pastEnd = (next < 0 && !hasNext) || (next > 0 && !hasPrevious)
+            pageOffset += pastEnd ? fingers * 0.3 : fingers
+            if fingers != 0 { lastSwipeStep = fingers }
+        }
+        if event.phase.contains(.cancelled) {
+            swipeAxis = .undecided
+            settleBack()
+        } else if event.phase.contains(.ended) {
+            let direction = ViewerSwipe.direction(
+                offset: pageOffset, width: areaSize.width, lastStep: lastSwipeStep,
+                hasPrevious: hasPrevious, hasNext: hasNext
+            )
+            if direction == 0 { settleBack() } else { page(direction) }
+        }
+        return true
+    }
+
+    /// Slides to the neighbouring photo; false at either end. A page turn
+    /// still animating is finished first, so held arrow keys keep up.
+    @discardableResult
+    private func page(_ direction: Int) -> Bool {
+        finishPendingPage()
+        guard let index, live.itemIDs.indices.contains(index + direction) else {
+            settleBack()
+            return false
+        }
+        guard !reduceMotion, areaSize.width > 0 else {
+            completePage(direction)
+            return true
+        }
+        pendingPage = direction
+        let token = UUID()
+        pageToken = token
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.92)) {
+            pageOffset = direction > 0 ? -pageDistance : pageDistance
+        } completion: {
+            guard pageToken == token else { return }
+            finishPendingPage()
+        }
+        return true
+    }
+
+    private func finishPendingPage() {
+        guard let direction = pendingPage else { return }
+        pendingPage = nil
+        completePage(direction)
+    }
+
+    /// The neighbour that slid in becomes the open photo, in place, with no
+    /// further movement.
+    private func completePage(_ direction: Int) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            stopVideo()
+            if direction > 0 {
+                previousImage = image
+                image = nextImage
+                nextImage = nil
+            } else {
+                nextImage = image
+                image = previousImage
+                previousImage = nil
+            }
+            pageOffset = 0
+            zoom = ViewerZoom()
+            _ = step(direction)
+        }
+    }
+
+    private func settleBack() {
+        guard pageOffset != 0 else { return }
+        if reduceMotion {
+            pageOffset = 0
+        } else {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { pageOffset = 0 }
+        }
+    }
+
+    private func removeEventMonitor() {
+        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
+        eventMonitor = nil
+    }
+
+    /// The right-hand column: when, where, who, and the words written for
+    /// this photo, each editable in place.
+    @ViewBuilder
+    private var infoPanel: some View {
+        if let item {
+            PhotoInfoPanel(item: item, libraryState: libraryState, isEditing: $isEditingInfo)
+                .id(item.id)
+        } else {
+            Color.clear
+        }
+    }
+
+    /// The open photo with its neighbours either side, off screen until the
+    /// strip slides.
+    private var media: some View {
+        ZStack {
+            if pageOffset != 0 {
+                neighbour(previousImage).offset(x: pageOffset - pageDistance)
+                neighbour(nextImage).offset(x: pageOffset + pageDistance)
+            }
+            current.offset(x: pageOffset)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+    }
+
+    private static let pageGap: CGFloat = 40
+
+    private var pageDistance: CGFloat { areaSize.width + Self.pageGap }
+
+    @ViewBuilder
+    private func neighbour(_ image: NSImage?) -> some View {
+        if let image {
+            let size = Self.fittedSize(image.size, in: CGSize(width: areaSize.width - 56, height: areaSize.height - 56))
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: size.width, height: size.height)
+                .shadow(color: Paper.shadow.opacity(0.12), radius: 10, y: 4)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        } else {
+            Color.clear
+        }
     }
 
     @ViewBuilder
-    private var media: some View {
+    private var current: some View {
         if let player {
-            VideoPlayer(player: player)
+            VideoPlayerView(player: player)
+                .accessibilityIdentifier("viewer.video")
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .padding(28)
         } else if let image {
-            GeometryReader { geometry in
-                let fitted = Self.fittedSize(image.size, in: CGSize(width: geometry.size.width - 56, height: geometry.size.height - 56))
-                ScrollView([.horizontal, .vertical]) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: fitted.width * zoom, height: fitted.height * zoom)
-                        .shadow(color: Paper.shadow.opacity(0.12), radius: 10, y: 4)
-                        .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
-                        // Double click toggles between fitted and twice the size, like Photos.
-                        .onTapGesture(count: 2) { setZoom(zoom > 1 ? 1 : 2) }
-                        .accessibilityLabel(title)
-                        .accessibilityIdentifier("viewer.image")
-                }
-                .scrollIndicators(zoom > 1 ? .automatic : .hidden)
-                .scrollDisabled(zoom <= 1)
-            }
+            let fitted = fittedSize
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: fitted.width, height: fitted.height)
+                .shadow(color: Paper.shadow.opacity(zoom.isZoomed ? 0 : 0.12), radius: 10, y: 4)
+                .scaleEffect(zoom.scale)
+                .offset(zoom.offset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                // Double click zooms to twice the size at that point, and back to fit.
+                .gesture(SpatialTapGesture(count: 2).onEnded { value in
+                    animateZoom { zoom in
+                        if zoom.isZoomed {
+                            zoom.reset()
+                        } else {
+                            zoom.zoom(to: 2, anchor: value.location, fitted: fitted, area: areaSize)
+                        }
+                    }
+                })
+                .simultaneousGesture(magnify)
+                .simultaneousGesture(pan)
+                .clipped()
+                .accessibilityLabel(title)
+                .accessibilityIdentifier("viewer.image")
+                .accessibilityValue(String(format: "%.0f%%", zoom.scale * 100))
         } else {
             ProgressView().controlSize(.small)
         }
@@ -279,9 +536,9 @@ struct PhotoViewer: View {
 
     private var pagingButtons: some View {
         HStack {
-            pagingButton("chevron.left", label: String(localized: "Previous photo"), identifier: "viewer.previous", enabled: hasPrevious) { _ = step(-1) }
+            pagingButton("chevron.left", label: String(localized: "Previous photo"), identifier: "viewer.previous", enabled: hasPrevious) { page(-1) }
             Spacer()
-            pagingButton("chevron.right", label: String(localized: "Next photo"), identifier: "viewer.next", enabled: hasNext) { _ = step(1) }
+            pagingButton("chevron.right", label: String(localized: "Next photo"), identifier: "viewer.next", enabled: hasNext) { page(1) }
         }
         .padding(.horizontal, 14)
         .opacity(isHovering ? 1 : 0)
@@ -308,21 +565,12 @@ struct PhotoViewer: View {
         return date.formatted(date: .long, time: .shortened)
     }
 
-    private var dateTitle: String {
-        guard let date = item?.effectiveCaptureDate else { return item?.title ?? String(localized: "Undated") }
-        return date.formatted(date: .long, time: .omitted)
-    }
-
-    private var timeTitle: String? {
-        item?.effectiveCaptureDate?.formatted(date: .omitted, time: .shortened)
-    }
-
     /// Moves to the neighbouring photo; false at either end.
     private func step(_ offset: Int) -> Bool {
         guard let index else { return false }
         let target = index + offset
-        guard request.itemIDs.indices.contains(target) else { return false }
-        let id = request.itemIDs[target]
+        guard live.itemIDs.indices.contains(target) else { return false }
+        let id = live.itemIDs[target]
         selection.select(id)
         selection.anchorItemID = id
         selection.viewerRequest?.itemID = id
@@ -344,45 +592,54 @@ struct PhotoViewer: View {
             return
         }
         item = found
-        zoom = 1
-        peopleNames = names(of: id)
+        zoom = ViewerZoom()
+        // Neighbours start loading now, alongside this photo, so a quick second
+        // swipe already has something to slide in.
+        async let neighbours: Void = loadNeighbours()
         if let cached = PhotoViewerImageCache.shared.image(for: id) {
             image = cached
         } else {
             // The grid's thumbnail first, so the photo appears at once; the
-            // full-size image replaces it when it is ready.
-            image = await ThumbnailCache.shared.image(for: found, width: 560, height: 420)
+            // full-size image replaces it when it is ready. A page turned in
+            // the meantime cancels this, and nothing is written after that.
+            let thumbnail = await ThumbnailCache.shared.image(for: found, width: 560, height: 420)
+            guard !Task.isCancelled else { return await neighbours }
+            if image == nil { image = thumbnail }
             if let full = await PhotoViewerImageCache.shared.load(found), !Task.isCancelled {
                 image = full
             }
         }
-        guard !Task.isCancelled else { return }
-        if found.kind == .video { startVideo(found) }
-        prefetchNeighbours()
+        if !Task.isCancelled, found.kind == .video { startVideo(found) }
+        await neighbours
     }
 
-    /// Named, visible people found in this photo.
-    private func names(of mediaID: String) -> [String] {
-        let faces = (try? modelContext.fetch(FetchDescriptor<FaceObservation>(predicate: #Predicate { $0.mediaID == mediaID }))) ?? []
-        let personIDs = Set(faces.compactMap(\.personID))
-        guard !personIDs.isEmpty else { return [] }
-        let people = (try? modelContext.fetch(FetchDescriptor<Person>())) ?? []
-        return people
-            .filter { personIDs.contains($0.id) && !$0.hidden }
-            .compactMap { $0.name?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .sorted()
-    }
-
-    private func prefetchNeighbours() {
+    /// The photos either side, so a swipe can slide them in at once: a
+    /// thumbnail first when the full image isn't ready.
+    private func loadNeighbours() async {
         guard let index else { return }
-        for offset in [1, -1] where request.itemIDs.indices.contains(index + offset) {
-            let id = request.itemIDs[index + offset]
-            var descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == id })
-            descriptor.fetchLimit = 1
-            guard let neighbour = try? modelContext.fetch(descriptor).first else { continue }
-            Task { _ = await PhotoViewerImageCache.shared.load(neighbour) }
+        let ids = live.itemIDs
+        let nextID = ids.indices.contains(index + 1) ? ids[index + 1] : nil
+        let previousID = ids.indices.contains(index - 1) ? ids[index - 1] : nil
+        async let next: Void = fillNeighbour(nextID, isNext: true)
+        async let previous: Void = fillNeighbour(previousID, isNext: false)
+        _ = await (next, previous)
+    }
+
+    private func fillNeighbour(_ id: String?, isNext: Bool) async {
+        func set(_ value: NSImage?) {
+            guard !Task.isCancelled else { return }
+            if isNext { nextImage = value } else { previousImage = value }
         }
+        guard let id else { return set(nil) }
+        if let cached = PhotoViewerImageCache.shared.image(for: id) { return set(cached) }
+        var descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        guard let neighbour = try? modelContext.fetch(descriptor).first else { return set(nil) }
+        if let thumbnail = await ThumbnailCache.shared.image(for: neighbour, width: 560, height: 420),
+           (isNext ? nextImage : previousImage) == nil {
+            set(thumbnail)
+        }
+        if let full = await PhotoViewerImageCache.shared.load(neighbour) { set(full) }
     }
 
     private func startVideo(_ item: MediaItem) {
@@ -440,5 +697,24 @@ final class PhotoViewerImageCache {
         let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
         cache.setObject(image, forKey: item.id as NSString)
         return image
+    }
+}
+
+/// AppKit's player view. SwiftUI's `VideoPlayer` aborted the app on macOS 27
+/// when it was first shown: its AVKit overlay could not find its superclass
+/// `AVPlayerView`, because nothing else in the app loaded AVKit.
+private struct VideoPlayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.controlsStyle = .floating
+        view.showsFullScreenToggleButton = false
+        view.player = player
+        return view
+    }
+
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if view.player !== player { view.player = player }
     }
 }

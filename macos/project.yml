@@ -31,6 +31,8 @@ targets:
       - path: Sources/Moments
     dependencies:
       - package: MomentsCore
+      # Linked explicitly: the large viewer plays videos with AVPlayerView.
+      - sdk: AVKit.framework
     resources:
       - path: Sources/Moments/Resources/Localizable.xcstrings
       - path: Sources/Moments/Resources/InfoPlist.xcstrings

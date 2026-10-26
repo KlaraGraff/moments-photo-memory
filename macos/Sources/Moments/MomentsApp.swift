@@ -21,6 +21,14 @@ struct MomentsApp: App {
         ProcessInfo.processInfo.arguments.contains("-MomentsUITestSmallWindow")
     }
 
+    /// -MomentsUITestWindowWidth <points>: a fixed window width, e.g. maple's 1111.
+    private var uiTestWindowWidth: CGFloat? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-MomentsUITestWindowWidth"), index + 1 < arguments.count,
+              let width = Double(arguments[index + 1]) else { return nil }
+        return CGFloat(width)
+    }
+
     private var isUITestDarkMode: Bool {
         ProcessInfo.processInfo.arguments.contains("-MomentsUITestDarkMode")
     }
@@ -59,6 +67,9 @@ struct MomentsApp: App {
             let testStoreURL = testStoreDirectory?.appending(path: "Moments.store")
             let isUITesting = ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
                 || (isUnitTestHost && testStoreURL == nil)
+            // Filters live in user defaults; a test run starts without the
+            // ones a previous run left behind.
+            if isUITesting { LibraryFilterKeys.clearAll() }
             let container: ModelContainer
             if isUITesting || testStoreURL != nil {
                 container = try MomentsPersistence.makeContainer(inMemory: isUITesting, url: testStoreURL)
@@ -72,6 +83,9 @@ struct MomentsApp: App {
             // The on-disk UI-test store holds only what the test imports.
             if Self.uiTestStoreDirectory == nil {
                 try? DemoSeeder.seedIfNeeded(context: container.mainContext)
+                if ProcessInfo.processInfo.arguments.contains("-MomentsUITestReviewItems") {
+                    try? DemoSeeder.flagUndatedDemoItemsForReview(context: container.mainContext)
+                }
             }
             if isUITesting || testStoreURL != nil, let count = Self.uiTestStressCount {
                 try? DemoSeeder.generateSyntheticLibrary(count: count, context: container.mainContext)
@@ -121,7 +135,7 @@ struct MomentsApp: App {
                     }
                     .modifier(StoreRecoveryAlert())
                     #if DEBUG
-                    .frame(width: isUITestSmallWindow ? 900 : nil, height: isUITestSmallWindow ? 600 : nil)
+                    .frame(width: uiTestWindowWidth ?? (isUITestSmallWindow ? 900 : nil), height: isUITestSmallWindow ? 600 : nil)
                     .onAppear {
                         // Simulates a Mac in Dark Mode; the window below must stay light.
                         if isUITestDarkMode { NSApp.appearance = NSAppearance(named: .darkAqua) }
@@ -157,9 +171,11 @@ struct MomentsApp: App {
         }
 
         Settings {
-            AISettingsView()
+            SettingsView()
+                .environment(peopleController)
                 .preferredColorScheme(.light)
         }
+        .windowResizability(.contentSize)
     }
 }
 

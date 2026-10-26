@@ -6,10 +6,8 @@ import UniformTypeIdentifiers
 
 private enum MomentsSection: Hashable {
     case library
-    case review
     case people
-    case places
-    case footprints
+    case map
     case timeline
     case trips
     case group(String)
@@ -46,23 +44,15 @@ struct ContentView: View {
     @State private var groupToDelete: UserGroup?
     @State private var cachedGroupCounts: [String: Int] = [:]
 
-    private var reviewCount: Int {
-        items.reduce(into: 0) { count, item in
-            if item.needsImportReview { count += 1 }
-        }
-    }
-
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 List(selection: $selection) {
                     Section {
                         sidebarRow("Library", icon: "photo.on.rectangle.angled", section: .library, identifier: "sidebar.library")
-                        sidebarRow("To review", icon: "checkmark.circle", section: .review, identifier: "sidebar.review", badge: reviewCount)
                         sidebarRow("People", icon: "person.2", section: .people, identifier: "sidebar.people")
-                        sidebarRow("Places", icon: "map", section: .places, identifier: "sidebar.places")
-                        sidebarRow("Footprints", icon: "globe.americas", section: .footprints, identifier: "sidebar.footprints")
-                        sidebarRow("Timeline", icon: "calendar", section: .timeline, identifier: "sidebar.timeline")
+                        sidebarRow("Map", icon: "globe.europe.africa", section: .map, identifier: "sidebar.map")
+                        sidebarRow("Timeline", icon: "point.topleft.down.to.point.bottomright.curvepath", section: .timeline, identifier: "sidebar.timeline")
                         sidebarRow("Chapters", icon: "book.pages", section: .trips, identifier: "sidebar.trips")
                     }
 
@@ -110,8 +100,20 @@ struct ContentView: View {
                                 groupEditorKind = .newSmart
                             }
                         } label: {
-                            Label(String(localized: "New group"), systemImage: "plus")
+                            // A quiet row like the ones above it, not a bordered button.
+                            Label {
+                                Text(String(localized: "New group"))
+                                    .foregroundStyle(MomentsPalette.muted)
+                            } icon: {
+                                Image(systemName: "plus")
+                                    .foregroundStyle(MomentsPalette.accent)
+                            }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                         }
+                        .menuStyle(.button)
+                        .buttonStyle(.plain)
+                        .menuIndicator(.hidden)
                         .accessibilityIdentifier("sidebar.new-group")
                     } header: {
                         Text(String(localized: "My groups"))
@@ -124,55 +126,37 @@ struct ContentView: View {
                 .scrollContentBackground(.hidden)
                 .tint(MomentsPalette.accent)
 
-                HStack(spacing: 0) {
-                    Button {
-                        importController.chooseFolder()
-                    } label: {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Image(systemName: "plus.circle")
-                            Text(String(localized: "Import more photos…"))
-                            Spacer()
-                        }
-                        .font(.caption)
-                        .foregroundStyle(MomentsPalette.muted)
-                        .padding(.leading, 16)
-                        .padding(.vertical, 12)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("sidebar.import")
-                    // The AI model is set up here too, not only from ⌘, or
-                    // after a note fails to organize.
+                // Importing lives in the toolbar's + and the File menu; the
+                // sidebar foot keeps only the way into Settings.
+                HStack {
                     SettingsLink {
                         Image(systemName: "gearshape")
                             .font(.callout)
                             .foregroundStyle(MomentsPalette.muted)
-                            .frame(width: 32, height: 32)
+                            .frame(width: 28, height: 28)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .padding(.trailing, 8)
-                    .help(String(localized: "AI model settings"))
-                    .accessibilityLabel(String(localized: "AI model settings"))
+                    .help(String(localized: "Settings"))
+                    .accessibilityLabel(String(localized: "Settings"))
                     .accessibilityIdentifier("sidebar.settings")
+                    Spacer()
                 }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
             }
             .background(MomentsPalette.sidebar)
             .navigationTitle("Moments")
-            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
         } detail: {
             Group {
                 switch selection ?? .library {
                 case .library:
                     LibraryView(state: libraryState, firstLaunchCompleted: $firstLaunchCompleted)
-                case .review:
-                    ReviewListView()
                 case .people:
                     PeopleScreen()
-                case .places:
-                    PlacesScreen()
-                case .footprints:
-                    FootprintsScreen()
+                case .map:
+                    MapScreen()
                 case .timeline:
                     TimelineScreen()
                 case .trips:
@@ -181,6 +165,19 @@ struct ContentView: View {
                     GroupDetailView(groupID: groupID, state: libraryState)
                 }
             }
+            .toolbar {
+                // Each page's + adds that page's thing; People and Trips bring their own.
+                if selection != .people && selection != .trips {
+                    ToolbarItem(placement: .primaryAction) {
+                        ImportToolbarButton()
+                    }
+                }
+            }
+            #if DEBUG
+            .background {
+                if MapViewProbe.isEnabled { MapViewProbe() }
+            }
+            #endif
             // The title bar continues the page's paper instead of a white strip.
             .toolbarBackground(MomentsPalette.content, for: .windowToolbar)
             .toolbarBackground(.visible, for: .windowToolbar)
@@ -196,6 +193,11 @@ struct ContentView: View {
             }
         }
         .animation(reduceMotion ? nil : Motion.snap, value: shared.viewerRequest == nil)
+        #if DEBUG
+        .overlay {
+            if SidebarIconGallery.isEnabled { SidebarIconGallery() }
+        }
+        #endif
         // One accent everywhere, sheets included: no system blue controls.
         .tint(MomentsPalette.accent)
         .onChange(of: selection) { _, _ in
@@ -210,8 +212,7 @@ struct ContentView: View {
             }
             switch destination {
             case .library: selection = .library
-            case .places: selection = .places
-            case .footprints: selection = .footprints
+            case .map: selection = .map
             case .timeline: selection = .timeline
             case .trips: selection = .trips
             }
@@ -332,27 +333,127 @@ struct ContentView: View {
         return true
     }
 
-    @ViewBuilder
     private func sidebarRow(
         _ title: String,
         icon: String,
         section: MomentsSection,
-        identifier: String,
-        badge: Int? = nil
+        identifier: String
     ) -> some View {
-        HStack(spacing: 8) {
-            Label(LocalizedStringKey(title), systemImage: icon)
-            Spacer(minLength: 4)
-            if let badge, badge > 0 {
-                Text("\(badge)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(MomentsPalette.accent)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(MomentsPalette.accent.opacity(0.12), in: Capsule())
-            }
-        }
-        .tag(section)
-        .accessibilityIdentifier(identifier)
+        Label(LocalizedStringKey(title), systemImage: icon)
+            .tag(section)
+            .accessibilityIdentifier(identifier)
     }
 }
+
+/// The window's + button: the same two imports as the File menu.
+private struct ImportToolbarButton: View {
+    @Environment(ImportController.self) private var importController
+
+    var body: some View {
+        Menu {
+            Button(String(localized: "Import Folder…")) {
+                importController.chooseFolder()
+            }
+            Button(String(localized: "Import from Apple Photos…")) {
+                NotificationCenter.default.post(name: .momentsShowPhotosImport, object: nil)
+            }
+        } label: {
+            Label(String(localized: "Import photos"), systemImage: "plus")
+        }
+        .menuIndicator(.hidden)
+        .help(String(localized: "Import photos"))
+        .accessibilityIdentifier("toolbar.import")
+    }
+}
+
+#if DEBUG
+/// UI tests only: counts the live map views in the app's windows, so a test
+/// can check the map is gone (and stops drawing) once you leave the Map.
+private struct MapViewProbe: View {
+    static let isEnabled = ProcessInfo.processInfo.arguments.contains("-MomentsUITestMapProbe")
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement()
+                .accessibilityLabel("mapviews=\(Self.liveMapViews())")
+                .accessibilityIdentifier("debug.mapviews")
+        }
+    }
+
+    static func liveMapViews() -> Int {
+        func count(_ view: NSView) -> Int {
+            (view is MKMapView ? 1 : 0) + view.subviews.reduce(0) { $0 + count($1) }
+        }
+        return NSApp.windows.compactMap(\.contentView?.superview).reduce(0) { $0 + count($1) }
+    }
+}
+#endif
+
+#if DEBUG
+/// UI tests only: the candidate sidebar icons side by side, as they would
+/// look in the sidebar, so a screenshot can be shown for picking one.
+private struct SidebarIconGallery: View {
+    static let isEnabled = ProcessInfo.processInfo.arguments.contains("-MomentsUITestIconGallery")
+
+    private let rows: [(String, [(String, String)])] = [
+        ("Chapters", [("now", "airplane.departure"), ("A", "book.pages"), ("B", "bookmark"), ("C", "book.closed")]),
+        ("Map", [("now", "globe.europe.africa"), ("A", "globe.desk"), ("B", "mappin.circle"), ("C", "map.circle")]),
+        ("Timeline", [("now", "point.topleft.down.to.point.bottomright.curvepath"), ("A", "point.forward.to.point.capsulepath"), ("B", "timeline.selection"), ("C", "sparkles")]),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            ForEach(rows, id: \.0) { row in
+                let (title, candidates) = row
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(title).font(.headline).foregroundStyle(MomentsPalette.ink)
+                    HStack(spacing: 18) {
+                        ForEach(candidates, id: \.0) { candidate in
+                            let (tag, symbol) = candidate
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label(title, systemImage: symbol)
+                                    .font(.body)
+                                    .foregroundStyle(MomentsPalette.ink)
+                                    .symbolRenderingMode(.monochrome)
+                                    .labelStyle(GalleryLabelStyle())
+                                    .padding(.horizontal, 10)
+                                    .frame(width: 190, height: 34, alignment: .leading)
+                                    .background(MomentsPalette.sidebar, in: RoundedRectangle(cornerRadius: 8))
+                                Label(title, systemImage: symbol)
+                                    .font(.body)
+                                    .labelStyle(GalleryLabelStyle(iconColor: .white))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 10)
+                                    .frame(width: 190, height: 34, alignment: .leading)
+                                    .background(MomentsPalette.accent, in: RoundedRectangle(cornerRadius: 8))
+                                Text(tag == "now" ? "Now" : tag)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(MomentsPalette.muted)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(MomentsPalette.content)
+        .accessibilityIdentifier("debug.icon-gallery")
+    }
+}
+
+private struct GalleryLabelStyle: LabelStyle {
+    var iconColor = MomentsPalette.accent
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 8) {
+            configuration.icon
+                .foregroundStyle(iconColor)
+                .frame(width: 22)
+            configuration.title
+        }
+    }
+}
+#endif

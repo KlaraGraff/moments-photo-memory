@@ -1,10 +1,10 @@
+import Foundation
 import Observation
 
 /// Sidebar destinations other screens can ask the window to switch to.
 enum SidebarDestination: Hashable {
     case library
-    case places
-    case footprints
+    case map
     case timeline
     case trips
 }
@@ -27,7 +27,7 @@ struct LibraryScope: Equatable {
 /// window and read with `@Environment(SelectionModel.self)`.
 ///
 /// - Library owns `visibleItemIDs` (the result of its filters) and writes it
-///   whenever filters change; Places and Timeline only read it.
+///   whenever filters change; the Map and Timeline only read it.
 /// - Any screen may change the selection; `focusedItemID` is the one item the
 ///   other screens should reveal (fly the map to it, scroll to it).
 @MainActor
@@ -130,6 +130,41 @@ final class SelectionModel {
         requestedDestination = .library
         libraryScope = LibraryScope(title: title, itemIDs: set)
         // Nothing to reveal: the scoped grid opens at its top.
+        shouldRevealSelectionInLibrary = false
+    }
+
+    /// A photo the Map should fly to once it is on screen; the Map only
+    /// follows focus changes while it is already showing.
+    var mapFocusRequest: String?
+
+    /// Shows one photo on the Map, closing the viewer.
+    func showOnMap(_ itemID: String) {
+        viewerRequest = nil
+        select(itemID)
+        mapFocusRequest = itemID
+        requestedDestination = .map
+    }
+
+    /// Opens a trip on the Trips screen, closing the viewer.
+    func showTrip(_ tripID: String) {
+        viewerRequest = nil
+        openTripID = tripID
+        requestedDestination = .trips
+    }
+
+    /// Shows the photo in the Library grid, closing the viewer.
+    func revealInLibrary(_ itemID: String) {
+        viewerRequest = nil
+        select(itemID)
+        requestedDestination = .library
+    }
+
+    /// Opens the Library filtered to one person, as the People card does.
+    func showPhotos(ofPerson personID: String, defaults: UserDefaults = .standard) {
+        viewerRequest = nil
+        defaults.set(personID, forKey: LibraryFilterKeys.person)
+        clear()
+        requestedDestination = .library
         shouldRevealSelectionInLibrary = false
     }
 

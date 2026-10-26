@@ -257,6 +257,7 @@ struct LibraryView: View {
                 .lineLimit(1)
                 .layoutPriority(1)
                 .minimumScaleFactor(0.7)
+                .accessibilityIdentifier("library.title")
             Text("\(cachedVisibleCount) \(String(localized: "photos"))")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(LibraryPalette.muted)

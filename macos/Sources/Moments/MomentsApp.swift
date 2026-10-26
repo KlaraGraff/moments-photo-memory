@@ -21,6 +21,14 @@ struct MomentsApp: App {
         ProcessInfo.processInfo.arguments.contains("-MomentsUITestSmallWindow")
     }
 
+    /// -MomentsUITestWindowWidth <points>: a fixed window width, e.g. maple's 1111.
+    private var uiTestWindowWidth: CGFloat? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-MomentsUITestWindowWidth"), index + 1 < arguments.count,
+              let width = Double(arguments[index + 1]) else { return nil }
+        return width
+    }
+
     private var isUITestDarkMode: Bool {
         ProcessInfo.processInfo.arguments.contains("-MomentsUITestDarkMode")
     }
@@ -110,7 +118,7 @@ struct MomentsApp: App {
                     }
                     .modifier(StoreRecoveryAlert())
                     #if DEBUG
-                    .frame(width: isUITestSmallWindow ? 900 : nil, height: isUITestSmallWindow ? 600 : nil)
+                    .frame(width: uiTestWindowWidth ?? (isUITestSmallWindow ? 900 : nil), height: isUITestSmallWindow ? 600 : nil)
                     .onAppear {
                         // Simulates a Mac in Dark Mode; the window below must stay light.
                         if isUITestDarkMode { NSApp.appearance = NSAppearance(named: .darkAqua) }

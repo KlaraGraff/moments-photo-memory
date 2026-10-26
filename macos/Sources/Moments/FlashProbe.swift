@@ -102,7 +102,7 @@ enum FlashProbe {
                     let identifier = view.accessibilityIdentifier()
                     let name = identifier.isEmpty ? "segmented\(segmented)" : identifier
                     result["w\(window.windowNumber) \(name)"] = view.convert(view.bounds, to: nil)
-                    segmented += 1
+                    if identifier.isEmpty { segmented += 1 }
                 }
                 if let split = view as? NSSplitView {
                     for (index, column) in split.arrangedSubviews.enumerated() {

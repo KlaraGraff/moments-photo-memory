@@ -2437,7 +2437,10 @@ public enum SchemaV4: VersionedSchema {
 @Model
 public final class UserGroup {
     public enum Kind: String, Codable, CaseIterable, Hashable, Sendable {
-        case manual, smart
+        /// `chapter`: a stretch of time on the Chapters page (an event, a
+        /// celebration, a period); its details live in `rulesData` as
+        /// `ChapterInfo` and its photos in `UserGroupItem`. Not a "My groups" entry.
+        case manual, smart, chapter
     }
 
     public var id: String

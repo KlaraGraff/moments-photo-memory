@@ -508,8 +508,12 @@ final class LibraryViewState {
         didSet { orderedItemIDs = gridSections.flatMap { $0 } }
     }
     private(set) var orderedItemIDs: [String] = []
-    /// Columns in the grid at its current width, for the up and down arrows.
-    var gridColumns = 1
+    /// Columns in the Library grid: its rows and the up and down arrows.
+    var gridColumns = 4
+    /// The window's width. The grid's columns follow it, not the space next
+    /// to the sidebar, so hiding, showing or dragging the sidebar scales the
+    /// photos instead of changing how many fit in a row, like Photos.
+    var windowWidth: CGFloat = 0
 
     func draft(for item: MediaItem) -> String {
         memoryDrafts[item.id] ?? item.latestMemory?.text ?? ""
@@ -573,6 +577,18 @@ enum LibraryGridNavigation {
     static func columns(width: CGFloat, minimum: CGFloat, spacing: CGFloat) -> Int {
         max(1, Int((width + spacing) / (minimum + spacing)))
     }
+
+    /// Columns for a window `windowWidth` wide: as many as fit next to the
+    /// sidebar at its default width, whether or not it is showing.
+    static func columns(windowWidth: CGFloat, minimum: CGFloat, spacing: CGFloat) -> Int {
+        let window = max(windowWidth, minimumWindowWidth)
+        return columns(width: window - defaultSidebarWidth - 2 * gridInset, minimum: minimum, spacing: spacing)
+    }
+
+    static let minimumWindowWidth: CGFloat = 900
+    static let defaultSidebarWidth: CGFloat = 190
+    /// The grid's horizontal padding in the Library.
+    static let gridInset: CGFloat = 34
 }
 
 /// The Library's zoom levels, smallest first. The two smallest are a dense
@@ -591,7 +607,6 @@ struct LibraryThumbnailSize: Equatable {
     }
 
     var minimumWidth: CGFloat { Self.minimumWidths[level] }
-    var maximumWidth: CGFloat { (minimumWidth * 1.7).rounded() }
     var isCompact: Bool { level < 2 }
     var spacing: CGFloat { isCompact ? 6 : 24 }
     var rowSpacing: CGFloat { isCompact ? 6 : 28 }

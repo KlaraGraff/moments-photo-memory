@@ -140,7 +140,7 @@ enum UserGroupRuleEngine {
     ) -> [MediaItem] {
         let groupMemberships = memberships.filter { $0.groupID == group.id }
         switch group.kind {
-        case .manual:
+        case .manual, .chapter:
             let ids = Set(groupMemberships.filter { !$0.excluded }.map(\.mediaID))
             var seen = Set<String>()
             return items.filter { ids.contains($0.id) && seen.insert($0.id).inserted }

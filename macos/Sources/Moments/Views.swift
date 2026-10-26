@@ -30,7 +30,9 @@ struct ContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(ImportController.self) private var importController
     @Query private var items: [MediaItem]
-    @Query(sort: \UserGroup.name) private var groups: [UserGroup]
+    /// "My groups" only; chapters live on the Chapters page.
+    @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" }, sort: \UserGroup.name)
+    private var groups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
     @Query private var faceObservations: [FaceObservation]
     @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
@@ -49,9 +51,9 @@ struct ContentView: View {
                     Section {
                         sidebarRow("Library", icon: "photo.on.rectangle.angled", section: .library, identifier: "sidebar.library")
                         sidebarRow("People", icon: "person.2", section: .people, identifier: "sidebar.people")
-                        sidebarRow("Map", icon: "globe.europe.africa", section: .map, identifier: "sidebar.map")
-                        sidebarRow("Timeline", icon: "point.topleft.down.to.point.bottomright.curvepath", section: .timeline, identifier: "sidebar.timeline")
-                        sidebarRow("Trips", icon: "airplane.departure", section: .trips, identifier: "sidebar.trips")
+                        sidebarRow("Map", icon: "map.circle", section: .map, identifier: "sidebar.map")
+                        sidebarRow("Timeline", icon: "timeline.selection", section: .timeline, identifier: "sidebar.timeline")
+                        sidebarRow("Chapters", icon: "book.pages", section: .trips, identifier: "sidebar.trips")
                     }
 
                     Section {
@@ -181,6 +183,14 @@ struct ContentView: View {
             .toolbarBackground(.visible, for: .windowToolbar)
         }
         .frame(minWidth: 900, minHeight: 600)
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
+            if libraryState.windowWidth != width { libraryState.windowWidth = width }
+            // Here as well as in the grid, so the Library opens with the right
+            // count after the window changed while another page was showing.
+            let size = LibraryThumbnailSize(level: UserDefaults.standard.object(forKey: LibraryThumbnailSize.storageKey) as? Int ?? LibraryThumbnailSize.defaultLevel)
+            let columns = LibraryGridNavigation.columns(windowWidth: width, minimum: size.minimumWidth, spacing: size.spacing)
+            if libraryState.gridColumns != columns { libraryState.gridColumns = columns }
+        }
         // The large photo view is a card over the whole window, sidebar included.
         .overlay {
             if let request = shared.viewerRequest {
@@ -191,11 +201,6 @@ struct ContentView: View {
             }
         }
         .animation(reduceMotion ? nil : Motion.snap, value: shared.viewerRequest == nil)
-        #if DEBUG
-        .overlay {
-            if SidebarIconGallery.isEnabled { SidebarIconGallery() }
-        }
-        #endif
         // One accent everywhere, sheets included: no system blue controls.
         .tint(MomentsPalette.accent)
         .onChange(of: selection) { _, _ in
@@ -385,73 +390,6 @@ private struct MapViewProbe: View {
             (view is MKMapView ? 1 : 0) + view.subviews.reduce(0) { $0 + count($1) }
         }
         return NSApp.windows.compactMap(\.contentView?.superview).reduce(0) { $0 + count($1) }
-    }
-}
-#endif
-
-#if DEBUG
-/// UI tests only: the candidate sidebar icons side by side, as they would
-/// look in the sidebar, so a screenshot can be shown for picking one.
-private struct SidebarIconGallery: View {
-    static let isEnabled = ProcessInfo.processInfo.arguments.contains("-MomentsUITestIconGallery")
-
-    private let rows: [(String, [(String, String)])] = [
-        ("Chapters", [("now", "airplane.departure"), ("A", "book.pages"), ("B", "bookmark"), ("C", "book.closed")]),
-        ("Map", [("now", "globe.europe.africa"), ("A", "globe.desk"), ("B", "mappin.circle"), ("C", "map.circle")]),
-        ("Timeline", [("now", "point.topleft.down.to.point.bottomright.curvepath"), ("A", "point.forward.to.point.capsulepath"), ("B", "timeline.selection"), ("C", "sparkles")]),
-    ]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            ForEach(rows, id: \.0) { row in
-                let (title, candidates) = row
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(title).font(.headline).foregroundStyle(MomentsPalette.ink)
-                    HStack(spacing: 18) {
-                        ForEach(candidates, id: \.0) { candidate in
-                            let (tag, symbol) = candidate
-                            VStack(alignment: .leading, spacing: 6) {
-                                Label(title, systemImage: symbol)
-                                    .font(.body)
-                                    .foregroundStyle(MomentsPalette.ink)
-                                    .symbolRenderingMode(.monochrome)
-                                    .labelStyle(GalleryLabelStyle())
-                                    .padding(.horizontal, 10)
-                                    .frame(width: 190, height: 34, alignment: .leading)
-                                    .background(MomentsPalette.sidebar, in: RoundedRectangle(cornerRadius: 8))
-                                Label(title, systemImage: symbol)
-                                    .font(.body)
-                                    .labelStyle(GalleryLabelStyle(iconColor: .white))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 10)
-                                    .frame(width: 190, height: 34, alignment: .leading)
-                                    .background(MomentsPalette.accent, in: RoundedRectangle(cornerRadius: 8))
-                                Text(tag == "now" ? "Now" : tag)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(MomentsPalette.muted)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .padding(28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(MomentsPalette.content)
-        .accessibilityIdentifier("debug.icon-gallery")
-    }
-}
-
-private struct GalleryLabelStyle: LabelStyle {
-    var iconColor = MomentsPalette.accent
-
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 8) {
-            configuration.icon
-                .foregroundStyle(iconColor)
-                .frame(width: 22)
-            configuration.title
-        }
     }
 }
 #endif

@@ -383,16 +383,17 @@ struct LibraryView: View {
     private var results: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 34) {
+                // Headings and photo rows space themselves (LibrarySectionView).
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(cachedSections) { section in
                         LibrarySectionView(
                             section: section,
                             items: section.itemIDs.compactMap { cachedItemByID[$0] },
                             state: state,
                             allGroups: allGroups,
-                            groupItems: groupItems
+                            groupItems: groupItems,
+                            isFirst: section.id == cachedSections.first?.id
                         )
-                        .id(LibraryScrollTarget.section(section.id))
                     }
                 }
                 .scrollTargetLayout()
@@ -639,6 +640,7 @@ private struct LibrarySectionView: View {
     var allGroups: [UserGroup] = []
     var groupItems: [UserGroupItem] = []
     var group: UserGroup? = nil
+    var isFirst = false
     @Query private var placeNotes: [PlaceNote]
     @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
@@ -650,12 +652,17 @@ private struct LibrarySectionView: View {
         LibraryGridNavigation.columns(windowWidth: state.windowWidth, minimum: size.minimumWidth, spacing: size.spacing)
     }
 
-    /// A fixed number of flexible columns: when the space changes the photos
-    /// grow or shrink with it, and a row never reflows mid-animation.
-    private var columns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: size.spacing, alignment: .top), count: columnCount)
+    /// The section's photos in rows of `columnCount`.
+    private var rows: [ArraySlice<MediaItem>] {
+        stride(from: 0, to: items.count, by: columnCount).map { items[$0..<min($0 + columnCount, items.count)] }
     }
 
+    /// The heading and each row of photos are separate children of the
+    /// Library's lazy stack, so only rows on screen are laid out. A grid per
+    /// section sized every photo in it whenever the width changed: half a
+    /// second a frame while the sidebar moved with a few hundred photos.
+    /// Rows have a fixed number of equal columns, so when the space changes
+    /// the photos grow and shrink with it, like Photos.
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -672,15 +679,31 @@ private struct LibrarySectionView: View {
             }
 
             CollectionMemoryLines(memories: sectionMemories)
+        }
+        .padding(.top, isFirst ? 0 : LibrarySectionView.sectionSpacing)
+        .padding(.bottom, 13)
+        .id(LibraryScrollTarget.section(section.id))
+        .reportsLibraryGridColumns(columnCount, to: state)
 
-            LazyVGrid(columns: columns, alignment: .leading, spacing: size.rowSpacing) {
-                ForEach(items, id: \.id) { item in
+        let rows = self.rows
+        ForEach(rows.indices, id: \.self) { index in
+            HStack(alignment: .top, spacing: size.spacing) {
+                ForEach(rows[index], id: \.id) { item in
                     LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                // A short last row keeps the same column widths.
+                ForEach(rows[index].count..<columnCount, id: \.self) { _ in
+                    Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
                 }
             }
-            .reportsLibraryGridColumns(columnCount, to: state)
+            .padding(.bottom, index < rows.count - 1 ? size.rowSpacing : 0)
+            .id("row:\(section.id):\(columnCount):\(index)")
         }
     }
+
+    /// Space above every section heading but the first.
+    static let sectionSpacing: CGFloat = 34
 
     /// Trip memories for a trip section, and day memories for the days its photos were taken.
     private var sectionMemories: [CollectionMemory] {
@@ -1296,7 +1319,7 @@ struct GroupDetailView: View {
                     } else {
                         ScrollViewReader { proxy in
                             ScrollView {
-                                LazyVStack(alignment: .leading, spacing: 34) {
+                                LazyVStack(alignment: .leading, spacing: 0) {
                                     ForEach(sections) { section in
                                         LibrarySectionView(
                                             section: section,
@@ -1304,7 +1327,8 @@ struct GroupDetailView: View {
                                             state: state,
                                             allGroups: groups,
                                             groupItems: memberships,
-                                            group: group
+                                            group: group,
+                                            isFirst: section.id == sections.first?.id
                                         )
                                     }
                                 }

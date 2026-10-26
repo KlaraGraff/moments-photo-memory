@@ -124,6 +124,8 @@ final class TimelineGroupingTests: XCTestCase {
         let built = document.trips[0]
         XCTAssertEqual(built.orderedItems.map(\.id), ["v", "p1", "p2", "p3"])
         XCTAssertEqual(built.cover?.id, "p1", "A video is not the cover while there is a photo")
+        XCTAssertEqual(built.covers.map(\.id), ["p1", "p3"], "The second print comes from the last place")
+        XCTAssertEqual(built.videoCount, 1)
         XCTAssertEqual(built.datedDayCount, 3)
         XCTAssertEqual(built.placeCount, 2, "A place visited twice counts once")
         XCTAssertEqual(built.cityNames, ["Alpha", "Beta"])

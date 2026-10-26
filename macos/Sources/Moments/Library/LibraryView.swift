@@ -395,7 +395,9 @@ struct LibraryView: View {
             // The count is in the title bar; this row only appears for a
             // filter that could become a smart group. A scope is a one-off
             // list, not a rule a smart group could keep.
-            if criteria.isFiltered && selection.libraryScope == nil {
+            // Favorites and search have no smart-group rule yet, so a filter
+            // using them can't be saved without losing part of it.
+            if criteria.isFiltered && !criteria.favoritesOnly && criteria.searchText.isEmpty && selection.libraryScope == nil {
                 HStack {
                     Spacer(minLength: 12)
                     Button(String(localized: "Save this filter as a smart group")) {

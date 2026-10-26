@@ -53,7 +53,14 @@ struct DateFilterPicker: View {
         VStack(alignment: .leading, spacing: 14) {
             Picker(String(localized: "Pick by"), selection: Binding(
                 get: { mode },
-                set: { modeRaw = $0.rawValue; awaitingEnd = false }
+                set: { newMode in
+                    modeRaw = newMode.rawValue
+                    awaitingEnd = false
+                    // After and Before are open on one side; drop the other
+                    // end so what is highlighted is what is filtered.
+                    if newMode == .after { toInterval = 0 }
+                    if newMode == .before { fromInterval = 0 }
+                }
             )) {
                 ForEach(DateFilterMode.allCases) { mode in
                     Text(mode.title).tag(mode)
@@ -322,24 +329,27 @@ struct DateFilterPicker: View {
 extension DateFilterMode {
     /// The chip's words for a from/to pair picked in this mode.
     static func label(from: Date?, to: Date?, modeRaw: String) -> String? {
-        guard from != nil || to != nil else { return nil }
-        let mode = DateFilterMode(rawValue: modeRaw) ?? .days
+        // Named by the dates themselves, not the tab last looked at: a range
+        // is called a month or a year only when it is exactly one.
+        let calendar = Calendar.current
         let day = Date.FormatStyle(date: .abbreviated, time: .omitted)
         switch (from, to) {
         case let (from?, to?) where from == to:
             return from.formatted(day)
         case let (from?, to?):
-            if mode == .year {
-                return String(Calendar.current.component(.year, from: from))
-            }
-            if mode == .month {
+            let monthEnd = calendar.date(byAdding: DateComponents(month: 1, day: -1), to: from)
+            let yearEnd = calendar.date(byAdding: DateComponents(year: 1, day: -1), to: from)
+            if calendar.component(.day, from: from) == 1, to == monthEnd {
                 return from.formatted(.dateTime.month(.wide).year())
+            }
+            if calendar.ordinality(of: .day, in: .year, for: from) == 1, to == yearEnd {
+                return String(calendar.component(.year, from: from))
             }
             return DateIntervalFormatter.shortRange.string(from: from, to: to)
         case let (from?, nil):
-            return String(format: String(localized: "After %@"), from.formatted(day))
+            return String(format: String(localized: "From %@"), from.formatted(day))
         case let (nil, to?):
-            return String(format: String(localized: "Before %@"), to.formatted(day))
+            return String(format: String(localized: "Until %@"), to.formatted(day))
         default:
             return nil
         }

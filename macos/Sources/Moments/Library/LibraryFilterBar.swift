@@ -147,8 +147,7 @@ struct LibraryFilterChips: View {
         tripFilterKey = ""
         memoryFilterRaw = LibraryMemoryFilter.all.rawValue
         personFilterID = ""
-        typeRaw = LibraryMediaTypeFilter.all.rawValue
-        UserDefaults.standard.removeObject(forKey: LibraryFilterKeys.query)
+        LibraryFilterKeys.clearAll()
         selection.libraryScope = nil
     }
 
@@ -336,9 +335,9 @@ enum LibraryFilterKeys {
     static let dateMode = "moments.library.dateMode"
     static let query = "moments.library.query"
 
-    /// Clears every filter (not the media type) on every screen.
+    /// Clears every filter, the media type and the search on every screen.
     static func clearAll(_ defaults: UserDefaults = .standard) {
-        for key in [fromDate, toDate, place, trip, memory, person, dateMode, query] {
+        for key in [type, fromDate, toDate, place, trip, memory, person, dateMode, query] {
             defaults.removeObject(forKey: key)
         }
     }
@@ -384,9 +383,16 @@ struct LibraryFilterPublisher: View {
         hasher.combine(tripFilterKey)
         hasher.combine(memoryFilterRaw)
         hasher.combine(personFilterID)
+        // Search and the memory filter read notes and trip names, which change
+        // without touching the item; only read them when they matter.
+        let readsText = !query.isEmpty || memoryFilterRaw != LibraryMemoryFilter.all.rawValue
         for item in items {
             hasher.combine(item.id)
             hasher.combine(item.updatedAt)
+            if readsText {
+                hasher.combine(item.latestMemory?.text)
+                hasher.combine(item.trip?.effectiveName)
+            }
         }
         for observation in faceObservations {
             hasher.combine(observation.id)
@@ -411,6 +417,7 @@ struct LibraryFilterPublisher: View {
 /// same chips as the Library in a popover and shows how many are on.
 struct CompactLibraryFilters: ViewModifier {
     @AppStorage(LibraryFilterKeys.query) private var query = ""
+    @AppStorage(LibraryFilterKeys.type) private var typeRaw = LibraryMediaTypeFilter.all.rawValue
     @AppStorage(LibraryFilterKeys.fromDate) private var fromDateInterval = 0.0
     @AppStorage(LibraryFilterKeys.toDate) private var toDateInterval = 0.0
     @AppStorage(LibraryFilterKeys.place) private var placeFilterID = ""
@@ -421,6 +428,8 @@ struct CompactLibraryFilters: ViewModifier {
 
     private var activeCount: Int {
         [
+            // Favorites, Videos… picked in the Library narrow these screens too.
+            typeRaw != LibraryMediaTypeFilter.all.rawValue,
             fromDateInterval != 0 || toDateInterval != 0,
             !placeFilterID.isEmpty,
             !tripFilterKey.isEmpty,

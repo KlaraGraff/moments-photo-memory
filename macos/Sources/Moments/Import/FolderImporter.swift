@@ -31,7 +31,8 @@ struct CoreLocationImportGeocoder: ImportGeocoder {
             city: placemark.locality ?? placemark.subAdministrativeArea,
             area: placemark.administrativeArea,
             spot: placemark.name,
-            timeZoneIdentifier: placemark.timeZone?.identifier
+            timeZoneIdentifier: placemark.timeZone?.identifier,
+            country: placemark.country
         )
     }
 }

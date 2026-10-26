@@ -58,9 +58,15 @@ final class ImportController {
                 }
                 guard !Task.isCancelled else { return }
                 self?.progress = ImportProgress(phase: .finished, completed: summary.importedCount, total: summary.importedCount, message: String(localized: "Import complete"))
-                self?.reviewSummary = summary
+                // Turned off in Settings › General: no results sheet and no
+                // face scan; flagged photos still show in the Library banner.
+                if ImportSettings.autoOrganize {
+                    self?.reviewSummary = summary
+                }
                 self?.state = .finished
-                NotificationCenter.default.post(name: .momentsPeopleScanRequested, object: nil)
+                if ImportSettings.autoOrganize {
+                    NotificationCenter.default.post(name: .momentsPeopleScanRequested, object: nil)
+                }
             } catch is CancellationError {
                 self?.progress = ImportProgress(phase: .cancelled, completed: self?.progress.completed ?? 0, total: self?.progress.total ?? 0, message: String(localized: "Import cancelled"))
                 self?.state = .cancelled

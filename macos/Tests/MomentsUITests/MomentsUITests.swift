@@ -50,7 +50,7 @@ final class MomentsUITests: XCTestCase {
         note.click()
         note.typeText(text)
 
-        for destination in ["sidebar.places", "sidebar.timeline", "sidebar.footprints", "sidebar.library"] {
+        for destination in ["sidebar.map", "sidebar.timeline", "sidebar.people", "sidebar.library"] {
             let item = element(in: app, identifier: destination)
             XCTAssertTrue(item.waitForExistence(timeout: launchTimeout), "Missing sidebar item \(destination)")
             item.click()
@@ -88,17 +88,243 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "library-03-note-saved")
     }
 
+    func testClickSelectsSecondClickDeselectsDoubleClickOpensTheViewer() {
+        let app = launch(language: "en")
+        let photos = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+        let first = photos.element(boundBy: 0)
+        let second = photos.element(boundBy: 1)
+        XCTAssertTrue(second.waitForExistence(timeout: launchTimeout))
+
+        // One click selects, a second (separate) click deselects.
+        first.click()
+        XCTAssertEqual(first.value as? String, "Selected")
+        pauseLongerThanADoubleClick()
+        first.click()
+        XCTAssertEqual(first.value as? String, "Not selected", "A second click did not deselect the photo")
+
+        // Command-click adds, Esc clears.
+        pauseLongerThanADoubleClick()
+        first.click()
+        XCUIElement.perform(withKeyModifiers: .command) { second.click() }
+        XCTAssertEqual(first.value as? String, "Selected")
+        XCTAssertEqual(second.value as? String, "Selected")
+        capture(app, named: "grid-01-two-selected-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertEqual(first.value as? String, "Not selected", "Esc did not clear the selection")
+        XCTAssertEqual(second.value as? String, "Not selected")
+
+        // Double click opens the large viewer; the right arrow pages, Esc closes.
+        pauseLongerThanADoubleClick()
+        first.doubleClick()
+        let viewer = element(in: app, identifier: "viewer")
+        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout), "Double click did not open the photo")
+        let counter = element(in: app, identifier: "viewer.counter")
+        XCTAssertTrue(counter.waitForExistence(timeout: launchTimeout))
+        let start = counter.value as? String
+        capture(app, named: "grid-02-viewer-evidence")
+        app.typeKey(.rightArrow, modifierFlags: [])
+        let paged = NSPredicate(format: "value != %@", start ?? "")
+        expectation(for: paged, evaluatedWith: counter)
+        waitForExpectations(timeout: launchTimeout)
+        capture(app, named: "grid-02b-viewer-paged-evidence")
+
+        // ⌘= and the scroll wheel zoom in; a double click fits the photo again.
+        let image = element(in: app, identifier: "viewer.image")
+        XCTAssertEqual(image.value as? String, "100%")
+        // The photo sits under the hover paging buttons' row, so point at it
+        // by coordinate instead of asking for the element's hit point.
+        let photoCentre = image.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let zoomed = NSPredicate(format: "value != %@", "100%")
+        let fitted = NSPredicate(format: "value == %@", "100%")
+        app.typeKey("=", modifierFlags: .command)
+        expectation(for: zoomed, evaluatedWith: image)
+        waitForExpectations(timeout: launchTimeout)
+        photoCentre.doubleClick()
+        expectation(for: fitted, evaluatedWith: image)
+        waitForExpectations(timeout: launchTimeout)
+        XCUIElement.perform(withKeyModifiers: .command) { photoCentre.scroll(byDeltaX: 0, deltaY: 8) }
+        expectation(for: zoomed, evaluatedWith: image)
+        waitForExpectations(timeout: launchTimeout)
+        capture(app, named: "grid-02c-viewer-zoomed-evidence")
+        pauseLongerThanADoubleClick()
+        photoCentre.doubleClick()
+        expectation(for: fitted, evaluatedWith: image)
+        waitForExpectations(timeout: launchTimeout)
+
+        // Over the photo, the scroll wheel turns to another photo.
+        let beforeWheel = counter.value as? String
+        pauseLongerThanADoubleClick()
+        photoCentre.scroll(byDeltaX: 0, deltaY: -3)
+        expectation(for: NSPredicate(format: "value != %@", beforeWheel ?? ""), evaluatedWith: counter)
+        waitForExpectations(timeout: launchTimeout)
+
+        // The column edits in place: type over the place, adjust the date.
+        // By type: the column's scroll view also answers to its children's identifiers.
+        let place = app.textFields["viewer.place"]
+        XCTAssertTrue(place.waitForExistence(timeout: launchTimeout))
+        // SwiftUI reports the field with its scroll view's frame, which has no
+        // hit point; click the place line by its position under the date.
+        let date = app.buttons["viewer.date"]
+        // Its frame may be reported as the column's; 30 pt down is on the date either way.
+        let dateTitle = date.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: 40, dy: 30))
+        date.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 1)).withOffset(CGVector(dx: 30, dy: 47)).click()
+        app.typeKey("a", modifierFlags: .command)
+        app.typeText("Harbour cafe\r")
+        capture(app, named: "grid-02c2-viewer-place-typed-evidence")
+        // The corrected place shows what it was found as.
+        let corrected = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@ OR value BEGINSWITH %@", "Corrected, was", "Corrected, was")).firstMatch
+        XCTAssertTrue(corrected.waitForExistence(timeout: launchTimeout), "Typing over the place did not correct it")
+        dateTitle.click()
+        let dateDone = app.buttons["viewer.date.done"]
+        XCTAssertTrue(dateDone.waitForExistence(timeout: launchTimeout), "Clicking the date did not open the date editor")
+        capture(app, named: "grid-02d-viewer-date-evidence")
+        dateDone.click()
+        capture(app, named: "grid-02e-viewer-edited-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        let gone = NSPredicate(format: "exists == false")
+        expectation(for: gone, evaluatedWith: viewer)
+        waitForExpectations(timeout: launchTimeout)
+
+        // Back in the grid, Space opens the selected photo again.
+        app.typeKey(" ", modifierFlags: [])
+        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout), "Space did not open the selected photo")
+        app.typeKey(" ", modifierFlags: [])
+        expectation(for: gone, evaluatedWith: viewer)
+        waitForExpectations(timeout: launchTimeout)
+
+        // ⌘− twice: the dense grid has photos only, no note lines.
+        let photoID = String(first.identifier.dropFirst("library.photo.".count))
+        let note = element(in: app, identifier: "library.note.\(photoID)")
+        XCTAssertTrue(note.exists)
+        app.typeKey("-", modifierFlags: .command)
+        app.typeKey("-", modifierFlags: .command)
+        let noteGone = NSPredicate(format: "exists == false")
+        expectation(for: noteGone, evaluatedWith: note)
+        waitForExpectations(timeout: launchTimeout)
+        capture(app, named: "grid-03-compact-evidence")
+        app.typeKey("=", modifierFlags: .command)
+        app.typeKey("=", modifierFlags: .command)
+        XCTAssertTrue(note.waitForExistence(timeout: launchTimeout), "⌘+ did not bring the print size back")
+    }
+
+    /// The viewer at the smallest window size: photo, column and header must not overlap.
+    func testViewerFitsTheSmallWindow() {
+        let app = launch(language: "en", smallWindow: true)
+        let first = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo.")).element(boundBy: 0)
+        XCTAssertTrue(first.waitForExistence(timeout: launchTimeout))
+        first.doubleClick()
+        let viewer = element(in: app, identifier: "viewer")
+        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout))
+        let window = app.windows.firstMatch.frame
+        XCTAssertTrue(window.contains(viewer.frame), "The viewer card spills outside the window")
+        let close = element(in: app, identifier: "viewer.close")
+        let date = app.buttons["viewer.date"]
+        XCTAssertTrue(date.waitForExistence(timeout: launchTimeout))
+        XCTAssertFalse(close.frame.intersects(date.frame), "The header overlaps the info column")
+        capture(app, named: "grid-04-viewer-small-window-evidence")
+    }
+
+    /// Two clicks closer together than the double-click interval are a double click.
+    private func pauseLongerThanADoubleClick() {
+        RunLoop.current.run(until: Date().addingTimeInterval(NSEvent.doubleClickInterval + 0.3))
+    }
+
+    /// Opens the Map and zooms from the globe to the photos.
+    private func openMapAtPhotos(_ app: XCUIApplication) -> XCUIElement {
+        element(in: app, identifier: "sidebar.map").click()
+        let map = element(in: app, identifier: "map.view")
+        XCTAssertTrue(map.waitForExistence(timeout: 30))
+        let fit = element(in: app, identifier: "map.fit")
+        XCTAssertTrue(fit.waitForExistence(timeout: launchTimeout))
+        // The fitted region needs the clustered snapshot; give it a moment.
+        Thread.sleep(forTimeInterval: 1.0)
+        fit.click()
+        Thread.sleep(forTimeInterval: 2.0)
+        return map
+    }
+
+    /// Section titles, the time and the place under a photo look like
+    /// information; clicking them must do something.
+    func testInfoUnderPhotosIsClickable() {
+        exerciseInfoClicks(launch(language: "en"), prefix: "info")
+    }
+
+    func testInfoUnderPhotosIsClickableInASmallWindow() {
+        exerciseInfoClicks(launch(language: "en", smallWindow: true), prefix: "info-small")
+    }
+
+    private func exerciseInfoClicks(_ app: XCUIApplication, prefix: String) {
+        let anyID = { (prefix: String) in
+            app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix)).firstMatch
+        }
+        let firstPhoto = anyID("library.photo.")
+        XCTAssertTrue(firstPhoto.waitForExistence(timeout: launchTimeout))
+
+        // A section title selects its photos.
+        let section = anyID("library.section.")
+        XCTAssertTrue(section.waitForExistence(timeout: launchTimeout), "Library section title is not a control")
+        section.click()
+        // A trip title waits out the double-click interval (double-click renames).
+        let selected = NSPredicate(format: "value == %@", "Selected")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: selected, evaluatedWith: firstPhoto)], timeout: 5), .completed, "Clicking the section title did not select its photos")
+        app.typeKey(.escape, modifierFlags: [])
+
+        // The time under a photo opens the date editor.
+        let time = anyID("library.time.")
+        XCTAssertTrue(time.waitForExistence(timeout: launchTimeout), "The time under a photo is not a control")
+        time.click()
+        let done = element(in: app, identifier: "viewer.date.done")
+        XCTAssertTrue(done.waitForExistence(timeout: launchTimeout), "Clicking the time did not open the date editor")
+        capture(app, named: "\(prefix)-01-date-editor-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(done.waitForNonExistence(timeout: launchTimeout))
+
+        // The place under a photo shows it on the map.
+        let place = anyID("library.place.")
+        XCTAssertTrue(place.waitForExistence(timeout: launchTimeout), "The place under a photo is not a control")
+        place.click()
+        XCTAssertTrue(element(in: app, identifier: "map.panel").waitForExistence(timeout: launchTimeout), "Clicking the place did not show it on the map")
+        Thread.sleep(forTimeInterval: 1.0)
+        capture(app, named: "\(prefix)-02-place-on-map-evidence")
+    }
+
+    /// People's + adds a person; the window's import + is not shown there.
+    func testPeoplePlusAddsAPerson() {
+        exercisePeoplePlus(launch(language: "en"), prefix: "people-plus")
+    }
+
+    func testPeoplePlusAddsAPersonInASmallWindow() {
+        exercisePeoplePlus(launch(language: "en", smallWindow: true), prefix: "people-plus-small")
+    }
+
+    private func exercisePeoplePlus(_ app: XCUIApplication, prefix: String) {
+        XCTAssertTrue(element(in: app, identifier: "toolbar.import").waitForExistence(timeout: launchTimeout))
+        element(in: app, identifier: "sidebar.people").click()
+        let add = element(in: app, identifier: "people.add")
+        XCTAssertTrue(add.waitForExistence(timeout: launchTimeout), "People has no Add person button")
+        XCTAssertTrue(element(in: app, identifier: "toolbar.import").waitForNonExistence(timeout: launchTimeout), "People still shows the import +")
+        add.click()
+        let name = element(in: app, identifier: "people.add.name")
+        XCTAssertTrue(name.waitForExistence(timeout: launchTimeout), "Add person did not open its sheet")
+        XCTAssertFalse(element(in: app, identifier: "people.add.save").isEnabled, "Add is enabled with no name and no faces")
+        capture(app, named: "\(prefix)-01-sheet-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(name.waitForNonExistence(timeout: launchTimeout))
+        // Back on the Library the import + returns.
+        element(in: app, identifier: "sidebar.library").click()
+        XCTAssertTrue(element(in: app, identifier: "toolbar.import").waitForExistence(timeout: launchTimeout))
+    }
+
     func testPlacesMapHasSyntheticMarkers() {
         let app = launch(language: "en")
-        element(in: app, identifier: "sidebar.places").click()
-
-        let map = element(in: app, identifier: "places.map")
-        XCTAssertTrue(map.waitForExistence(timeout: launchTimeout))
-        let firstMarker = element(in: app, identifier: "places.marker.D0001")
+        let map = openMapAtPhotos(app)
+        let firstMarker = element(in: app, identifier: "map.marker.D0001")
         XCTAssertTrue(firstMarker.waitForExistence(timeout: launchTimeout), "Route-start synthetic place marker was not exposed")
         // Record where every marker and label sits, so a failure in CI says why.
         let placeElements = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "places."))
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "map."))
             .allElementsBoundByIndex
         let layout = placeElements.map { "\($0.identifier) \($0.elementType.rawValue) \($0.frame) hittable=\($0.isHittable)" }
         let note = XCTAttachment(string: (["map \(map.frame)"] + layout).joined(separator: "\n"))
@@ -110,39 +336,37 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(map.frame.contains(firstMarker.frame), "Route-start marker is outside the Places map")
         XCTAssertTrue(firstMarker.isHittable, "Route-start marker is not hittable")
         let marker = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "places.marker."))
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "map.marker."))
             .firstMatch
         XCTAssertTrue(marker.waitForExistence(timeout: launchTimeout), "Synthetic place marker was not exposed")
-        capture(app, named: "places-01-map-and-pin")
+        capture(app, named: "map-01-photo-pins-evidence")
     }
 
     func testPlacesPanelIsCompactAndCloses() {
         let app = launch(language: "en")
-        element(in: app, identifier: "sidebar.places").click()
-        let map = element(in: app, identifier: "places.map")
-        XCTAssertTrue(map.waitForExistence(timeout: launchTimeout))
-        let marker = element(in: app, identifier: "places.marker.D0001")
+        let map = openMapAtPhotos(app)
+        let marker = element(in: app, identifier: "map.marker.D0001")
         XCTAssertTrue(marker.waitForExistence(timeout: launchTimeout))
         marker.click()
 
-        let panel = element(in: app, identifier: "places.panel")
+        let panel = element(in: app, identifier: "map.panel")
         XCTAssertTrue(panel.waitForExistence(timeout: launchTimeout), "Clicking a place did not open its photo panel")
         Thread.sleep(forTimeInterval: 1.0)
-        capture(app, named: "places-02-panel-open-evidence")
-        let title = element(in: app, identifier: "places.panel.title")
+        capture(app, named: "map-02-panel-open-evidence")
+        let title = element(in: app, identifier: "map.panel.title")
         let titleText = (title.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? title.label
         log("places panel \(panel.frame) map \(map.frame) title '\(titleText)'")
         XCTAssertLessThan(panel.frame.height, map.frame.height * 0.45, "The photo panel covers most of the map (panel \(panel.frame), map \(map.frame))")
         XCTAssertGreaterThan(panel.frame.minY, map.frame.midY, "The photo panel should sit at the bottom of the map")
 
-        element(in: app, identifier: "places.panel.close").click()
+        element(in: app, identifier: "map.panel.close").click()
         XCTAssertTrue(panel.waitForNonExistence(timeout: launchTimeout), "The close button did not close the photo panel")
 
         marker.click()
         XCTAssertTrue(panel.waitForExistence(timeout: launchTimeout))
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(panel.waitForNonExistence(timeout: launchTimeout), "Escape did not close the photo panel")
-        capture(app, named: "places-03-panel-closed")
+        capture(app, named: "map-03-panel-closed")
     }
 
     /// Settings (language, AI model) are reachable from the sidebar, not only via ⌘,.
@@ -158,7 +382,11 @@ final class MomentsUITests: XCTestCase {
         while app.windows.count <= windowsBefore && Date() < deadline {
             Thread.sleep(forTimeInterval: 0.3)
         }
-        XCTAssertGreaterThan(app.windows.count, windowsBefore, "The Settings window did not open")
+        if app.windows.count <= windowsBefore {
+            capture(app, named: "settings-00b-gear-no-window-evidence")
+            print("SIDEBAR-GEAR frame=\(gear.frame) hittable=\(gear.isHittable) window=\(app.windows.firstMatch.frame)")
+        }
+        XCTAssertGreaterThan(app.windows.count, windowsBefore, "The AI model settings window did not open")
         capture(app, named: "settings-01-from-sidebar-evidence")
         app.typeKey("w", modifierFlags: .command)
     }
@@ -173,7 +401,7 @@ final class MomentsUITests: XCTestCase {
             ("zh-Hans", false, "^[0-9]+ 张照片$", "语言"),
         ]
         for (language, smallWindow, countPattern, languageLabel) in cases {
-            let app = launch(language: language, smallWindow: smallWindow, extraArguments: ["-MomentsSettingsTab", "general"])
+            let app = launch(language: language, smallWindow: smallWindow, extraArguments: ["-moments.settings.tab", "general"])
             let count = app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", countPattern)).firstMatch
             XCTAssertTrue(count.waitForExistence(timeout: launchTimeout), "No translated photo count in \(language)")
             app.typeKey(",", modifierFlags: .command)
@@ -192,24 +420,62 @@ final class MomentsUITests: XCTestCase {
 
     func testFootprintsGlobeOpens() {
         let app = launch(language: "en")
-        assertGlobeFullyVisible(app, screenshot: "footprints-01-globe-evidence")
+        assertGlobeFullyVisible(app, screenshot: "map-04-globe-evidence")
+    }
+
+    /// In the smallest window nothing overlaps: the Library's type bar has
+    /// no scroll bar and the Map's countries card clears its controls.
+    func testSmallWindowHasNoOverlaps() {
+        let app = launch(language: "en", smallWindow: true)
+        XCTAssertTrue(element(in: app, identifier: "library.type-filter").waitForExistence(timeout: launchTimeout))
+        capture(app, named: "small-01-library-evidence")
+
+        element(in: app, identifier: "sidebar.map").click()
+        let stats = element(in: app, identifier: "map.stats")
+        let toolbar = element(in: app, identifier: "map.toolbar")
+        XCTAssertTrue(stats.waitForExistence(timeout: 30))
+        XCTAssertTrue(toolbar.waitForExistence(timeout: launchTimeout))
+        Thread.sleep(forTimeInterval: 1.5)
+        capture(app, named: "small-02-map-evidence")
+        XCTAssertFalse(stats.frame.intersects(toolbar.frame), "Countries card \(stats.frame) overlaps the map controls \(toolbar.frame)")
+
+        element(in: app, identifier: "sidebar.library").click()
+        let date = element(in: app, identifier: "filter.date")
+        XCTAssertTrue(date.waitForExistence(timeout: launchTimeout))
+        date.click()
+        XCTAssertTrue(app.popovers.firstMatch.waitForExistence(timeout: launchTimeout), "Date did not open its calendar")
+        XCTAssertFalse(element(in: app, identifier: "filter.date-chip").exists, "Opening the calendar must not apply a date")
+        capture(app, named: "small-03-date-picker-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+
+        element(in: app, identifier: "sidebar.timeline").click()
+        XCTAssertTrue(element(in: app, identifier: "toolbar.filter").waitForExistence(timeout: launchTimeout), "The Timeline has no Filter button")
+        capture(app, named: "small-04-timeline-evidence")
+    }
+
+    /// Not a check: the candidate sidebar icons, for picking one.
+    func testSidebarIconCandidates() {
+        let app = launch(language: "en", iconGallery: true)
+        XCTAssertTrue(element(in: app, identifier: "debug.icon-gallery").waitForExistence(timeout: launchTimeout))
+        capture(app, named: "icons-01-candidates-evidence")
     }
 
     func testFootprintsGlobeFitsSmallWindow() {
         let app = launch(language: "en", smallWindow: true)
-        assertGlobeFullyVisible(app, screenshot: "footprints-02-globe-small-window-evidence")
+        assertGlobeFullyVisible(app, screenshot: "map-05-globe-small-window-evidence")
     }
 
     /// The globe sits on black space: scan the middle row and column of the
     /// map for the first and last bright pixels. A cropped globe touches the
     /// map's edges.
     private func assertGlobeFullyVisible(_ app: XCUIApplication, screenshot name: String, file: StaticString = #filePath, line: UInt = #line) {
-        let footprints = element(in: app, identifier: "sidebar.footprints")
-        XCTAssertTrue(footprints.waitForExistence(timeout: launchTimeout), file: file, line: line)
-        footprints.click()
+        let mapRow = element(in: app, identifier: "sidebar.map")
+        XCTAssertTrue(mapRow.waitForExistence(timeout: launchTimeout), file: file, line: line)
+        mapRow.click()
 
-        // The first MapKit globe of a test run can take longer to appear.
-        let globe = element(in: app, identifier: "footprints.globe")
+        // The Map opens on the globe. The first MapKit globe of a test run
+        // can take longer to appear.
+        let globe = element(in: app, identifier: "map.view")
         XCTAssertTrue(globe.waitForExistence(timeout: 30), file: file, line: line)
         Thread.sleep(forTimeInterval: 3.0)
         capture(app, named: name)
@@ -268,13 +534,215 @@ final class MomentsUITests: XCTestCase {
         add(note)
     }
 
-    func testTimelinePlaceShowsItsPhotosInLibrary() {
+    func testSidebarHasFourDestinations() {
         let app = launch(language: "en")
-        timelineJumpShowsPlaceInLibrary(app)
+        for identifier in ["sidebar.library", "sidebar.people", "sidebar.map", "sidebar.timeline"] {
+            XCTAssertTrue(element(in: app, identifier: identifier).waitForExistence(timeout: launchTimeout), "Missing \(identifier)")
+        }
+        for identifier in ["sidebar.review", "sidebar.places", "sidebar.footprints", "sidebar.import"] {
+            XCTAssertFalse(element(in: app, identifier: identifier).exists, "\(identifier) should have left the sidebar")
+        }
+        // Without photos to confirm there is no banner.
+        XCTAssertFalse(element(in: app, identifier: "library.review-banner").exists)
+
+        let importButton = element(in: app, identifier: "toolbar.import")
+        XCTAssertTrue(importButton.waitForExistence(timeout: launchTimeout), "The toolbar + import button is missing")
+        importButton.click()
+        // Scoped to the button: the File menu has the same two commands.
+        XCTAssertTrue(importButton.menuItems["Import Folder…"].waitForExistence(timeout: launchTimeout), "The + button did not open its menu")
+        XCTAssertTrue(importButton.menuItems["Import from Apple Photos…"].exists)
+        capture(app, named: "toolbar-01-import-menu-evidence")
+        app.typeKey(.escape, modifierFlags: [])
     }
 
-    /// The Library restores where the user left it; a Timeline jump must still win.
-    func testTimelinePlaceShowsItsPhotosInLibraryAfterScrolling() {
+    func testReviewBannerOpensTheReviewList() {
+        let app = launch(language: "zh-Hans", reviewItems: true)
+        let banner = element(in: app, identifier: "library.review-banner")
+        XCTAssertTrue(banner.waitForExistence(timeout: launchTimeout), "Photos to confirm should show a banner in the Library")
+        capture(app, named: "library-03-review-banner-evidence")
+        banner.click()
+        XCTAssertTrue(app.sheets.firstMatch.waitForExistence(timeout: launchTimeout), "The banner did not open the review list")
+        Thread.sleep(forTimeInterval: 0.6)
+        capture(app, named: "library-04-review-sheet-evidence")
+        let done = element(in: app, identifier: "review.done")
+        XCTAssertTrue(done.waitForExistence(timeout: launchTimeout))
+        done.click()
+        XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: launchTimeout))
+    }
+
+    func testTripsOpenATripWriteItsMemoryAndOpenAPhoto() {
+        let app = launch(language: "en")
+        element(in: app, identifier: "sidebar.trips").click()
+
+        // The shelf: one cover card per trip.
+        let card = element(in: app, identifier: "trips.card.journeyA")
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout), "Trip cover card was not exposed")
+        XCTAssertTrue(element(in: app, identifier: "trips.card.journeyB").exists, "Every trip gets a card")
+        Thread.sleep(forTimeInterval: 0.8)
+        capture(app, named: "trips-01-shelf-evidence")
+        card.click()
+
+        // The trip: its memory line, then days with places and photos.
+        let tripMemory = element(in: app, identifier: "trips.memory.trip")
+        XCTAssertTrue(tripMemory.waitForExistence(timeout: launchTimeout), "Opening a trip did not show it")
+        let dayLine = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.memory.day."))
+            .firstMatch
+        XCTAssertTrue(dayLine.waitForExistence(timeout: launchTimeout), "A dated day has no memory line")
+
+        tripMemory.click()
+        tripMemory.typeText("Synthetic trip memory\r")
+        let written = app.staticTexts
+            .matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Synthetic trip memory", "Synthetic trip memory"))
+            .firstMatch
+        let saved = written.waitForExistence(timeout: launchTimeout)
+        capture(app, named: "trips-02a-after-return-evidence")
+        XCTAssertTrue(saved, "Return did not save the trip memory")
+        XCTAssertFalse((tripMemory.value as? String ?? "").contains("Synthetic trip memory"), "The memory line was not cleared after saving")
+        Thread.sleep(forTimeInterval: 0.8)
+        capture(app, named: "trips-02-trip-evidence")
+
+        // A photo opens the large viewer, which pages through the trip.
+        let photo = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.photo.")).firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
+        photo.click()
+        let viewer = element(in: app, identifier: "viewer")
+        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout), "Clicking a photo did not open it")
+        capture(app, named: "trips-03-viewer-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(viewer.waitForNonExistence(timeout: launchTimeout))
+
+        // The open trip survives a visit to another screen.
+        element(in: app, identifier: "sidebar.library").click()
+        element(in: app, identifier: "sidebar.trips").click()
+        XCTAssertTrue(tripMemory.waitForExistence(timeout: launchTimeout), "The open trip was lost on a screen switch")
+
+        // Back to the shelf.
+        let back = element(in: app, identifier: "trips.back")
+        XCTAssertTrue(back.waitForExistence(timeout: launchTimeout))
+        back.click()
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout), "Back did not return to the trip cards")
+        capture(app, named: "trips-04-shelf-with-memory-evidence")
+    }
+
+    func testTimelineShowsDaysAndLinksToTheirTrip() {
+        let app = launch(language: "en")
+        element(in: app, identifier: "sidebar.timeline").click()
+
+        // Every photo by day, each day with its memory line.
+        let dayLine = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.memory.day."))
+            .firstMatch
+        XCTAssertTrue(dayLine.waitForExistence(timeout: launchTimeout), "Timeline days have no memory line")
+        let photo = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.photo.")).firstMatch
+        XCTAssertTrue(photo.exists, "Timeline days show their photos")
+
+        // A day inside a trip links to that trip.
+        let tripLink = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.trip.")).firstMatch
+        XCTAssertTrue(tripLink.waitForExistence(timeout: launchTimeout), "A trip day has no link to its trip")
+        capture(app, named: "timeline-01-days-evidence")
+        tripLink.click()
+        XCTAssertTrue(element(in: app, identifier: "trips.memory.trip").waitForExistence(timeout: launchTimeout), "The trip link did not open the trip")
+    }
+
+    func testDoubleClickRenamesATripInPlace() {
+        let app = launch(language: "en")
+        // Library groups by trip by default; a trip's title renames in place.
+        // Newest trips come first, so take whichever trip title is on screen.
+        let title = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trip.title."))
+            .firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: launchTimeout), "The Library has no trip title")
+        let tripID = String(title.identifier.dropFirst("trip.title.".count))
+        title.doubleClick()
+        let field = element(in: app, identifier: "trip.rename.\(tripID)")
+        XCTAssertTrue(field.waitForExistence(timeout: launchTimeout), "Double-click did not start renaming")
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText("Synthetic renamed trip\r")
+        let renamed = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == %@ AND (label CONTAINS %@ OR value CONTAINS %@)", "trip.title.\(tripID)", "Synthetic renamed trip", "Synthetic renamed trip"))
+            .firstMatch
+        XCTAssertTrue(renamed.waitForExistence(timeout: launchTimeout), "Return did not save the new name")
+        capture(app, named: "library-04-trip-renamed-evidence")
+
+        // The Trips card follows.
+        element(in: app, identifier: "sidebar.trips").click()
+        let cardName = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == %@ AND (label CONTAINS %@ OR value CONTAINS %@)", "trips.card.name.\(tripID)", "Synthetic renamed trip", "Synthetic renamed trip"))
+            .firstMatch
+        XCTAssertTrue(cardName.waitForExistence(timeout: launchTimeout), "The trip card kept the old name")
+    }
+
+    func testTripDatesPreviewBeforeApplying() {
+        let app = launch(language: "en")
+        element(in: app, identifier: "sidebar.trips").click()
+        let card = element(in: app, identifier: "trips.card.journeyA")
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
+
+        // The cover: click the prints, pick another photo.
+        let prints = element(in: app, identifier: "trips.cover.journeyA")
+        XCTAssertTrue(prints.waitForExistence(timeout: launchTimeout), "The cover cannot be changed")
+        prints.click()
+        let pick = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.cover.pick."))
+            .element(boundBy: 3)
+        XCTAssertTrue(pick.waitForExistence(timeout: launchTimeout), "The cover picker shows no photos")
+        capture(app, named: "trips-05-cover-picker-evidence")
+        pick.click()
+        XCTAssertTrue(pick.waitForNonExistence(timeout: launchTimeout), "Picking a cover did not close the picker")
+
+        // The dates on the card open the date editor with a preview; nothing changes until Apply.
+        element(in: app, identifier: "trips.card.dates.journeyA").click()
+        let preview = element(in: app, identifier: "trips.dates.preview")
+        XCTAssertTrue(preview.waitForExistence(timeout: launchTimeout), "The trip's dates show no preview")
+        XCTAssertTrue(element(in: app, identifier: "trips.dates.apply").exists)
+        capture(app, named: "trips-06-dates-preview-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(preview.waitForNonExistence(timeout: launchTimeout))
+    }
+
+    func testSplitATripAtADayAndUndo() {
+        let app = launch(language: "en")
+        element(in: app, identifier: "sidebar.trips").click()
+        let card = element(in: app, identifier: "trips.card.journeyA")
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
+        let cards = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (identifier BEGINSWITH %@) AND NOT (identifier BEGINSWITH %@)", "trips.card.", "trips.card.name.", "trips.card.dates."))
+        let cardIDs = Set(cards.allElementsBoundByIndex.map(\.identifier))
+        card.click()
+        XCTAssertTrue(element(in: app, identifier: "trips.memory.trip").waitForExistence(timeout: launchTimeout))
+
+        // Each day after the first can start a new trip.
+        let menus = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.day.menu."))
+        XCTAssertTrue(menus.firstMatch.waitForExistence(timeout: launchTimeout), "Trip days have no menu")
+        let third = menus.element(boundBy: 2)
+        XCTAssertTrue(third.exists)
+        third.click()
+        let split = app.menuItems["Start a new trip from this day"]
+        XCTAssertTrue(split.waitForExistence(timeout: launchTimeout), "The day menu cannot split the trip")
+        capture(app, named: "trips-07-day-menu-evidence")
+        split.click()
+
+        let notice = element(in: app, identifier: "trips.notice")
+        XCTAssertTrue(notice.waitForExistence(timeout: launchTimeout), "Splitting showed no note")
+        capture(app, named: "trips-08-split-evidence")
+        element(in: app, identifier: "trips.notice.undo").click()
+        XCTAssertTrue(notice.waitForNonExistence(timeout: launchTimeout), "Undo did not finish")
+        element(in: app, identifier: "trips.back").click()
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
+        Thread.sleep(forTimeInterval: 0.8)
+        let afterIDs = Set(cards.allElementsBoundByIndex.map(\.identifier))
+        XCTAssertTrue(afterIDs.isSubset(of: cardIDs), "Undo left the split-off trip behind: \(afterIDs.subtracting(cardIDs))")
+    }
+
+    func testTripPlaceShowsItsPhotosInLibrary() {
+        let app = launch(language: "en")
+        tripPlaceShowsItsPhotosInLibrary(app)
+    }
+
+    /// The Library restores where the user left it; a jump from a trip must still win.
+    func testTripPlaceShowsItsPhotosInLibraryAfterScrolling() {
         let app = launch(language: "en")
         let photo = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
@@ -282,15 +750,19 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
         photo.scroll(byDeltaX: 0, deltaY: -1500)
         Thread.sleep(forTimeInterval: 1)
-        timelineJumpShowsPlaceInLibrary(app)
+        tripPlaceShowsItsPhotosInLibrary(app)
     }
 
-    private func timelineJumpShowsPlaceInLibrary(_ app: XCUIApplication) {
+    private func tripPlaceShowsItsPhotosInLibrary(_ app: XCUIApplication) {
         let allCount = libraryPhotoCount(app)
-        element(in: app, identifier: "sidebar.timeline").click()
+        element(in: app, identifier: "sidebar.trips").click()
+        let card = element(in: app, identifier: "trips.card.journeyA")
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
+        card.click()
 
-        let place = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.place.")).firstMatch
-        XCTAssertTrue(place.waitForExistence(timeout: launchTimeout), "Timeline place row was not exposed")
+        // A place's name lists its photos on their own in the Library.
+        let place = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.place.")).firstMatch
+        XCTAssertTrue(place.waitForExistence(timeout: launchTimeout), "Trip place name was not exposed")
         place.click()
 
         let chip = element(in: app, identifier: "library.scope-chip")
@@ -299,29 +771,81 @@ final class MomentsUITests: XCTestCase {
         XCTAssertGreaterThan(scopedCount, 0)
         XCTAssertLessThan(scopedCount, allCount, "Only the place's photos should be listed")
 
-        let photo = element(in: app, identifier: "library.photo.D0001")
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+            .firstMatch
         XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
         XCTAssertTrue(photo.isHittable, "The place's photos should be in view")
         // A sliver at the edge counts as hittable; the whole card must be visible
         // below the filter chips and inside the window.
         let window = app.windows.firstMatch.frame
-        let card = photo.frame
-        XCTAssertGreaterThanOrEqual(card.minY, chip.frame.maxY - 1, "The card is cut off at the top (card \(card), chip \(chip.frame))")
-        XCTAssertLessThanOrEqual(card.maxY, window.maxY + 1, "The card is cut off at the bottom (card \(card), window \(window))")
-        capture(app, named: "timeline-01-place-in-library-evidence")
+        let frame = photo.frame
+        XCTAssertGreaterThanOrEqual(frame.minY, chip.frame.maxY - 1, "The card is cut off at the top (card \(frame), chip \(chip.frame))")
+        XCTAssertLessThanOrEqual(frame.maxY, window.maxY + 1, "The card is cut off at the bottom (card \(frame), window \(window))")
+        capture(app, named: "trips-05-place-in-library-evidence")
 
         chip.click()
         XCTAssertTrue(chip.waitForNonExistence(timeout: 5), "Clicking the chip should remove the scope")
         XCTAssertEqual(libraryPhotoCount(app), allCount)
     }
 
-    /// A country in Footprints lists its photos in the Library.
-    func testFootprintsCountryShowsItsPhotosInLibrary() {
+    /// The Map has the Library's filters, and a filter set there is set in
+    /// the Library too.
+    func testMapFiltersFollowTheLibrary() {
+        let app = launch(language: "en")
+        element(in: app, identifier: "sidebar.map").click()
+        let filterButton = element(in: app, identifier: "toolbar.filter")
+        XCTAssertTrue(filterButton.waitForExistence(timeout: 30), "The Map has no Filter button")
+        XCTAssertTrue(app.searchFields.firstMatch.exists, "The Map has no search field")
+        filterButton.click()
+        let popover = app.popovers.firstMatch
+        XCTAssertTrue(popover.waitForExistence(timeout: launchTimeout), "Filter did not open its options")
+        capture(app, named: "map-06-filter-popover-evidence")
+        let trip = popover.descendants(matching: .any).matching(identifier: "filter.trip").firstMatch
+        XCTAssertTrue(trip.waitForExistence(timeout: launchTimeout))
+        trip.click()
+        let journey = app.menuItems["journeyA"].firstMatch
+        XCTAssertTrue(journey.waitForExistence(timeout: launchTimeout))
+        journey.click()
+        Thread.sleep(forTimeInterval: 1.5)
+        capture(app, named: "map-07-filtered-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+
+        element(in: app, identifier: "sidebar.library").click()
+        let chip = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "journeyA")).firstMatch
+        XCTAssertTrue(chip.waitForExistence(timeout: launchTimeout), "The trip picked on the Map is not set in the Library")
+        capture(app, named: "map-08-filter-in-library-evidence")
+        chip.click()
+    }
+
+    /// Leaving the Map removes its map view, so MapKit stops drawing frames
+    /// while you browse the Library or People.
+    func testMapViewIsReleasedAfterLeavingTheMap() {
+        let app = launch(language: "en", mapProbe: true)
+        let probe = element(in: app, identifier: "debug.mapviews")
+        XCTAssertTrue(probe.waitForExistence(timeout: launchTimeout))
+        XCTAssertEqual(probe.label, "mapviews=0")
+        element(in: app, identifier: "sidebar.map").click()
+        XCTAssertTrue(element(in: app, identifier: "toolbar.filter").waitForExistence(timeout: 30))
+        let onMap = NSPredicate(format: "label != %@", "mapviews=0")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: onMap, evaluatedWith: probe)], timeout: 10), .completed, "The probe found no map view on the Map")
+        for destination in ["sidebar.library", "sidebar.people", "sidebar.timeline"] {
+            element(in: app, identifier: destination).click()
+            let gone = NSPredicate(format: "label == %@", "mapviews=0")
+            XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: gone, evaluatedWith: probe)], timeout: 5), .completed, "A map view is still alive on \(destination): \(probe.label)")
+        }
+    }
+
+    /// A country on the Map's globe lists its photos in the Library.
+    func testMapCountryShowsItsPhotosInLibrary() {
         let app = launch(language: "en")
         let allCount = libraryPhotoCount(app)
-        element(in: app, identifier: "sidebar.footprints").click()
+        element(in: app, identifier: "sidebar.map").click()
+        let stats = element(in: app, identifier: "map.stats")
+        XCTAssertTrue(stats.waitForExistence(timeout: 30), "The globe has no countries card")
+        stats.click()
         let button = app.buttons
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "footprints.country.photos."))
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "map.country.photos."))
             .firstMatch
         XCTAssertTrue(button.waitForExistence(timeout: launchTimeout), "Country row has no photos button")
         button.click()
@@ -329,7 +853,27 @@ final class MomentsUITests: XCTestCase {
         let scopedCount = libraryPhotoCount(app)
         XCTAssertGreaterThan(scopedCount, 0)
         XCTAssertLessThanOrEqual(scopedCount, allCount)
-        capture(app, named: "footprints-03-country-in-library-evidence")
+        capture(app, named: "map-06-country-in-library-evidence")
+    }
+
+    /// The count lives in the title bar now; the type picker stays put while
+    /// it changes, and the header never widens the window.
+    func testLibraryCountNeitherOverlapsNorMovesThePicker() {
+        let app = launch(language: "en")
+        let picker = element(in: app, identifier: "library.type-filter")
+        XCTAssertTrue(picker.waitForExistence(timeout: launchTimeout))
+        let before = picker.frame
+        for segment in ["Videos", "Photos", "All"] {
+            app.radioButtons[segment].firstMatch.click()
+            Thread.sleep(forTimeInterval: 0.5)
+            XCTAssertEqual(picker.frame.minX, before.minX, accuracy: 0.5, "The picker moved after choosing \(segment)")
+        }
+        // The header never makes the window's content wider than the window.
+        let window = app.windows.firstMatch.frame
+        let grouping = element(in: app, identifier: "library.grouping")
+        XCTAssertLessThanOrEqual(grouping.frame.maxX, window.maxX + 0.5, "The header pushes past the window's right edge")
+        XCTAssertGreaterThanOrEqual(element(in: app, identifier: "sidebar.library").frame.minX, window.minX - 0.5, "The sidebar was pushed off the window")
+        capture(app, named: "library-05-header-evidence")
     }
 
     /// "Save as smart group" is offered only once a filter is set.
@@ -352,41 +896,61 @@ final class MomentsUITests: XCTestCase {
     }
 
     private func navigateAndCapture(_ app: XCUIApplication, prefix: String, settleMap: Bool) {
-        // German and Chinese screens go to the log too, to check translations
-        // and long German labels without artifact access.
-        let evidence = prefix == "en" ? "" : "-evidence"
         let library = element(in: app, identifier: "sidebar.library")
         XCTAssertTrue(library.waitForExistence(timeout: launchTimeout))
         capture(app, named: "\(prefix)-01-library-evidence")
 
-        let places = element(in: app, identifier: "sidebar.places")
-        XCTAssertTrue(places.waitForExistence(timeout: launchTimeout))
-        places.click()
-        XCTAssertTrue(element(in: app, identifier: "places.map").waitForExistence(timeout: launchTimeout))
-        if settleMap { Thread.sleep(forTimeInterval: 1.0) }
-        capture(app, named: "\(prefix)-02-places\(evidence)")
+        let map = element(in: app, identifier: "sidebar.map")
+        XCTAssertTrue(map.waitForExistence(timeout: launchTimeout))
+        map.click()
+        XCTAssertTrue(element(in: app, identifier: "map.view").waitForExistence(timeout: 30))
+        if settleMap { Thread.sleep(forTimeInterval: 2.0) }
+        capture(app, named: "\(prefix)-02-map-globe-evidence")
 
-        let footprints = element(in: app, identifier: "sidebar.footprints")
-        XCTAssertTrue(footprints.waitForExistence(timeout: launchTimeout))
-        footprints.click()
-        XCTAssertTrue(element(in: app, identifier: "footprints.globe").waitForExistence(timeout: launchTimeout))
-        if settleMap { Thread.sleep(forTimeInterval: 1.0) }
-        capture(app, named: "\(prefix)-03-footprints\(evidence)")
+        let fit = element(in: app, identifier: "map.fit")
+        XCTAssertTrue(fit.waitForExistence(timeout: launchTimeout))
+        fit.click()
+        if settleMap { Thread.sleep(forTimeInterval: 2.0) }
+        capture(app, named: "\(prefix)-03-map-places-evidence")
 
         let timeline = element(in: app, identifier: "sidebar.timeline")
         XCTAssertTrue(timeline.waitForExistence(timeout: launchTimeout))
         timeline.click()
-        // Locale-independent: a timeline place row proves the screen rendered.
-        let placeRow = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.place."))
+        // Locale-independent: a month header proves the screen rendered.
+        let month = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.month."))
             .firstMatch
-        XCTAssertTrue(placeRow.waitForExistence(timeout: launchTimeout))
-        capture(app, named: "\(prefix)-04-timeline\(evidence)")
+        XCTAssertTrue(month.waitForExistence(timeout: launchTimeout))
+        capture(app, named: "\(prefix)-04-timeline-evidence")
+
+        let trips = element(in: app, identifier: "sidebar.trips")
+        XCTAssertTrue(trips.waitForExistence(timeout: launchTimeout))
+        trips.click()
+        // Locale-independent: a trip cover card proves the screen rendered.
+        let tripCard = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.card."))
+            .firstMatch
+        XCTAssertTrue(tripCard.waitForExistence(timeout: launchTimeout))
+        capture(app, named: "\(prefix)-05-trips-evidence")
+
+        // One trip, by day and place.
+        tripCard.click()
+        let tripMemory = element(in: app, identifier: "trips.memory.trip")
+        XCTAssertTrue(tripMemory.waitForExistence(timeout: launchTimeout))
+        capture(app, named: "\(prefix)-06-trip-evidence")
+        element(in: app, identifier: "trips.dates").click()
+        XCTAssertTrue(element(in: app, identifier: "trips.dates.start").waitForExistence(timeout: launchTimeout), "The trip's dates cannot be changed")
+        capture(app, named: "\(prefix)-07-trip-dates-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        element(in: app, identifier: "trips.back").click()
     }
 
-    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, extraArguments: [String] = []) -> XCUIApplication {
+    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false, mapProbe: Bool = false, iconGallery: Bool = false, extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language] + extraArguments
+        if iconGallery { app.launchArguments += ["-MomentsUITestIconGallery"] }
+        if mapProbe { app.launchArguments += ["-MomentsUITestMapProbe"] }
+        if reviewItems { app.launchArguments += ["-MomentsUITestReviewItems"] }
         if darkMode { app.launchArguments += ["-MomentsUITestDarkMode"] }
         if smallWindow { app.launchArguments += ["-MomentsUITestSmallWindow"] }
         // No window-state arguments: with -MomentsUITesting, both

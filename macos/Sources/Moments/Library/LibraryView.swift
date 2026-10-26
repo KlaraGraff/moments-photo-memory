@@ -1,6 +1,13 @@
+import AppKit
 import Foundation
 import SwiftUI
 import SwiftData
+
+private struct LibraryFilterOptions {
+    var places: [LibraryPlaceOption] = []
+    var trips: [String] = []
+    var tripNames: [String: String] = [:]
+}
 
 private enum LibraryScrollTarget {
     static func section(_ id: String) -> String { "section:\(id)" }
@@ -36,6 +43,7 @@ struct LibraryView: View {
     @Binding var firstLaunchCompleted: Bool
 
     @AppStorage("moments.library.type") private var typeRaw = LibraryMediaTypeFilter.all.rawValue
+    @AppStorage(LibraryFilterKeys.query) private var query = ""
     @AppStorage("moments.library.grouping") private var groupingRaw = LibraryGrouping.trip.rawValue
     @AppStorage("moments.library.fromDate") private var fromDateInterval = 0.0
     @AppStorage("moments.library.toDate") private var toDateInterval = 0.0
@@ -50,6 +58,10 @@ struct LibraryView: View {
     @State private var hasGrouped = false
     @State private var showingSmartGroupEditor = false
     @State private var cachedPersonIndex: [String: Set<String>] = [:]
+    /// Photos the import flagged for a look; shown as a banner, not a sidebar row.
+    @State private var cachedReviewCount = 0
+    @State private var showingReview = false
+    @State private var cachedFilterOptions = LibraryFilterOptions()
 
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
@@ -64,7 +76,8 @@ struct LibraryView: View {
             mediaType: LibraryMediaTypeFilter(rawValue: typeRaw) ?? .all,
             tripKey: tripFilterKey.isEmpty ? nil : tripFilterKey,
             memoryFilter: LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all,
-            personID: personFilterID.isEmpty ? nil : personFilterID
+            personID: personFilterID.isEmpty ? nil : personFilterID,
+            searchText: query
         )
     }
 
@@ -80,9 +93,17 @@ struct LibraryView: View {
         LibraryGrouping(rawValue: groupingRaw) ?? .trip
     }
 
-    private var places: [LibraryPlaceOption] {
+    /// The Place and Trip menus' rows, rebuilt with the sections in regroup().
+    /// Computing them here walked every item and its place on each render,
+    /// which showed up as a stall when the Library re-rendered mid-scroll.
+    private var places: [LibraryPlaceOption] { cachedFilterOptions.places }
+
+    private var trips: [String] { cachedFilterOptions.trips }
+
+    private static func filterOptions(for items: [MediaItem]) -> LibraryFilterOptions {
         var options: [String: LibraryPlaceOption] = [:]
-        for item in allItems {
+        var tripNames: [String: String] = [:]
+        for item in items {
             // One row per name: unnamed spots are listed under the area or
             // city that names them, and the filter matches all of them.
             if let place = item.place, let named = PlaceDisplayName.namingPlace(of: place) {
@@ -91,12 +112,15 @@ struct LibraryView: View {
             if let override = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
                 options["override:\(override)"] = LibraryPlaceOption(id: "override:\(override)", name: override)
             }
+            if let tripID = item.tripID, tripNames[tripID] == nil {
+                tripNames[tripID] = item.trip?.effectiveName ?? tripID
+            }
         }
-        return options.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    }
-
-    private var trips: [String] {
-        Array(Set(allItems.compactMap(\.tripID))).sorted()
+        return LibraryFilterOptions(
+            places: options.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending },
+            trips: tripNames.keys.sorted(),
+            tripNames: tripNames
+        )
     }
 
     private var selectedPlaceName: String? {
@@ -105,7 +129,7 @@ struct LibraryView: View {
 
     private var selectedTripName: String? {
         guard !tripFilterKey.isEmpty else { return nil }
-        return allItems.first(where: { $0.tripID == tripFilterKey })?.trip?.effectiveName ?? tripFilterKey
+        return selectedTripName(for: tripFilterKey)
     }
 
     private var selectedMemoryFilter: LibraryMemoryFilter {
@@ -126,6 +150,9 @@ struct LibraryView: View {
     /// trip/place names, and overrides come from their own queries so this
     /// token never faults `item.memories` for every media item during a render.
     private var groupingKey: Int {
+        #if DEBUG
+        ScrollProbe.count("library.groupingKey")
+        #endif
         var hasher = Hasher()
         hasher.combine(typeRaw)
         hasher.combine(groupingRaw)
@@ -135,13 +162,18 @@ struct LibraryView: View {
         hasher.combine(tripFilterKey)
         hasher.combine(memoryFilterRaw)
         hasher.combine(personFilterID)
+        hasher.combine(query)
         hasher.combine(state.focusedMemoryItemID)
         hasher.combine(selection.libraryScope?.itemIDs)
-        for item in items {
+        // All items, not just the visible type: the Place and Trip menus
+        // are built from both.
+        for item in allItems {
             hasher.combine(item.id)
             hasher.combine(item.captureDate)
             hasher.combine(item.userCorrectedCaptureDateUTC)
             hasher.combine(item.isScreenshot)
+            // Only read the stars while Favorites is shown; it faults a relation.
+            if typeRaw == LibraryMediaTypeFilter.favorite.rawValue { hasher.combine(item.isFavorite) }
             hasher.combine(item.kindRaw)
             hasher.combine(item.tripID)
             hasher.combine(item.place?.id)
@@ -197,6 +229,18 @@ struct LibraryView: View {
             if !personFilterID.isEmpty && !ids.contains(personFilterID) { personFilterID = "" }
         }
         .task(id: groupingKey) { regroup() }
+        .sheet(isPresented: $showingReview) {
+            ReviewSheet()
+        }
+        // A jump to another place (such as Show in Library) closes the list.
+        .onChange(of: selection.requestedDestination) { _, destination in
+            if destination != nil { showingReview = false }
+        }
+        // The large viewer opens in the window behind the sheet; close the
+        // list so a photo clicked there is seen.
+        .onChange(of: selection.viewerRequest == nil) { _, isClosed in
+            if !isClosed { showingReview = false }
+        }
         .sheet(
             isPresented: Binding(
                 get: { importController.reviewSummary != nil },
@@ -213,6 +257,9 @@ struct LibraryView: View {
         VStack(spacing: 0) {
             libraryHeader
             filterBar
+            if cachedReviewCount > 0 {
+                reviewBanner
+            }
             ImportStatusView()
                 .padding(.horizontal, 34)
                 .padding(.vertical, 7)
@@ -225,63 +272,107 @@ struct LibraryView: View {
                 results
             }
         }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
+        }
+        .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search places, trips, notes")))
+        .navigationTitle(String(localized: "Library"))
+        .navigationSubtitle(String(localized: "\(cachedVisibleCount) photos"))
     }
 
-    private var libraryHeader: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .bottom, spacing: 22) {
-                libraryHeaderTitle
-                libraryTypePicker
+    /// "12 photos to confirm" under the filters; opens the review list.
+    private var reviewBanner: some View {
+        Button {
+            showingReview = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle")
+                    .foregroundStyle(LibraryPalette.accent)
+                    .inlineIcon()
+                Text(String(localized: "\(cachedReviewCount) photos to confirm"))
+                    .foregroundStyle(LibraryPalette.ink)
                 Spacer(minLength: 8)
-                libraryGroupingPicker
+                Text(String(localized: "Review"))
+                    .foregroundStyle(LibraryPalette.accent)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(LibraryPalette.accent)
+                    .inlineIcon()
             }
-            VStack(alignment: .leading, spacing: 12) {
-                libraryHeaderTitle
-                HStack(alignment: .center, spacing: 22) {
-                    libraryTypePicker
-                    Spacer(minLength: 8)
-                    libraryGroupingPicker
-                }
-            }
+            .font(.callout)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(LibraryPalette.well, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, PaperMetrics.screenInset)
+        .padding(.top, 10)
+        // Room before the first section title, so the banner never sits on it.
+        .padding(.bottom, 14)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("library.review-banner")
+    }
+
+    /// The page name and photo count live in the window's title bar; the
+    /// page itself opens straight on its controls.
+    private var libraryHeader: some View {
+        // One fixed row at every width, so the grid never moves while the
+        // sidebar animates (a ViewThatFits here switched between one, two and
+        // three rows). The page title is in the window's title bar; the type
+        // bar is short enough to share the row with Group by.
+        HStack(alignment: .center, spacing: 22) {
+            libraryTypePicker
+            Spacer(minLength: 8)
+            libraryGroupingPicker
         }
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.top, PaperMetrics.screenTopInset)
-        .padding(.bottom, 18)
+        .padding(.bottom, 14)
     }
 
-    private var libraryHeaderTitle: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 9) {
-            Text(String(localized: "Library"))
-                .font(.system(size: 34, weight: .medium, design: .serif))
-                .foregroundStyle(LibraryPalette.ink)
-                .lineLimit(1)
-                .layoutPriority(1)
-                .minimumScaleFactor(0.7)
-            Text(String(localized: "\(cachedVisibleCount) photos"))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(LibraryPalette.muted)
-                .lineLimit(1)
-                .accessibilityIdentifier("library.photoCount")
-                .accessibilityValue(String(cachedVisibleCount))
-        }
-        // Never squeezed: a compressed title wraps one letter per line.
-        .fixedSize()
-    }
-
+    /// The everyday choices as segments; Live Photos and Screenshots, picked
+    /// rarely, wait in More. Fixed size, so the control never turns into a
+    /// scrolling strip.
     private var libraryTypePicker: some View {
-        Picker(String(localized: "Media type"), selection: $typeRaw) {
-            Text(String(localized: "All")).tag(LibraryMediaTypeFilter.all.rawValue)
-            Text(String(localized: "Photos")).tag(LibraryMediaTypeFilter.photo.rawValue)
-            Text(String(localized: "Videos")).tag(LibraryMediaTypeFilter.video.rawValue)
-            Text(String(localized: "Live Photos")).tag(LibraryMediaTypeFilter.live.rawValue)
-            Text(String(localized: "Screenshots")).tag(LibraryMediaTypeFilter.screenshot.rawValue)
+        let lessUsed: [(LibraryMediaTypeFilter, String)] = [
+            (.live, String(localized: "Live Photos")),
+            (.screenshot, String(localized: "Screenshots")),
+        ]
+        let pickedLessUsed = lessUsed.first { $0.0.rawValue == typeRaw }
+        return HStack(spacing: 8) {
+            Picker(String(localized: "Media type"), selection: $typeRaw) {
+                Text(String(localized: "All")).tag(LibraryMediaTypeFilter.all.rawValue)
+                Label(String(localized: "Favorites"), systemImage: "star").tag(LibraryMediaTypeFilter.favorite.rawValue)
+                Text(String(localized: "Photos")).tag(LibraryMediaTypeFilter.photo.rawValue)
+                Text(String(localized: "Videos")).tag(LibraryMediaTypeFilter.video.rawValue)
+                if let pickedLessUsed {
+                    Text(pickedLessUsed.1).tag(pickedLessUsed.0.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            // The segments name themselves; a visible "Media type" label wrapped
+            // onto two lines in narrow windows. VoiceOver still reads it.
+            .labelsHidden()
+            .fixedSize()
+            .accessibilityIdentifier("library.type-filter")
+
+            Menu {
+                ForEach(lessUsed, id: \.0) { option in
+                    Button {
+                        typeRaw = option.0.rawValue
+                    } label: {
+                        Label(option.1, systemImage: typeRaw == option.0.rawValue ? "checkmark" : "circle")
+                    }
+                }
+            } label: {
+                Text(String(localized: "More"))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help(String(localized: "Live Photos and Screenshots"))
+            .accessibilityIdentifier("library.type-more")
         }
-        .pickerStyle(.segmented)
-        // The segments name themselves; a visible "Media type" label wrapped
-        // onto two lines in narrow windows. VoiceOver still reads it.
-        .labelsHidden()
-        .frame(maxWidth: 410)
-        .accessibilityIdentifier("library.type-filter")
     }
 
     private var libraryGroupingPicker: some View {
@@ -299,53 +390,16 @@ struct LibraryView: View {
 
     private var filterBar: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Chips never truncate; when they do not fit, scroll rather than clip.
-            ViewThatFits(in: .horizontal) {
-                filterChipRow
-                ScrollView(.horizontal) { filterChipRow }
-                    .scrollIndicators(.hidden)
-            }
+            LibraryFilterChips(showsScope: true)
 
-            if hasActiveFilters || selection.libraryScope != nil {
-                HStack(spacing: 7) {
-                    if let scope = selection.libraryScope {
-                        filterChip(scope.title) { selection.libraryScope = nil }
-                            .accessibilityIdentifier("library.scope-chip")
-                    }
-                    if let selectedPlaceName {
-                        filterChip("\(String(localized: "Place:")) \(selectedPlaceName)") { placeFilterID = "" }
-                    }
-                    if let selectedTripName {
-                        filterChip("\(String(localized: "Trip:")) \(selectedTripName)") { tripFilterKey = "" }
-                    }
-                    if let dateLabel = dateFilterLabel {
-                        filterChip(dateLabel) {
-                            fromDateInterval = 0
-                            toDateInterval = 0
-                        }
-                    }
-                    if selectedMemoryFilter != .all {
-                        filterChip(memoryFilterLabel(selectedMemoryFilter)) { memoryFilterRaw = LibraryMemoryFilter.all.rawValue }
-                    }
-                    if let selectedPersonName {
-                        filterChip("\(String(localized: "Person:")) \(selectedPersonName)") { personFilterID = "" }
-                    }
-                    Button(String(localized: "Clear filters")) { clearFilters() }
-                        .buttonStyle(.link)
-                        .font(.caption)
-                        .foregroundStyle(LibraryPalette.muted)
-                }
-            }
-
-            HStack {
-                Text(String(format: String(localized: "Filtered count"), cachedVisibleCount))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(LibraryPalette.muted)
-                Spacer(minLength: 12)
-                // Only a real filter can become a smart group. Its own row
-                // keeps the chips at full width and the button on one line.
-                // A scope is a one-off list, not a rule a smart group could keep.
-                if criteria.isFiltered && selection.libraryScope == nil {
+            // The count is in the title bar; this row only appears for a
+            // filter that could become a smart group. A scope is a one-off
+            // list, not a rule a smart group could keep.
+            // Favorites and search have no smart-group rule yet, so a filter
+            // using them can't be saved without losing part of it.
+            if criteria.isFiltered && !criteria.favoritesOnly && criteria.searchText.isEmpty && selection.libraryScope == nil {
+                HStack {
+                    Spacer(minLength: 12)
                     Button(String(localized: "Save this filter as a smart group")) {
                         showingSmartGroupEditor = true
                     }
@@ -358,6 +412,15 @@ struct LibraryView: View {
                 }
             }
         }
+        // Tests read the count here; people see it in the title bar.
+        .background(alignment: .topLeading) {
+            Text(String(cachedVisibleCount))
+                .font(.system(size: 1))
+                .foregroundStyle(.clear)
+                .allowsHitTesting(false)
+                .accessibilityValue(String(cachedVisibleCount))
+                .accessibilityIdentifier("library.photoCount")
+        }
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.vertical, 13)
         // A band one tone down sets the filters apart; no rules above or below.
@@ -365,180 +428,6 @@ struct LibraryView: View {
         .sheet(isPresented: $showingSmartGroupEditor) {
             GroupEditorSheet(kind: .newSmart, group: nil, initialCriteria: criteria)
         }
-    }
-
-    private var filterChipRow: some View {
-        HStack(spacing: 8) {
-            filterMenu(label: String(localized: "Place"), selected: selectedPlaceName) {
-                Button(String(localized: "All places")) { placeFilterID = "" }
-                if !places.isEmpty { Divider() }
-                ForEach(places) { place in
-                    Button {
-                        placeFilterID = place.id
-                    } label: {
-                        filterMenuLabel(place.name, selected: place.id == placeFilterID)
-                    }
-                }
-            }
-
-            filterMenu(label: String(localized: "Trip"), selected: selectedTripName) {
-                Button(String(localized: "All trips")) { tripFilterKey = "" }
-                if !trips.isEmpty { Divider() }
-                ForEach(trips, id: \.self) { trip in
-                    Button {
-                        tripFilterKey = trip
-                    } label: {
-                        filterMenuLabel(selectedTripName(for: trip), selected: trip == tripFilterKey)
-                    }
-                }
-            }
-
-            dateFilterMenu
-            memoryFilterMenu
-            personFilterMenu
-
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func filterMenu<Content: View>(label: String, selected: String?, @ViewBuilder content: () -> Content) -> some View {
-        Menu {
-            content()
-        } label: {
-            HStack(spacing: 5) {
-                Text(selected.map(Self.chipTitle) ?? label)
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold))
-            }
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        // Chip labels read as ink; the app accent would turn every chip red.
-        .tint(LibraryPalette.ink)
-        .fixedSize()
-        .paperChip(selected: selected != nil)
-        .foregroundStyle(LibraryPalette.ink)
-    }
-
-    /// A long place or trip name would push the other chips out of the row;
-    /// the full name stays in the menu and in the active-filter chip below.
-    static func chipTitle(_ name: String) -> String {
-        name.count > 22 ? String(name.prefix(21)) + "…" : name
-    }
-
-    private func filterMenuLabel(_ text: String, selected: Bool) -> some View {
-        Label(text, systemImage: selected ? "checkmark" : "circle")
-    }
-
-    private var dateFilterMenu: some View {
-        Menu {
-            Toggle(String(localized: "From date"), isOn: Binding(
-                get: { fromDateInterval != 0 },
-                set: { enabled in
-                    fromDateInterval = enabled ? (fromDateInterval == 0 ? Date.now.timeIntervalSince1970 : fromDateInterval) : 0
-                }
-            ))
-            if fromDateInterval != 0 {
-                DatePicker(String(localized: "From date"), selection: fromDateBinding, displayedComponents: .date)
-            }
-            Toggle(String(localized: "To date"), isOn: Binding(
-                get: { toDateInterval != 0 },
-                set: { enabled in
-                    toDateInterval = enabled ? (toDateInterval == 0 ? Date.now.timeIntervalSince1970 : toDateInterval) : 0
-                }
-            ))
-            if toDateInterval != 0 {
-                DatePicker(String(localized: "To date"), selection: toDateBinding, displayedComponents: .date)
-            }
-            Divider()
-            Button(String(localized: "All dates")) {
-                fromDateInterval = 0
-                toDateInterval = 0
-            }
-        } label: {
-            filterMenuTitle(String(localized: "Date"), selected: dateFilterLabel != nil)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        // Chip labels read as ink; the app accent would turn every chip red.
-        .tint(LibraryPalette.ink)
-        .fixedSize()
-        .paperChip(selected: dateFilterLabel != nil)
-    }
-
-    private var memoryFilterMenu: some View {
-        Menu {
-            Button {
-                memoryFilterRaw = LibraryMemoryFilter.all.rawValue
-            } label: {
-                filterMenuLabel(String(localized: "All memories"), selected: selectedMemoryFilter == .all)
-            }
-            Button {
-                memoryFilterRaw = LibraryMemoryFilter.hasMemory.rawValue
-            } label: {
-                filterMenuLabel(String(localized: "Has memory"), selected: selectedMemoryFilter == .hasMemory)
-            }
-            Button {
-                memoryFilterRaw = LibraryMemoryFilter.noMemory.rawValue
-            } label: {
-                filterMenuLabel(String(localized: "No memory"), selected: selectedMemoryFilter == .noMemory)
-            }
-        } label: {
-            filterMenuTitle(String(localized: "Memory"), selected: selectedMemoryFilter != .all)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        // Chip labels read as ink; the app accent would turn every chip red.
-        .tint(LibraryPalette.ink)
-        .fixedSize()
-        .paperChip(selected: selectedMemoryFilter != .all)
-    }
-
-    private var personFilterMenu: some View {
-        Menu {
-            Button { personFilterID = "" } label: {
-                filterMenuLabel(String(localized: "All people"), selected: personFilterID.isEmpty)
-            }
-            if !visiblePeople.isEmpty { Divider() }
-            ForEach(visiblePeople, id: \.id) { person in
-                Button { personFilterID = person.id } label: {
-                    filterMenuLabel(person.name ?? String(localized: "Unnamed person"), selected: person.id == personFilterID)
-                }
-            }
-        } label: {
-            filterMenuTitle(String(localized: "Person"), selected: !personFilterID.isEmpty)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        // Chip labels read as ink; the app accent would turn every chip red.
-        .tint(LibraryPalette.ink)
-        .fixedSize()
-        .paperChip(selected: !personFilterID.isEmpty)
-    }
-
-    private func filterMenuTitle(_ label: String, selected: Bool) -> some View {
-        HStack(spacing: 5) {
-            Text(label)
-                .fontWeight(selected ? .semibold : .regular)
-            Image(systemName: "chevron.down")
-                .font(.caption2.weight(.semibold))
-        }
-        .foregroundStyle(selected ? LibraryPalette.accent : LibraryPalette.ink)
-    }
-
-    private func filterChip(_ text: String, remove: @escaping () -> Void) -> some View {
-        Button(action: remove) {
-            HStack(spacing: 5) {
-                Text(text)
-                Image(systemName: "xmark")
-                    .font(.caption2.weight(.bold))
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(LibraryPalette.accent, in: Capsule())
-        }
-        .buttonStyle(.plain)
     }
 
     private var results: some View {
@@ -559,6 +448,7 @@ struct LibraryView: View {
                 .scrollTargetLayout()
                 .padding(.horizontal, 34)
                 .padding(.vertical, 24)
+                .deselectsOnBackgroundClick(selection)
             }
             .scrollIndicators(.visible)
             // The scroll view opens at the section that was at the top when
@@ -568,6 +458,7 @@ struct LibraryView: View {
                 id: Binding(get: { state.topSectionScrollID }, set: { state.topSectionScrollID = $0 }),
                 anchor: .top
             )
+            .libraryGridInteraction(state: state, proxy: proxy)
             .onChange(of: selection.focusedItemID) { _, _ in
                 revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
             }
@@ -625,20 +516,6 @@ struct LibraryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var fromDateBinding: Binding<Date> {
-        Binding(
-            get: { fromDateInterval == 0 ? .now : Date(timeIntervalSince1970: fromDateInterval) },
-            set: { fromDateInterval = $0.timeIntervalSince1970 }
-        )
-    }
-
-    private var toDateBinding: Binding<Date> {
-        Binding(
-            get: { toDateInterval == 0 ? .now : Date(timeIntervalSince1970: toDateInterval) },
-            set: { toDateInterval = $0.timeIntervalSince1970 }
-        )
-    }
-
     private var dateFilterLabel: String? {
         guard fromDateInterval != 0 || toDateInterval != 0 else { return nil }
         let formatter = DateFormatter()
@@ -665,7 +542,7 @@ struct LibraryView: View {
     }
 
     private func selectedTripName(for tripID: String) -> String {
-        allItems.first(where: { $0.tripID == tripID })?.trip?.effectiveName ?? tripID
+        cachedFilterOptions.tripNames[tripID] ?? tripID
     }
 
     private func clearFilters() {
@@ -680,6 +557,9 @@ struct LibraryView: View {
     }
 
     private func regroup() {
+        cachedReviewCount = allItems.reduce(into: 0) { count, item in
+            if item.needsImportReview { count += 1 }
+        }
         let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
         cachedPersonIndex = personIndex
         // A scope from another screen narrows the grid only; the published
@@ -697,7 +577,9 @@ struct LibraryView: View {
         cachedVisibleCount = visible.count
         cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
         cachedSections = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
+        state.gridSections = cachedSections.map(\.itemIDs)
         hasGrouped = true
+        cachedFilterOptions = Self.filterOptions(for: allItems)
         let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
         selection.visibleItemIDs = publishedVisible
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
@@ -811,16 +693,58 @@ private struct LibrarySectionView: View {
     @Query private var placeNotes: [PlaceNote]
     @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
+    @AppStorage(LibraryThumbnailSize.storageKey) private var sizeLevel = LibraryThumbnailSize.defaultLevel
+
+    private var size: LibraryThumbnailSize { LibraryThumbnailSize(level: sizeLevel) }
+
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 175, maximum: 300), spacing: 24, alignment: .top)]
+        [GridItem(.adaptive(minimum: size.minimumWidth, maximum: size.maximumWidth), spacing: size.spacing, alignment: .top)]
+    }
+
+    @Environment(SelectionModel.self) private var selection
+
+    private var sectionTripID: String? {
+        section.id.hasPrefix("trip:") ? String(section.id.dropFirst("trip:".count)) : nil
+    }
+
+    private func selectSection() {
+        selection.select(section.itemIDs, focus: section.itemIDs.first)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(section.title)
-                    .font(.system(size: 21, weight: .medium, design: .serif))
-                    .foregroundStyle(LibraryPalette.ink)
+                // Like a moment title in Photos: click selects the section's
+                // photos, and the menu goes to the trip or the map. A trip's
+                // name also changes in place on double-click.
+                HStack(spacing: 0) {
+                    if let tripID = sectionTripID, section.id != "trip:unassigned" {
+                        EditableTripTitle(tripID: tripID, title: section.title, onClick: selectSection)
+                            .accessibilityAction(named: Text(String(localized: "Select these photos"))) { selectSection() }
+                    } else {
+                        Button { selectSection() } label: {
+                            Text(section.title)
+                                .font(.system(size: 21, weight: .medium, design: .serif))
+                                .foregroundStyle(LibraryPalette.ink)
+                        }
+                        .buttonStyle(.plain)
+                        .help(String(localized: "Select these photos"))
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("library.section.\(section.id)")
+                .contextMenu {
+                    Button(String(localized: "Select these photos")) { selectSection() }
+                    Button(String(localized: "Show only these photos")) {
+                        selection.showInLibrary(section.itemIDs, title: section.title)
+                    }
+                    if let tripID = sectionTripID {
+                        Button(String(localized: "Show Trip")) { selection.showTrip(tripID) }
+                    }
+                    if let first = section.itemIDs.first {
+                        Button(String(localized: "Show on Map")) { selection.showOnMap(first) }
+                    }
+                }
                 Text(dateSpan)
                     .font(.caption)
                     .foregroundStyle(LibraryPalette.muted)
@@ -832,11 +756,12 @@ private struct LibrarySectionView: View {
 
             CollectionMemoryLines(memories: sectionMemories)
 
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 28) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: size.rowSpacing) {
                 ForEach(items, id: \.id) { item in
-                    LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes)
+                    LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact)
                 }
             }
+            .measuresLibraryGridColumns(state, minimum: size.minimumWidth, spacing: size.spacing)
         }
     }
 
@@ -873,25 +798,58 @@ private struct LibraryPhotoCell: View {
     let groupItems: [UserGroupItem]
     var group: UserGroup? = nil
     var placeNotes: [PlaceNote] = []
+    /// The smallest zoom levels: a dense grid of photos only; place, memory
+    /// and note are read and written in the large viewer.
+    var isCompact = false
+    @State private var isHovering = false
 
     private var showsMemoryEditor: Bool {
         state.memoryDrafts[item.id] != nil
             || item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
+    /// A photo with a memory shows just that memory; its note line appears
+    /// while the pointer is over the photo or the line is in use. It keeps
+    /// its space, so the grid never shifts.
+    private var showsNoteLine: Bool {
+        !showsMemoryEditor || isHovering || state.focusedNoteItemID == item.id
+            || !(state.noteDrafts[item.id] ?? "").isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             ZStack(alignment: .topLeading) {
                 Button {
-                    selection.select(item.id)
+                    click()
                 } label: {
-                    ThumbnailView(item: item, width: 560, height: 420)
-                        .aspectRatio(1.33, contentMode: .fit)
-                        .padding(5)
-                        // A print's white mat, lifted by a warm two-layer shadow.
-                        .background(Color.white)
-                        .shadow(color: Paper.shadow.opacity(0.08), radius: 1, y: 1)
-                        .shadow(color: Paper.shadow.opacity(0.10), radius: 8, y: 5)
+                    if isCompact {
+                        ThumbnailView(item: item, width: 280, height: 280)
+                            .aspectRatio(1, contentMode: .fit)
+                            .overlay {
+                                if selection.isSelected(item.id) {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .strokeBorder(LibraryPalette.accent, lineWidth: 3)
+                                }
+                            }
+                    } else {
+                        ThumbnailView(item: item, width: 560, height: 420)
+                            .aspectRatio(1.33, contentMode: .fit)
+                            .padding(5)
+                            // A print's white mat, lifted by a warm two-layer shadow.
+                            // The mat casts it, not the photo: a shadow over the
+                            // whole cell is redrawn offscreen while the grid scrolls.
+                            .background(
+                                Color.white
+                                    .shadow(.drop(color: Paper.shadow.opacity(0.08), radius: 1, y: 1))
+                                    .shadow(.drop(color: Paper.shadow.opacity(0.10), radius: 8, y: 5))
+                            )
+                            // Selected photos get an accent frame, like Photos.
+                            .overlay {
+                                if selection.isSelected(item.id) {
+                                    Rectangle().strokeBorder(LibraryPalette.accent, lineWidth: 3)
+                                }
+                            }
+                    }
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("library.photo.\(item.id)")
@@ -904,10 +862,10 @@ private struct LibraryPhotoCell: View {
 
                 HStack(spacing: 6) {
                     Button {
-                        selection.toggle(item.id)
+                        selection.click(item.id, command: true)
                     } label: {
                         Image(systemName: selection.isSelected(item.id) ? "checkmark.circle.fill" : "circle")
-                            .font(.title3)
+                            .font(isCompact ? .body : .title3)
                             .symbolRenderingMode(.palette)
                             .foregroundStyle(.white, Paper.shadow.opacity(0.45))
                             .shadow(color: Paper.shadow.opacity(0.35), radius: 2)
@@ -923,7 +881,7 @@ private struct LibraryPhotoCell: View {
                         try? modelContext.save()
                     } label: {
                         Image(systemName: item.isFavorite ? "star.fill" : "star")
-                            .font(.title3)
+                            .font(isCompact ? .body : .title3)
                             .foregroundStyle(item.isFavorite ? .yellow : .white)
                             .shadow(color: Paper.shadow.opacity(0.35), radius: 2)
                             // Confirmations get one small, friendly bounce.
@@ -932,23 +890,43 @@ private struct LibraryPhotoCell: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel(String(localized: "Favorite"))
                 }
-                .padding(11)
+                .padding(isCompact ? 6 : 11)
+                // In the dense grid the marks show on hover, or when they mean something.
+                .opacity(!isCompact || isHovering || selection.isSelected(item.id) || item.isFavorite ? 1 : 0)
             }
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                PhotoPlaceLine(item: item, placeNotes: placeNotes)
-                Spacer(minLength: 0)
-                PhotoNoteBadge(item: item)
+            if !isCompact {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    PhotoPlaceLine(item: item, placeNotes: placeNotes)
+                    Spacer(minLength: 0)
+                    PhotoNoteBadge(item: item)
+                }
+                // A written memory stays editable here; the ruled line below is
+                // where new words go, so an empty photo shows only that one line.
+                if showsMemoryEditor {
+                    MemoryEditor(item: item, state: state)
+                }
+                PhotoNoteSection(item: item, state: state)
+                    .opacity(showsNoteLine ? 1 : 0)
             }
-            // A written memory stays editable here; the ruled line below is
-            // where new words go, so an empty photo shows only that one line.
-            if showsMemoryEditor {
-                MemoryEditor(item: item, state: state)
-            }
-            PhotoNoteSection(item: item, state: state)
         }
+        .onHover { isHovering = $0 }
         .contextMenu {
-            Button(String(localized: "Select")) { selection.select(item.id) }
+            Button(String(localized: "Open")) { open() }
+            Button(selection.isSelected(item.id) ? String(localized: "Deselect") : String(localized: "Select")) {
+                selection.toggle(item.id)
+            }
+            Button(item.isFavorite ? String(localized: "Unfavorite") : String(localized: "Favorite")) {
+                item.setFavorite(!item.isFavorite, context: modelContext)
+                try? modelContext.save()
+            }
+            Divider()
+            if item.latitude != nil {
+                Button(String(localized: "Show on Map")) { selection.showOnMap(item.id) }
+            }
+            if let tripID = item.tripID {
+                Button(String(localized: "Show Trip")) { selection.showTrip(tripID) }
+            }
             if let group {
                 Button(String(localized: "Remove from this group")) {
                     UserGroupRuleEngine.remove(item, from: group, memberships: groupItems, context: modelContext)
@@ -970,9 +948,35 @@ private struct LibraryPhotoCell: View {
         }
         .onDrag { NSItemProvider(object: item.id as NSString) }
     }
+
+    /// One click selects, a second click on the only selected photo
+    /// deselects it, Command and Shift extend; a double click opens it.
+    private func click() {
+        let event = NSApp.currentEvent
+        // clickCount exists only on mouse events; a keyboard press of the
+        // button (Full Keyboard Access, VoiceOver) is a single click.
+        let isMouse = event?.type == .leftMouseUp || event?.type == .leftMouseDown
+        if isMouse, (event?.clickCount ?? 1) >= 2 {
+            open()
+            return
+        }
+        // A click on a photo ends note editing, so the keys that follow move
+        // through the grid instead of typing into the note.
+        if NSApp.keyWindow?.firstResponder is NSTextView {
+            NSApp.keyWindow?.makeFirstResponder(nil)
+        }
+        let flags = event?.modifierFlags ?? []
+        selection.click(item.id, command: flags.contains(.command), shift: flags.contains(.shift), order: state.orderedItemIDs)
+    }
+
+    private func open() {
+        selection.select(item.id)
+        selection.anchorItemID = item.id
+        selection.openViewer(item.id, in: state.orderedItemIDs)
+    }
 }
 
-private struct MemoryEditor: View {
+struct MemoryEditor: View {
     @Environment(\.modelContext) private var modelContext
 
     let item: MediaItem
@@ -1135,6 +1139,30 @@ private struct MemoryEditor: View {
     }
 }
 
+/// The review list in a sheet, opened from the Library banner.
+struct ReviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ReviewListView()
+            HStack {
+                Spacer()
+                Button(String(localized: "Done")) { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("review.done")
+            }
+            .controlSize(.large)
+            .padding(.horizontal, PaperMetrics.sheetInset)
+            .padding(.vertical, 14)
+            .background(Paper.well.opacity(0.6))
+        }
+        .frame(minWidth: 640, idealWidth: 720, minHeight: 480, idealHeight: 620)
+        .background(Paper.canvas)
+        .tint(Paper.accent)
+    }
+}
+
 struct ReviewListView: View {
     @Query private var items: [MediaItem]
     @Environment(\.modelContext) private var modelContext
@@ -1242,6 +1270,7 @@ struct ReviewListView: View {
 struct GroupDetailView: View {
     let groupID: String
     let state: LibraryViewState
+    @Environment(SelectionModel.self) private var selection
 
     @Environment(\.modelContext) private var modelContext
     @Query private var groups: [UserGroup]
@@ -1334,6 +1363,7 @@ struct GroupDetailView: View {
             .sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) > ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
         cachedVisibleItemIDs = sorted.map(\.id)
         cachedVisibleItemsByID = Dictionary(uniqueKeysWithValues: sorted.map { ($0.id, $0) })
+        state.gridSections = sections.map(\.itemIDs)
     }
 
     private var sections: [LibrarySection] {
@@ -1344,15 +1374,6 @@ struct GroupDetailView: View {
         Group {
             if let group {
                 VStack(spacing: 0) {
-                    PaperScreenHeader(group.name) {
-                        Text(String(localized: "\(visibleItems.count) photos"))
-                    } trailing: {
-                        Text(group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
-                            .font(.caption)
-                            .foregroundStyle(LibraryPalette.muted)
-                            .paperChip()
-                    }
-
                     if sections.isEmpty {
                         ContentUnavailableView(
                             String(localized: "This group is empty"),
@@ -1367,26 +1388,36 @@ struct GroupDetailView: View {
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 34) {
-                                ForEach(sections) { section in
-                                    LibrarySectionView(
-                                        section: section,
-                                        items: section.itemIDs.compactMap { cachedVisibleItemsByID[$0] },
-                                        state: state,
-                                        allGroups: groups,
-                                        groupItems: memberships,
-                                        group: group
-                                    )
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 34) {
+                                    ForEach(sections) { section in
+                                        LibrarySectionView(
+                                            section: section,
+                                            items: section.itemIDs.compactMap { cachedVisibleItemsByID[$0] },
+                                            state: state,
+                                            allGroups: groups,
+                                            groupItems: memberships,
+                                            group: group
+                                        )
+                                    }
                                 }
+                                .padding(.horizontal, PaperMetrics.screenInset)
+                                .padding(.vertical, 24)
+                                .deselectsOnBackgroundClick(selection)
                             }
-                            .padding(.horizontal, PaperMetrics.screenInset)
-                            .padding(.vertical, 24)
+                            .libraryGridInteraction(state: state, proxy: proxy)
                         }
                     }
                 }
                 .background(LibraryPalette.content)
+                .navigationTitle(group.name)
+                .navigationSubtitle(
+                    String(localized: "\(visibleItems.count) photos") + " · "
+                        + (group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
+                )
                 .toolbar {
+                    ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
                     ToolbarItemGroup {
                         Button(String(localized: "Edit")) { showingEditor = true }
                         if group.kind == .smart {

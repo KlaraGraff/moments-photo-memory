@@ -6,6 +6,8 @@ holds every string Xcode extracted from the Swift sources merged with the
 String Catalogs, so a string added in code but never translated shows up
 here even though it is missing from Localizable.xcstrings.
 
+Also fails when a catalog lists a key twice.
+
 Usage: check_localization.py EXPORT_DIR
 """
 import json
@@ -47,8 +49,30 @@ def missing_units(xliff):
                 }
 
 
+def duplicate_keys(catalog):
+    """Keys listed twice, as a git merge of two branches can leave them."""
+    found = []
+
+    def collect(pairs):
+        seen = set()
+        for key, _ in pairs:
+            if key in seen:
+                found.append(key)
+            seen.add(key)
+        return dict(pairs)
+
+    json.loads(catalog.read_text(), object_pairs_hook=collect)
+    return found
+
+
 def main():
     export = Path(sys.argv[1])
+    root = Path(__file__).resolve().parent.parent
+    duplicates = {str(c.relative_to(root)): d for c in sorted(root.glob('macos/**/*.xcstrings')) if (d := duplicate_keys(c))}
+    if duplicates:
+        for catalog, keys in duplicates.items():
+            print(f'::error::{catalog} lists these keys twice: {", ".join(keys)}')
+        return 1
     problems = {}
     for language in LANGUAGES:
         xliffs = list(export.glob(f'{language}.xcloc/Localized Contents/{language}.xliff'))

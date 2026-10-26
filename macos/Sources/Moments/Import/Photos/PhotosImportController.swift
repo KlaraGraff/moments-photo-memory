@@ -191,7 +191,9 @@ public final class PhotosImportController {
                 }
                 summary = value
                 state = .finished
-                NotificationCenter.default.post(name: .momentsPeopleScanRequested, object: nil)
+                if ImportSettings.autoOrganize {
+                    NotificationCenter.default.post(name: .momentsPeopleScanRequested, object: nil)
+                }
             } catch is CancellationError {
                 progress = ImportProgress(phase: .cancelled, completed: progress.completed, total: progress.total, message: String(localized: "Apple Photos import cancelled"))
                 state = .cancelled

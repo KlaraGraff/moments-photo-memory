@@ -33,33 +33,3 @@ struct LanguageSettingsSection: View {
         }
     }
 }
-
-// Until the Settings window gains its own General tab (#74), the language
-// gets a minimal one here.
-struct MomentsSettingsView: View {
-    enum Tab: String {
-        case general
-        case ai
-    }
-
-    static let tabKey = "MomentsSettingsTab"
-
-    @AppStorage(MomentsSettingsView.tabKey) private var tab = Tab.general
-
-    var body: some View {
-        TabView(selection: $tab) {
-            Form { LanguageSettingsSection() }
-                .formStyle(.grouped)
-                .scrollContentBackground(.hidden)
-                .background(Paper.canvas)
-                .tint(Paper.accent)
-                .frame(width: 560)
-                .tabItem { Label(String(localized: "General"), systemImage: "gearshape") }
-                .tag(Tab.general)
-            AISettingsView()
-                .tabItem { Label(String(localized: "AI Model"), systemImage: "sparkles") }
-                .tag(Tab.ai)
-        }
-        .preferredColorScheme(.light)
-    }
-}

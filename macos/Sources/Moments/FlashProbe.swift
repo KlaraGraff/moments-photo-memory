@@ -21,7 +21,8 @@ enum FlashProbe {
     private static var monitor: Any?
     private static var timer: Timer?
     private static var deadline: TimeInterval = 0
-    private static var session: (label: String, start: TimeInterval, before: [Int: Frame], frames: [Int: [Frame]])?
+    private static var session: (label: String, start: TimeInterval, before: [Int: Frame], frames: [Int: [Frame]],
+                                 controlsBefore: [String: CGRect], controls: [String: [CGRect]])?
     private static var sessionCount = 0
     private static var report = ""
     private static let clock = CACurrentMediaTime()
@@ -58,7 +59,7 @@ enum FlashProbe {
         // The event has not been handled yet, so this is the frame before the click.
         var before: [Int: Frame] = [:]
         for window in captureWindows() { before[window.key] = window.value }
-        session = (label, now(), before, [:])
+        session = (label, now(), before, [:], controlFrames(), [:])
         deadline = now() + 1.5
         guard timer == nil else { return }
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { _ in
@@ -75,11 +76,45 @@ enum FlashProbe {
             if let last = session?.frames[number]?.last, changedShare(frame.luma, last.luma) == 0 { continue }
             session?.frames[number, default: []].append(frame)
         }
+        for (key, rect) in controlFrames() where session?.controls[key]?.last != rect {
+            session?.controls[key, default: []].append(rect)
+        }
         if now() > deadline {
             finishSession()
             timer?.invalidate()
             timer = nil
         }
+    }
+
+    /// Segmented controls and split-view columns, in window coordinates: an
+    /// AppKit control drawn wider than SwiftUI's slot shows up here even when
+    /// it covers too few pixels for the image check.
+    private static func controlFrames() -> [String: CGRect] {
+        var result: [String: CGRect] = [:]
+        for window in NSApp.windows where window.isVisible && window.windowNumber > 0 {
+            guard let content = window.contentView else { continue }
+            var segmented = 0
+            var splits = 0
+            func visit(_ view: NSView) {
+                // Keyed by accessibility identifier where there is one, so a
+                // cell's control appearing or scrolling away cannot shift keys.
+                if view is NSSegmentedControl, !view.isHiddenOrHasHiddenAncestor {
+                    let identifier = view.accessibilityIdentifier()
+                    let name = identifier.isEmpty ? "segmented\(segmented)" : identifier
+                    result["w\(window.windowNumber) \(name)"] = view.convert(view.bounds, to: nil)
+                    segmented += 1
+                }
+                if let split = view as? NSSplitView {
+                    for (index, column) in split.arrangedSubviews.enumerated() {
+                        result["w\(window.windowNumber) split\(splits) column\(index)"] = column.convert(column.bounds, to: nil)
+                    }
+                    splits += 1
+                }
+                view.subviews.forEach(visit)
+            }
+            visit(content)
+        }
+        return result
     }
 
     private static func captureWindows() -> [Int: Frame] {
@@ -146,11 +181,19 @@ enum FlashProbe {
                 if key != previous { text += "    \(line)\n" }
                 previous = key
             }
-            if flash, let worst {
+            if worstScore > 0.02, let worst {
                 if let before { write(before.image, name: "\(sessionCount)-w\(number)-1-before") }
                 write(worst.image, name: "\(sessionCount)-w\(number)-2-flash")
                 write(settled.image, name: "\(sessionCount)-w\(number)-3-after")
             }
+        }
+        for (key, rects) in current.controls.sorted(by: { $0.key < $1.key }) {
+            guard let settled = rects.last else { continue }
+            let before = current.controlsBefore[key]
+            let describe = { (r: CGRect) in String(format: "(%.1f,%.1f %.1fx%.1f)", r.minX, r.minY, r.width, r.height) }
+            // A frame that is neither where it started nor where it settled.
+            let transient = rects.contains { $0 != settled && $0 != before }
+            text += "  \(key): \(before.map(describe) ?? "-") -> \(rects.map(describe).joined(separator: " -> "))\(transient ? " CONTROL-JUMP" : "")\n"
         }
         append(text)
     }

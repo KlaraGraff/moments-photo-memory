@@ -198,8 +198,8 @@ extension PaperScreenHeader where Detail == EmptyView, Trailing == EmptyView {
 enum PaperMetrics {
     /// Leading and trailing inset of every list screen.
     static let screenInset: CGFloat = 34
-    /// Space above a screen's serif title.
-    static let screenTopInset: CGFloat = 28
+    /// Space between the title bar and a screen's first row.
+    static let screenTopInset: CGFloat = 16
     static let screenTitleFont = Font.system(size: 34, weight: .medium, design: .serif)
     /// Sheets: the same inset on every side and between header, body and footer.
     static let sheetInset: CGFloat = 24

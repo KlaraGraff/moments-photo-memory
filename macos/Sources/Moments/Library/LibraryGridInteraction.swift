@@ -61,10 +61,10 @@ private struct LibraryGridInteraction: ViewModifier {
             .onCommand(#selector(NSResponder.selectAll(_:))) {
                 selection.select(state.orderedItemIDs, focus: selection.focusedItemID)
             }
-            // A click on a photo makes the grid the keyboard target, unless
-            // the click went into a note field.
+            // A click on a photo makes the grid the keyboard target; the
+            // viewer keeps the keys while it is open.
             .onChange(of: selection.focusedItemID) { _, focused in
-                guard focused != nil, !Self.isEditingText else { return }
+                guard focused != nil, selection.viewerRequest == nil, !Self.isEditingText else { return }
                 isFocused = true
             }
             .onChange(of: selection.viewerRequest) { _, request in

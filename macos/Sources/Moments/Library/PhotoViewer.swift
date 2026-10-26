@@ -1,5 +1,6 @@
 import AppKit
 import AVKit
+import Photos
 import SwiftData
 import SwiftUI
 
@@ -221,10 +222,25 @@ struct PhotoViewer: View {
     }
 
     private func startVideo(_ item: MediaItem) {
-        guard let bookmark = item.originalBookmarkData,
-              let resolved = try? OriginalMediaBookmark.resolve(bookmark) else { return }
-        if resolved.url.startAccessingSecurityScopedResource() { scopedURL = resolved.url }
-        player = AVPlayer(url: resolved.url)
+        if let bookmark = item.originalBookmarkData,
+           let resolved = try? OriginalMediaBookmark.resolve(bookmark) {
+            if resolved.url.startAccessingSecurityScopedResource() { scopedURL = resolved.url }
+            player = AVPlayer(url: resolved.url)
+            return
+        }
+        // Videos from the Photos library play through PhotoKit.
+        guard let localIdentifier = item.photosLocalIdentifier,
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject else { return }
+        let options = PHVideoRequestOptions()
+        options.isNetworkAccessAllowed = true
+        let requestedID = item.id
+        PHImageManager.default().requestPlayerItem(forVideo: asset, options: options) { playerItem, _ in
+            guard let playerItem else { return }
+            DispatchQueue.main.async {
+                guard selection.viewerRequest?.itemID == requestedID else { return }
+                player = AVPlayer(playerItem: playerItem)
+            }
+        }
     }
 
     private func stopVideo() {

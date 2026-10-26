@@ -914,7 +914,7 @@ private struct LibraryPhotoCell: View {
 
                 HStack(spacing: 6) {
                     Button {
-                        selection.toggle(item.id)
+                        selection.click(item.id, command: true)
                     } label: {
                         Image(systemName: selection.isSelected(item.id) ? "checkmark.circle.fill" : "circle")
                             .font(.title3)
@@ -988,9 +988,17 @@ private struct LibraryPhotoCell: View {
     /// deselects it, Command and Shift extend; a double click opens it.
     private func click() {
         let event = NSApp.currentEvent
-        if (event?.clickCount ?? 1) >= 2 {
+        // clickCount exists only on mouse events; a keyboard press of the
+        // button (Full Keyboard Access, VoiceOver) is a single click.
+        let isMouse = event?.type == .leftMouseUp || event?.type == .leftMouseDown
+        if isMouse, (event?.clickCount ?? 1) >= 2 {
             open()
             return
+        }
+        // A click on a photo ends note editing, so the keys that follow move
+        // through the grid instead of typing into the note.
+        if NSApp.keyWindow?.firstResponder is NSTextView {
+            NSApp.keyWindow?.makeFirstResponder(nil)
         }
         let flags = event?.modifierFlags ?? []
         selection.click(item.id, command: flags.contains(.command), shift: flags.contains(.shift), order: state.orderedItemIDs)

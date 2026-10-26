@@ -59,9 +59,15 @@ final class SelectionModel {
     /// deselects it, Command adds or removes one photo, and Shift selects
     /// everything between the anchor and this photo in `order`.
     func click(_ id: String, command: Bool = false, shift: Bool = false, order: [String] = []) {
-        if shift, let anchor = anchorItemID ?? focusedItemID,
-           let from = order.firstIndex(of: anchor), let to = order.firstIndex(of: id) {
-            selectedItemIDs.formUnion(order[min(from, to)...max(from, to)])
+        if shift {
+            if let anchor = anchorItemID ?? focusedItemID,
+               let from = order.firstIndex(of: anchor), let to = order.firstIndex(of: id) {
+                selectedItemIDs.formUnion(order[min(from, to)...max(from, to)])
+            } else {
+                // No visible anchor: Shift-click adds this photo and starts a new range.
+                selectedItemIDs.insert(id)
+                anchorItemID = id
+            }
             focusedItemID = id
             return
         }

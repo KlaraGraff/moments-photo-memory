@@ -43,6 +43,16 @@ final class LibraryGridInteractionTests: XCTestCase {
         XCTAssertEqual(selection.selectedItemIDs, ["a", "b", "c", "d"])
     }
 
+    func testShiftClickWithoutAVisibleAnchorAddsThePhoto() {
+        let selection = SelectionModel()
+        selection.click("d", order: order)
+        // d is filtered out of view; Shift-click must not fall back to a plain click.
+        selection.click("b", shift: true, order: ["a", "b", "c"])
+        XCTAssertEqual(selection.selectedItemIDs, ["b", "d"])
+        selection.click("b", shift: true, order: ["a", "b", "c"])
+        XCTAssertEqual(selection.selectedItemIDs, ["b", "d"], "Shift-clicking the anchor must not deselect it")
+    }
+
     func testClearForgetsTheAnchor() {
         let selection = SelectionModel()
         selection.click("b", order: order)

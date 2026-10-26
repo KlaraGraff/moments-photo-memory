@@ -32,11 +32,19 @@ struct MomentsApp: App {
         guard path.hasPrefix("/") else { return nil }
         return URL(fileURLWithPath: path, isDirectory: true)
     }
+
+    /// `-MomentsUITestStressCount <n>` adds n synthetic items for scrolling checks.
+    private static var uiTestStressCount: Int? {
+        guard let index = ProcessInfo.processInfo.arguments.firstIndex(of: "-MomentsUITestStressCount"),
+              index + 1 < ProcessInfo.processInfo.arguments.count else { return nil }
+        return Int(ProcessInfo.processInfo.arguments[index + 1])
+    }
     #endif
 
     init() {
         #if DEBUG
         FlashProbe.startIfRequested()
+        ScrollProbe.startIfRequested()
         #endif
         do {
             #if DEBUG
@@ -62,6 +70,9 @@ struct MomentsApp: App {
             // The on-disk UI-test store holds only what the test imports.
             if Self.uiTestStoreDirectory == nil {
                 try? DemoSeeder.seedIfNeeded(context: container.mainContext)
+            }
+            if let count = Self.uiTestStressCount {
+                try? DemoSeeder.generateSyntheticLibrary(count: count, context: container.mainContext)
             }
             #endif
             modelContainer = container

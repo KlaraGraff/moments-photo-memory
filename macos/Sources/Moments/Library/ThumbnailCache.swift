@@ -109,6 +109,9 @@ final class ThumbnailCache {
 
     func image(for item: MediaItem, width: Int, height: Int) async -> NSImage? {
         let key = "\(item.id)-\(width)x\(height)" as NSString
+        #if DEBUG
+        ScrollProbe.count("thumbnail.request")
+        #endif
         if let cached = cache.object(forKey: key) { return cached }
         let bookmark = item.originalBookmarkData
         let id = item.id

@@ -121,6 +121,9 @@ struct LibraryView: View {
     /// trip/place names, and overrides come from their own queries so this
     /// token never faults `item.memories` for every media item during a render.
     private var groupingKey: Int {
+        #if DEBUG
+        ScrollProbe.count("library.groupingKey")
+        #endif
         var hasher = Hasher()
         hasher.combine(typeRaw)
         hasher.combine(groupingRaw)

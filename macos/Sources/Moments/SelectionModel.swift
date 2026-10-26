@@ -162,7 +162,7 @@ final class SelectionModel {
     /// Opens the Library filtered to one person, as the People card does.
     func showPhotos(ofPerson personID: String, defaults: UserDefaults = .standard) {
         viewerRequest = nil
-        defaults.set(personID, forKey: "moments.library.person")
+        defaults.set(personID, forKey: LibraryFilterKeys.person)
         clear()
         requestedDestination = .library
         shouldRevealSelectionInLibrary = false

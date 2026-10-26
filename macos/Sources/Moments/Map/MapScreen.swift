@@ -131,6 +131,12 @@ struct MapScreen: View {
         .onChange(of: selection.focusedItemID) { _, focusedItemID in
             focus(on: focusedItemID)
         }
+        // A request made while the map is already showing (e.g. from the viewer).
+        .onChange(of: selection.mapFocusRequest) { _, requested in
+            guard let requested else { return }
+            selection.mapFocusRequest = nil
+            focus(on: requested)
+        }
         .onChange(of: selection.selectedItemIDs) { _, selectedItemIDs in
             guard let selectedClusterID,
                   let cluster = snapshot.clusters.first(where: { $0.id == selectedClusterID }) else { return }

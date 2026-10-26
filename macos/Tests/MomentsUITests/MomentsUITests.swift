@@ -488,6 +488,27 @@ final class MomentsUITests: XCTestCase {
     }
 
     /// "Save as smart group" is offered only once a filter is set.
+    /// The count beside the title never sits under the type picker, and the
+    /// picker stays put while the count changes.
+    func testLibraryCountNeitherOverlapsNorMovesThePicker() {
+        let app = launch(language: "en")
+        let picker = element(in: app, identifier: "library.type-filter")
+        let count = element(in: app, identifier: "library.photoCount")
+        XCTAssertTrue(picker.waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(count.waitForExistence(timeout: launchTimeout))
+        let before = picker.frame
+        for segment in ["Videos", "Photos", "All"] {
+            app.radioButtons[segment].firstMatch.click()
+            Thread.sleep(forTimeInterval: 0.5)
+            let after = picker.frame
+            XCTAssertEqual(after.minX, before.minX, accuracy: 0.5, "The picker moved after choosing \(segment)")
+            if abs(after.midY - count.frame.midY) < after.height {
+                XCTAssertLessThanOrEqual(count.frame.maxX, after.minX, "The count runs under the picker after choosing \(segment)")
+            }
+        }
+        capture(app, named: "library-05-header-evidence")
+    }
+
     func testSmartGroupButtonOnlyWithFilter() {
         let app = launch(language: "en")
         XCTAssertTrue(element(in: app, identifier: "library.type-filter").waitForExistence(timeout: launchTimeout))

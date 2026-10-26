@@ -245,7 +245,8 @@ struct PhotoViewer: View {
     @ViewBuilder
     private var media: some View {
         if let player {
-            VideoPlayer(player: player)
+            VideoPlayerView(player: player)
+                .accessibilityIdentifier("viewer.video")
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .padding(28)
         } else if let image {
@@ -440,5 +441,24 @@ final class PhotoViewerImageCache {
         let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
         cache.setObject(image, forKey: item.id as NSString)
         return image
+    }
+}
+
+/// AppKit's player view. SwiftUI's `VideoPlayer` aborted the app on macOS 27
+/// when it was first shown: its AVKit overlay could not find its superclass
+/// `AVPlayerView`, because nothing else in the app loaded AVKit.
+private struct VideoPlayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.controlsStyle = .floating
+        view.showsFullScreenToggleButton = false
+        view.player = player
+        return view
+    }
+
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if view.player !== player { view.player = player }
     }
 }

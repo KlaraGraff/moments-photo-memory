@@ -311,12 +311,18 @@ struct LibraryView: View {
                 .lineLimit(1)
                 .layoutPriority(1)
                 .minimumScaleFactor(0.7)
-            Text("\(cachedVisibleCount) \(String(localized: "photos"))")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(LibraryPalette.muted)
-                .lineLimit(1)
-                .accessibilityIdentifier("library.photoCount")
-                .accessibilityValue(String(cachedVisibleCount))
+            // A slot as wide as "888,888 photos", so the pickers beside it
+            // never move while the count changes (up to six digits).
+            ZStack(alignment: .leading) {
+                Text("\(888_888) \(String(localized: "photos"))")
+                    .hidden()
+                Text("\(cachedVisibleCount) \(String(localized: "photos"))")
+                    .foregroundStyle(LibraryPalette.muted)
+                    .accessibilityIdentifier("library.photoCount")
+                    .accessibilityValue(String(cachedVisibleCount))
+            }
+            .font(.caption.monospacedDigit())
+            .lineLimit(1)
         }
         // Never squeezed: a compressed title wraps one letter per line.
         .fixedSize()
@@ -334,7 +340,9 @@ struct LibraryView: View {
         // The segments name themselves; a visible "Media type" label wrapped
         // onto two lines in narrow windows. VoiceOver still reads it.
         .labelsHidden()
-        .frame(maxWidth: 410)
+        // At its own width: squeezed, the segments drew over the count beside
+        // them instead of letting the header wrap.
+        .fixedSize()
         .accessibilityIdentifier("library.type-filter")
     }
 

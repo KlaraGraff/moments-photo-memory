@@ -388,6 +388,29 @@ final class MomentsUITests: XCTestCase {
         XCTAssertEqual(libraryPhotoCount(app), allCount)
     }
 
+    /// The Map has the Library's filters, and a filter set there is set in
+    /// the Library too.
+    func testMapFiltersFollowTheLibrary() {
+        let app = launch(language: "en")
+        element(in: app, identifier: "sidebar.map").click()
+        let filters = element(in: app, identifier: "map.filters")
+        XCTAssertTrue(filters.waitForExistence(timeout: 30), "The Map has no filter bar")
+        let trip = filters.menuButtons["Trip"].firstMatch
+        XCTAssertTrue(trip.waitForExistence(timeout: launchTimeout))
+        trip.click()
+        let journey = app.menuItems["journeyA"].firstMatch
+        XCTAssertTrue(journey.waitForExistence(timeout: launchTimeout))
+        journey.click()
+        Thread.sleep(forTimeInterval: 1.5)
+        capture(app, named: "map-07-filtered-evidence")
+
+        element(in: app, identifier: "sidebar.library").click()
+        let chip = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "journeyA")).firstMatch
+        XCTAssertTrue(chip.waitForExistence(timeout: launchTimeout), "The trip picked on the Map is not set in the Library")
+        capture(app, named: "map-08-filter-in-library-evidence")
+        chip.click()
+    }
+
     /// A country on the Map's globe lists its photos in the Library.
     func testMapCountryShowsItsPhotosInLibrary() {
         let app = launch(language: "en")

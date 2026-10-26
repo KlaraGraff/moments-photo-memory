@@ -14,6 +14,7 @@ struct PhotoNoteSection: View {
     let state: LibraryViewState
     @FocusState private var isFocused: Bool
     @State private var savedCount = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var draft: Binding<String> {
         Binding(
@@ -39,7 +40,7 @@ struct PhotoNoteSection: View {
                 Rectangle()
                     .fill(isFocused ? LibraryPalette.muted.opacity(0.7) : LibraryPalette.rule)
                     .frame(height: isFocused ? 1.5 : 1)
-                    .animation(Motion.settle, value: isFocused)
+                    .animation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), value: isFocused)
             }
             // Return submits and Option-Return inserts a line break (the
             // vertical field's own behavior), so Return that confirms an input
@@ -469,6 +470,9 @@ private struct NoteSuggestionCard: View {
 private struct NoteSuggestionContent: View {
     let suggestion: NoteSuggestion
     var reveal = false
+    /// Decided once when the text first shows, so the person's own later
+    /// edits or toggles never replay it as if the AI had just written it.
+    @State private var revealsOnAppear: Bool?
 
     static func title(for suggestion: NoteSuggestion) -> String {
         switch suggestion.kind {
@@ -505,11 +509,14 @@ private struct NoteSuggestionContent: View {
 
     @ViewBuilder
     private var written: some View {
-        if reveal {
-            InkRevealText(text: suggestion.text)
-        } else {
-            Text(suggestion.text)
+        Group {
+            if revealsOnAppear ?? reveal {
+                InkRevealText(text: suggestion.text)
+            } else {
+                Text(suggestion.text)
+            }
         }
+        .onAppear { if revealsOnAppear == nil { revealsOnAppear = reveal } }
     }
 }
 

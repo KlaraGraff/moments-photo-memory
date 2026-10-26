@@ -1411,7 +1411,6 @@ struct GroupEditorSheet: View {
                     TextField(String(localized: "Group name"), text: $name)
                         .textFieldStyle(.paper)
                         .labelsHidden()
-                        .onSubmit(save)
                 }
                 if isSmart {
                     GridRow {
@@ -1428,13 +1427,14 @@ struct GroupEditorSheet: View {
                     GridRow {
                         PaperFormLabel(String(localized: "Conditions"))
                         VStack(alignment: .leading, spacing: 10) {
-                            if !rules.isEmpty {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    ForEach($rules) { $rule in
-                                        ruleRow($rule)
-                                    }
-                                }
-                                .paperWell()
+                            if rules.count > 5 {
+                                // A long list scrolls so the buttons stay on screen.
+                                ScrollView { ruleList }
+                                    .frame(height: 250)
+                                    .paperWell(padding: 0)
+                            } else if !rules.isEmpty {
+                                ruleList
+                                    .paperWell()
                             }
                             HStack(alignment: .firstTextBaseline, spacing: 12) {
                                 Button {
@@ -1477,6 +1477,15 @@ struct GroupEditorSheet: View {
         }
         .frame(width: isSmart ? 620 : 440)
         .frame(minHeight: isSmart ? 320 : 0)
+    }
+
+    private var ruleList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach($rules) { $rule in
+                ruleRow($rule)
+            }
+        }
+        .padding(rules.count > 5 ? 10 : 0)
     }
 
     /// One condition on a single line. Field and condition menus have fixed

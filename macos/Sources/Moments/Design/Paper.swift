@@ -345,10 +345,7 @@ struct InkRevealText: View {
             Text(text)
                 .textRenderer(InkRevealRenderer(progress: progress))
                 .onAppear { play() }
-                .onChange(of: text) { _, _ in
-                    progress = 0
-                    play()
-                }
+
         } else {
             Text(text)
                 .blur(radius: (1 - progress) * 4)

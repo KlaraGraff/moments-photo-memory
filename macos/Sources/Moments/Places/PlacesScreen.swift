@@ -481,7 +481,7 @@ private enum MapStatusStyle {
     var background: AnyShapeStyle {
         switch self {
         case .normal: return AnyShapeStyle(Paper.raised)
-        case .warning: return AnyShapeStyle(Paper.raised)
+        case .warning: return AnyShapeStyle(Paper.accent.opacity(0.10))
         }
     }
 }

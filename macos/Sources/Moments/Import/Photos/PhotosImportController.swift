@@ -285,9 +285,15 @@ public struct PhotosImportStatusView: View {
                 case .denied, .restricted:
                     Label("Apple Photos access is unavailable", systemImage: "lock.slash")
                         .foregroundStyle(Paper.muted)
-                case .limited where controller.preview == nil:
-                    Label("Apple Photos access is limited", systemImage: "photo.on.rectangle.angled")
-                        .foregroundStyle(Paper.muted)
+                case .limited:
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let preview = controller.preview {
+                            Text("\(preview.count) photos or videos selected")
+                                .monospacedDigit()
+                        }
+                        Label("Apple Photos access is limited", systemImage: "photo.on.rectangle.angled")
+                            .foregroundStyle(Paper.muted)
+                    }
                 default:
                     if let preview = controller.preview {
                         Text("\(preview.count) photos or videos selected")
@@ -374,7 +380,6 @@ public struct PhotosImportSheet: View {
                             } else {
                                 List(controller.albums, selection: $selectedAlbums) { album in
                                     Text(album.title).tag(album.localIdentifier)
-                                        .listRowBackground(Color.clear)
                                 }
                                 .scrollContentBackground(.hidden)
                                 .paperWell(padding: 2)

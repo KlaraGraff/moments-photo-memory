@@ -28,6 +28,7 @@ struct ContentView: View {
     /// Owned by the app so Library filters and scroll survive sidebar switches.
     let libraryState: LibraryViewState
     @Environment(SelectionModel.self) private var shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(ImportController.self) private var importController
     @Query private var items: [MediaItem]
     @Query(sort: \UserGroup.name) private var groups: [UserGroup]
@@ -157,18 +158,21 @@ struct ContentView: View {
                     GroupDetailView(groupID: groupID, state: libraryState)
                 }
             }
-            // The large photo view covers whichever screen opened it.
-            .overlay {
-                if let request = shared.viewerRequest {
-                    PhotoViewer(request: request, libraryState: libraryState)
-                        .transition(.opacity)
-                }
-            }
             // The title bar continues the page's paper instead of a white strip.
             .toolbarBackground(MomentsPalette.content, for: .windowToolbar)
             .toolbarBackground(.visible, for: .windowToolbar)
         }
         .frame(minWidth: 900, minHeight: 600)
+        // The large photo view is a card over the whole window, sidebar included.
+        .overlay {
+            if let request = shared.viewerRequest {
+                PhotoViewer(request: request, libraryState: libraryState)
+                    // Opens and closes like a file preview in Claude: a quick
+                    // fade with a slight grow from the middle.
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+            }
+        }
+        .animation(reduceMotion ? nil : Motion.snap, value: shared.viewerRequest == nil)
         // One accent everywhere, sheets included: no system blue controls.
         .tint(MomentsPalette.accent)
         .onChange(of: selection) { _, _ in
@@ -176,6 +180,11 @@ struct ContentView: View {
         }
         .onChange(of: shared.requestedDestination) { _, destination in
             guard let destination else { return }
+            // A scoped jump opens the Library at the top of those photos,
+            // not where the full Library was left.
+            if destination == .library, shared.libraryScope != nil, !shared.shouldRevealSelectionInLibrary {
+                libraryState.topSectionScrollID = nil
+            }
             switch destination {
             case .library: selection = .library
             case .places: selection = .places

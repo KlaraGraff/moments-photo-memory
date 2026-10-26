@@ -92,4 +92,20 @@ final class ImportReviewPartitionTests: XCTestCase {
             .set("New suggestion")
         )
     }
+
+    /// The To review list and its sidebar badge drop a photo once it is handled.
+    func testHandledItemNoLongerNeedsReview() {
+        let item = MediaItem(id: "synthetic-review")
+        item.importReviewReasonsRaw = ImportReviewReason.missingLocation.rawValue
+        XCTAssertTrue(item.needsImportReview)
+
+        item.importDecision = .accepted
+        XCTAssertFalse(item.needsImportReview)
+
+        item.importDecision = .pending
+        XCTAssertTrue(item.needsImportReview)
+
+        item.importReviewReasonsRaw = nil
+        XCTAssertFalse(item.needsImportReview)
+    }
 }

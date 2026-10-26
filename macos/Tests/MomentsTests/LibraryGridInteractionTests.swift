@@ -104,4 +104,14 @@ final class LibraryGridInteractionTests: XCTestCase {
         XCTAssertEqual(LibraryGridNavigation.columns(width: 374, minimum: 175, spacing: 24), 2)
         XCTAssertEqual(LibraryGridNavigation.columns(width: 800, minimum: 175, spacing: 24), 4)
     }
+
+    func testThumbnailSizeLevelsClampAndCompactAtTheSmallestTwo() {
+        XCTAssertEqual(LibraryThumbnailSize(level: -3).level, 0)
+        XCTAssertEqual(LibraryThumbnailSize(level: 99).level, LibraryThumbnailSize.maximumLevel)
+        XCTAssertTrue(LibraryThumbnailSize(level: 0).isCompact)
+        XCTAssertTrue(LibraryThumbnailSize(level: 1).isCompact)
+        XCTAssertFalse(LibraryThumbnailSize(level: LibraryThumbnailSize.defaultLevel).isCompact)
+        // The default keeps today's print size.
+        XCTAssertEqual(LibraryThumbnailSize(level: LibraryThumbnailSize.defaultLevel).minimumWidth, 175)
+    }
 }

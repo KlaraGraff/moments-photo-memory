@@ -417,6 +417,8 @@ private struct TripPlaceBlock: View {
 
     private let columns = [GridItem(.adaptive(minimum: 128, maximum: 200), spacing: 8, alignment: .top)]
 
+    private var placeName: String { place.name ?? String(localized: "Unknown place") }
+
     /// Photo memories written before notes existed stay readable here.
     private var photoMemories: [TimelineMemorySnippet] { place.items.flatMap(\.memories) }
 
@@ -426,9 +428,17 @@ private struct TripPlaceBlock: View {
                 Image(systemName: "mappin")
                     .font(.caption)
                     .foregroundStyle(Paper.accent)
-                Text(place.name ?? String(localized: "Unknown place"))
-                    .font(.headline)
-                    .foregroundStyle(Paper.ink)
+                // The place's name lists its photos on their own in the Library.
+                Button {
+                    selection.showInLibrary(place.itemIDs, title: placeName)
+                } label: {
+                    Text(placeName)
+                        .font(.headline)
+                        .foregroundStyle(Paper.ink)
+                }
+                .buttonStyle(.plain)
+                .help(String(localized: "Show these photos in the Library"))
+                .accessibilityIdentifier("trips.place.\(place.id)")
                 if let city = place.cityName, city != place.name {
                     Text(city)
                         .font(.caption)

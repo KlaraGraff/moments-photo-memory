@@ -115,7 +115,7 @@ struct FootprintsScreen: View {
                 if let center = cluster.center {
                     Annotation(cluster.name ?? String(localized: "City"), coordinate: center.coordinate, anchor: .bottom) {
                         Button {
-                            selection.select(cluster.stopIDs, focus: cluster.stopIDs.first)
+                            selection.showInLibrary(cluster.stopIDs, title: cityTitle(cluster))
                         } label: {
                             VStack(spacing: 2) {
                                 Image(systemName: "mappin.circle.fill")
@@ -130,7 +130,8 @@ struct FootprintsScreen: View {
                             }
                         }
                         .buttonStyle(.plain)
-                        .help(cluster.name ?? String(localized: "City"))
+                        .help(String(format: String(localized: "Show photos from %@"), cityTitle(cluster)))
+                        .accessibilityIdentifier("footprints.city.\(cluster.id)")
                     }
                 }
             }
@@ -183,31 +184,45 @@ struct FootprintsScreen: View {
                             .padding(.bottom, 8)
                     }
                     ForEach(screenState.countrySummaries) { country in
-                        Button {
-                            guard let center = country.firstCenter else { return }
-                            moveCamera(to: center)
-                        } label: {
-                            HStack(spacing: 10) {
-                                Text(country.flag)
-                                    .font(.title3)
-                                    .frame(width: 28)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(country.name)
-                                        .foregroundStyle(Paper.ink)
-                                    Text("\(country.photoCount) \(String(localized: "photos"))")
-                                        .font(.caption)
-                                        .foregroundStyle(Paper.muted)
+                        HStack(spacing: 0) {
+                            Button {
+                                guard let center = country.firstCenter else { return }
+                                moveCamera(to: center)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Text(country.flag)
+                                        .font(.title3)
+                                        .frame(width: 28)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(country.name)
+                                            .foregroundStyle(Paper.ink)
+                                        Text("\(country.photoCount) \(String(localized: "photos"))")
+                                            .font(.caption)
+                                            .foregroundStyle(Paper.muted)
+                                    }
+                                    Spacer()
                                 }
-                                Spacer()
-                                Image(systemName: "location.north.line")
-                                    .font(.caption)
-                                    .foregroundStyle(Paper.muted)
+                                .contentShape(Rectangle())
+                                .padding(.leading, 16)
+                                .padding(.vertical, 9)
                             }
-                            .contentShape(Rectangle())
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 9)
+                            .buttonStyle(.plain)
+                            .help(String(localized: "Show on the globe"))
+                            Button {
+                                selection.showInLibrary(itemIDs(of: country), title: country.name)
+                            } label: {
+                                Image(systemName: "photo.on.rectangle")
+                                    .font(.callout)
+                                    .foregroundStyle(Paper.muted)
+                                    .frame(width: 32, height: 32)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.borderless)
+                            .padding(.trailing, 8)
+                            .help(String(format: String(localized: "Show photos from %@"), country.name))
+                            .accessibilityLabel(String(format: String(localized: "Show photos from %@"), country.name))
+                            .accessibilityIdentifier("footprints.country.photos.\(country.id)")
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -237,6 +252,19 @@ struct FootprintsScreen: View {
         screenState.geocoding = batch.results
         screenState.isGeocoding = false
         screenState.didEncounterGeocodingError = batch.didEncounterError
+    }
+
+    /// Name for a city pin: the cluster's own name, else its country.
+    private func cityTitle(_ cluster: PlaceCluster) -> String {
+        if let name = cluster.name, !name.isEmpty { return name }
+        return screenState.geocoding[cluster.id]?.displayName ?? String(localized: "City")
+    }
+
+    private func itemIDs(of country: FootprintsCountrySummary) -> [String] {
+        let clusterIDs = Set(country.clusterIDs)
+        return screenState.snapshot.cityClusters
+            .filter { clusterIDs.contains($0.id) }
+            .flatMap(\.stopIDs)
     }
 
     private func focus(on itemID: String?) {

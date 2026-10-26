@@ -127,6 +127,7 @@ final class MomentsUITests: XCTestCase {
         let paged = NSPredicate(format: "value != %@", start ?? "")
         expectation(for: paged, evaluatedWith: counter)
         waitForExpectations(timeout: launchTimeout)
+        capture(app, named: "grid-02b-viewer-paged-evidence")
         app.typeKey(.escape, modifierFlags: [])
         let gone = NSPredicate(format: "exists == false")
         expectation(for: gone, evaluatedWith: viewer)
@@ -138,6 +139,20 @@ final class MomentsUITests: XCTestCase {
         app.typeKey(" ", modifierFlags: [])
         expectation(for: gone, evaluatedWith: viewer)
         waitForExpectations(timeout: launchTimeout)
+
+        // ⌘− twice: the dense grid has photos only, no note lines.
+        let photoID = String(first.identifier.dropFirst("library.photo.".count))
+        let note = element(in: app, identifier: "library.note.\(photoID)")
+        XCTAssertTrue(note.exists)
+        app.typeKey("-", modifierFlags: .command)
+        app.typeKey("-", modifierFlags: .command)
+        let noteGone = NSPredicate(format: "exists == false")
+        expectation(for: noteGone, evaluatedWith: note)
+        waitForExpectations(timeout: launchTimeout)
+        capture(app, named: "grid-03-compact-evidence")
+        app.typeKey("=", modifierFlags: .command)
+        app.typeKey("=", modifierFlags: .command)
+        XCTAssertTrue(note.waitForExistence(timeout: launchTimeout), "⌘+ did not bring the print size back")
     }
 
     /// Two clicks closer together than the double-click interval are a double click.
@@ -331,6 +346,95 @@ final class MomentsUITests: XCTestCase {
         back.click()
         XCTAssertTrue(card.waitForExistence(timeout: launchTimeout), "Back did not return to the trip cards")
         capture(app, named: "trips-04-shelf-with-memory-evidence")
+    }
+
+    func testTripPlaceShowsItsPhotosInLibrary() {
+        let app = launch(language: "en")
+        tripPlaceShowsItsPhotosInLibrary(app)
+    }
+
+    /// The Library restores where the user left it; a jump from a trip must still win.
+    func testTripPlaceShowsItsPhotosInLibraryAfterScrolling() {
+        let app = launch(language: "en")
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+            .firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
+        photo.scroll(byDeltaX: 0, deltaY: -1500)
+        Thread.sleep(forTimeInterval: 1)
+        tripPlaceShowsItsPhotosInLibrary(app)
+    }
+
+    private func tripPlaceShowsItsPhotosInLibrary(_ app: XCUIApplication) {
+        let allCount = libraryPhotoCount(app)
+        element(in: app, identifier: "sidebar.timeline").click()
+        let card = element(in: app, identifier: "trips.card.journeyA")
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
+        card.click()
+
+        // A place's name lists its photos on their own in the Library.
+        let place = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.place.")).firstMatch
+        XCTAssertTrue(place.waitForExistence(timeout: launchTimeout), "Trip place name was not exposed")
+        place.click()
+
+        let chip = element(in: app, identifier: "library.scope-chip")
+        XCTAssertTrue(chip.waitForExistence(timeout: launchTimeout), "Library should show the place as a removable chip")
+        let scopedCount = libraryPhotoCount(app)
+        XCTAssertGreaterThan(scopedCount, 0)
+        XCTAssertLessThan(scopedCount, allCount, "Only the place's photos should be listed")
+
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+            .firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(photo.isHittable, "The place's photos should be in view")
+        // A sliver at the edge counts as hittable; the whole card must be visible
+        // below the filter chips and inside the window.
+        let window = app.windows.firstMatch.frame
+        let frame = photo.frame
+        XCTAssertGreaterThanOrEqual(frame.minY, chip.frame.maxY - 1, "The card is cut off at the top (card \(frame), chip \(chip.frame))")
+        XCTAssertLessThanOrEqual(frame.maxY, window.maxY + 1, "The card is cut off at the bottom (card \(frame), window \(window))")
+        capture(app, named: "trips-05-place-in-library-evidence")
+
+        chip.click()
+        XCTAssertTrue(chip.waitForNonExistence(timeout: 5), "Clicking the chip should remove the scope")
+        XCTAssertEqual(libraryPhotoCount(app), allCount)
+    }
+
+    /// A country in Footprints lists its photos in the Library.
+    func testFootprintsCountryShowsItsPhotosInLibrary() {
+        let app = launch(language: "en")
+        let allCount = libraryPhotoCount(app)
+        element(in: app, identifier: "sidebar.footprints").click()
+        let button = app.buttons
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "footprints.country.photos."))
+            .firstMatch
+        XCTAssertTrue(button.waitForExistence(timeout: launchTimeout), "Country row has no photos button")
+        button.click()
+        XCTAssertTrue(element(in: app, identifier: "library.scope-chip").waitForExistence(timeout: launchTimeout))
+        let scopedCount = libraryPhotoCount(app)
+        XCTAssertGreaterThan(scopedCount, 0)
+        XCTAssertLessThanOrEqual(scopedCount, allCount)
+        capture(app, named: "footprints-03-country-in-library-evidence")
+    }
+
+    /// "Save as smart group" is offered only once a filter is set.
+    func testSmartGroupButtonOnlyWithFilter() {
+        let app = launch(language: "en")
+        XCTAssertTrue(element(in: app, identifier: "library.type-filter").waitForExistence(timeout: launchTimeout))
+        XCTAssertFalse(element(in: app, identifier: "library.save-smart-group").exists)
+        XCTAssertFalse(element(in: app, identifier: "library.add-filter").exists, "The dead Add filter stub is gone")
+        app.radioButtons["Photos"].firstMatch.click()
+        XCTAssertTrue(element(in: app, identifier: "library.save-smart-group").waitForExistence(timeout: launchTimeout))
+        app.radioButtons["All"].firstMatch.click()
+    }
+
+    private func libraryPhotoCount(_ app: XCUIApplication) -> Int {
+        let count = element(in: app, identifier: "library.photoCount")
+        XCTAssertTrue(count.waitForExistence(timeout: launchTimeout))
+        // Let a regroup after a scope change publish its count.
+        Thread.sleep(forTimeInterval: 0.5)
+        return Int(count.value as? String ?? "") ?? -1
     }
 
     private func navigateAndCapture(_ app: XCUIApplication, prefix: String, settleMap: Bool) {

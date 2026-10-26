@@ -470,8 +470,11 @@ final class LibraryViewState {
     var memoryDrafts: [String: String] = [:]
     /// Unsaved words on a photo's note line, by media ID.
     var noteDrafts: [String: String] = [:]
-    var lastVisibleSectionID: String?
+    /// Scroll ID of the section at the top of the Library, restored on return.
+    var topSectionScrollID: String?
     var focusedMemoryItemID: String?
+    /// The photo whose note line is being typed in.
+    var focusedNoteItemID: String?
     /// The card a reveal request is waiting for; lazy grids build cards only
     /// near the viewport, so the final scroll happens when this card appears.
     var pendingRevealItemID: String?
@@ -547,4 +550,26 @@ enum LibraryGridNavigation {
     static func columns(width: CGFloat, minimum: CGFloat, spacing: CGFloat) -> Int {
         max(1, Int((width + spacing) / (minimum + spacing)))
     }
+}
+
+/// The Library's zoom levels, smallest first. The two smallest are a dense
+/// grid of photos only, like Photos; the larger ones are prints with their
+/// place, memory and note line.
+struct LibraryThumbnailSize: Equatable {
+    static let storageKey = "moments.library.thumbnailSize"
+    static let minimumWidths: [CGFloat] = [92, 130, 175, 240]
+    static let defaultLevel = 2
+    static var maximumLevel: Int { minimumWidths.count - 1 }
+
+    let level: Int
+
+    init(level: Int) {
+        self.level = min(max(level, 0), Self.maximumLevel)
+    }
+
+    var minimumWidth: CGFloat { Self.minimumWidths[level] }
+    var maximumWidth: CGFloat { (minimumWidth * 1.7).rounded() }
+    var isCompact: Bool { level < 2 }
+    var spacing: CGFloat { isCompact ? 6 : 24 }
+    var rowSpacing: CGFloat { isCompact ? 6 : 28 }
 }

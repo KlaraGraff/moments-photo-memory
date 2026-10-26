@@ -110,3 +110,51 @@ private struct LibraryGridInteraction: ViewModifier {
         return .handled
     }
 }
+
+/// The toolbar's thumbnail size control: − slider +, with ⌘− and ⌘+ like Photos.
+struct LibraryZoomControl: View {
+    @Environment(SelectionModel.self) private var selection
+    @AppStorage(LibraryThumbnailSize.storageKey) private var level = LibraryThumbnailSize.defaultLevel
+
+    /// While the large viewer is open, ⌘− and ⌘+ zoom the photo instead.
+    private func shortcut(_ key: KeyEquivalent) -> KeyboardShortcut? {
+        selection.viewerRequest == nil ? KeyboardShortcut(key, modifiers: .command) : nil
+    }
+
+    private var maximum: Int { LibraryThumbnailSize.maximumLevel }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button { zoom(-1) } label: { Image(systemName: "minus.magnifyingglass") }
+                .keyboardShortcut(shortcut("-"))
+                .disabled(level <= 0)
+                .help(String(localized: "Smaller thumbnails (⌘−)"))
+                .accessibilityIdentifier("library.zoom-out")
+            Slider(
+                value: Binding(get: { Double(level) }, set: { level = Int($0.rounded()) }),
+                in: 0...Double(maximum),
+                step: 1
+            )
+            .frame(width: 90)
+            .accessibilityLabel(String(localized: "Thumbnail size"))
+            .accessibilityIdentifier("library.zoom")
+            Button { zoom(1) } label: { Image(systemName: "plus.magnifyingglass") }
+                .keyboardShortcut(shortcut("="))
+                .disabled(level >= maximum)
+                .help(String(localized: "Larger thumbnails (⌘+)"))
+                .accessibilityIdentifier("library.zoom-in")
+        }
+        // Keyboards with a "+" key send ⌘+ rather than ⌘=.
+        .background {
+            Button("") { zoom(1) }
+                .keyboardShortcut(shortcut("+"))
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func zoom(_ step: Int) {
+        level = LibraryThumbnailSize(level: level + step).level
+    }
+}

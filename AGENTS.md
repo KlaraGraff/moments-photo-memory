@@ -11,6 +11,8 @@ The app is a **native SwiftUI rewrite** in `macos/` (macOS 14+, SwiftData, MapKi
 - Keep PRs to one issue. Say in the PR what you verified by actually running the app or a browser, and what you only checked offline.
 - Split a PR that mixes fixes with a product decision (anything the owner would notice and might disagree with: new feature shape, UI style, user-visible text, defaults, data handling), so the fixes can merge while the decision waits.
 
+- Bug reports: the owner's description is a hint for locating the bug, not a diagnosis. If what or where is unclear (which screen, which control, when), ask the owner briefly. If the bug is hard to describe (flashes, jitter, timing, visual glitches), reproduce it yourself on the GitHub macOS runner and confirm the cause with evidence (test output, logged values, recorded frames) before fixing; then show the same check passing after the fix. Do not fix on a guess or ask the owner to diagnose.
+
 ## Verification before handing over
 - A build or static check alone is not verification. Run at least one test that exercises the change (XCTest, `swift test`, or a UI test on the GitHub macOS runner) and name it in the PR. Docs-only changes are exempt; run the privacy check instead.
 - State plainly what you did not run, why, and what could break. "Should be fine" is not verified.

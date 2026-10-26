@@ -137,20 +137,26 @@ private struct CorrectionUndoCapsule: View {
 private struct FrontLayer<Content: View>: NSViewRepresentable {
     let content: Content
 
-    func makeNSView(context: Context) -> NSHostingView<Content> {
-        let view = NSHostingView(rootView: content)
+    func makeNSView(context: Context) -> FirstClickHostingView<Content> {
+        let view = FirstClickHostingView(rootView: content)
         // SwiftUI sets the frame; no Auto Layout size of its own to fight it.
         view.sizingOptions = []
         return view
     }
 
-    func updateNSView(_ view: NSHostingView<Content>, context: Context) {
+    func updateNSView(_ view: FirstClickHostingView<Content>, context: Context) {
         view.rootView = content
     }
 
     /// Its own size, but no wider than offered, so a long line truncates.
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSHostingView<Content>, context: Context) -> CGSize? {
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: FirstClickHostingView<Content>, context: Context) -> CGSize? {
         let fitting = nsView.fittingSize
         return CGSize(width: min(fitting.width, proposal.width ?? fitting.width), height: fitting.height)
     }
+}
+
+/// Takes the click that also makes the window key: right after a sheet
+/// closes, the first click on Undo should undo, not only focus the window.
+private final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

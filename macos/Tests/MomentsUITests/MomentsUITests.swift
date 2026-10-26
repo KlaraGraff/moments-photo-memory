@@ -369,7 +369,7 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "map-03-panel-closed")
     }
 
-    /// The AI model settings are reachable from the sidebar, not only via ⌘,.
+    /// Settings (language, AI model) are reachable from the sidebar, not only via ⌘,.
     func testSidebarOpensAIModelSettings() {
         let app = launch(language: "en")
         let gear = element(in: app, identifier: "sidebar.settings")
@@ -389,6 +389,44 @@ final class MomentsUITests: XCTestCase {
         XCTAssertGreaterThan(app.windows.count, windowsBefore, "The AI model settings window did not open")
         capture(app, named: "settings-01-from-sidebar-evidence")
         app.typeKey("w", modifierFlags: .command)
+    }
+
+    /// Settings › General offers the app language, readable in German at the
+    /// small window size and in Chinese.
+    func testSettingsOfferLanguage() {
+        // The sidebar and the picker's label come from the catalog, not the
+        // English keys.
+        let cases = [
+            ("de", true, "Mediathek", "Sprache"),
+            ("zh-Hans", false, "图库", "语言"),
+        ]
+        for (language, smallWindow, libraryLabel, languageLabel) in cases {
+            let app = launch(language: language, smallWindow: smallWindow, extraArguments: ["-moments.settings.tab", "general"])
+            // The small window may start with the sidebar folded away.
+            let library = element(in: app, identifier: "sidebar.library")
+            let sidebarShown = library.waitForExistence(timeout: smallWindow ? 5 : launchTimeout)
+            XCTAssertTrue(sidebarShown || smallWindow, "The sidebar is missing in \(language)")
+            if sidebarShown {
+                // macOS puts a sidebar row's text in the value of its static text.
+                let parts = [library] + library.descendants(matching: .any).allElementsBoundByIndex
+                let texts = parts.flatMap { [$0.label, $0.title, $0.value as? String ?? ""] }.filter { !$0.isEmpty }
+                XCTAssertTrue(texts.contains(libraryLabel), "The sidebar reads \(texts), not \(libraryLabel), in \(language)")
+            }
+            app.typeKey(",", modifierFlags: .command)
+            let picker = element(in: app, identifier: "settings.language")
+            XCTAssertTrue(picker.waitForExistence(timeout: launchTimeout), "Settings › General has no language picker (\(language))")
+            let window = app.windows.containing(.any, identifier: "settings.language").firstMatch
+            // A Form row may show the picker's label as a separate static text,
+            // with its text in the value.
+            let settingsParts = [picker] + window.staticTexts.allElementsBoundByIndex
+            let settingsTexts = settingsParts.flatMap { [$0.label, $0.title, $0.value as? String ?? ""] }.filter { !$0.isEmpty }
+            XCTAssertTrue(settingsTexts.contains(languageLabel), "Settings reads \(settingsTexts), no \(languageLabel), in \(language)")
+            let attachment = XCTAttachment(screenshot: window.screenshot())
+            attachment.name = "settings-02-language-\(language)-evidence"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            app.terminate()
+        }
     }
 
     func testFootprintsGlobeOpens() {
@@ -961,9 +999,9 @@ final class MomentsUITests: XCTestCase {
         element(in: app, identifier: "trips.back").click()
     }
 
-    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false, mapProbe: Bool = false) -> XCUIApplication {
+    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false, mapProbe: Bool = false, extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language]
+        app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language] + extraArguments
         if mapProbe { app.launchArguments += ["-MomentsUITestMapProbe"] }
         if reviewItems { app.launchArguments += ["-MomentsUITestReviewItems"] }
         if darkMode { app.launchArguments += ["-MomentsUITestDarkMode"] }

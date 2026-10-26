@@ -54,6 +54,7 @@ struct MomentsApp: App {
     #endif
 
     init() {
+        _ = AppLanguage.atLaunch
         #if DEBUG
         FlashProbe.startIfRequested()
         ScrollProbe.startIfRequested()
@@ -206,8 +207,8 @@ private struct StoreUnavailableView: View {
             systemImage: "externaldrive.badge.exclamationmark",
             description: Text(
                 isProtectedLegacyStore
-                    ? "A legacy store contains non-demo data. It was left untouched; back it up before migrating."
-                    : "Moments could not open its local store. Your existing data was left untouched."
+                    ? String(localized: "A legacy store contains non-demo data. It was left untouched; back it up before migrating.")
+                    : String(localized: "Moments could not open its local store. Your existing data was left untouched.")
             )
         )
         .frame(minWidth: 520, minHeight: 280)

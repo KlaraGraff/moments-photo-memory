@@ -27,7 +27,7 @@ public struct ImportConflictDetector: Sendable {
                     kind: .noPhotosGap,
                     itemIDs: [previous.id, current.id],
                     timeGap: gap,
-                    detail: "There is a gap of more than two hours with no photos."
+                    detail: String(localized: "There is a gap of more than two hours with no photos.")
                 ))
                 continue
             }
@@ -44,7 +44,7 @@ public struct ImportConflictDetector: Sendable {
                     itemIDs: [previous.id, current.id],
                     distanceMeters: distance,
                     timeGap: gap,
-                    detail: "The distance and time are consistent with transport."
+                    detail: String(localized: "The distance and time are consistent with transport.")
                 ))
                 continue
             }
@@ -55,7 +55,7 @@ public struct ImportConflictDetector: Sendable {
                     itemIDs: [previous.id, current.id],
                     distanceMeters: distance,
                     timeGap: gap,
-                    detail: "Neighbouring photos contain a candidate location jump."
+                    detail: String(localized: "Neighbouring photos contain a candidate location jump.")
                 ))
             }
             if distance > configuration.highSpeedDistanceMeters,
@@ -65,7 +65,7 @@ public struct ImportConflictDetector: Sendable {
                     itemIDs: [previous.id, current.id],
                     distanceMeters: distance,
                     timeGap: gap,
-                    detail: "The implied speed is unusually high for a photo sequence."
+                    detail: String(localized: "The implied speed is unusually high for a photo sequence.")
                 ))
             }
             if gap <= 1, distance > configuration.sameSecondDistanceMeters {
@@ -74,7 +74,7 @@ public struct ImportConflictDetector: Sendable {
                     itemIDs: [previous.id, current.id],
                     distanceMeters: distance,
                     timeGap: gap,
-                    detail: "Photos with the same second have far-apart coordinates."
+                    detail: String(localized: "Photos with the same second have far-apart coordinates.")
                 ))
             }
         }
@@ -100,7 +100,7 @@ public struct ImportConflictDetector: Sendable {
                         itemIDs: [first.id, middle.id, last.id],
                         distanceMeters: max(firstLeg, secondLeg),
                         timeGap: totalGap,
-                        detail: "The sequence leaves a place and returns near its starting point."
+                        detail: String(localized: "The sequence leaves a place and returns near its starting point.")
                     ))
                 }
             }

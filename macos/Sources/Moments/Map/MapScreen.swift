@@ -305,7 +305,7 @@ struct MapScreen: View {
         .contentShape(Rectangle())
         .help(clusterDisplayName(cluster))
         .accessibilityLabel(clusterDisplayName(cluster))
-        .accessibilityValue(Text("\(photoCount) photos"))
+        .accessibilityValue(Text(String(localized: "\(photoCount) photos")))
         .accessibilityIdentifier("map.marker.\(cluster.stopIDs.first ?? cluster.id)")
     }
 
@@ -459,7 +459,7 @@ struct MapScreen: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(country.name)
                                         .foregroundStyle(Paper.ink)
-                                    Text("\(country.photoCount) \(String(localized: "photos"))")
+                                    Text(String(localized: "\(country.photoCount) photos"))
                                         .font(.caption)
                                         .foregroundStyle(Paper.muted)
                                 }

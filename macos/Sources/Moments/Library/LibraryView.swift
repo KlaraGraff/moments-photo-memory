@@ -2,6 +2,12 @@ import Foundation
 import SwiftUI
 import SwiftData
 
+private struct LibraryFilterOptions {
+    var places: [LibraryPlaceOption] = []
+    var trips: [String] = []
+    var tripNames: [String: String] = [:]
+}
+
 private enum LibraryScrollTarget {
     static func section(_ id: String) -> String { "section:\(id)" }
     static func item(_ id: String) -> String { "item:\(id)" }
@@ -50,6 +56,7 @@ struct LibraryView: View {
     @State private var hasGrouped = false
     @State private var showingSmartGroupEditor = false
     @State private var cachedPersonIndex: [String: Set<String>] = [:]
+    @State private var cachedFilterOptions = LibraryFilterOptions()
 
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
@@ -80,9 +87,17 @@ struct LibraryView: View {
         LibraryGrouping(rawValue: groupingRaw) ?? .trip
     }
 
-    private var places: [LibraryPlaceOption] {
+    /// The Place and Trip menus' rows, rebuilt with the sections in regroup().
+    /// Computing them here walked every item and its place on each render,
+    /// which showed up as a stall when the Library re-rendered mid-scroll.
+    private var places: [LibraryPlaceOption] { cachedFilterOptions.places }
+
+    private var trips: [String] { cachedFilterOptions.trips }
+
+    private static func filterOptions(for items: [MediaItem]) -> LibraryFilterOptions {
         var options: [String: LibraryPlaceOption] = [:]
-        for item in allItems {
+        var tripNames: [String: String] = [:]
+        for item in items {
             // One row per name: unnamed spots are listed under the area or
             // city that names them, and the filter matches all of them.
             if let place = item.place, let named = PlaceDisplayName.namingPlace(of: place) {
@@ -91,12 +106,15 @@ struct LibraryView: View {
             if let override = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
                 options["override:\(override)"] = LibraryPlaceOption(id: "override:\(override)", name: override)
             }
+            if let tripID = item.tripID, tripNames[tripID] == nil {
+                tripNames[tripID] = item.trip?.effectiveName ?? tripID
+            }
         }
-        return options.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    }
-
-    private var trips: [String] {
-        Array(Set(allItems.compactMap(\.tripID))).sorted()
+        return LibraryFilterOptions(
+            places: options.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending },
+            trips: tripNames.keys.sorted(),
+            tripNames: tripNames
+        )
     }
 
     private var selectedPlaceName: String? {
@@ -105,7 +123,7 @@ struct LibraryView: View {
 
     private var selectedTripName: String? {
         guard !tripFilterKey.isEmpty else { return nil }
-        return allItems.first(where: { $0.tripID == tripFilterKey })?.trip?.effectiveName ?? tripFilterKey
+        return selectedTripName(for: tripFilterKey)
     }
 
     private var selectedMemoryFilter: LibraryMemoryFilter {
@@ -668,7 +686,7 @@ struct LibraryView: View {
     }
 
     private func selectedTripName(for tripID: String) -> String {
-        allItems.first(where: { $0.tripID == tripID })?.trip?.effectiveName ?? tripID
+        cachedFilterOptions.tripNames[tripID] ?? tripID
     }
 
     private func clearFilters() {
@@ -701,6 +719,7 @@ struct LibraryView: View {
         cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
         cachedSections = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
         hasGrouped = true
+        cachedFilterOptions = Self.filterOptions(for: allItems)
         let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
         selection.visibleItemIDs = publishedVisible
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
@@ -1263,6 +1282,7 @@ struct GroupDetailView: View {
     @State private var cachedVisibleItemIDs: [String] = []
     @State private var cachedVisibleItemsByID: [String: MediaItem] = [:]
     @State private var cachedPersonIndex: [String: Set<String>] = [:]
+    @State private var cachedFilterOptions = LibraryFilterOptions()
 
     init(groupID: String, state: LibraryViewState) {
         self.groupID = groupID

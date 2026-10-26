@@ -192,6 +192,19 @@ public enum DemoSeeder {
     }
     #endif
 
+    #if DEBUG
+    /// UI tests: files three demo photos under a synthetic imported folder,
+    /// so Settings › Imports has a source to remove.
+    public static func addSyntheticImportSource(context: ModelContext) throws {
+        guard try context.fetchCount(FetchDescriptor<ImportSource>()) == 0 else { return }
+        let source = ImportSource(kind: .folder, name: "Synthetic folder", locationKey: "/synthetic/Synthetic folder")
+        context.insert(source)
+        let items = try context.fetch(FetchDescriptor<MediaItem>()).filter { $0.source == .demo }.sorted { $0.id < $1.id }
+        for item in items.prefix(3) { item.addImportSource(source.id) }
+        try context.save()
+    }
+    #endif
+
     private static func safeID(_ value: String) -> String {
         value.lowercased().replacingOccurrences(of: " ", with: "-")
     }

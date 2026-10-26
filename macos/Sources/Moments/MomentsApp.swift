@@ -93,6 +93,9 @@ struct MomentsApp: App {
                 if ProcessInfo.processInfo.arguments.contains("-MomentsUITestBurst") {
                     try? DemoSeeder.addSyntheticBurst(context: container.mainContext)
                 }
+                if ProcessInfo.processInfo.arguments.contains("-MomentsUITestImportSource") {
+                    try? DemoSeeder.addSyntheticImportSource(context: container.mainContext)
+                }
             }
             if isUITesting || testStoreURL != nil, let count = Self.uiTestStressCount {
                 try? DemoSeeder.generateSyntheticLibrary(count: count, context: container.mainContext)

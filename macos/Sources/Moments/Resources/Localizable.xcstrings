@@ -5179,6 +5179,72 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "隐藏人物" } }
       }
     },
+    "Merge with existing %@?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit vorhandener Person „%@“ zusammenführen?"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Merge with existing %@?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要合并到已有的「%@」吗？"
+          }
+        }
+      }
+    },
+    "Merge" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zusammenführen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Merge"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "合并"
+          }
+        }
+      }
+    },
+    "Keep separate" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Getrennt lassen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep separate"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分开保留"
+          }
+        }
+      }
+    },
     "Skipped unavailable": {
       "localizations" : {
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Nicht verfügbar, übersprungen: %d" } },

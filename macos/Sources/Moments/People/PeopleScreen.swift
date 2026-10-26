@@ -26,6 +26,9 @@ struct PeopleFaceSnapshot: Sendable {
     let embedding: Data
     var createdAt: Date = .distantPast
     var updatedAt: Date = .distantPast
+    /// The photo the face was found in. Empty means unknown, which turns off
+    /// the one-face-per-photo rule for that face.
+    var mediaID: String = ""
 }
 
 struct PeoplePersonSnapshot: Sendable {
@@ -53,6 +56,29 @@ struct PeopleStoreAssignmentSnapshot: Sendable {
 private struct PeopleClusterSnapshot: Identifiable {
     let id: String
     let faces: [FaceObservation]
+}
+
+/// A cluster name that matches an existing person, waiting for the user to
+/// choose between merging and keeping the two apart.
+private struct PendingNameMerge: Identifiable {
+    let id: String
+    let name: String
+    let targetID: String
+    let targetName: String
+}
+
+private enum PeopleFacePicker {
+    /// The face that represents a group: a user-confirmed face if there is one,
+    /// then the sharpest. Every People surface shows this face's aligned crop,
+    /// never the whole source photo, so a multi-person photo shows one face.
+    static func cover(_ faces: [FaceObservation]) -> FaceObservation? {
+        faces.max { lhs, rhs in
+            let left = lhs.confirmed && lhs.assignmentSource == "user"
+            let right = rhs.confirmed && rhs.assignmentSource == "user"
+            if left != right { return !left }
+            return lhs.quality < rhs.quality
+        }
+    }
 }
 
 actor PeopleScanCoordinator {
@@ -302,7 +328,10 @@ final class PeopleScanController {
         }
         let limitedIndices = Array(clusteringIndices.prefix(3_000))
         let vectors = limitedIndices.compactMap { decode(faces[$0].embedding) }
-        guard vectors.count == limitedIndices.count else { return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false) }
+        guard vectors.count == limitedIndices.count else {
+            separateSamePhotoFaces(&assignments, faces: faces)
+            return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false)
+        }
         let result = FaceClustering.averageLinkResult(vectors, shouldStop: stop)
         if result.stopped {
             return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
@@ -313,7 +342,65 @@ final class PeopleScanController {
             let clusterID = "cluster-\(assignments[firstIndex].id)"
             for member in cluster { assignments[limitedIndices[member]].clusterID = clusterID }
         }
+        separateSamePhotoFaces(&assignments, faces: faces)
         return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false)
+    }
+
+    /// One person appears at most once in a photo, so two faces from the same
+    /// photo never share a suggested person or an unnamed group. In each group
+    /// the face closest to the group's mean stays; the others move to groups of
+    /// their own. Faces the user confirmed are never moved.
+    nonisolated static func separateSamePhotoFaces(_ assignments: inout [PeopleFaceAssignment], faces: [PeopleFaceSnapshot]) {
+        // The same faces that write-back never touches: anything confirmed or
+        // set by the user.
+        func isUserConfirmed(_ index: Int) -> Bool {
+            assignments[index].confirmed || assignments[index].assignmentSource == "user"
+        }
+        func groupKey(_ index: Int) -> String? {
+            guard !faces[index].mediaID.isEmpty else { return nil }
+            if let personID = assignments[index].personID { return "person:\(personID)" }
+            if let clusterID = assignments[index].clusterID, !clusterID.hasPrefix("pending-") { return "cluster:\(clusterID)" }
+            return nil
+        }
+        func unit(_ vector: [Float]) -> [Float] {
+            let norm = sqrt(vector.reduce(Float.zero) { $0 + $1 * $1 })
+            return norm > 0 ? vector.map { $0 / norm } : vector
+        }
+        var groups: [String: [Int]] = [:]
+        for index in assignments.indices {
+            if let key = groupKey(index) { groups[key, default: []].append(index) }
+        }
+        for members in groups.values {
+            let byPhoto = Dictionary(grouping: members, by: { faces[$0].mediaID })
+            guard byPhoto.values.contains(where: { $0.count > 1 }) else { continue }
+            let vectors = Dictionary(uniqueKeysWithValues: members.compactMap { index in decode(faces[index].embedding).map { (index, unit($0)) } })
+            // Confirmed faces define the person when there are any.
+            let anchors = members.filter(isUserConfirmed).isEmpty ? members : members.filter(isUserConfirmed)
+            let anchorVectors = anchors.compactMap { vectors[$0] }
+            var mean: [Float] = []
+            if let dimension = anchorVectors.first?.count {
+                mean = [Float](repeating: 0, count: dimension)
+                for vector in anchorVectors where vector.count == dimension {
+                    for d in 0..<dimension { mean[d] += vector[d] }
+                }
+            }
+            func similarity(_ index: Int) -> Float {
+                guard let vector = vectors[index], vector.count == mean.count else { return -.infinity }
+                return zip(vector, mean).reduce(Float.zero) { $0 + $1.0 * $1.1 }
+            }
+            for (_, photoFaces) in byPhoto where photoFaces.count > 1 {
+                let confirmed = photoFaces.filter(isUserConfirmed)
+                let keep: Set<Int> = confirmed.isEmpty
+                    ? [photoFaces.max { (similarity($0), faces[$1].id) < (similarity($1), faces[$0].id) }!]
+                    : Set(confirmed)
+                for index in photoFaces where !keep.contains(index) {
+                    assignments[index].personID = nil
+                    assignments[index].clusterID = "cluster-solo-\(assignments[index].id)"
+                    assignments[index].confirmed = false
+                    assignments[index].assignmentSource = "auto"
+                }
+            }
+        }
     }
 
     nonisolated static func makeAssignments(faces: [PeopleFaceSnapshot], people: [PeoplePersonSnapshot]) -> [PeopleFaceAssignment] {
@@ -328,7 +415,107 @@ final class PeopleScanController {
 }
 
 enum PeopleStoreActions {
-    static func merge(sourceID: String, into targetID: String, people: [Person], observations: [FaceObservation], context: ModelContext) {
+    /// Local person IDs the user chose to keep apart from a same-named person.
+    /// Only opaque IDs are stored here, never names, faces or embeddings.
+    static let keepSeparateKey = "moments.people.keepSeparate"
+
+    /// Two person names are the same when they match after trimming, ignoring
+    /// case and full-width/half-width forms (so "Ａｌｉｃｅ" equals "alice").
+    static func namesMatch(_ lhs: String?, _ rhs: String?) -> Bool {
+        let left = (lhs ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let right = (rhs ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !left.isEmpty, !right.isEmpty else { return false }
+        return left.compare(right, options: [.caseInsensitive, .widthInsensitive]) == .orderedSame
+    }
+
+    static func keepSeparateIDs(_ defaults: UserDefaults = .standard) -> Set<String> {
+        Set(defaults.stringArray(forKey: keepSeparateKey) ?? [])
+    }
+
+    private static func setKeepSeparate(_ personID: String, _ isSeparate: Bool, defaults: UserDefaults) {
+        var ids = keepSeparateIDs(defaults)
+        let changed = isSeparate ? ids.insert(personID).inserted : ids.remove(personID) != nil
+        guard changed else { return }
+        if ids.isEmpty { defaults.removeObject(forKey: keepSeparateKey) } else { defaults.set(ids.sorted(), forKey: keepSeparateKey) }
+    }
+
+    private static func isOlder(_ lhs: Person, _ rhs: Person) -> Bool {
+        (lhs.createdAt, lhs.id) < (rhs.createdAt, rhs.id)
+    }
+
+    /// The visible person a new name should merge into: the oldest non-hidden
+    /// person with an equal name that the user has not kept separate.
+    static func mergeCandidate(forName name: String, people: [Person], excluding excludedID: String? = nil, defaults: UserDefaults = .standard) -> Person? {
+        let separate = keepSeparateIDs(defaults)
+        return people
+            .filter { !$0.hidden && $0.id != excludedID && !separate.contains($0.id) && namesMatch($0.name, name) }
+            .min(by: isOlder)
+    }
+
+    /// Names a group of faces as a user-confirmed person. With `target`, the
+    /// faces join that existing person through ``merge``; otherwise a new
+    /// person is created, optionally marked to stay apart from same-named people.
+    @discardableResult
+    static func name(
+        faces: [FaceObservation],
+        as name: String,
+        mergingInto target: Person?,
+        keepSeparate: Bool,
+        people: [Person],
+        observations: [FaceObservation],
+        context: ModelContext,
+        defaults: UserDefaults = .standard
+    ) -> String? {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !faces.isEmpty else { return nil }
+        let person = Person(name: value)
+        context.insert(person)
+        for face in faces {
+            face.personID = person.id
+            face.clusterID = nil
+            face.confirmed = true
+            face.assignmentSource = "user"
+            face.updatedAt = .now
+        }
+        guard let target, !target.hidden, target.id != person.id else {
+            if keepSeparate { setKeepSeparate(person.id, true, defaults: defaults) }
+            return person.id
+        }
+        var seen = Set<ObjectIdentifier>()
+        let allFaces = (faces + observations).filter { seen.insert(ObjectIdentifier($0)).inserted }
+        merge(sourceID: person.id, into: target.id, people: people + [person], observations: allFaces, context: context, defaults: defaults)
+        // Naming these faces is an explicit choice, so it overrides an older
+        // "not this person" rejection of the same person.
+        for face in faces {
+            var rejected = face.rejectedPersonIDSet
+            guard rejected.remove(target.id) != nil else { continue }
+            face.rejectedPersonIDs = rejected.sorted().joined(separator: ",")
+        }
+        return target.id
+    }
+
+    /// Merges visible people whose names are equal into the oldest of them,
+    /// skipping anyone the user kept separate. Returns how many were merged.
+    @discardableResult
+    static func mergeDuplicateNames(people: [Person], observations: [FaceObservation], context: ModelContext, defaults: UserDefaults = .standard) -> Int {
+        let separate = keepSeparateIDs(defaults)
+        let candidates = people
+            .filter { !$0.hidden && !separate.contains($0.id) && $0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+            .sorted(by: isOlder)
+        var keepers: [Person] = []
+        var merged = 0
+        for person in candidates {
+            if let keeper = keepers.first(where: { namesMatch($0.name, person.name) }) {
+                merge(sourceID: person.id, into: keeper.id, people: people, observations: observations, context: context, defaults: defaults)
+                merged += 1
+            } else {
+                keepers.append(person)
+            }
+        }
+        return merged
+    }
+
+    static func merge(sourceID: String, into targetID: String, people: [Person], observations: [FaceObservation], context: ModelContext, defaults: UserDefaults = .standard) {
         guard sourceID != targetID else { return }
         for face in observations where face.personID == sourceID {
             face.personID = targetID
@@ -354,9 +541,10 @@ enum PeopleStoreActions {
             if changed { group.rules = rules; group.updatedAt = .now }
         }
         let key = "moments.library.person"
-        if UserDefaults.standard.string(forKey: key) == sourceID {
-            UserDefaults.standard.set(targetID, forKey: key)
+        if defaults.string(forKey: key) == sourceID {
+            defaults.set(targetID, forKey: key)
         }
+        setKeepSeparate(sourceID, false, defaults: defaults)
         if let source = people.first(where: { $0.id == sourceID }) { context.delete(source) }
     }
 
@@ -407,9 +595,26 @@ actor PeopleScanStore {
         itemsDescriptor.propertiesToFetch = [\.id, \.kindRaw]
         let needsFaceScan = try modelContext.fetch(itemsDescriptor).contains { $0.kind != .video && !completedIDs.contains($0.id) }
         var facesDescriptor = FetchDescriptor<FaceObservation>()
-        facesDescriptor.propertiesToFetch = [\.personID, \.clusterID]
-        let needsClustering = try modelContext.fetch(facesDescriptor).contains { $0.personID == nil && $0.clusterID?.hasPrefix("pending-") == true }
-        return needsFaceScan || needsClustering
+        facesDescriptor.propertiesToFetch = [\.mediaID, \.personID, \.clusterID, \.confirmed, \.assignmentSource]
+        let faces = try modelContext.fetch(facesDescriptor)
+        let needsClustering = faces.contains { $0.personID == nil && $0.clusterID?.hasPrefix("pending-") == true }
+        return needsFaceScan || needsClustering || Self.hasSamePhotoSuggestions(faces)
+    }
+
+    /// True when an unnamed group or a machine-suggested person holds two faces
+    /// from one photo, as groups made before the one-face-per-photo rule can.
+    static func hasSamePhotoSuggestions(_ faces: [FaceObservation]) -> Bool {
+        var seen = Set<String>()
+        // Matches separateSamePhotoFaces: faces without a photo and faces the
+        // write-back never moves can't make work.
+        for face in faces where !face.mediaID.isEmpty && !face.confirmed && face.assignmentSource != "user" {
+            let group: String
+            if let personID = face.personID { group = "person:\(personID)" }
+            else if let clusterID = face.clusterID, !clusterID.hasPrefix("pending-") { group = "cluster:\(clusterID)" }
+            else { continue }
+            if !seen.insert("\(group)|\(face.mediaID)").inserted { return true }
+        }
+        return false
     }
 
     func pendingDescriptors() throws -> [PeopleMediaDescriptor] {
@@ -478,7 +683,8 @@ actor PeopleScanStore {
                 rejectedPersonIDs: $0.rejectedPersonIDs,
                 embedding: $0.embedding,
                 createdAt: $0.createdAt,
-                updatedAt: $0.updatedAt
+                updatedAt: $0.updatedAt,
+                mediaID: $0.mediaID
             )
         }
         var peopleDescriptor = FetchDescriptor<Person>()
@@ -497,7 +703,13 @@ actor PeopleScanStore {
         var descriptor = FetchDescriptor<FaceObservation>(predicate: #Predicate { faceIDs.contains($0.id) })
         descriptor.propertiesToFetch = [\.id, \.personID, \.clusterID, \.confirmed, \.assignmentSource, \.updatedAt, \.rejectedPersonIDs]
         let facesByID = Dictionary(try modelContext.fetch(descriptor).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // A person merged or removed while the scan ran must not get faces back;
+        // such a face stays as it was and the next scan places it again.
+        var peopleDescriptor = FetchDescriptor<Person>()
+        peopleDescriptor.propertiesToFetch = [\.id]
+        let livePersonIDs = Set(try modelContext.fetch(peopleDescriptor).map(\.id))
         for assignment in assignments {
+            if let personID = assignment.personID, !livePersonIDs.contains(personID) { continue }
             guard let snapshot = snapshotsByID[assignment.id] else { continue }
             guard let face = facesByID[assignment.id],
                   face.updatedAt == snapshot.updatedAt,
@@ -556,6 +768,7 @@ struct PeopleScreen: View {
     @State private var clusterNames: [String: String] = [:]
     @State private var mergeSource: String?
     @State private var mergeTarget: String?
+    @State private var pendingNameMerge: PendingNameMerge?
     @State private var cachedFacesByPerson: [String: [FaceObservation]] = [:]
     @State private var cachedUnnamedClusters: [PeopleClusterSnapshot] = []
 
@@ -637,17 +850,72 @@ struct PeopleScreen: View {
         }
         .padding(34)
         .background(Color(red: 0.984, green: 0.945, blue: 0.918))
-        .onAppear { scanner.scanIfNeeded() }
+        .onAppear {
+            mergeSameNamedPeople()
+            scanner.scanIfNeeded()
+        }
         .onChange(of: observationsKey, initial: true) { _, _ in refreshFaceCaches() }
         .onChange(of: people.map(\.id), initial: true) { _, ids in
             if !personFilterIsValid(ids: ids) { UserDefaults.standard.removeObject(forKey: "moments.library.person") }
         }
-        .confirmationDialog(String(localized: "Merge two people"), isPresented: Binding(get: { mergeSource != nil }, set: { if !$0 { mergeSource = nil } })) {
-            ForEach(namedPeople.filter { $0.id != mergeSource }, id: \.id) { person in
-                Button(person.name ?? String(localized: "Unnamed person")) { mergeTarget = person.id; mergePeople() }
-            }
-            Button(String(localized: "Cancel"), role: .cancel) { mergeSource = nil }
+        .sheet(isPresented: Binding(get: { mergeSource != nil }, set: { if !$0 { mergeSource = nil } })) {
+            mergeSheet
         }
+        .alert(
+            String(format: String(localized: "Merge with existing %@?"), pendingNameMerge?.targetName ?? ""),
+            isPresented: Binding(get: { pendingNameMerge != nil }, set: { if !$0 { pendingNameMerge = nil } }),
+            presenting: pendingNameMerge
+        ) { pending in
+            Button(String(localized: "Merge")) { commitName(pending, merge: true) }
+                .keyboardShortcut(.defaultAction)
+            Button(String(localized: "Keep separate")) { commitName(pending, merge: false) }
+            Button(String(localized: "Cancel"), role: .cancel) { pendingNameMerge = nil }
+        }
+    }
+
+    private var mergeSheet: some View {
+        let source = people.first { $0.id == mergeSource }
+        return VStack(alignment: .leading, spacing: 14) {
+            Text(String(localized: "Merge two people")).font(.headline)
+            if let source {
+                HStack(spacing: 10) {
+                    if let face = PeopleFacePicker.cover(cachedFacesByPerson[source.id] ?? []) {
+                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
+                    }
+                    Text(source.name ?? String(localized: "Unnamed person")).font(.title3)
+                }
+                Divider()
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(namedPeople.filter { $0.id != mergeSource }, id: \.id) { person in
+                        Button {
+                            mergeTarget = person.id
+                            mergePeople()
+                        } label: {
+                            HStack(spacing: 10) {
+                                if let face = PeopleFacePicker.cover(cachedFacesByPerson[person.id] ?? []) {
+                                    FaceCropView(data: face.cropData, cacheKey: face.id, size: 44)
+                                }
+                                Text(person.name ?? String(localized: "Unnamed person"))
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+            .frame(maxHeight: 320)
+            HStack {
+                Spacer()
+                Button(String(localized: "Cancel"), role: .cancel) { mergeSource = nil }
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 340)
     }
 
     private var namedSection: some View {
@@ -664,7 +932,7 @@ struct PeopleScreen: View {
         let photoCount = Set(faces.map(\.mediaID)).count
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                if let first = faces.first { FaceCropView(data: first.cropData, size: 62) }
+                if let cover = PeopleFacePicker.cover(faces) { FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72) }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(person.name ?? String(localized: "Unnamed person")).font(.headline)
                     Text(String(format: String(localized: "People photo count"), photoCount)).font(.caption).foregroundStyle(.secondary)
@@ -679,7 +947,7 @@ struct PeopleScreen: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 6) {
                         ForEach(faces, id: \.id) { face in
-                            FaceCropView(data: face.cropData, size: 40)
+                            FaceCropView(data: face.cropData, cacheKey: face.id, size: 40)
                                 .overlay(alignment: .topTrailing) {
                                     VStack(spacing: 2) {
                                         if !face.confirmed || face.assignmentSource != "user" {
@@ -707,23 +975,36 @@ struct PeopleScreen: View {
     }
 
     private var unnamedSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        // Lazy so a card's zoomed photo loads only when the card scrolls in.
+        LazyVStack(alignment: .leading, spacing: 14) {
             Text(String(localized: "Is this the same person?")).font(.headline)
             ForEach(unnamedClusters) { cluster in
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        TextField(String(localized: "Name this person"), text: Binding(get: { clusterNames[cluster.id] ?? "" }, set: { clusterNames[cluster.id] = $0 }))
-                            .textFieldStyle(.roundedBorder)
-                        Button(String(localized: "Save")) { name(cluster) }.buttonStyle(.borderedProminent)
+                HStack(alignment: .top, spacing: 14) {
+                    if let cover = PeopleFacePicker.cover(cluster.faces) {
+                        FaceInPhotoView(
+                            faceID: cover.id,
+                            faceRect: CGRect(x: cover.rectX, y: cover.rectY, width: cover.rectWidth, height: cover.rectHeight),
+                            mediaID: cover.mediaID,
+                            fallbackCrop: cover.cropData,
+                            size: 150
+                        )
                     }
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 10) {
-                            ForEach(cluster.faces, id: \.id) { face in
-                                VStack(spacing: 4) {
-                                    FaceCropView(data: face.cropData, size: 72)
-                                    HStack(spacing: 6) {
-                                        Button { face.confirmed = true; face.assignmentSource = "user"; face.updatedAt = .now; try? modelContext.save() } label: { Image(systemName: "checkmark") }.buttonStyle(.borderless).foregroundStyle(.green)
-                                        Button { remove(face) } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).foregroundStyle(.red)
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            TextField(String(localized: "Name this person"), text: Binding(get: { clusterNames[cluster.id] ?? "" }, set: { clusterNames[cluster.id] = $0 }))
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { name(cluster) }
+                            Button(String(localized: "Save")) { name(cluster) }.buttonStyle(.borderedProminent)
+                        }
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            LazyHStack(spacing: 10) {
+                                ForEach(cluster.faces, id: \.id) { face in
+                                    VStack(spacing: 4) {
+                                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 64)
+                                        HStack(spacing: 6) {
+                                            Button { face.confirmed = true; face.assignmentSource = "user"; face.updatedAt = .now; try? modelContext.save() } label: { Image(systemName: "checkmark") }.buttonStyle(.borderless).foregroundStyle(.green)
+                                            Button { remove(face) } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).foregroundStyle(.red)
+                                        }
                                     }
                                 }
                             }
@@ -739,17 +1020,39 @@ struct PeopleScreen: View {
     private func name(_ cluster: PeopleClusterSnapshot) {
         let value = (clusterNames[cluster.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
-        let person = Person(name: value)
-        modelContext.insert(person)
-        for face in cluster.faces {
-            face.personID = person.id
-            face.clusterID = nil
-            face.confirmed = true
-            face.assignmentSource = "user"
-            face.updatedAt = .now
+        if let target = PeopleStoreActions.mergeCandidate(forName: value, people: people) {
+            pendingNameMerge = PendingNameMerge(id: cluster.id, name: value, targetID: target.id, targetName: target.name ?? value)
+            return
         }
+        commitName(clusterID: cluster.id, name: value, target: nil, keepSeparate: false)
+    }
+
+    private func commitName(_ pending: PendingNameMerge, merge: Bool) {
+        let target = merge ? people.first { $0.id == pending.targetID && !$0.hidden } : nil
+        commitName(clusterID: pending.id, name: pending.name, target: target, keepSeparate: !merge)
+        pendingNameMerge = nil
+    }
+
+    private func commitName(clusterID: String, name: String, target: Person?, keepSeparate: Bool) {
+        guard let cluster = cachedUnnamedClusters.first(where: { $0.id == clusterID }) else { return }
+        PeopleStoreActions.name(
+            faces: cluster.faces,
+            as: name,
+            mergingInto: target,
+            keepSeparate: keepSeparate,
+            people: people,
+            observations: observations,
+            context: modelContext
+        )
         try? modelContext.save()
-        clusterNames[cluster.id] = nil
+        clusterNames[clusterID] = nil
+    }
+
+    /// Folds same-named people left over from earlier versions or other paths
+    /// into the oldest one each time the People screen appears.
+    private func mergeSameNamedPeople() {
+        guard PeopleStoreActions.mergeDuplicateNames(people: people, observations: observations, context: modelContext) > 0 else { return }
+        try? modelContext.save()
     }
 
     private func remove(_ face: FaceObservation) {
@@ -784,6 +1087,10 @@ private struct FaceCropView: View {
         return cache
     }()
     let data: Data
+    /// The face's own ID. `Data` hashes only its first 80 bytes, which are the
+    /// same JPEG header for every crop, so a data-derived key could show one
+    /// person's face in another person's slot.
+    let cacheKey: String
     let size: CGFloat
     @State private var image: NSImage?
 
@@ -798,8 +1105,8 @@ private struct FaceCropView: View {
         .frame(width: size, height: size)
         .clipShape(Circle())
         .overlay(Circle().stroke(Color.white.opacity(0.7), lineWidth: 1))
-        .task(id: data) {
-            let key = "\(data.hashValue):\(data.count)" as NSString
+        .task(id: cacheKey) {
+            let key = cacheKey as NSString
             if let cached = Self.cache.object(forKey: key) {
                 image = cached
                 return
@@ -816,6 +1123,91 @@ private struct FaceCropView: View {
             guard let decoded = decodedData.flatMap(NSImage.init(data:)) else { return }
             Self.cache.setObject(decoded, forKey: key)
             image = decoded
+        }
+    }
+}
+
+enum PeopleFaceZoom {
+    /// How much of the photo around the face to keep, as a multiple of the
+    /// face's longer side: enough to recognise the person, little enough that
+    /// a neighbour in a group photo stays at the edge.
+    static let context: CGFloat = 1.8
+
+    /// The square pixel rect that zooms a photo to one face. `faceRect` is
+    /// Vision's normalized, y-up bounding box; the result is in y-down pixels,
+    /// shifted to stay inside the image and shrunk only if the image is smaller.
+    static func cropRect(faceRect: CGRect, imageSize: CGSize) -> CGRect {
+        let face = CGRect(
+            x: faceRect.minX * imageSize.width,
+            y: (1 - faceRect.maxY) * imageSize.height,
+            width: faceRect.width * imageSize.width,
+            height: faceRect.height * imageSize.height
+        )
+        let side = min(max(face.width, face.height) * context, imageSize.width, imageSize.height)
+        let x = min(max(face.midX - side / 2, 0), imageSize.width - side)
+        let y = min(max(face.midY - side / 2, 0), imageSize.height - side)
+        return CGRect(x: x, y: y, width: side, height: side).integral
+    }
+}
+
+/// The photo a face was found in, zoomed to that one face, the way Photos
+/// asks "who is this". Falls back to the aligned face crop when the original
+/// photo can't be read.
+private struct FaceInPhotoView: View {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 64
+        return cache
+    }()
+    let faceID: String
+    let faceRect: CGRect
+    @Environment(\.modelContext) private var modelContext
+    let mediaID: String
+    let fallbackCrop: Data
+    let size: CGFloat
+    @State private var image: NSImage?
+    @State private var loadFailed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else if loadFailed {
+                FaceCropView(data: fallbackCrop, cacheKey: faceID, size: size)
+            } else {
+                Color.gray.opacity(0.18)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.7), lineWidth: 1))
+        .accessibilityHidden(true)
+        .task(id: faceID) {
+            // The cover face can change under the same card; never leave the
+            // previous face showing.
+            image = nil
+            loadFailed = false
+            let key = faceID as NSString
+            if let cached = Self.cache.object(forKey: key) {
+                image = cached
+                return
+            }
+            let wantedID = mediaID
+            var fetch = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == wantedID })
+            fetch.fetchLimit = 1
+            let descriptor = (try? modelContext.fetch(fetch))?.first.map(PeopleMediaDescriptor.init)
+            guard let descriptor, let photo = await PeopleImageLoader.load(descriptor) else {
+                loadFailed = true
+                return
+            }
+            let rect = PeopleFaceZoom.cropRect(faceRect: faceRect, imageSize: CGSize(width: photo.width, height: photo.height))
+            guard !Task.isCancelled, let cropped = photo.cropping(to: rect) else {
+                loadFailed = true
+                return
+            }
+            let zoomed = NSImage(cgImage: cropped, size: NSSize(width: cropped.width, height: cropped.height))
+            Self.cache.setObject(zoomed, forKey: key)
+            image = zoomed
         }
     }
 }

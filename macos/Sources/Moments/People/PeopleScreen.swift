@@ -58,8 +58,6 @@ private struct PeopleClusterSnapshot: Identifiable {
     let faces: [FaceObservation]
 }
 
-/// A cluster name that matches an existing person, waiting for the user to
-/// choose between merging and keeping the two apart.
 /// A face's state before ✓ or ✗, so the change can be taken back.
 private struct FaceUndoSnapshot {
     let faceID: String
@@ -89,6 +87,8 @@ private struct PendingRename: Identifiable {
     var id: String { personID }
 }
 
+/// A cluster name that matches an existing person, waiting for the user to
+/// choose between merging and keeping the two apart.
 private struct PendingNameMerge: Identifiable {
     let id: String
     let name: String
@@ -841,8 +841,8 @@ struct PeopleScreen: View {
                     .foregroundStyle(Color(red: 0.227, green: 0.165, blue: 0.141))
                 Spacer()
                 if lastFaceChange != nil {
+                    // No ⌘Z: it would take text undo from the name fields.
                     Button(String(localized: "Undo")) { undoFaceChange() }
-                        .keyboardShortcut("z", modifiers: .command)
                         .accessibilityIdentifier("people.undo")
                 }
                 Button {
@@ -1175,6 +1175,9 @@ struct PeopleScreen: View {
         guard let snapshot = lastFaceChange else { return }
         lastFaceChange = nil
         guard let face = observations.first(where: { $0.id == snapshot.faceID }) else { return }
+        // A merge since then may have deleted that person; leave the face
+        // where it is rather than pointing it at nobody.
+        if let personID = snapshot.personID, !people.contains(where: { $0.id == personID }) { return }
         face.personID = snapshot.personID
         face.clusterID = snapshot.clusterID
         face.confirmed = snapshot.confirmed
@@ -1203,7 +1206,9 @@ struct PeopleScreen: View {
         guard !value.isEmpty, let person = people.first(where: { $0.id == personID }) else { return }
         // Same name as someone else: offer the merge, as naming a group does.
         if let target = PeopleStoreActions.mergeCandidate(forName: value, people: people, excluding: personID) {
-            pendingRename = PendingRename(personID: personID, name: value, targetID: target.id, targetName: target.name ?? value)
+            let pending = PendingRename(personID: personID, name: value, targetID: target.id, targetName: target.name ?? value)
+            // Present after the rename alert has gone, or AppKit drops it.
+            DispatchQueue.main.async { pendingRename = pending }
             return
         }
         person.name = value

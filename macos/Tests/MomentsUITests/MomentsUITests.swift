@@ -394,17 +394,16 @@ final class MomentsUITests: XCTestCase {
     /// Settings › General offers the app language, readable in German at the
     /// small window size and in Chinese.
     func testSettingsOfferLanguage() {
-        // The photo count reads as a whole sentence in each language, and the
-        // picker's label comes from the catalog, not the English key.
+        // The sidebar and the picker's label come from the catalog, not the
+        // English keys.
         let cases = [
-            ("de", true, "^[0-9]+ Fotos?$", "Sprache"),
-            ("zh-Hans", false, "^[0-9]+ 张照片$", "语言"),
+            ("de", true, "Mediathek", "Sprache"),
+            ("zh-Hans", false, "图库", "语言"),
         ]
-        for (language, smallWindow, countPattern, languageLabel) in cases {
+        for (language, smallWindow, libraryLabel, languageLabel) in cases {
             let app = launch(language: language, smallWindow: smallWindow, extraArguments: ["-moments.settings.tab", "general"])
-            let count = element(in: app, identifier: "library.photoCount")
-            XCTAssertTrue(count.waitForExistence(timeout: launchTimeout))
-            XCTAssertNotNil(count.label.range(of: countPattern, options: .regularExpression), "Photo count reads \"\(count.label)\" in \(language)")
+            let library = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR title == %@", libraryLabel, libraryLabel)).firstMatch
+            XCTAssertTrue(library.waitForExistence(timeout: launchTimeout), "The sidebar shows no \(libraryLabel) in \(language)")
             app.typeKey(",", modifierFlags: .command)
             let picker = element(in: app, identifier: "settings.language")
             XCTAssertTrue(picker.waitForExistence(timeout: launchTimeout), "Settings › General has no language picker (\(language))")

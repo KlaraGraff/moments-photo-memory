@@ -60,23 +60,22 @@ struct CorrectionUndoBar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
-    /// Long enough to read the line and reach the button.
-    static let lifetime: Duration = .seconds(6)
+    /// Long enough to read the line and reach the button. UI tests get
+    /// longer, as a hosted Mac can take seconds between two steps.
+    static let lifetime: Duration = ProcessInfo.processInfo.arguments.contains("-MomentsUITesting") ? .seconds(30) : .seconds(6)
 
     var body: some View {
         ZStack(alignment: .bottom) {
             if let correction = selection.lastCorrection {
-                // In its own AppKit view: drawn SwiftUI content never gets the
-                // clicks over a text field (the notes under the photos), which
-                // AppKit asks first.
-                FrontLayer(id: correction.id, content: CorrectionUndoCapsule(
+                UndoBarLayer(
+                    id: correction.id,
                     message: correction.message,
                     undo: {
                         correction.perform(in: modelContext)
                         selection.lastCorrection = nil
                     },
                     onHover: { isHovering = $0 }
-                ))
+                )
                 .padding(.bottom, 6)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 // The bar can go while the pointer is on it, with no word
@@ -104,6 +103,8 @@ private struct CorrectionUndoCapsule: View {
     let message: String
     let undo: () -> Void
     let onHover: (Bool) -> Void
+    /// Where the Undo button is, in the capsule's own view.
+    var onUndoFrame: (CGRect) -> Void = { _ in }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -115,8 +116,12 @@ private struct CorrectionUndoCapsule: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(Paper.accent)
                 .fontWeight(.semibold)
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(key: UndoFrameKey.self, value: proxy.frame(in: .global))
+                })
                 .accessibilityIdentifier("correction.undo")
         }
+        .onPreferenceChange(UndoFrameKey.self, perform: onUndoFrame)
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
         .background(
@@ -132,63 +137,80 @@ private struct CorrectionUndoCapsule: View {
     }
 }
 
-/// SwiftUI content in an AppKit view of its own, so it sits in front of the
-/// AppKit views under it for clicks as well as on screen.
-private struct FrontLayer<ID: Hashable, Content: View>: NSViewRepresentable {
-    /// The content changes only with this: setting it again on every update
-    /// of the view behind (the Library redraws after a change) restarts the
-    /// button and drops a click in progress.
-    let id: ID
-    let content: Content
+private struct UndoFrameKey: PreferenceKey {
+    static let defaultValue = CGRect.zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
+
+/// The capsule in an AppKit view of its own, which takes the clicks on Undo
+/// itself. Over the Library, AppKit hands a click there to the views behind
+/// (the note fields, and the scroll view once the Library has redrawn after
+/// a change), so the button was drawn and in reach but did nothing.
+private struct UndoBarLayer: NSViewRepresentable {
+    /// The content changes only with this: the bar is set up once per
+    /// correction, not again on every redraw of the view behind it.
+    let id: UUID
+    let message: String
+    let undo: () -> Void
+    let onHover: (Bool) -> Void
 
     final class Coordinator {
         /// Measures the content: the shown view has no Auto Layout size, so
         /// its own fitting size is zero.
-        let measure: NSHostingController<Content>
-        var id: ID
+        let measure: NSHostingController<CorrectionUndoCapsule>
+        var id: UUID
+        weak var view: UndoBarHostingView?
 
-        init(id: ID, content: Content) {
+        init(id: UUID, capsule: CorrectionUndoCapsule) {
             self.id = id
-            measure = NSHostingController(rootView: content)
+            measure = NSHostingController(rootView: capsule)
+        }
+    }
+
+    private func capsule(reportingTo coordinator: Coordinator?) -> CorrectionUndoCapsule {
+        CorrectionUndoCapsule(message: message, undo: undo, onHover: onHover) { [weak coordinator] frame in
+            coordinator?.view?.undoFrame = frame
         }
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(id: id, content: content)
+        Coordinator(id: id, capsule: capsule(reportingTo: nil))
     }
 
-    func makeNSView(context: Context) -> FirstClickHostingView<Content> {
-        let view = FirstClickHostingView(rootView: content)
+    func makeNSView(context: Context) -> UndoBarHostingView {
+        let view = UndoBarHostingView(rootView: capsule(reportingTo: context.coordinator))
         // SwiftUI sets the frame; no Auto Layout size of its own to fight it.
         view.sizingOptions = []
+        view.onUndo = undo
+        context.coordinator.view = view
         return view
     }
 
-    func updateNSView(_ view: FirstClickHostingView<Content>, context: Context) {
+    func updateNSView(_ view: UndoBarHostingView, context: Context) {
         guard context.coordinator.id != id else { return }
         context.coordinator.id = id
-        view.rootView = content
-        context.coordinator.measure.rootView = content
+        view.rootView = capsule(reportingTo: context.coordinator)
+        view.onUndo = undo
+        context.coordinator.measure.rootView = capsule(reportingTo: nil)
     }
 
     /// Its own size, but no wider than offered, so a long line truncates.
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: FirstClickHostingView<Content>, context: Context) -> CGSize? {
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: UndoBarHostingView, context: Context) -> CGSize? {
         let unbounded = CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         let ideal = context.coordinator.measure.sizeThatFits(in: unbounded)
         return CGSize(width: min(ideal.width, proposal.width ?? ideal.width), height: ideal.height)
     }
 }
 
-/// Takes the clicks inside it itself. AppKit asks the views behind first
-/// once the Library has redrawn after a change (its scroll view then sits
-/// above this view for clicks), so the bar was drawn and in reach but a
-/// click went to the photos under it. Also takes the click that makes the
-/// window key, so the first click after a sheet closes undoes.
-private final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+/// Watches the window's clicks and takes the ones on Undo before AppKit
+/// looks for the view under them, including the click that makes the
+/// window key (the first one after a sheet closes).
+private final class UndoBarHostingView: NSHostingView<CorrectionUndoCapsule> {
+    /// The Undo button, in SwiftUI's coordinates for this view (top left).
+    var undoFrame = CGRect.zero
+    var onUndo: (() -> Void)?
     private var monitor: Any?
-    private var isTrackingClick = false
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    private var isPressing = false
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -202,27 +224,31 @@ private final class FirstClickHostingView<Content: View>: NSHostingView<Content>
         }
     }
 
-    /// True when the event was handled here.
+    /// True when the event was Undo's and is handled here.
     private func take(_ event: NSEvent) -> Bool {
         switch event.type {
         case .leftMouseDown:
-            guard let window, event.window === window, window.attachedSheet == nil,
-                  !isHiddenOrHasHiddenAncestor, alphaValue > 0 else { return false }
-            // The capsule, not the clear room around it for its shadow.
-            let capsule = convert(bounds.insetBy(dx: 12, dy: 12), to: nil)
-            guard capsule.contains(event.locationInWindow) else { return false }
-            isTrackingClick = true
-            mouseDown(with: event)
+            guard isOnUndo(event) else { return false }
+            isPressing = true
             return true
-        case .leftMouseDragged where isTrackingClick:
-            mouseDragged(with: event)
-            return true
-        case .leftMouseUp where isTrackingClick:
-            isTrackingClick = false
-            mouseUp(with: event)
+        case .leftMouseDragged:
+            return isPressing
+        case .leftMouseUp:
+            guard isPressing else { return false }
+            isPressing = false
+            // Let go off the button: no Undo, as with any button.
+            if isOnUndo(event) { onUndo?() }
             return true
         default:
             return false
         }
+    }
+
+    private func isOnUndo(_ event: NSEvent) -> Bool {
+        guard let window, event.window === window, window.attachedSheet == nil,
+              !isHiddenOrHasHiddenAncestor, alphaValue > 0, !undoFrame.isEmpty else { return false }
+        var target = undoFrame.insetBy(dx: -4, dy: -4)
+        if !isFlipped { target.origin.y = bounds.height - target.maxY }
+        return convert(target, to: nil).contains(event.locationInWindow)
     }
 }

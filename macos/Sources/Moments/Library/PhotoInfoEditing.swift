@@ -35,8 +35,15 @@ enum PhotoInfoEditing {
         let original = item.place.flatMap(PlaceDisplayName.resolvedName(of:))
         let current = item.localPlaceOverride
         if value.isEmpty || value == original {
-            guard let current else { return }
-            context.delete(current)
+            guard let current, current.nameOverride != nil else { return }
+            // A corrected map link or position stays; only the name goes.
+            if current.mapLinkOverride == nil, current.latitude == nil, current.longitude == nil {
+                context.delete(current)
+            } else {
+                current.nameOverride = nil
+                current.updatedAt = now
+                current.updatedBy = MomentsAccount.localID
+            }
             touch(item, now: now)
             return
         }

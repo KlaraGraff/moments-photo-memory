@@ -43,7 +43,9 @@ struct PhotoNoteSection: View {
             // method's candidate never saves half-typed words.
             .onSubmit { save() }
             .onExitCommand {
-                state.noteDrafts[item.id] = nil
+                // In the viewer's large box Esc only ends typing (the words are
+                // kept and saved); under a grid photo it cancels the line.
+                if !isLarge { state.noteDrafts[item.id] = nil }
                 isFocused = false
             }
             .onChange(of: isFocused) { _, focused in
@@ -56,7 +58,10 @@ struct PhotoNoteSection: View {
             }
             // Clicking the sidebar can remove the cell in the same update
             // that ends editing; the words are still saved.
-            .onDisappear { save() }
+            .onDisappear {
+                save()
+                if state.focusedNoteItemID == item.id { state.focusedNoteItemID = nil }
+            }
             .help(String(localized: "Places, corrections, descriptions, feelings: write anything. Return saves; your words are kept and AI organizes them. Option-Return starts a new line."))
             .accessibilityLabel(String(localized: "Note for this photo"))
             .accessibilityIdentifier("library.note.\(item.id)")

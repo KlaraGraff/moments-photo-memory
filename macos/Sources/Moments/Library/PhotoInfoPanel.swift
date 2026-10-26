@@ -70,6 +70,13 @@ struct PhotoInfoPanel: View {
             if field != .place { placeText = name ?? "" }
         }
         .onChange(of: field) { _, value in isEditing = value != nil }
+        // Paging away while typing: keep what was typed and give the keys back.
+        .onDisappear {
+            commitPlace()
+            if isRenamingTrip { commitTripName() }
+            if let id = namingFaceID, let face = faces.first(where: { $0.id == id }) { commitFaceName(face) }
+            isEditing = false
+        }
     }
 
     private func row<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
@@ -220,6 +227,8 @@ struct PhotoInfoPanel: View {
                 .foregroundStyle(LibraryPalette.ink)
                 .focused($field, equals: .tripName)
                 .modifier(InlineFieldUnderline(isFocused: field == .tripName, reduceMotion: reduceMotion))
+                // The field only exists after the menu closes, so focus it then.
+                .onAppear { DispatchQueue.main.async { field = .tripName } }
                 .onSubmit { commitTripName() }
                 .onExitCommand {
                     isRenamingTrip = false
@@ -253,7 +262,6 @@ struct PhotoInfoPanel: View {
                     Button(String(localized: "Rename “\(trip.effectiveName)”…")) {
                         tripNameText = trip.effectiveName
                         isRenamingTrip = true
-                        field = .tripName
                     }
                 }
             } label: {
@@ -317,6 +325,7 @@ struct PhotoInfoPanel: View {
                             .foregroundStyle(LibraryPalette.ink)
                             .focused($field, equals: .faceName)
                             .modifier(InlineFieldUnderline(isFocused: field == .faceName, reduceMotion: reduceMotion))
+                            .onAppear { DispatchQueue.main.async { field = .faceName } }
                             .onSubmit { commitFaceName(face) }
                             .onExitCommand {
                                 namingFaceID = nil
@@ -343,7 +352,6 @@ struct PhotoInfoPanel: View {
                 Button(String(localized: "New name…")) {
                     faceNameText = ""
                     namingFaceID = face.id
-                    field = .faceName
                 }
             }
             if face.personID != nil {

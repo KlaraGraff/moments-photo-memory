@@ -140,7 +140,7 @@ final class MomentsUITests: XCTestCase {
         image.doubleClick()
         expectation(for: fitted, evaluatedWith: image)
         waitForExpectations(timeout: launchTimeout)
-        image.scroll(byDeltaX: 0, deltaY: 8)
+        XCUIElement.perform(withKeyModifiers: .command) { image.scroll(byDeltaX: 0, deltaY: 8) }
         expectation(for: zoomed, evaluatedWith: image)
         waitForExpectations(timeout: launchTimeout)
         capture(app, named: "grid-02c-viewer-zoomed-evidence")
@@ -155,7 +155,8 @@ final class MomentsUITests: XCTestCase {
         place.click()
         place.typeKey("a", modifierFlags: .command)
         place.typeText("Harbour cafe\r")
-        XCTAssertEqual(place.value as? String, "Harbour cafe", "Typing over the place did not keep the new name")
+        expectation(for: NSPredicate(format: "value == %@", "Harbour cafe"), evaluatedWith: place)
+        waitForExpectations(timeout: launchTimeout)
         element(in: app, identifier: "viewer.date").click()
         let dateDone = element(in: app, identifier: "viewer.date.done")
         XCTAssertTrue(dateDone.waitForExistence(timeout: launchTimeout), "Clicking the date did not open the date editor")

@@ -24,7 +24,7 @@ struct PhotoViewer: View {
     @State private var gestureBase: ViewerZoom?
     @State private var hoverLocation: CGPoint?
     @State private var areaSize: CGSize = .zero
-    @State private var scrollMonitor: Any?
+    @State private var eventMonitor: Any?
     @State private var isEditingInfo = false
     @FocusState private var isFocused: Bool
 
@@ -70,7 +70,7 @@ struct PhotoViewer: View {
         .focused($isFocused)
         .onAppear {
             isFocused = true
-            installScrollMonitor()
+            installEventMonitor()
         }
         // When a field in the column lets go of the keyboard, the arrows page again.
         .onChange(of: isEditingText) { _, editing in
@@ -82,11 +82,10 @@ struct PhotoViewer: View {
             close()
             return .handled
         }
-        .onExitCommand { close() }
         .task(id: request.itemID) { await load(request.itemID) }
         .onDisappear {
             stopVideo()
-            removeScrollMonitor()
+            removeEventMonitor()
         }
     }
 
@@ -125,9 +124,6 @@ struct PhotoViewer: View {
                 .accessibilityLabel(String(localized: "Favorite"))
             }
             headerButton("xmark", label: String(localized: "Close"), identifier: "viewer.close") { close() }
-                // Esc closes wherever the keyboard focus is, except that it
-                // first ends typing in the column.
-                .keyboardShortcut(isEditingText ? nil : KeyboardShortcut.cancelAction)
                 .help(String(localized: "Close (Esc)"))
         }
         .padding(.leading, 18)
@@ -212,10 +208,9 @@ struct PhotoViewer: View {
         CGPoint(x: areaSize.width / 2, y: areaSize.height / 2)
     }
 
-    /// The zoom buttons and ⌘− / ⌘=: around the pointer when it is over the
-    /// photo, otherwise around the centre.
+    /// The zoom buttons and ⌘− / ⌘= zoom around the centre of what is shown.
     private func zoomStep(_ factor: CGFloat) {
-        animateZoom { $0.zoom(to: $0.scale * factor, anchor: hoverLocation ?? areaCenter, fitted: fittedSize, area: areaSize) }
+        animateZoom { $0.zoom(to: $0.scale * factor, anchor: areaCenter, fitted: fittedSize, area: areaSize) }
     }
 
     private func animateZoom(_ change: (inout ViewerZoom) -> Void) {
@@ -255,35 +250,47 @@ struct PhotoViewer: View {
             .onEnded { _ in gestureBase = nil }
     }
 
-    /// The mouse wheel or ⌘-scroll zooms around the pointer; two fingers on the
-    /// trackpad move a zoomed photo, as in Preview.
-    private func installScrollMonitor() {
-        guard scrollMonitor == nil else { return }
-        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
-            MainActor.assumeIsolated {
-                guard selection.viewerRequest != nil, player == nil, image != nil,
-                      let location = hoverLocation else { return event }
-                let wheel = !event.hasPreciseScrollingDeltas
-                if event.modifierFlags.contains(.command) || wheel {
-                    let delta = wheel ? event.scrollingDeltaY * 12 : event.scrollingDeltaY
-                    guard delta != 0 else { return nil }
-                    var next = zoom
-                    next.zoom(to: zoom.scale * exp(delta / 120), anchor: location, fitted: fittedSize, area: areaSize)
-                    zoom = next
-                    return nil
-                }
-                guard zoom.isZoomed else { return event }
-                var next = zoom
-                next.pan(by: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY), fitted: fittedSize, area: areaSize)
-                zoom = next
-                return nil
-            }
+    /// Esc closes the viewer wherever the keyboard is, unless a text field
+    /// has it: then Esc is the field's own (cancel or end typing), and the
+    /// next Esc closes. The mouse wheel or ⌘-scroll zooms around the pointer;
+    /// two fingers on the trackpad move a zoomed photo, as in Preview.
+    private func installEventMonitor() {
+        guard eventMonitor == nil else { return }
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { event in
+            let consumed = MainActor.assumeIsolated { handle(event) }
+            return consumed ? nil : event
         }
     }
 
-    private func removeScrollMonitor() {
-        if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
-        scrollMonitor = nil
+    private func handle(_ event: NSEvent) -> Bool {
+        guard selection.viewerRequest != nil else { return false }
+        if event.type == .keyDown {
+            // 53 is Esc. Popovers (the date editor) and menus handle their own.
+            guard event.keyCode == 53, let window = event.window, window.styleMask.contains(.titled),
+                  !(window.firstResponder is NSText) else { return false }
+            close()
+            return true
+        }
+        guard player == nil, image != nil, let location = hoverLocation else { return false }
+        let wheel = !event.hasPreciseScrollingDeltas
+        if event.modifierFlags.contains(.command) || wheel {
+            let delta = wheel ? event.scrollingDeltaY * 12 : event.scrollingDeltaY
+            guard delta != 0 else { return true }
+            var next = zoom
+            next.zoom(to: zoom.scale * exp(delta / 120), anchor: location, fitted: fittedSize, area: areaSize)
+            zoom = next
+            return true
+        }
+        guard zoom.isZoomed else { return false }
+        var next = zoom
+        next.pan(by: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY), fitted: fittedSize, area: areaSize)
+        zoom = next
+        return true
+    }
+
+    private func removeEventMonitor() {
+        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
+        eventMonitor = nil
     }
 
     /// The right-hand column: when, where, who, and the words written for

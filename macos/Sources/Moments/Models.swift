@@ -4198,8 +4198,8 @@ public enum SchemaV7: VersionedSchema {
         Person.self,
         FaceObservation.self,
         FaceScanRecord.self,
-        PhotoNote.self
-        PlaceNote.self
+        PhotoNote.self,
+        PlaceNote.self,
         CollectionMemory.self
     ]
 }

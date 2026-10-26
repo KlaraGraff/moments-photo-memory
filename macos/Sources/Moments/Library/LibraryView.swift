@@ -17,6 +17,7 @@ private enum LibraryScrollTarget {
 struct LibraryView: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(ImportController.self) private var importController
+    @Environment(PhotoStackModel.self) private var stacks
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Keep the common Library query free of explicit screenshots in SwiftData.
     // The screenshot segment switches to the second descriptor without making
@@ -33,12 +34,15 @@ struct LibraryView: View {
     private var allPlaces: [Place]
     @Query(sort: \PlaceOverride.id)
     private var placeOverrides: [PlaceOverride]
-    /// "My groups" only; chapters live on the Chapters page.
-    @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" }, sort: \UserGroup.name)
+    /// "My groups" only; chapters live on the Chapters page, and stack
+    /// records are not groups anyone made.
+    @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" }, sort: \UserGroup.name)
     private var allGroups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
     @Query(sort: \Person.name) private var people: [Person]
     @Query private var faceObservations: [FaceObservation]
+    /// What someone changed about bursts: covers, unstacked, photos taken out.
+    @Query(filter: #Predicate<UserGroup> { $0.kindRaw == "stack" }) private var stackRecords: [UserGroup]
 
     let state: LibraryViewState
     @Binding var firstLaunchCompleted: Bool
@@ -54,6 +58,10 @@ struct LibraryView: View {
     @AppStorage("moments.library.person") private var personFilterID = ""
 
     @State private var cachedSections: [LibrarySection] = []
+    /// Each section's photos before stacks were folded.
+    @State private var cachedUnfoldedSectionItems: [String: [String]] = [:]
+    /// Photos behind each stacked cell, by the id the cell shows.
+    @State private var cachedStackCounts: [String: Int] = [:]
     @State private var cachedItemByID: [String: MediaItem] = [:]
     @State private var cachedVisibleCount = 0
     @State private var hasGrouped = false
@@ -207,6 +215,12 @@ struct LibraryView: View {
             hasher.combine(observation.personID)
             hasher.combine(observation.confirmed)
             hasher.combine(observation.assignmentSource)
+        }
+        // Bursts regroup when someone changes a stack or new analysis arrives.
+        hasher.combine(stacks.generation)
+        for record in stackRecords {
+            hasher.combine(record.id)
+            hasher.combine(record.rulesData)
         }
         return hasher.finalize()
     }
@@ -442,7 +456,9 @@ struct LibraryView: View {
                             items: section.itemIDs.compactMap { cachedItemByID[$0] },
                             state: state,
                             allGroups: allGroups,
-                            groupItems: groupItems
+                            groupItems: groupItems,
+                            stackCounts: cachedStackCounts,
+                            allItemIDs: cachedUnfoldedSectionItems[section.id] ?? section.itemIDs
                         )
                     }
                 }
@@ -579,10 +595,17 @@ struct LibraryView: View {
             preservingEditingItemID: state.focusedMemoryItemID,
             personIDsByMediaID: personIndex
         )
-        cachedVisibleCount = visible.count
         cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
-        cachedSections = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
+        // A burst is one cell showing its cover, and counts as one photo.
+        let stackIndex = stacks.update(items: allItems, decisions: stackRecords)
+        let unfolded = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
+        let folded = LibraryFilterEngine.folding(unfolded, with: stackIndex)
+        cachedSections = folded.sections
+        cachedUnfoldedSectionItems = Dictionary(unfolded.map { ($0.id, $0.itemIDs) }, uniquingKeysWith: { first, _ in first })
+        cachedStackCounts = folded.stackCounts
+        cachedVisibleCount = visible.count
         state.gridSections = cachedSections.map(\.itemIDs)
+        state.viewerItemIDs = unfolded.flatMap(\.itemIDs)
         hasGrouped = true
         cachedFilterOptions = Self.filterOptions(for: allItems)
         let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
@@ -606,7 +629,14 @@ struct LibraryView: View {
             return
         }
 
-        guard let target = sections.first(where: { $0.itemIDs.contains(focus) }) else { return }
+        guard let target = sections.first(where: { $0.itemIDs.contains(focus) }) else {
+            // A shot inside a stack (Show in Library from the viewer): the
+            // stack's cell stands for it.
+            if let cell = stacks.stack(containing: focus)?.memberIDs.first(where: { cachedStackCounts[$0] != nil }) {
+                selection.select(cell)
+            }
+            return
+        }
         guard state.pendingRevealItemID != focus else { return }
         state.pendingRevealItemID = focus
         state.appearedRevealItemID = nil
@@ -695,6 +725,9 @@ private struct LibrarySectionView: View {
     var allGroups: [UserGroup] = []
     var groupItems: [UserGroupItem] = []
     var group: UserGroup? = nil
+    var stackCounts: [String: Int] = [:]
+    /// The section's photos with each stack's shots, for "Show only these".
+    var allItemIDs: [String]? = nil
     @Query private var placeNotes: [PlaceNote]
     @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
@@ -748,7 +781,7 @@ private struct LibrarySectionView: View {
                 .contextMenu {
                     Button(String(localized: "Select these photos")) { selectSection() }
                     Button(String(localized: "Show only these photos")) {
-                        selection.showInLibrary(section.itemIDs, title: section.title)
+                        selection.showInLibrary(allItemIDs ?? section.itemIDs, title: section.title)
                     }
                     if let tripID = sectionTripID {
                         Button(String(localized: "Show Trip")) { selection.showTrip(tripID) }
@@ -776,7 +809,7 @@ private struct LibrarySectionView: View {
 
         LazyVGrid(columns: gridColumns, alignment: .leading, spacing: size.rowSpacing) {
             ForEach(items, id: \.id) { item in
-                LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact)
+                LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact, stackCount: stackCounts[item.id] ?? 1)
             }
         }
         .padding(.bottom, LibrarySectionView.sectionSpacing)
@@ -817,7 +850,9 @@ private struct LibrarySectionView: View {
 
 private struct LibraryPhotoCell: View {
     @Environment(SelectionModel.self) private var selection
+    @Environment(PhotoStackModel.self) private var stacks
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.undoManager) private var undoManager
     let item: MediaItem
     let state: LibraryViewState
     let allGroups: [UserGroup]
@@ -827,6 +862,8 @@ private struct LibraryPhotoCell: View {
     /// The smallest zoom levels: a dense grid of photos only; place, memory
     /// and note are read and written in the large viewer.
     var isCompact = false
+    /// More than one: the cell is a burst, shown as a stack with its cover.
+    var stackCount = 1
     @State private var isHovering = false
 
     private var showsMemoryEditor: Bool {
@@ -851,6 +888,7 @@ private struct LibraryPhotoCell: View {
                     if isCompact {
                         ThumbnailView(item: item, width: 280, height: 280)
                             .aspectRatio(1, contentMode: .fit)
+                            .stackedPaper(stackCount, isCompact: true, cornerRadius: 10)
                             .overlay {
                                 if selection.isSelected(item.id) {
                                     RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -869,6 +907,7 @@ private struct LibraryPhotoCell: View {
                                     .shadow(.drop(color: Paper.shadow.opacity(0.08), radius: 1, y: 1))
                                     .shadow(.drop(color: Paper.shadow.opacity(0.10), radius: 8, y: 5))
                             )
+                            .stackedPaper(stackCount, isCompact: false)
                             // Selected photos get an accent frame, like Photos.
                             .overlay {
                                 if selection.isSelected(item.id) {
@@ -884,6 +923,13 @@ private struct LibraryPhotoCell: View {
                 .id(LibraryScrollTarget.item(item.id))
                 .onAppear {
                     if state.pendingRevealItemID == item.id { state.appearedRevealItemID = item.id }
+                }
+                // Outside the button, so the count is its own element for
+                // VoiceOver and tests; clicks pass through to the photo.
+                .overlay(alignment: .bottomTrailing) {
+                    stackBadge
+                        .padding(isCompact ? 0 : 5)
+                        .allowsHitTesting(false)
                 }
 
                 HStack(spacing: 6) {
@@ -939,6 +985,11 @@ private struct LibraryPhotoCell: View {
         .onHover { isHovering = $0 }
         .contextMenu {
             Button(String(localized: "Open")) { open() }
+            if stackCount > 1, let stack = stacks.stack(containing: item.id) {
+                Button(String(localized: "Unstack")) {
+                    stacks.unstack(stack, context: modelContext, undoManager: undoManager)
+                }
+            }
             Button(selection.isSelected(item.id) ? String(localized: "Deselect") : String(localized: "Select")) {
                 selection.toggle(item.id)
             }
@@ -975,6 +1026,14 @@ private struct LibraryPhotoCell: View {
         .onDrag { NSItemProvider(object: item.id as NSString) }
     }
 
+    @ViewBuilder
+    private var stackBadge: some View {
+        if stackCount > 1 {
+            StackCountBadge(count: stackCount, isCompact: isCompact)
+                .accessibilityIdentifier("library.stack.\(item.id)")
+        }
+    }
+
     /// One click selects, a second click on the only selected photo
     /// deselects it, Command and Shift extend; a double click opens it.
     private func click() {
@@ -998,7 +1057,7 @@ private struct LibraryPhotoCell: View {
     private func open() {
         selection.select(item.id)
         selection.anchorItemID = item.id
-        selection.openViewer(item.id, in: state.orderedItemIDs)
+        selection.openViewer(item.id, in: state.viewerItemIDs)
     }
 }
 
@@ -1299,7 +1358,7 @@ struct GroupDetailView: View {
     @Environment(SelectionModel.self) private var selection
 
     @Environment(\.modelContext) private var modelContext
-    @Query private var groups: [UserGroup]
+    @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "stack" }) private var groups: [UserGroup]
     @Query private var items: [MediaItem]
     @Query private var memberships: [UserGroupItem]
     @Query private var memoryRecords: [Memory]

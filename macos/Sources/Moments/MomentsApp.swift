@@ -46,12 +46,14 @@ struct MomentsApp: App {
             let testStoreURL = testStoreDirectory?.appending(path: "Moments.store")
             let isUITesting = ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
                 || (isUnitTestHost && testStoreURL == nil)
-            let container = try MomentsPersistence.makeContainer(
-                inMemory: isUITesting,
-                url: testStoreURL
-            )
+            let container: ModelContainer
+            if isUITesting || testStoreURL != nil {
+                container = try MomentsPersistence.makeContainer(inMemory: isUITesting, url: testStoreURL)
+            } else {
+                container = try Self.openUserStore()
+            }
             #else
-            let container = try MomentsPersistence.makeContainer()
+            let container = try Self.openUserStore()
             #endif
             #if DEBUG
             // The on-disk UI-test store holds only what the test imports.
@@ -68,6 +70,12 @@ struct MomentsApp: App {
             modelContainer = nil
             storeError = nil
         }
+    }
+
+    /// Opens the user's store; an unreadable store is backed up and replaced
+    /// with a new empty one, and the user is told once where the backup is.
+    private static func openUserStore() throws -> ModelContainer {
+        try MomentsPersistence.openWithRecovery().container
     }
 
     @ViewBuilder
@@ -89,6 +97,7 @@ struct MomentsApp: App {
                     .sheet(isPresented: $showingPhotosImport) {
                         PhotosImportSheet(controller: photosImportController)
                     }
+                    .modifier(StoreRecoveryAlert())
                     #if DEBUG
                     .frame(width: isUITestSmallWindow ? 900 : nil, height: isUITestSmallWindow ? 600 : nil)
                     .onAppear {
@@ -142,5 +151,33 @@ private struct StoreUnavailableView: View {
         )
         .frame(minWidth: 520, minHeight: 280)
         .padding(32)
+    }
+}
+
+/// One-time notice after an unreadable store was moved to a backup folder.
+private struct StoreRecoveryAlert: ViewModifier {
+    @AppStorage(StoreRecoveryNotice.defaultsKey) private var backupPath = ""
+
+    func body(content: Content) -> some View {
+        content.alert(
+            String(localized: "Your library couldn't be opened"),
+            isPresented: Binding(get: { !backupPath.isEmpty }, set: { if !$0 { backupPath = "" } })
+        ) {
+            Button(String(localized: "Show in Finder")) {
+                NSWorkspace.shared.activateFileViewerSelecting(backupPaths.map { URL(fileURLWithPath: $0) })
+                backupPath = ""
+            }
+            Button(String(localized: "OK"), role: .cancel) { backupPath = "" }
+        } message: {
+            Text(String(format: String(localized: "Moments couldn't open its data, so it saved a copy to %@ and started a new, empty library. Your original photos are not affected."), displayedPaths))
+        }
+    }
+
+    private var backupPaths: [String] {
+        backupPath.split(separator: "\n").map(String.init)
+    }
+
+    private var displayedPaths: String {
+        backupPaths.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: "\n")
     }
 }

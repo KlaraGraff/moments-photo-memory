@@ -717,12 +717,12 @@ private struct LibrarySectionView: View {
         selection.select(section.itemIDs, focus: section.itemIDs.first)
     }
 
-    /// The heading and each row of photos are separate children of the
-    /// Library's lazy stack, so only rows on screen are laid out. A grid per
-    /// section sized every photo in it whenever the width changed: half a
-    /// second a frame while the sidebar moved with a few hundred photos.
-    /// Rows have a fixed number of equal columns, so when the space changes
-    /// the photos grow and shrink with it, like Photos.
+    /// The heading and the section's grid are children of the Library's lazy
+    /// stack. The grid has a fixed number of equal columns, taken from the
+    /// window width, so when the sidebar moves the photos grow and shrink
+    /// with it instead of jumping to another column count, like Photos.
+    /// (One HStack per row instead of a grid scrolled with several times
+    /// more stalls on 2,000 photos.)
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -788,7 +788,7 @@ private struct LibrarySectionView: View {
         Array(repeating: GridItem(.flexible(), spacing: size.spacing, alignment: .top), count: columnCount)
     }
 
-    /// Space between one section's last row and the next heading.
+    /// Space between one section's grid and the next heading.
     static let sectionSpacing: CGFloat = 34
 
     /// Trip memories for a trip section, and day memories for the days its photos were taken.

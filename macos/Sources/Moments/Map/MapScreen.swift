@@ -108,10 +108,11 @@ struct MapScreen: View {
                         refitGlobeOverview()
                     }
             }
-            // Map ignores the safe area. Flush against the floating sidebar it
-            // would extend under it and centre the globe on the hidden part; a
-            // 1 pt gap keeps it inside its own frame.
+            // Map ignores the safe area. Flush against the floating sidebar or
+            // the title bar it would extend under them and centre the globe on
+            // the hidden part; a 1 pt gap keeps it inside its own frame.
             .padding(.leading, 1)
+            .padding(.top, 1)
             .clipped()
             .overlay(alignment: .topLeading) {
                 if isWorldView, !world.snapshot.cityClusters.isEmpty { worldSummary }
@@ -594,11 +595,15 @@ struct MapScreen: View {
 
     /// A photo in the strip opens in the large viewer, paging through the strip.
     private func open(itemID: String) {
+        lastMarkerSelection = Date()
         selection.select([itemID], focus: itemID)
         selection.openViewer(itemID, in: selectedItems.map(\.id))
     }
 
     private func focus(on itemID: String?) {
+        // A pin clicked here is already on screen; only selections made in
+        // other screens move the camera.
+        guard Date().timeIntervalSince(lastMarkerSelection) > 0.4 else { return }
         guard let itemID, let coordinate = snapshot.coordinateByID[itemID] else { return }
         moveCamera(to: .region(viewModel.focusRegion(for: coordinate)), isGlobe: false)
         selectedClusterID = snapshot.cluster(containing: itemID)?.id

@@ -50,7 +50,7 @@ struct AISettingsView: View {
                 }
                 .font(.callout)
             } footer: {
-                Text(String(localized: "Whichever you choose, suggestions are always shown to you first. Nothing is changed until you accept it."))
+                Text(String(localized: "Whichever you choose, the result is written right away. Click the mark next to a photo's place to change or undo it."))
             }
 
             Section(String(localized: "Cloud model")) {

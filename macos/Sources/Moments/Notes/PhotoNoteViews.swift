@@ -5,7 +5,8 @@ import SwiftData
 /// The ruled line under a photo, edited in place like a caption in Photos:
 /// click and type, Return saves, Option-Return starts a new line, Escape
 /// cancels, and clicking elsewhere saves. Saving keeps the words and hands
-/// them to the AI model; its suggestions wait behind `PhotoNoteBadge`.
+/// them to the AI model, whose result is written right away; `PhotoNoteBadge`
+/// opens it for changes or Undo.
 struct PhotoNoteSection: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PhotoNoteService.self) private var service
@@ -66,9 +67,9 @@ struct PhotoNoteSection: View {
 }
 
 /// A small mark at the end of the place line once a photo has notes: a spinner
-/// while organizing, the number of suggestions waiting, or a warning. Clicking
-/// it opens the suggestions and the original words in a popover, so the grid
-/// cell never grows around them.
+/// while organizing, a sparkle once the AI's result is written, suggestions
+/// waiting after an undo, or a warning. Clicking it opens the details in a
+/// popover, so the grid cell never grows around them.
 struct PhotoNoteBadge: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PhotoNoteService.self) private var service
@@ -132,6 +133,11 @@ struct PhotoNoteBadge: View {
                 .font(.caption)
                 .foregroundStyle(LibraryPalette.accent)
                 .accessibilityLabel(String(localized: "Not organized yet"))
+        } else if notes.contains(where: { $0.status == .done && !$0.undoRecord.isEmpty }) {
+            Image(systemName: "sparkles")
+                .font(.caption)
+                .foregroundStyle(LibraryPalette.accent)
+                .accessibilityLabel(String(localized: "Notes on this photo"))
         } else {
             Image(systemName: "text.bubble")
                 .font(.caption)
@@ -141,10 +147,9 @@ struct PhotoNoteBadge: View {
     }
 }
 
-/// The popover behind `PhotoNoteBadge`: open suggestions, then every note's
-/// original words with Undo for what it wrote.
+/// The popover behind `PhotoNoteBadge`: anything still open, what each note
+/// wrote (editable, with Undo), then every note's original words.
 private struct PhotoNoteDetails: View {
-    @Environment(\.modelContext) private var modelContext
     let item: MediaItem
     let notes: [PhotoNote]
     let close: () -> Void
@@ -154,12 +159,19 @@ private struct PhotoNoteDetails: View {
         return notes.filter { open.contains($0.status) }
     }
 
+    private var writtenNotes: [PhotoNote] {
+        notes.filter { $0.status == .done && $0.suggestions.contains { $0.decision == .accepted } }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(openNotes, id: \.id) { note in
                 PhotoNoteStatusView(note: note, item: item, close: close)
             }
-            if !openNotes.isEmpty {
+            ForEach(writtenNotes.reversed(), id: \.id) { note in
+                WrittenNoteView(note: note, item: item)
+            }
+            if !openNotes.isEmpty || !writtenNotes.isEmpty {
                 Divider()
             }
             Text(String(localized: "Original words"))
@@ -180,15 +192,6 @@ private struct PhotoNoteDetails: View {
                             Text(String(localized: "Nothing to organize"))
                                 .font(.caption2)
                                 .foregroundStyle(LibraryPalette.muted)
-                        }
-                        if !note.undoRecord.isEmpty {
-                            Button(String(localized: "Undo")) {
-                                try? NoteApplier.undo(note, context: modelContext)
-                                try? modelContext.save()
-                            }
-                            .buttonStyle(.link)
-                            .font(.caption2)
-                            .accessibilityIdentifier("library.note.undo.\(note.id)")
                         }
                     }
                 }
@@ -360,7 +363,7 @@ private struct NoteSuggestionCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(title)
+            Text(NoteSuggestionContent.title(for: suggestion))
                 .font(.caption)
                 .foregroundStyle(LibraryPalette.accent)
 
@@ -369,7 +372,7 @@ private struct NoteSuggestionCard: View {
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...6)
             } else {
-                content
+                NoteSuggestionContent(suggestion: suggestion)
             }
 
             if suggestion.kind == .placeCorrection, !suggestion.nearbyMediaIDs.isEmpty {
@@ -446,7 +449,21 @@ private struct NoteSuggestionCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    private var title: String {
+    private func update(_ change: (inout NoteSuggestion) -> Void) {
+        var suggestions = note.suggestions
+        guard let index = suggestions.firstIndex(where: { $0.id == suggestion.id }) else { return }
+        change(&suggestions[index])
+        note.suggestions = suggestions
+        note.updatedAt = .now
+        try? modelContext.save()
+    }
+}
+
+/// What a suggestion says, shared by the pending card and the written list.
+private struct NoteSuggestionContent: View {
+    let suggestion: NoteSuggestion
+
+    static func title(for suggestion: NoteSuggestion) -> String {
         switch suggestion.kind {
         case .placeCorrection: return String(localized: "Place correction")
         case .placeDescription: return String(localized: "About \(suggestion.placeName ?? "")")
@@ -454,8 +471,7 @@ private struct NoteSuggestionCard: View {
         }
     }
 
-    @ViewBuilder
-    private var content: some View {
+    var body: some View {
         switch suggestion.kind {
         case .placeCorrection:
             HStack(spacing: 8) {
@@ -479,13 +495,101 @@ private struct NoteSuggestionCard: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
+}
 
-    private func update(_ change: (inout NoteSuggestion) -> Void) {
-        var suggestions = note.suggestions
-        guard let index = suggestions.firstIndex(where: { $0.id == suggestion.id }) else { return }
-        change(&suggestions[index])
-        note.suggestions = suggestions
-        note.updatedAt = .now
+/// One note whose suggestions were written: what changed, each item can be
+/// changed in place, and Undo takes the whole note back.
+private struct WrittenNoteView: View {
+    @Environment(\.modelContext) private var modelContext
+    let note: PhotoNote
+    let item: MediaItem
+
+    private var written: [NoteSuggestion] {
+        note.suggestions.filter { $0.decision == .accepted }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Label(String(localized: "Organized and saved"), systemImage: "sparkles")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(LibraryPalette.ink)
+                Spacer(minLength: 4)
+                if let label = note.organizerLabel {
+                    Text(label)
+                        .font(.caption2)
+                        .foregroundStyle(LibraryPalette.muted)
+                }
+                Button(String(localized: "Undo")) {
+                    try? NoteApplier.undo(note, context: modelContext)
+                    try? modelContext.save()
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+                .accessibilityIdentifier("library.note.undo.\(note.id)")
+            }
+            ForEach(written) { suggestion in
+                WrittenSuggestionRow(note: note, item: item, suggestion: suggestion)
+            }
+        }
+    }
+}
+
+private struct WrittenSuggestionRow: View {
+    @Environment(\.modelContext) private var modelContext
+    let note: PhotoNote
+    let item: MediaItem
+    let suggestion: NoteSuggestion
+    @State private var isEditing = false
+    @State private var editedText = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(NoteSuggestionContent.title(for: suggestion))
+                    .font(.caption)
+                    .foregroundStyle(LibraryPalette.accent)
+                if suggestion.kind == .placeCorrection, suggestion.applyToNearby, !suggestion.nearbyMediaIDs.isEmpty {
+                    Text(String(localized: "also \(suggestion.nearbyMediaIDs.count) photos nearby"))
+                        .font(.caption)
+                        .foregroundStyle(LibraryPalette.muted)
+                }
+                Spacer(minLength: 4)
+                if !isEditing {
+                    Button(String(localized: "Edit")) {
+                        editedText = suggestion.text
+                        isEditing = true
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                }
+            }
+            if isEditing {
+                TextField("", text: $editedText, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1...6)
+                    .onSubmit { commit() }
+                    .onExitCommand { isEditing = false }
+                HStack {
+                    Spacer()
+                    Button(String(localized: "Cancel")) { isEditing = false }
+                        .controlSize(.small)
+                    Button(String(localized: "Done")) { commit() }
+                        .controlSize(.small)
+                }
+            } else {
+                NoteSuggestionContent(suggestion: suggestion)
+            }
+        }
+        .padding(.leading, 10)
+        .overlay(alignment: .leading) { Rectangle().fill(LibraryPalette.accent.opacity(0.5)).frame(width: 2) }
+    }
+
+    private func commit() {
+        let text = editedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        isEditing = false
+        guard !text.isEmpty, text != suggestion.text else { return }
+        try? NoteApplier.revise(suggestion.id, of: note, to: text, item: item, context: modelContext)
         try? modelContext.save()
     }
 }

@@ -148,6 +148,29 @@ public enum NoteApplier {
         return written
     }
 
+    /// Changes the text of one written suggestion: the note's writes are
+    /// undone and written again with the new text.
+    public static func revise(
+        _ suggestionID: String,
+        of note: PhotoNote,
+        to text: String,
+        item: MediaItem,
+        context: ModelContext,
+        now: Date = .now
+    ) throws {
+        let accepted = Set(note.suggestions.filter { $0.decision == .accepted }.map(\.id))
+        guard accepted.contains(suggestionID) else { return }
+        try undo(note, context: context, now: now)
+        // Commit the undo's deletions before writing again, so the new
+        // writes never land on a record that is about to be deleted.
+        try context.save()
+        var suggestions = note.suggestions
+        guard let index = suggestions.firstIndex(where: { $0.id == suggestionID }) else { return }
+        suggestions[index].text = text
+        note.suggestions = suggestions
+        try accept(accepted, of: note, item: item, context: context, now: now)
+    }
+
     public static func reject(_ suggestionID: String, of note: PhotoNote, now: Date = .now) {
         var suggestions = note.suggestions
         guard let index = suggestions.firstIndex(where: { $0.id == suggestionID && $0.decision == .pending }) else { return }

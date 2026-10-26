@@ -175,6 +175,36 @@ final class PhotoNoteTests: XCTestCase {
         XCTAssertEqual(note.text, "Not the harbor, it is Old Lane", "The original words are never touched")
     }
 
+    func testRevisingAWrittenItemRewritesItAndKeepsUndo() throws {
+        let context = try makeContext()
+        let harbor = Place(name: "Harbor")
+        context.insert(harbor)
+        let item = insertItem("a", place: harbor, in: context)
+        let neighbour = insertItem("b", minutes: 5, place: harbor, in: context)
+        try context.save()
+
+        let note = PhotoNote(mediaID: "a", text: "It is Old Lane", status: .ready)
+        note.suggestions = [
+            NoteSuggestion(id: "c", kind: .placeCorrection, text: "Old Lane", previousPlaceName: "Harbor", applyToNearby: true, nearbyMediaIDs: ["b"]),
+            NoteSuggestion(id: "m", kind: .memory, text: "Quiet morning", scope: .photo)
+        ]
+        context.insert(note)
+        try NoteApplier.accept(["c", "m"], of: note, item: item, context: context)
+        try context.save()
+
+        try NoteApplier.revise("c", of: note, to: "Old Lane Café", item: item, context: context)
+        try context.save()
+        XCTAssertEqual(item.effectivePlaceName, "Old Lane Café")
+        XCTAssertEqual(neighbour.effectivePlaceName, "Old Lane Café")
+        XCTAssertEqual(item.memories.map(\.text), ["Quiet morning"], "Other written items stay written")
+        XCTAssertEqual(note.status, .done)
+
+        try NoteApplier.undo(note, context: context)
+        try context.save()
+        XCTAssertEqual(item.effectivePlaceName, "Harbor")
+        XCTAssertEqual(neighbour.effectivePlaceName, "Harbor")
+    }
+
     func testMemoryAppendsToOwnMemoryLeavesPartnerAloneAndUndoes() throws {
         let context = try makeContext()
         let mine = insertItem("mine", in: context)
@@ -273,9 +303,12 @@ final class PhotoNoteTests: XCTestCase {
 
         XCTAssertEqual(capture.received?.noteText, "It was Old Lane")
         XCTAssertEqual(capture.received?.placeName, "Harbor")
-        XCTAssertEqual(note.status, .ready)
         XCTAssertEqual(note.organizerLabel, "Capture")
         XCTAssertEqual(note.suggestions.map(\.kind), [.memory])
+        XCTAssertEqual(note.status, .done, "The result is written without asking")
+        XCTAssertEqual(note.suggestions.map(\.decision), [.accepted])
+        XCTAssertEqual(item.memories.map(\.text), ["ok"])
+        XCTAssertFalse(note.undoRecord.isEmpty, "What was written can be undone")
         XCTAssertNil(service.save("   ", for: item, context: context), "Blank words are not saved")
     }
 

@@ -3,8 +3,8 @@ import Observation
 import SwiftData
 
 /// Saves notes and runs the model on them. Saving always keeps the original
-/// words first; organizing is a separate step whose result only becomes
-/// suggestions, never direct changes.
+/// words first; organizing then writes the model's result, recording how to
+/// undo it.
 @MainActor
 @Observable
 final class PhotoNoteService {
@@ -63,6 +63,12 @@ final class PhotoNoteService {
                 note.organizerLabel = organizer.label
                 note.status = suggestions.isEmpty ? .nothingFound : .ready
                 note.updatedAt = .now
+                // Written at once (maple's call): the badge's popover keeps
+                // every item editable and the whole note undoable. If writing
+                // fails the suggestions stay to be used by hand.
+                if !suggestions.isEmpty {
+                    try? NoteApplier.accept(Set(suggestions.map(\.id)), of: note, item: item, context: context)
+                }
                 try? context.save()
                 return
             } catch NoteOrganizerError.unavailable(let reason) {

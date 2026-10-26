@@ -6440,24 +6440,24 @@
         }
       }
     },
-    "Whichever you choose, suggestions are always shown to you first. Nothing is changed until you accept it." : {
+    "Whichever you choose, the result is written right away. Click the mark next to a photo's place to change or undo it." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Egal welches: Vorschläge werden dir immer zuerst gezeigt. Nichts ändert sich, bevor du zustimmst."
+            "value" : "Egal welches Modell: Das Ergebnis wird sofort gesichert. Klick auf die Markierung neben dem Ort eines Fotos, um es zu ändern oder rückgängig zu machen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Whichever you choose, suggestions are always shown to you first. Nothing is changed until you accept it."
+            "value" : "Whichever you choose, the result is written right away. Click the mark next to a photo's place to change or undo it."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "无论用哪个，整理结果都会先给你确认，不会直接改动。"
+            "value" : "无论选哪个，整理结果都会直接写入。点照片地名旁的小标记可以修改或撤回。"
           }
         }
       }
@@ -6744,6 +6744,72 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有可整理的内容"
+          }
+        }
+      }
+    },
+    "Organized and saved" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geordnet und gesichert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Organized and saved"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已整理并写入"
+          }
+        }
+      }
+    },
+    "also %lld photos nearby" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "auch %lld Fotos in der Nähe"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "also %lld photos nearby"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "附近 %lld 张照片也一起改了"
+          }
+        }
+      }
+    },
+    "Edit" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bearbeiten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修改"
           }
         }
       }

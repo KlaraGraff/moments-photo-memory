@@ -11,6 +11,8 @@ struct LibraryFilterChips: View {
     @Environment(SelectionModel.self) private var selection
     @Query private var allItems: [MediaItem]
     @Query(sort: \Person.name) private var people: [Person]
+    @Query(sort: \Trip.id) private var allTrips: [Trip]
+    @Query(sort: \Place.id) private var allPlaces: [Place]
 
     @AppStorage(LibraryFilterKeys.type) private var typeRaw = LibraryMediaTypeFilter.all.rawValue
     @AppStorage(LibraryFilterKeys.fromDate) private var fromDateInterval = 0.0
@@ -21,6 +23,15 @@ struct LibraryFilterChips: View {
     @AppStorage(LibraryFilterKeys.person) private var personFilterID = ""
     @AppStorage(LibraryFilterKeys.dateMode) private var dateModeRaw = DateFilterMode.days.rawValue
     @State private var showingDatePicker = false
+    /// The menus' options, rebuilt only when items, trips or places change:
+    /// this view's body runs on every Library update, including scrolling.
+    @State private var options = Options()
+
+    private struct Options {
+        var places: [LibraryPlaceOption] = []
+        var trips: [String] = []
+        var tripNames: [String: String] = [:]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -63,28 +74,57 @@ struct LibraryFilterChips: View {
                 }
             }
         }
+        .onChange(of: optionsKey, initial: true) { options = buildOptions() }
         .onChange(of: people.map(\.id), initial: true) { _, ids in
             if !personFilterID.isEmpty && !ids.contains(personFilterID) { personFilterID = "" }
         }
     }
 
-    private var places: [LibraryPlaceOption] {
-        var options: [String: LibraryPlaceOption] = [:]
+    private var places: [LibraryPlaceOption] { options.places }
+    private var trips: [String] { options.trips }
+
+    private var optionsKey: Int {
+        var hasher = Hasher()
         for item in allItems {
+            hasher.combine(item.id)
+            hasher.combine(item.tripID)
+            hasher.combine(item.place?.id)
+            hasher.combine(item.placeOverrideName)
+            hasher.combine(item.updatedAt)
+        }
+        for trip in allTrips {
+            hasher.combine(trip.id)
+            hasher.combine(trip.name)
+            hasher.combine(trip.overrideName)
+        }
+        for place in allPlaces {
+            hasher.combine(place.id)
+            hasher.combine(place.name)
+        }
+        return hasher.finalize()
+    }
+
+    private func buildOptions() -> Options {
+        var places: [String: LibraryPlaceOption] = [:]
+        var tripNames: [String: String] = [:]
+        for item in allItems {
+            if let tripID = item.tripID, tripNames[tripID] == nil {
+                tripNames[tripID] = item.trip?.effectiveName ?? tripID
+            }
             // One row per name: unnamed spots are listed under the area or
             // city that names them, and the filter matches all of them.
             if let place = item.place, let named = PlaceDisplayName.namingPlace(of: place) {
-                options[named.id] = LibraryPlaceOption(id: named.id, name: named.displayName)
+                places[named.id] = LibraryPlaceOption(id: named.id, name: named.displayName)
             }
             if let override = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
-                options["override:\(override)"] = LibraryPlaceOption(id: "override:\(override)", name: override)
+                places["override:\(override)"] = LibraryPlaceOption(id: "override:\(override)", name: override)
             }
         }
-        return options.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    }
-
-    private var trips: [String] {
-        Array(Set(allItems.compactMap(\.tripID))).sorted()
+        return Options(
+            places: places.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending },
+            trips: tripNames.keys.sorted(),
+            tripNames: tripNames
+        )
     }
 
     private var selectedPlaceName: String? {
@@ -98,7 +138,7 @@ struct LibraryFilterChips: View {
     }
 
     private func selectedTripName(for tripID: String) -> String {
-        allItems.first(where: { $0.tripID == tripID })?.trip?.effectiveName ?? tripID
+        options.tripNames[tripID] ?? tripID
     }
 
     private var selectedMemoryFilter: LibraryMemoryFilter {

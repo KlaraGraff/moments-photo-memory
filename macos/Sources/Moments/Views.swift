@@ -297,7 +297,7 @@ struct ContentView: View {
         HStack(spacing: 8) {
             Label(LocalizedStringKey(title), systemImage: icon)
             Spacer(minLength: 4)
-            if let badge {
+            if let badge, badge > 0 {
                 Text("\(badge)")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(MomentsPalette.accent)

@@ -2441,7 +2441,10 @@ public final class UserGroup {
         /// `chapter`: a stretch of time on the Chapters page (an event, a
         /// celebration, a period); its details live in `rulesData` as
         /// `ChapterInfo` and its photos in `UserGroupItem`. Not a "My groups" entry.
-        case manual, smart, chapter
+        /// `stack`: what someone changed about a burst of similar photos (its
+        /// cover, unstacked, photos taken out), as a `StackDecision` in
+        /// `rulesData`. Not a "My groups" entry either; see `PhotoStackModel`.
+        case manual, smart, chapter, stack
     }
 
     public var id: String

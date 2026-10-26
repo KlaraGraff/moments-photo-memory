@@ -14,6 +14,7 @@ struct MapScreen: View {
     @Query(sort: \MediaItem.captureDate) private var items: [MediaItem]
     @Query private var places: [Place]
     @Environment(SelectionModel.self) private var selection
+    @Environment(PhotoStackModel.self) private var stacks
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var cameraPosition = MapCameraPosition.camera(
@@ -90,12 +91,20 @@ struct MapScreen: View {
         )
     }
 
-    private var selectedItems: [MediaItem] {
+    /// Every photo of the selected place, a burst's shots included.
+    private var selectedClusterItems: [MediaItem] {
         guard let selectedCluster else { return [] }
         return selectedCluster.stopIDs
             .compactMap { itemsByID[$0] }
             .filter { selection.isVisible($0.id) }
             .sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) < ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
+    }
+
+    /// The strip's photos: a burst shows once, as its cover, as in the Library.
+    private var selectedItems: [MediaItem] {
+        let sorted = selectedClusterItems
+        let shown = Set(stacks.collapse(sorted.map(\.id)).map(\.id))
+        return sorted.filter { shown.contains($0.id) }
     }
 
     var body: some View {
@@ -254,6 +263,8 @@ struct MapScreen: View {
         let isSelected = selectedCluster?.id == cluster.id
         let side: CGFloat = isWorldView ? 34 : 46
         let cover = cluster.stopIDs.lazy.compactMap { itemsByID[$0] }.first
+        // A burst counts once.
+        let photoCount = stacks.foldedCount(cluster.stopIDs)
         return Button {
             pinClicked(cluster)
         } label: {
@@ -270,8 +281,8 @@ struct MapScreen: View {
                 .padding(2.5)
                 .background(isSelected ? Paper.accent : Color.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(alignment: .topTrailing) {
-                    if cluster.stopIDs.count > 1 {
-                        Text(cluster.stopIDs.count, format: .number)
+                    if photoCount > 1 {
+                        Text(photoCount, format: .number)
                             .font(.caption2.weight(.semibold).monospacedDigit())
                             .foregroundStyle(.white)
                             .padding(.horizontal, 5)
@@ -294,7 +305,7 @@ struct MapScreen: View {
         .contentShape(Rectangle())
         .help(clusterDisplayName(cluster))
         .accessibilityLabel(clusterDisplayName(cluster))
-        .accessibilityValue(Text("\(cluster.stopIDs.count) photos"))
+        .accessibilityValue(Text("\(photoCount) photos"))
         .accessibilityIdentifier("map.marker.\(cluster.stopIDs.first ?? cluster.id)")
     }
 
@@ -496,7 +507,7 @@ struct MapScreen: View {
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
                     Button {
-                        selection.showInLibrary(selectedItems.map(\.id), title: clusterDisplayName(selectedCluster))
+                        selection.showInLibrary(selectedClusterItems.map(\.id), title: clusterDisplayName(selectedCluster))
                     } label: {
                         Text(clusterDisplayName(selectedCluster))
                             .font(.headline)
@@ -516,7 +527,7 @@ struct MapScreen: View {
                     .fixedSize()
                     Spacer(minLength: 8)
                     Button {
-                        selection.showInLibrary(selectedItems.map(\.id), title: clusterDisplayName(selectedCluster))
+                        selection.showInLibrary(selectedClusterItems.map(\.id), title: clusterDisplayName(selectedCluster))
                     } label: {
                         Label("Show in Library", systemImage: "photo.on.rectangle")
                             .font(.callout)
@@ -684,7 +695,7 @@ struct MapScreen: View {
     private func open(itemID: String) {
         lastMarkerSelection = Date()
         selection.select([itemID], focus: itemID)
-        selection.openViewer(itemID, in: selectedItems.map(\.id))
+        selection.openViewer(itemID, in: selectedClusterItems.map(\.id))
     }
 
     private func focus(on itemID: String?) {

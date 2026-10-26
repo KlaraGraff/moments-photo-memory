@@ -16,7 +16,7 @@ import MomentsCore
 /// `UserGroup`s of kind `.chapter`, so a photo can be in a trip and in a
 /// birthday at once. Their cards and pages use the id "chapter.<group id>".
 struct TripsScreen: View {
-    @Query private var items: [MediaItem]
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
     @Query private var trips: [Trip]
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw == "chapter" }) private var chapterGroups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]

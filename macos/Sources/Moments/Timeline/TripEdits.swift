@@ -330,7 +330,8 @@ enum TripEdits {
     /// Members gathered once, for a preview that follows the date pickers.
     @MainActor
     static func members(context: ModelContext, locked: Set<String> = TripAssignmentLocks.lockedIDs()) -> [Member] {
-        let items = (try? context.fetch(FetchDescriptor<MediaItem>())) ?? []
+        // Photos in Recently Deleted keep their trip but don't count in it.
+        let items = (try? context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.deletedAt == nil }))) ?? []
         let trips = (try? context.fetch(FetchDescriptor<Trip>())) ?? []
         return members(items, trips: trips, locked: locked)
     }
@@ -582,7 +583,7 @@ extension TripEdits {
         let rows = memberships(of: group, context: context)
         let inside = Set(rows.filter { !$0.excluded }.map(\.mediaID))
         let excluded = Set(rows.filter(\.excluded).map(\.mediaID))
-        let items = (try? context.fetch(FetchDescriptor<MediaItem>())) ?? []
+        let items = (try? context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.deletedAt == nil }))) ?? []
         return items.map { item in
             Member(id: item.id, dayKey: dayKey(item), tripID: inside.contains(item.id) ? group.id : nil, isLocked: excluded.contains(item.id))
         }

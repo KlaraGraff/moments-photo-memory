@@ -117,29 +117,41 @@ struct FolderImporter {
         let sourceFileCount = organizedMetadata.reduce(into: 0) { $0 += $1.sourceReferences.count }
 
         let context = ModelContext(container)
+        let source = ImportSources.folderSource(for: folderURL, context: context)
         let existing = try context.fetch(FetchDescriptor<MediaItem>())
         let existingHashes = Set(existing.compactMap(\.originalContentHash))
         let existingIDs = Set(existing.map(\.id))
         let existingByHash = Dictionary(existing.compactMap { item in
             item.originalContentHash.map { ($0, item) }
         }, uniquingKeysWith: { first, _ in first })
-        var didUpdateSourceMappings = false
+        // The source is new or touched (last import date) on every run.
+        var didUpdateSourceMappings = true
+        // Importing a folder again brings back its photos that were in
+        // Recently Deleted: choosing the folder says "I want these".
+        var recovered: [MediaItem] = []
         for item in organizedMetadata where existingHashes.contains(item.contentHash) || existingIDs.contains(item.id) {
             guard let existingItem = existingByHash[item.contentHash] ?? existing.first(where: { $0.id == item.id }) else { continue }
             let oldReferences = sourceReferencesFromJSON(existingItem.sourceReferencesRaw)
             let merged = Array(Set(oldReferences + item.sourceReferences)).sorted { $0.fileName < $1.fileName }
             if merged.count > oldReferences.count {
                 existingItem.sourceReferencesRaw = sourceReferencesJSON(merged)
-                didUpdateSourceMappings = true
             }
+            existingItem.addImportSource(source.id)
+            if existingItem.deletedAt != nil, RecentlyDeleted.canDelete(existingItem) { recovered.append(existingItem) }
+        }
+        let recoveredSourceCount = recovered.reduce(into: 0) { $0 += max(1, sourceReferencesFromJSON($1.sourceReferencesRaw).count) }
+        for item in recovered {
+            item.deletedAt = nil
+            item.deletedBy = nil
+            item.updatedAt = .now
         }
         let fresh = organizedMetadata.filter { !existingHashes.contains($0.contentHash) && !existingIDs.contains($0.id) }
         let freshSourceCount = fresh.reduce(into: 0) { $0 += $1.sourceReferences.count }
-        let skippedCount = sourceFileCount - freshSourceCount
+        let skippedCount = max(0, sourceFileCount - freshSourceCount - recoveredSourceCount)
         if fresh.isEmpty {
             await geocodeCache.persist()
             if didUpdateSourceMappings { try context.save() }
-            return ImportSummary(importedCount: 0, skippedCount: skippedCount, tripCount: 0, placeCount: 0, collectionCount: 0, routeCount: 0, trips: [], flags: [])
+            return ImportSummary(importedCount: recovered.count, skippedCount: skippedCount, tripCount: 0, placeCount: 0, collectionCount: 0, routeCount: 0, trips: [], flags: [])
         }
 
         progress(ImportProgress(phase: .organizing, completed: 0, total: fresh.count, message: String(localized: "Organizing trips and places")))
@@ -212,6 +224,7 @@ struct FolderImporter {
                 reviewDecisionRaw: organized.reasons.isEmpty ? ImportReviewDecision.accepted.rawValue : ImportReviewDecision.pending.rawValue
             )
             model.place = organized.placeID.flatMap { placeModels[$0] }
+            model.importSourceIDsRaw = source.id
             context.insert(model)
             progress(ImportProgress(phase: .saving, completed: index + 1, total: fresh.count, message: String(localized: "Saving import")))
         }
@@ -222,7 +235,7 @@ struct FolderImporter {
             ImportTripSummary(id: trip.id, name: trip.name, itemCount: trip.itemIDs.count, startDate: trip.startDate, endDate: trip.endDate, isSuggestion: true)
         }
         return ImportSummary(
-            importedCount: fresh.count,
+            importedCount: fresh.count + recovered.count,
             skippedCount: skippedCount,
             tripCount: plan.trips.count,
             placeCount: plan.places.count,

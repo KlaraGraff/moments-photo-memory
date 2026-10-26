@@ -266,6 +266,19 @@ final class ThumbnailCache {
         try? (data as Data).write(to: url, options: .atomic)
     }
 
+    /// Drops the saved thumbnails of photos purged from Moments, at every size.
+    func removeFiles(for ids: Set<String>) {
+        guard let directory, !ids.isEmpty else { return }
+        let prefixes = ids.map { Self.fileName(for: $0) + "-" }
+        Task.detached(priority: .utility) {
+            let manager = FileManager.default
+            guard let names = try? manager.contentsOfDirectory(atPath: directory.path) else { return }
+            for name in names where prefixes.contains(where: name.hasPrefix) {
+                try? manager.removeItem(at: directory.appending(path: name))
+            }
+        }
+    }
+
     /// Photos identifiers contain "/", which cannot be in a file name.
     nonisolated private static func fileName(for id: String) -> String {
         id.replacingOccurrences(of: "/", with: "_")

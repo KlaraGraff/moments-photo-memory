@@ -809,6 +809,8 @@ struct PeopleScreen: View {
     @Environment(PeopleScanController.self) private var scanner
     @Query(sort: \Person.name) private var people: [Person]
     @Query private var observations: [FaceObservation]
+    /// Faces in Recently Deleted photos stay stored but are not shown.
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt != nil }) private var deletedItems: [MediaItem]
     @State private var clusterNames: [String: String] = [:]
     @State private var mergeSource: String?
     @State private var mergeTarget: String?
@@ -847,12 +849,15 @@ struct PeopleScreen: View {
             hasher.combine(observation.assignmentSource)
             hasher.combine(observation.updatedAt)
         }
+        for item in deletedItems { hasher.combine(item.id) }
         return hasher.finalize()
     }
 
     private func refreshFaceCaches() {
-        cachedFacesByPerson = Dictionary(grouping: observations.compactMap { $0.personID == nil ? nil : $0 }, by: { $0.personID! })
-        let grouped = Dictionary(grouping: observations.filter { $0.personID == nil && $0.clusterID != nil }, by: { $0.clusterID! })
+        let deletedIDs = Set(deletedItems.map(\.id))
+        let shown = deletedIDs.isEmpty ? observations : observations.filter { !deletedIDs.contains($0.mediaID) }
+        cachedFacesByPerson = Dictionary(grouping: shown.compactMap { $0.personID == nil ? nil : $0 }, by: { $0.personID! })
+        let grouped = Dictionary(grouping: shown.filter { $0.personID == nil && $0.clusterID != nil }, by: { $0.clusterID! })
         cachedUnnamedClusters = grouped.map { PeopleClusterSnapshot(id: $0.key, faces: $0.value.sorted { $0.createdAt < $1.createdAt }) }.sorted { $0.id < $1.id }
     }
 

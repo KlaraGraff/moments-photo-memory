@@ -29,7 +29,7 @@ struct ContentView: View {
     @Environment(SelectionModel.self) private var shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(ImportController.self) private var importController
-    @Query private var items: [MediaItem]
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
     /// "My groups" only; chapters live on the Chapters page, and stack
     /// records are not groups anyone made.
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" }, sort: \UserGroup.name)

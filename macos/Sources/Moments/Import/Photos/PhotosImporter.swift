@@ -121,11 +121,26 @@ public struct PhotosImporter {
             return false
         }()
         let existingPhotos = Set(existingByPhotosID.keys)
+        let photosSource = ImportSources.photosSource(context: context)
+        photosSource.lastImportedAt = .now
+        // Choosing photos to import brings back the ones in Recently Deleted;
+        // background refreshes of new or changed assets never do.
+        var recoveredCount = 0
+        if !isIncrementalRefresh {
+            for asset in assets {
+                guard let item = existingByPhotosID[asset.localIdentifier], item.deletedAt != nil, RecentlyDeleted.canDelete(item) else { continue }
+                item.deletedAt = nil
+                item.deletedBy = nil
+                item.updatedAt = .now
+                recoveredCount += 1
+            }
+        }
         let freshAssets = assets.filter { isIncrementalRefresh || !existingPhotos.contains($0.localIdentifier) }
-        let skippedCount = assets.count - freshAssets.count
+        let skippedCount = assets.count - freshAssets.count - recoveredCount
         guard !freshAssets.isEmpty else {
+            try context.save()
             progress(ImportProgress(phase: .finished, completed: 0, total: 0, message: String(localized: "Apple Photos import is already up to date")))
-            return ImportSummary(importedCount: 0, skippedCount: skippedCount, tripCount: 0, placeCount: 0, collectionCount: 0, routeCount: 0, trips: [], flags: [], conflicts: [])
+            return ImportSummary(importedCount: recoveredCount, skippedCount: skippedCount, tripCount: 0, placeCount: 0, collectionCount: 0, routeCount: 0, trips: [], flags: [], conflicts: [])
         }
 
         let hashIdentifiers = Set(freshAssets.compactMap { asset -> String? in
@@ -214,7 +229,7 @@ public struct PhotosImporter {
             ImportTripSummary(id: trip.id, name: trip.name, itemCount: trip.itemIDs.count, startDate: trip.startDate, endDate: trip.endDate, isSuggestion: true)
         }
         return ImportSummary(
-            importedCount: fresh.count,
+            importedCount: fresh.count + recoveredCount,
             skippedCount: skippedCount,
             tripCount: summaries.count,
             placeCount: saveResult.insertedPlaceIDs.count,

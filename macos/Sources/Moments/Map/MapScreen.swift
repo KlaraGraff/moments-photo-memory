@@ -11,7 +11,7 @@ import MomentsCore
 /// is a globe with the visited countries; zoomed in it shows places and the
 /// routes between them. Pins are the photos themselves, like Apple Photos.
 struct MapScreen: View {
-    @Query(sort: \MediaItem.captureDate) private var items: [MediaItem]
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }, sort: \MediaItem.captureDate) private var items: [MediaItem]
     @Query private var places: [Place]
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks

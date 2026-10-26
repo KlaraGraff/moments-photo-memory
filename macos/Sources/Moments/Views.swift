@@ -126,21 +126,38 @@ struct ContentView: View {
                 .tint(MomentsPalette.accent)
 
                 Divider()
-                Button {
-                    importController.chooseFolder()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "plus.circle")
-                        Text(String(localized: "Import more photos…"))
-                        Spacer()
+                HStack(spacing: 0) {
+                    Button {
+                        importController.chooseFolder()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "plus.circle")
+                            Text(String(localized: "Import more photos…"))
+                            Spacer()
+                        }
+                        .font(.caption)
+                        .foregroundStyle(MomentsPalette.muted)
+                        .padding(.leading, 16)
+                        .padding(.vertical, 12)
+                        .contentShape(Rectangle())
                     }
-                    .font(.caption)
-                    .foregroundStyle(MomentsPalette.muted)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("sidebar.import")
+                    // The AI model is set up here too, not only from ⌘, or
+                    // after a note fails to organize.
+                    SettingsLink {
+                        Image(systemName: "gearshape")
+                            .font(.callout)
+                            .foregroundStyle(MomentsPalette.muted)
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 8)
+                    .help(String(localized: "AI model settings"))
+                    .accessibilityLabel(String(localized: "AI model settings"))
+                    .accessibilityIdentifier("sidebar.settings")
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("sidebar.import")
             }
             .background(MomentsPalette.sidebar)
             .navigationTitle("Moments")

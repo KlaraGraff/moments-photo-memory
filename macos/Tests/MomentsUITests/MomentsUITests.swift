@@ -145,6 +145,20 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "places-03-panel-closed")
     }
 
+    /// The AI model settings are reachable from the sidebar, not only via ⌘,.
+    func testSidebarOpensAIModelSettings() {
+        let app = launch(language: "en")
+        let gear = element(in: app, identifier: "sidebar.settings")
+        XCTAssertTrue(gear.waitForExistence(timeout: launchTimeout))
+        gear.click()
+        let picker = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@ OR title CONTAINS %@", "Model for organizing notes", "Model for organizing notes", "Model for organizing notes"))
+            .firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: launchTimeout), "The AI model settings window did not open")
+        capture(app, named: "settings-01-from-sidebar-evidence")
+        app.typeKey("w", modifierFlags: .command)
+    }
+
     func testFootprintsGlobeOpens() {
         let app = launch(language: "en")
         assertGlobeFullyVisible(app, screenshot: "footprints-01-globe-evidence")

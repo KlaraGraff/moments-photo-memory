@@ -232,6 +232,17 @@ public final class PhotosImportController {
         task?.cancel()
     }
 
+    /// Apple Photos was removed as a source: stop offering its new photos
+    /// until someone imports from it again.
+    public func forgetImportScope() {
+        lastImportSelection = nil
+        userDefaults.removeObject(forKey: Self.lastImportScopeDefaultsKey)
+        changeTask?.cancel()
+        pendingScopeCheckIdentifiers.removeAll()
+        pendingNewAssetIdentifiers = []
+        pendingDeletedAssetCount = 0
+    }
+
     private static let lastImportScopeDefaultsKey = "Moments.photosImport.lastScope"
 
     private func persistLastImportSelection(_ selection: PhotosImportSelection?) {

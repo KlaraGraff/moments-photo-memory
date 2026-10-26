@@ -190,9 +190,17 @@ struct MomentsApp: App {
         }
 
         Settings {
-            SettingsView()
-                .environment(peopleController)
-                .preferredColorScheme(.light)
+            Group {
+                if let modelContainer {
+                    SettingsView(hasStore: true)
+                        .modelContainer(modelContainer)
+                } else {
+                    SettingsView(hasStore: false)
+                }
+            }
+            .environment(peopleController)
+            .environment(photosImportController)
+            .preferredColorScheme(.light)
         }
         .windowResizability(.contentSize)
     }

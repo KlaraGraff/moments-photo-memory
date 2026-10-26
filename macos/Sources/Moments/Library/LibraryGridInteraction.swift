@@ -4,8 +4,8 @@ import SwiftUI
 extension View {
     /// Keyboard and background clicks for a Library-style photo grid: arrow
     /// keys move the selection, Space or Return opens the photo, Esc clears
-    /// the selection, Command-A selects all and a click between photos
-    /// deselects everything.
+    /// the selection, Command-A selects all, Delete (or ⌘⌫ without asking)
+    /// deletes the selection and a click between photos deselects everything.
     func libraryGridInteraction(state: LibraryViewState, proxy: ScrollViewProxy) -> some View {
         modifier(LibraryGridInteraction(state: state, proxy: proxy))
     }
@@ -44,6 +44,9 @@ private struct LibraryGridColumnsReporter: ViewModifier {
 private struct LibraryGridInteraction: ViewModifier {
     @Environment(SelectionModel.self) private var selection
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.undoManager) private var undoManager
+    @Environment(\.photoDeletionScope) private var deletionScope
     let state: LibraryViewState
     let proxy: ScrollViewProxy
     @FocusState private var isFocused: Bool
@@ -63,6 +66,12 @@ private struct LibraryGridInteraction: ViewModifier {
             }
             .onKeyPress(.space) { openFocused() }
             .onKeyPress(.return) { openFocused() }
+            // Delete asks first and ⌘⌫ deletes at once, as in Photos.
+            .onKeyPress(keys: [.delete, .deleteForward]) { press in
+                deleteSelection(confirm: !press.modifiers.contains(.command))
+            }
+            // Edit ▸ Delete.
+            .onDeleteCommand { _ = deleteSelection(confirm: true) }
             .onCommand(#selector(NSResponder.selectAll(_:))) {
                 selection.select(state.orderedItemIDs, focus: selection.focusedItemID)
             }
@@ -106,6 +115,13 @@ private struct LibraryGridInteraction: ViewModifier {
         } else {
             withAnimation(.snappy(duration: 0.18)) { proxy.scrollTo("item:\(next)", anchor: nil) }
         }
+    }
+
+    private func deleteSelection(confirm: Bool) -> KeyPress.Result {
+        guard selection.viewerRequest == nil, !Self.isEditingText, !selection.selectedItemIDs.isEmpty else { return .ignored }
+        let shown = state.orderedItemIDs.filter(selection.selectedItemIDs.contains)
+        PhotoDeletion.request(deletionScope(shown), confirm: confirm, selection: selection, context: modelContext, undoManager: undoManager)
+        return .handled
     }
 
     private func openFocused() -> KeyPress.Result {

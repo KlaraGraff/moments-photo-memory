@@ -102,6 +102,16 @@ struct LibraryView: View {
         LibraryGrouping(rawValue: groupingRaw) ?? .trip
     }
 
+    /// A stacked cell stands for every photo in its burst, as in Photos.
+    private func deletionScope(_ ids: [String]) -> [String] {
+        var seen = Set<String>()
+        return ids.flatMap { id -> [String] in
+            if (cachedStackCounts[id] ?? 1) > 1, let stack = stacks.stack(containing: id) { return stack.memberIDs }
+            return [id]
+        }
+        .filter { seen.insert($0).inserted }
+    }
+
     /// The Place and Trip menus' rows, rebuilt with the sections in regroup().
     /// Computing them here walked every item and its place on each render,
     /// which showed up as a stall when the Library re-rendered mid-scroll.
@@ -480,6 +490,7 @@ struct LibraryView: View {
                 anchor: .top
             )
             .libraryGridInteraction(state: state, proxy: proxy)
+            .environment(\.photoDeletionScope, deletionScope)
             .onChange(of: selection.focusedItemID) { _, _ in
                 revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
             }
@@ -853,6 +864,7 @@ private struct LibraryPhotoCell: View {
     @Environment(PhotoStackModel.self) private var stacks
     @Environment(\.modelContext) private var modelContext
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.photoDeletionScope) private var deletionScope
     let item: MediaItem
     let state: LibraryViewState
     let allGroups: [UserGroup]
@@ -1022,6 +1034,15 @@ private struct LibraryPhotoCell: View {
                     }
                 }
             }
+            Divider()
+            Button(String(localized: "Delete from Moments"), role: .destructive) {
+                // The whole selection when this photo is in it, else just this one.
+                let shown = selection.isSelected(item.id)
+                    ? state.orderedItemIDs.filter(selection.selectedItemIDs.contains)
+                    : [item.id]
+                PhotoDeletion.request(deletionScope(shown.isEmpty ? [item.id] : shown), confirm: true, selection: selection, context: modelContext, undoManager: undoManager)
+            }
+            .disabled(!RecentlyDeleted.canDelete(item))
         }
         .onDrag { NSItemProvider(object: item.id as NSString) }
     }

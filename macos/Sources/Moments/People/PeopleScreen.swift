@@ -800,18 +800,6 @@ struct PeopleScreen: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PaperScreenHeader(String(localized: "People")) {
-                if !namedPeople.isEmpty { Text("\(namedPeople.count)") }
-            } trailing: {
-                Button {
-                    scanner.start()
-                } label: {
-                    Label(String(localized: "Scan for people"), systemImage: "person.crop.circle.badge.magnifyingglass")
-                }
-                .buttonStyle(.bordered)
-                .disabled(!scanner.isAvailable || scanner.isScanning)
-            }
-
             VStack(alignment: .leading, spacing: 20) {
                 if !scanner.isAvailable {
                     Text(String(localized: "People scanning is unavailable on this device."))
@@ -848,10 +836,24 @@ struct PeopleScreen: View {
                 }
             }
             .padding(.horizontal, PaperMetrics.screenInset)
+            .padding(.top, PaperMetrics.screenTopInset)
             .padding(.bottom, PaperMetrics.screenInset)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Paper.canvas)
+        .navigationTitle(String(localized: "People"))
+        .navigationSubtitle(namedPeople.isEmpty ? "" : String(format: String(localized: "%lld people"), namedPeople.count))
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    scanner.start()
+                } label: {
+                    Label(String(localized: "Scan for people"), systemImage: "person.crop.circle.badge.magnifyingglass")
+                }
+                .help(String(localized: "Scan for people"))
+                .disabled(!scanner.isAvailable || scanner.isScanning)
+            }
+        }
         .onAppear {
             mergeSameNamedPeople()
             scanner.scanIfNeeded()

@@ -309,23 +309,20 @@ struct MapScreen: View {
             .labelsHidden()
             .fixedSize()
 
-            // One way in and one way out, named in words: on the globe it
-            // zooms to where the photos are; closer in it goes back out.
-            if isWorldView {
-                if photosFitBelowWorld {
-                    Button("Zoom to photos", systemImage: "photo.on.rectangle") {
-                        fitAll()
-                    }
-                    .help("Zoom in to the places your photos were taken")
-                    .accessibilityIdentifier("map.fit")
-                }
-            } else {
-                Button("Whole world", systemImage: "globe.europe.africa") {
-                    showGlobe()
-                }
-                .help("Back out to the globe with every country you visited")
-                .accessibilityIdentifier("map.globe")
+            // Two different jobs, so two buttons: back out to every country,
+            // or frame exactly the places the photos were taken.
+            Button("Whole world", systemImage: "globe.europe.africa") {
+                showGlobe()
             }
+            .help("Back out to the globe with every country you visited")
+            .accessibilityIdentifier("map.globe")
+
+            Button("Zoom to photos", systemImage: "photo.on.rectangle") {
+                fitAll()
+            }
+            .help("Zoom in to the places your photos were taken")
+            .disabled(snapshot.stops.isEmpty)
+            .accessibilityIdentifier("map.fit")
         }
         .padding(8)
         .paperFloatingPanel(cornerRadius: 10)
@@ -629,12 +626,6 @@ struct MapScreen: View {
 
     /// When the photos span half the world, fitting them is the globe
     /// already, so there is nothing to zoom to.
-    private var photosFitBelowWorld: Bool {
-        guard !snapshot.stops.isEmpty else { return false }
-        let span = viewModel.initialRegion(for: snapshot.stops).span
-        return max(span.latitudeDelta, span.longitudeDelta) < 30
-    }
-
     private func fitAll() {
         guard !snapshot.stops.isEmpty else { return }
         moveCamera(to: .region(viewModel.initialRegion(for: snapshot.stops)), isGlobe: false)

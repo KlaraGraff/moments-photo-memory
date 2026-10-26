@@ -247,6 +247,8 @@ struct LibraryView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
         }
+        .navigationTitle(String(localized: "Library"))
+        .navigationSubtitle(String(format: String(localized: "%lld photos"), cachedVisibleCount))
     }
 
     /// "12 photos to confirm" under the filters; opens the review list.
@@ -283,45 +285,23 @@ struct LibraryView: View {
         .accessibilityIdentifier("library.review-banner")
     }
 
+    /// The page name and photo count live in the window's title bar; the
+    /// page itself opens straight on its controls.
     private var libraryHeader: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .bottom, spacing: 22) {
-                libraryHeaderTitle
+            HStack(alignment: .center, spacing: 22) {
                 libraryTypePicker
                 Spacer(minLength: 8)
                 libraryGroupingPicker
             }
             VStack(alignment: .leading, spacing: 12) {
-                libraryHeaderTitle
-                HStack(alignment: .center, spacing: 22) {
-                    libraryTypePicker
-                    Spacer(minLength: 8)
-                    libraryGroupingPicker
-                }
+                libraryTypePicker
+                libraryGroupingPicker
             }
         }
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.top, PaperMetrics.screenTopInset)
-        .padding(.bottom, 18)
-    }
-
-    private var libraryHeaderTitle: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 9) {
-            Text(String(localized: "Library"))
-                .font(.system(size: 34, weight: .medium, design: .serif))
-                .foregroundStyle(LibraryPalette.ink)
-                .lineLimit(1)
-                .layoutPriority(1)
-                .minimumScaleFactor(0.7)
-            Text("\(cachedVisibleCount) \(String(localized: "photos"))")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(LibraryPalette.muted)
-                .lineLimit(1)
-                .accessibilityIdentifier("library.photoCount")
-                .accessibilityValue(String(cachedVisibleCount))
-        }
-        // Never squeezed: a compressed title wraps one letter per line.
-        .fixedSize()
+        .padding(.bottom, 14)
     }
 
     private var libraryTypePicker: some View {
@@ -358,9 +338,13 @@ struct LibraryView: View {
             LibraryFilterChips(showsScope: true)
 
             HStack {
-                Text(String(format: String(localized: "Filtered count"), cachedVisibleCount))
+                Text(criteria.isFiltered || selection.libraryScope != nil
+                     ? String(format: String(localized: "Filtered count"), cachedVisibleCount)
+                     : String(format: String(localized: "%lld photos"), cachedVisibleCount))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(LibraryPalette.muted)
+                    .accessibilityIdentifier("library.photoCount")
+                    .accessibilityValue(String(cachedVisibleCount))
                 Spacer(minLength: 12)
                 // Only a real filter can become a smart group. Its own row
                 // keeps the chips at full width and the button on one line.
@@ -1277,15 +1261,6 @@ struct GroupDetailView: View {
         Group {
             if let group {
                 VStack(spacing: 0) {
-                    PaperScreenHeader(group.name) {
-                        Text("\(visibleItems.count) \(String(localized: "photos"))")
-                    } trailing: {
-                        Text(group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
-                            .font(.caption)
-                            .foregroundStyle(LibraryPalette.muted)
-                            .paperChip()
-                    }
-
                     if sections.isEmpty {
                         ContentUnavailableView(
                             String(localized: "This group is empty"),
@@ -1323,6 +1298,11 @@ struct GroupDetailView: View {
                     }
                 }
                 .background(LibraryPalette.content)
+                .navigationTitle(group.name)
+                .navigationSubtitle(
+                    String(format: String(localized: "%lld photos"), visibleItems.count) + " · "
+                        + (group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
+                )
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
                     ToolbarItemGroup {

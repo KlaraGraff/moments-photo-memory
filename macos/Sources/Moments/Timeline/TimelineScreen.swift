@@ -85,17 +85,18 @@ struct TimelineScreen: View {
 
     private var timelineScroll: some View {
         ScrollView {
-            PaperScreenHeader(String(localized: "Timeline"))
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                 ForEach(document.trips) { trip in
                     tripSections(for: trip)
                 }
             }
             .padding(.horizontal, PaperMetrics.screenInset)
+            .padding(.top, PaperMetrics.screenTopInset)
             .padding(.bottom, 32)
         }
         .scrollIndicators(.automatic)
         .background(Paper.canvas)
+        .navigationTitle(String(localized: "Timeline"))
     }
 
     @ViewBuilder

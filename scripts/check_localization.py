@@ -9,6 +9,7 @@ here even though it is missing from Localizable.xcstrings.
 Usage: check_localization.py EXPORT_DIR
 """
 import json
+import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -29,7 +30,8 @@ def missing_units(xliff):
             target = unit.find('x:target', NS)
             note = unit.find('x:note', NS)
             text = '' if source is None else ''.join(source.itertext())
-            if not text.strip():
+            # Numbers and punctuation alone ("%lld", "%@/%@") need no translation.
+            if not re.search(r'[^\W\d_]', re.sub(r'%(\d+\$)?(lld|ld|d|@|f|\.\df)', '', text)):
                 continue
             translated = (
                 target is not None

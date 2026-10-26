@@ -257,7 +257,7 @@ struct LibraryView: View {
                 .lineLimit(1)
                 .layoutPriority(1)
                 .minimumScaleFactor(0.7)
-            Text("\(cachedVisibleCount) \(String(localized: "photos"))")
+            Text("\(cachedVisibleCount) photos")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(LibraryPalette.muted)
                 .lineLimit(1)
@@ -825,7 +825,7 @@ private struct LibrarySectionView: View {
                     .font(.caption)
                     .foregroundStyle(LibraryPalette.muted)
                 Spacer()
-                Text("\(section.count) \(String(localized: "photos"))")
+                Text("\(section.count) photos")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(LibraryPalette.muted)
             }
@@ -1345,7 +1345,7 @@ struct GroupDetailView: View {
             if let group {
                 VStack(spacing: 0) {
                     PaperScreenHeader(group.name) {
-                        Text("\(visibleItems.count) \(String(localized: "photos"))")
+                        Text("\(visibleItems.count) photos")
                     } trailing: {
                         Text(group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
                             .font(.caption)

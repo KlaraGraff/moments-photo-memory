@@ -196,7 +196,7 @@ struct FootprintsScreen: View {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(country.name)
                                             .foregroundStyle(Paper.ink)
-                                        Text("\(country.photoCount) \(String(localized: "photos"))")
+                                        Text("\(country.photoCount) photos")
                                             .font(.caption)
                                             .foregroundStyle(Paper.muted)
                                     }

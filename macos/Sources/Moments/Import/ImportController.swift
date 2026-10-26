@@ -161,7 +161,7 @@ struct ImportReviewView: View {
     var body: some View {
         PaperSheet(
             String(localized: "Review import"),
-            subtitle: "\(summary.importedCount) \(String(localized: "imported")) · \(summary.skippedCount) \(String(localized: "already present"))"
+            subtitle: String(localized: "\(summary.importedCount) imported · \(summary.skippedCount) already present")
         ) {
             reviewContent
         } footer: {
@@ -243,7 +243,7 @@ struct ImportReviewView: View {
                     )
                     .textFieldStyle(.paper)
                     .accessibilityIdentifier("import.trip.name.\(trip.id)")
-                    Text("\(trip.itemCount) \(String(localized: "items"))")
+                    Text("\(trip.itemCount) items")
                         .foregroundStyle(Paper.muted)
                     Button("Save") { saveRename(for: trip) }
                         .buttonStyle(.borderless)

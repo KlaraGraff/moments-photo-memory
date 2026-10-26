@@ -86,7 +86,7 @@ struct TripsScreen: View {
             if items.isEmpty {
                 ContentUnavailableView(
                     "No trips yet",
-                    systemImage: "suitcase",
+                    systemImage: "airplane.departure",
                     description: Text("Import photos and each trip gets its own card here.")
                 )
             } else if document.trips.isEmpty {
@@ -308,7 +308,7 @@ private struct TripPrints: View {
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(Paper.well)
                     .overlay {
-                        Image(systemName: "suitcase")
+                        Image(systemName: "airplane.departure")
                             .font(.title2)
                             .foregroundStyle(Paper.muted)
                     }
@@ -473,7 +473,7 @@ struct TripDaySection: View {
                 }
                 ForEach(trips) { trip in
                     Button { onOpenTrip(trip.id) } label: {
-                        Label(trip.name, systemImage: "suitcase")
+                        Label(trip.name, systemImage: "airplane.departure")
                             .font(.caption)
                             .foregroundStyle(Paper.accent)
                     }

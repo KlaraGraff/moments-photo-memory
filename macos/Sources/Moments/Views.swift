@@ -61,7 +61,7 @@ struct ContentView: View {
                         sidebarRow("Places", icon: "map", section: .places, identifier: "sidebar.places")
                         sidebarRow("Footprints", icon: "globe.americas", section: .footprints, identifier: "sidebar.footprints")
                         sidebarRow("Timeline", icon: "calendar", section: .timeline, identifier: "sidebar.timeline")
-                        sidebarRow("Trips", icon: "suitcase", section: .trips, identifier: "sidebar.trips")
+                        sidebarRow("Trips", icon: "airplane.departure", section: .trips, identifier: "sidebar.trips")
                     }
 
                     Section {

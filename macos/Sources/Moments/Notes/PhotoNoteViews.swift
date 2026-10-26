@@ -37,12 +37,9 @@ struct PhotoNoteSection: View {
                     .fill(isFocused ? LibraryPalette.accent : LibraryPalette.rule)
                     .frame(height: isFocused ? 1.5 : 1)
             }
-            // Return saves; Option-Return falls through and inserts a line break.
-            .onKeyPress(.return, phases: .down) { press in
-                guard press.modifiers.isDisjoint(with: [.option, .shift, .control]) else { return .ignored }
-                save()
-                return .handled
-            }
+            // Return submits and Option-Return inserts a line break (the
+            // vertical field's own behavior), so Return that confirms an input
+            // method's candidate never saves half-typed words.
             .onSubmit { save() }
             .onExitCommand {
                 state.noteDrafts[item.id] = nil
@@ -51,6 +48,9 @@ struct PhotoNoteSection: View {
             .onChange(of: isFocused) { _, focused in
                 if !focused { save() }
             }
+            // Clicking the sidebar can remove the cell in the same update
+            // that ends editing; the words are still saved.
+            .onDisappear { save() }
             .help(String(localized: "Places, corrections, descriptions, feelings: write anything. Return saves; your words are kept and AI organizes them. Option-Return starts a new line."))
             .accessibilityLabel(String(localized: "Note for this photo"))
             .accessibilityIdentifier("library.note.\(item.id)")

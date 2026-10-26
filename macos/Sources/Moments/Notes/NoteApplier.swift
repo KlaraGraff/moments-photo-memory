@@ -60,14 +60,14 @@ public enum NoteApplier {
         radius: Double = 300
     ) -> [String] {
         guard let date = item.effectiveCaptureDate else { return [] }
-        let name = item.namedPlace.map(PlaceNote.key(for:))
+        let name = item.effectivePlaceName.map(PlaceNote.key(for:))
         let coordinate = item.effectiveCoordinate
         return candidates
             .filter { other in
                 guard other.id != item.id, let otherDate = other.effectiveCaptureDate,
                       abs(otherDate.timeIntervalSince(date)) <= window,
                       other.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return false }
-                if let name, !name.isEmpty, other.namedPlace.map(PlaceNote.key(for:)) == name { return true }
+                if let name, !name.isEmpty, other.effectivePlaceName.map(PlaceNote.key(for:)) == name { return true }
                 if let coordinate, let otherCoordinate = other.effectiveCoordinate {
                     return distance(coordinate, otherCoordinate) <= radius
                 }

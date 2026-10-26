@@ -183,6 +183,8 @@ struct ThumbnailView: View {
                 }
             }
             .clipped()
+            // Clipping hides the overflow but not its clicks.
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .task(id: "\(item.id)-\(width)x\(height)") {
             image = await ThumbnailCache.shared.image(for: item, width: width, height: height)
         }

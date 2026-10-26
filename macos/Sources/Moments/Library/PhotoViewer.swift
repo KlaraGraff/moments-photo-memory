@@ -25,10 +25,18 @@ struct PhotoViewer: View {
     @State private var hoverLocation: CGPoint?
     @State private var areaSize: CGSize = .zero
     @State private var eventMonitor: Any?
-    /// How far two fingers have moved sideways in this swipe, and whether it
-    /// already turned the page.
-    @State private var swipeDistance: CGFloat = 0
-    @State private var swipePaged = false
+    /// The neighbouring photos, ready to slide in beside the open one.
+    @State private var previousImage: NSImage?
+    @State private var nextImage: NSImage?
+    /// How far the strip of photos has slid sideways: follows two fingers on
+    /// the trackpad, then animates a whole page or springs back.
+    @State private var pageOffset: CGFloat = 0
+    /// The page turn being animated, finished at once if another one starts.
+    @State private var pendingPage: Int?
+    @State private var pageToken = UUID()
+    @State private var swipeAxis = SwipeAxis.undecided
+    @State private var lastSwipeStep: CGFloat = 0
+    @State private var lastWheelPage = Date.distantPast
     @State private var isEditingInfo = false
     @FocusState private var isFocused: Bool
 
@@ -87,8 +95,8 @@ struct PhotoViewer: View {
         }
         // Key presses reach these handlers even while a field in the column
         // has the keyboard; then the keys are the field's own.
-        .onKeyPress(.leftArrow) { !isTyping && step(-1) ? .handled : .ignored }
-        .onKeyPress(.rightArrow) { !isTyping && step(1) ? .handled : .ignored }
+        .onKeyPress(.leftArrow) { !isTyping && page(-1) ? .handled : .ignored }
+        .onKeyPress(.rightArrow) { !isTyping && page(1) ? .handled : .ignored }
         .onKeyPress(.space) {
             guard !isTyping else { return .ignored }
             close()
@@ -116,9 +124,9 @@ struct PhotoViewer: View {
                     .accessibilityIdentifier("viewer.counter")
                     .accessibilityValue("\(index + 1)")
             }
-            headerButton("chevron.left", label: String(localized: "Previous photo"), identifier: "viewer.previous") { _ = step(-1) }
+            headerButton("chevron.left", label: String(localized: "Previous photo"), identifier: "viewer.previous") { page(-1) }
                 .disabled(!hasPrevious)
-            headerButton("chevron.right", label: String(localized: "Next photo"), identifier: "viewer.next") { _ = step(1) }
+            headerButton("chevron.right", label: String(localized: "Next photo"), identifier: "viewer.next") { page(1) }
                 .disabled(!hasNext)
             if let item {
                 Button {
@@ -164,6 +172,11 @@ struct PhotoViewer: View {
                 pagingButtons
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Tracked on the whole area, not the photo, so it survives the
+            // photo being replaced while paging.
+            .onContinuousHover { phase in
+                if case .active(let location) = phase { hoverLocation = location } else { hoverLocation = nil }
+            }
             .background {
                 GeometryReader { geometry in
                     Color.clear
@@ -283,42 +296,137 @@ struct PhotoViewer: View {
             close()
             return true
         }
-        guard player == nil, image != nil, let location = hoverLocation else { return false }
-        let wheel = !event.hasPreciseScrollingDeltas
-        if event.modifierFlags.contains(.command) || wheel {
-            let delta = wheel ? event.scrollingDeltaY * 12 : event.scrollingDeltaY
+        guard image != nil || player != nil, let location = hoverLocation else { return false }
+        let wheel = !event.hasPreciseScrollingDeltas || (event.phase.isEmpty && event.momentumPhase.isEmpty)
+        let canZoom = player == nil && image != nil
+        if event.modifierFlags.contains(.command) {
+            guard canZoom else { return false }
+            let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * 12
             guard delta != 0 else { return true }
             var next = zoom
             next.zoom(to: zoom.scale * exp(delta / 120), anchor: location, fitted: fittedSize, area: areaSize)
             zoom = next
             return true
         }
-        guard zoom.isZoomed else { return swipe(event) }
-        var next = zoom
-        next.pan(by: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY), fitted: fittedSize, area: areaSize)
-        zoom = next
+        if zoom.isZoomed, canZoom {
+            // A zoomed photo moves under two fingers or the wheel.
+            let factor: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
+            var next = zoom
+            next.pan(by: CGSize(width: event.scrollingDeltaX * factor, height: event.scrollingDeltaY * factor), fitted: fittedSize, area: areaSize)
+            zoom = next
+            return true
+        }
+        return wheel ? wheelPage(event) : swipe(event)
+    }
+
+    /// Each turn of the mouse wheel over the photo shows the next photo (towards
+    /// you) or the previous one (away from you).
+    private func wheelPage(_ event: NSEvent) -> Bool {
+        let delta = abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) ? event.scrollingDeltaY : event.scrollingDeltaX
+        guard abs(delta) > 0.1 else { return true }
+        // One page per notch, even when a fast spin sends a burst of them.
+        let now = Date.now
+        guard now.timeIntervalSince(lastWheelPage) > 0.2 else { return true }
+        lastWheelPage = now
+        let towardsYou = event.isDirectionInvertedFromDevice ? delta > 0 : delta < 0
+        page(towardsYou ? 1 : -1)
         return true
     }
 
-    /// Two fingers sideways on the trackpad turn to the next or previous
-    /// photo, once per swipe, as in Photos. The slide that continues after
-    /// the fingers lift is swallowed so it doesn't scroll the grid behind.
+    /// Two fingers sideways on the trackpad slide the photos along with them,
+    /// as in Photos; letting go far or fast enough turns the page, otherwise
+    /// the photo springs back. Vertical swipes are left to the window.
     private func swipe(_ event: NSEvent) -> Bool {
-        if !event.momentumPhase.isEmpty { return swipePaged || abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) }
-        guard event.hasPreciseScrollingDeltas else { return false }
-        if event.phase.contains(.began) {
-            swipeDistance = 0
-            swipePaged = false
+        // The glide after the fingers lift belongs to the swipe that made it.
+        if !event.momentumPhase.isEmpty { return swipeAxis == .horizontal }
+        if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
+            finishPendingPage()
+            swipeAxis = .undecided
+            pageOffset = 0
+            lastSwipeStep = 0
         }
-        swipeDistance += event.scrollingDeltaX
-        guard abs(swipeDistance) > abs(event.scrollingDeltaY) || swipePaged else { return false }
-        if !swipePaged, abs(swipeDistance) > 50 {
-            // Fingers moving left bring the next photo in from the right.
-            let towardsNext = event.isDirectionInvertedFromDevice ? swipeDistance < 0 : swipeDistance > 0
-            _ = step(towardsNext ? 1 : -1)
-            swipePaged = true
+        if swipeAxis == .undecided, event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 {
+            swipeAxis = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) ? .horizontal : .vertical
+        }
+        guard swipeAxis == .horizontal else { return false }
+        // Positive when the fingers move right, whatever the scrolling direction setting.
+        let fingers = event.isDirectionInvertedFromDevice ? event.scrollingDeltaX : -event.scrollingDeltaX
+        if event.phase.contains(.changed) {
+            let next = pageOffset + fingers
+            // Past the first or last photo the strip gives only a little.
+            let pastEnd = (next < 0 && !hasNext) || (next > 0 && !hasPrevious)
+            pageOffset += pastEnd ? fingers * 0.3 : fingers
+            if fingers != 0 { lastSwipeStep = fingers }
+        }
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+            let direction = ViewerSwipe.direction(
+                offset: pageOffset, width: areaSize.width, lastStep: lastSwipeStep,
+                hasPrevious: hasPrevious, hasNext: hasNext
+            )
+            if direction == 0 { settleBack() } else { page(direction) }
         }
         return true
+    }
+
+    /// Slides to the neighbouring photo; false at either end. A page turn
+    /// still animating is finished first, so held arrow keys keep up.
+    @discardableResult
+    private func page(_ direction: Int) -> Bool {
+        finishPendingPage()
+        guard let index, request.itemIDs.indices.contains(index + direction) else {
+            settleBack()
+            return false
+        }
+        guard !reduceMotion, areaSize.width > 0 else {
+            completePage(direction)
+            return true
+        }
+        pendingPage = direction
+        let token = UUID()
+        pageToken = token
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.92)) {
+            pageOffset = direction > 0 ? -pageDistance : pageDistance
+        } completion: {
+            guard pageToken == token else { return }
+            finishPendingPage()
+        }
+        return true
+    }
+
+    private func finishPendingPage() {
+        guard let direction = pendingPage else { return }
+        pendingPage = nil
+        completePage(direction)
+    }
+
+    /// The neighbour that slid in becomes the open photo, in place, with no
+    /// further movement.
+    private func completePage(_ direction: Int) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            if direction > 0 {
+                previousImage = image
+                image = nextImage
+                nextImage = nil
+            } else {
+                nextImage = image
+                image = previousImage
+                previousImage = nil
+            }
+            pageOffset = 0
+            zoom = ViewerZoom()
+            _ = step(direction)
+        }
+    }
+
+    private func settleBack() {
+        guard pageOffset != 0 else { return }
+        if reduceMotion {
+            pageOffset = 0
+        } else {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { pageOffset = 0 }
+        }
     }
 
     private func removeEventMonitor() {
@@ -338,8 +446,43 @@ struct PhotoViewer: View {
         }
     }
 
-    @ViewBuilder
+    /// The open photo with its neighbours either side, off screen until the
+    /// strip slides.
     private var media: some View {
+        ZStack {
+            if pageOffset != 0 {
+                neighbour(previousImage).offset(x: pageOffset - pageDistance)
+                neighbour(nextImage).offset(x: pageOffset + pageDistance)
+            }
+            current.offset(x: pageOffset)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+    }
+
+    private static let pageGap: CGFloat = 40
+
+    private var pageDistance: CGFloat { areaSize.width + Self.pageGap }
+
+    @ViewBuilder
+    private func neighbour(_ image: NSImage?) -> some View {
+        if let image {
+            let size = Self.fittedSize(image.size, in: CGSize(width: areaSize.width - 56, height: areaSize.height - 56))
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: size.width, height: size.height)
+                .shadow(color: Paper.shadow.opacity(0.12), radius: 10, y: 4)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        } else {
+            Color.clear
+        }
+    }
+
+    @ViewBuilder
+    private var current: some View {
         if let player {
             VideoPlayer(player: player)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -367,9 +510,6 @@ struct PhotoViewer: View {
                 })
                 .simultaneousGesture(magnify)
                 .simultaneousGesture(pan)
-                .onContinuousHover { phase in
-                    if case .active(let location) = phase { hoverLocation = location } else { hoverLocation = nil }
-                }
                 .clipped()
                 .accessibilityLabel(title)
                 .accessibilityIdentifier("viewer.image")
@@ -387,9 +527,9 @@ struct PhotoViewer: View {
 
     private var pagingButtons: some View {
         HStack {
-            pagingButton("chevron.left", label: String(localized: "Previous photo"), identifier: "viewer.previous", enabled: hasPrevious) { _ = step(-1) }
+            pagingButton("chevron.left", label: String(localized: "Previous photo"), identifier: "viewer.previous", enabled: hasPrevious) { page(-1) }
             Spacer()
-            pagingButton("chevron.right", label: String(localized: "Next photo"), identifier: "viewer.next", enabled: hasNext) { _ = step(1) }
+            pagingButton("chevron.right", label: String(localized: "Next photo"), identifier: "viewer.next", enabled: hasNext) { page(1) }
         }
         .padding(.horizontal, 14)
         .opacity(isHovering ? 1 : 0)
@@ -456,18 +596,31 @@ struct PhotoViewer: View {
         }
         guard !Task.isCancelled else { return }
         if found.kind == .video { startVideo(found) }
-        prefetchNeighbours()
+        await loadNeighbours()
     }
 
-    private func prefetchNeighbours() {
+    /// The photos either side, so a swipe can slide them in at once.
+    private func loadNeighbours() async {
         guard let index else { return }
-        for offset in [1, -1] where request.itemIDs.indices.contains(index + offset) {
-            let id = request.itemIDs[index + offset]
-            var descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == id })
-            descriptor.fetchLimit = 1
-            guard let neighbour = try? modelContext.fetch(descriptor).first else { continue }
-            Task { _ = await PhotoViewerImageCache.shared.load(neighbour) }
-        }
+        let ids = request.itemIDs
+        let nextID = ids.indices.contains(index + 1) ? ids[index + 1] : nil
+        let previousID = ids.indices.contains(index - 1) ? ids[index - 1] : nil
+        let next = await neighbourImage(nextID)
+        guard !Task.isCancelled else { return }
+        nextImage = next
+        let previous = await neighbourImage(previousID)
+        guard !Task.isCancelled else { return }
+        previousImage = previous
+    }
+
+    private func neighbourImage(_ id: String?) async -> NSImage? {
+        guard let id else { return nil }
+        if let cached = PhotoViewerImageCache.shared.image(for: id) { return cached }
+        var descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        guard let neighbour = try? modelContext.fetch(descriptor).first else { return nil }
+        if let full = await PhotoViewerImageCache.shared.load(neighbour) { return full }
+        return await ThumbnailCache.shared.image(for: neighbour, width: 560, height: 420)
     }
 
     private func startVideo(_ item: MediaItem) {

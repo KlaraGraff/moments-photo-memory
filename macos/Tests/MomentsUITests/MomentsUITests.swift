@@ -152,6 +152,13 @@ final class MomentsUITests: XCTestCase {
         expectation(for: fitted, evaluatedWith: image)
         waitForExpectations(timeout: launchTimeout)
 
+        // Over the photo, the scroll wheel turns to another photo.
+        let beforeWheel = counter.value as? String
+        pauseLongerThanADoubleClick()
+        photoCentre.scroll(byDeltaX: 0, deltaY: -3)
+        expectation(for: NSPredicate(format: "value != %@", beforeWheel ?? ""), evaluatedWith: counter)
+        waitForExpectations(timeout: launchTimeout)
+
         // The column edits in place: type over the place, adjust the date.
         // By type: the column's scroll view also answers to its children's identifiers.
         let place = app.textFields["viewer.place"]

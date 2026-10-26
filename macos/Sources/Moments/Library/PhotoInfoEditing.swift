@@ -141,3 +141,22 @@ struct ViewerZoom: Equatable {
         offset.height = min(max(offset.height, -limitY), limitY)
     }
 }
+
+enum SwipeAxis {
+    case undecided, horizontal, vertical
+}
+
+/// Where a sideways swipe over the viewer's photo ends up.
+enum ViewerSwipe {
+    /// 1 for the next photo, -1 for the previous one, 0 to spring back.
+    /// `offset` is how far the photo slid (negative: towards the next one);
+    /// `lastStep` is the fingers' last movement, so a quick flick turns the
+    /// page even when it travelled only a little.
+    static func direction(offset: CGFloat, width: CGFloat, lastStep: CGFloat, hasPrevious: Bool, hasNext: Bool) -> Int {
+        let threshold = max(width * 0.18, 40)
+        let flick = abs(lastStep) > 6
+        if hasNext, offset < 0, offset < -threshold || (flick && lastStep < 0) { return 1 }
+        if hasPrevious, offset > 0, offset > threshold || (flick && lastStep > 0) { return -1 }
+        return 0
+    }
+}

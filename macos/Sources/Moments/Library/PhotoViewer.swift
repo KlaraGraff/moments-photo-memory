@@ -60,48 +60,44 @@ struct PhotoViewer: View {
     /// is shared, so reading through it is always current.
     private var live: ViewerRequest { selection.viewerRequest ?? request }
 
-    /// The burst the open photo belongs to, if any.
-    private var stack: PhotoStack? { stacks.stack(containing: live.itemID) }
+    /// The pages and each stack's shots, folded once when the order or the
+    /// stacks change, so hovering and swiping stay cheap.
+    @State private var paging = StackPaging.empty
 
-    /// The places the viewer pages through: the order with each stack
-    /// folded into one place. The order itself lists every shot (see
-    /// `expandStacks`), so a stack taken apart or a shot taken out gets its
-    /// own place at once, and a trip page's full list folds the same way.
-    private var pages: [StackedEntry] { stacks.collapse(live.itemIDs) }
+    /// The open photo's stack as the screen showed it: its shots, oldest first.
+    private var stackShots: [String] { paging.shots(of: live.itemID) }
 
-    /// Where the open photo sits among the pages, whichever shot of a stack is open.
-    private var index: Int? {
-        let pages = self.pages
-        if let stack, let index = pages.firstIndex(where: { $0.stackID == stack.id }) { return index }
-        return pages.firstIndex { $0.id == live.itemID }
+    /// The burst the open photo belongs to, when the screen showed more than
+    /// one of its shots.
+    private var stack: PhotoStack? {
+        stackShots.count > 1 ? stacks.stack(containing: live.itemID) : nil
     }
 
-    /// The open shot's place in its stack.
-    private var stackPosition: Int? { stack?.memberIDs.firstIndex(of: live.itemID) }
+    /// Where the open photo sits among the pages, whichever shot of a stack is open.
+    private var index: Int? { paging.page(of: live.itemID) }
 
     private var hasPrevious: Bool { neighbourID(-1) != nil }
     private var hasNext: Bool { neighbourID(1) != nil }
 
-    /// The photo an arrow or swipe leads to. Inside a stack that is its next
-    /// shot, as the strip shows them, then the next place in the order;
-    /// stepping into a stack starts at the end it is entered from.
+    /// The photo an arrow or swipe leads to: inside a stack its next shot,
+    /// as the strip shows them, then the next page.
     private func neighbourID(_ offset: Int) -> String? {
-        if let stack, let position = stackPosition, stack.memberIDs.indices.contains(position + offset) {
-            return stack.memberIDs[position + offset]
-        }
-        let pages = self.pages
-        guard let index, pages.indices.contains(index + offset) else { return nil }
-        let entry = pages[index + offset]
-        guard entry.isStack, let next = stacks.stack(containing: entry.id) else { return entry.id }
-        return offset > 0 ? next.memberIDs.first ?? entry.id : next.memberIDs.last ?? entry.id
+        paging.neighbour(of: live.itemID, offset: offset)
     }
 
-    /// Screens hand over their grid, a stack as its cover; the viewer keeps
-    /// every shot in the order, each stack's where its cover was.
-    private func expandStacks() {
-        guard let ids = selection.viewerRequest?.itemIDs else { return }
-        let expanded = stacks.index.expand(ids)
-        if expanded != ids { selection.viewerRequest?.itemIDs = expanded }
+    /// Screens hand over every photo they show, a stack's shots included;
+    /// the viewer folds them the way the grid does.
+    @discardableResult
+    private func rebuildPaging() -> StackPaging {
+        let next = StackPaging(order: live.itemIDs, stacks: stacks.index)
+        if next != paging { paging = next }
+        return next
+    }
+
+    /// The cell that stands for a photo in the grid: a stack's cover, or its
+    /// first shot shown when the cover was filtered out.
+    private func gridCell(_ id: String, in paging: StackPaging) -> String {
+        paging.page(of: id).map { paging.pages[$0].id } ?? id
     }
 
     var body: some View {
@@ -138,7 +134,7 @@ struct PhotoViewer: View {
         .onAppear {
             isFocused = true
             installEventMonitor()
-            expandStacks()
+            rebuildPaging()
             // An Undo offer from earlier (the Library's Unstack) is not about this photo.
             stacks.dismissLastChange()
         }
@@ -158,7 +154,14 @@ struct PhotoViewer: View {
         .task(id: request.itemID) { await load(request.itemID) }
         // Taken apart, a shot taken out, or Undo: the strip and the photos
         // ready to slide in follow.
-        .onChange(of: stack?.memberIDs ?? []) { _, _ in
+        .onChange(of: selection.viewerRequest?.itemIDs ?? []) { _, _ in rebuildPaging() }
+        .onChange(of: stacks.generation) { _, _ in
+            // The grid's cell for this photo may now be another shot.
+            let cell = gridCell(live.itemID, in: rebuildPaging())
+            selection.select(cell)
+            selection.anchorItemID = cell
+        }
+        .onChange(of: stackShots) { _, _ in
             loadStackMembers()
             nextImage = nil
             previousImage = nil
@@ -180,7 +183,7 @@ struct PhotoViewer: View {
                 .lineLimit(1)
             Spacer(minLength: 8)
             if let index {
-                Text("\(index + 1) / \(pages.count)")
+                Text("\(index + 1) / \(paging.pages.count)")
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(LibraryPalette.muted)
                     .accessibilityIdentifier("viewer.counter")
@@ -674,14 +677,17 @@ struct PhotoViewer: View {
         guard id != live.itemID else { return }
         stopVideo()
         image = PhotoViewerImageCache.shared.image(for: id) ?? ThumbnailCache.shared.cachedImage(for: id, width: 560, height: 420)
+        // The photos ready either side were the old shot's neighbours.
+        nextImage = nil
+        previousImage = nil
         zoom = ViewerZoom()
         show(id)
     }
 
     private func show(_ id: String) {
-        // Screens show a stack as its cover: select that, so the grid marks
+        // Screens show a stack as one cell: select that, so the grid marks
         // and reveals the stack after the viewer closes.
-        let cell = stacks.stack(containing: id)?.coverID ?? id
+        let cell = gridCell(id, in: paging)
         selection.select(cell)
         selection.anchorItemID = cell
         selection.viewerRequest?.itemID = id
@@ -725,12 +731,12 @@ struct PhotoViewer: View {
     }
 
     private func loadStackMembers() {
-        guard let stack else {
+        let ids = stackShots
+        guard ids.count > 1 else {
             stackMembers = []
             return
         }
-        guard stackMembers.map(\.id) != stack.memberIDs else { return }
-        let ids = stack.memberIDs
+        guard stackMembers.map(\.id) != ids else { return }
         let found = (try? modelContext.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { ids.contains($0.id) }))) ?? []
         let byID = Dictionary(found.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         stackMembers = ids.compactMap { byID[$0] }

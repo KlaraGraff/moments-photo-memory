@@ -154,7 +154,7 @@ struct StackChangeUndoBar: View {
                     .foregroundStyle(LibraryPalette.ink)
                 Button(String(localized: "Undo")) {
                     // Undone here, so ⌘Z must not undo it a second time.
-                    undoManager?.removeAllActions(withTarget: stacks)
+                    undoManager?.removeAllActions(withTarget: change.undoTarget)
                     stacks.undo(change, context: modelContext)
                 }
                 .buttonStyle(.borderless)

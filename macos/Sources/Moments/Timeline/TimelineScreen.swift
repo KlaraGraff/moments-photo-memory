@@ -47,7 +47,7 @@ struct TimelineScreen: View {
             hasher.combine(place.id)
             hasher.combine(PlaceDisplayName.resolvedName(of: place))
         }
-        hasher.combine(stacks.analysisRevision)
+        hasher.combine(stacks.generation)
         for record in stackRecords {
             hasher.combine(record.id)
             hasher.combine(record.rulesData)
@@ -138,9 +138,9 @@ struct TimelineScreen: View {
         let undated = days.filter { $0.date == nil }
         months = TimelineMonth.group(dated, calendar: .autoupdatingCurrent)
             + (undated.isEmpty ? [] : [TimelineMonth(id: "undated", date: nil, days: undated)])
-        // A burst is one stop in the viewer, as in the grid (see TripPlaceBlock).
+        // Every shot goes to the viewer, which folds bursts as the grid does.
         stacks.update(items: items, decisions: stackRecords)
-        viewerOrder = stacks.collapse(months.flatMap { $0.days.flatMap { $0.places.flatMap(\.itemIDs) } }).map(\.id)
+        viewerOrder = months.flatMap { $0.days.flatMap { $0.places.flatMap(\.itemIDs) } }
         itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var links: [String: TripLink] = [:]
         for trip in trips {

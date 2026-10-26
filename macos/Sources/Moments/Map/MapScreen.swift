@@ -91,13 +91,18 @@ struct MapScreen: View {
         )
     }
 
-    private var selectedItems: [MediaItem] {
+    /// Every photo of the selected place, a burst's shots included.
+    private var selectedClusterItems: [MediaItem] {
         guard let selectedCluster else { return [] }
-        let sorted = selectedCluster.stopIDs
+        return selectedCluster.stopIDs
             .compactMap { itemsByID[$0] }
             .filter { selection.isVisible($0.id) }
             .sorted { ($0.captureDate ?? .distantPast, $0.id) < ($1.captureDate ?? .distantPast, $1.id) }
-        // A burst shows once, as its cover, as in the Library.
+    }
+
+    /// The strip's photos: a burst shows once, as its cover, as in the Library.
+    private var selectedItems: [MediaItem] {
+        let sorted = selectedClusterItems
         let shown = Set(stacks.collapse(sorted.map(\.id)).map(\.id))
         return sorted.filter { shown.contains($0.id) }
     }
@@ -502,7 +507,7 @@ struct MapScreen: View {
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
                     Button {
-                        selection.showInLibrary(selectedItems.map(\.id), title: clusterDisplayName(selectedCluster))
+                        selection.showInLibrary(selectedClusterItems.map(\.id), title: clusterDisplayName(selectedCluster))
                     } label: {
                         Text(clusterDisplayName(selectedCluster))
                             .font(.headline)
@@ -522,7 +527,7 @@ struct MapScreen: View {
                     .fixedSize()
                     Spacer(minLength: 8)
                     Button {
-                        selection.showInLibrary(selectedItems.map(\.id), title: clusterDisplayName(selectedCluster))
+                        selection.showInLibrary(selectedClusterItems.map(\.id), title: clusterDisplayName(selectedCluster))
                     } label: {
                         Label("Show in Library", systemImage: "photo.on.rectangle")
                             .font(.callout)
@@ -690,7 +695,7 @@ struct MapScreen: View {
     private func open(itemID: String) {
         lastMarkerSelection = Date()
         selection.select([itemID], focus: itemID)
-        selection.openViewer(itemID, in: selectedItems.map(\.id))
+        selection.openViewer(itemID, in: selectedClusterItems.map(\.id))
     }
 
     private func focus(on itemID: String?) {

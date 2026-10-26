@@ -131,18 +131,18 @@ struct MomentsApp: App {
                         photosImportController.configure(container: modelContainer)
                         stackAnalyzer.configure(container: modelContainer)
                         stackAnalyzer.analyzeIfNeeded()
-                        photoStacks.refresh(context: modelContainer.mainContext)
+                        photoStacks.refresh(container: modelContainer)
                     }
                     // Map and Chapters only read the stacks, so new results
                     // are folded in here, whichever screen is showing.
                     .onChange(of: photoStacks.analysisRevision) {
-                        photoStacks.refresh(context: modelContainer.mainContext)
+                        photoStacks.analysisChanged()
                     }
                     // Posted after every import: new photos may be bursts.
                     .onReceive(NotificationCenter.default.publisher(for: .momentsPeopleScanRequested)) { _ in
                         peopleController.scanIfNeeded()
                         stackAnalyzer.analyzeIfNeeded()
-                        photoStacks.refresh(context: modelContainer.mainContext)
+                        photoStacks.refresh(container: modelContainer)
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
                         showingPhotosImport = true

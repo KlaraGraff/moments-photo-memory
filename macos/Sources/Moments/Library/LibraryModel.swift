@@ -527,6 +527,9 @@ final class LibraryViewState {
         didSet { orderedItemIDs = gridSections.flatMap { $0 } }
     }
     private(set) var orderedItemIDs: [String] = []
+    /// Every photo the grid shows, each stack's shots in place of its cell,
+    /// for the viewer, which folds them itself.
+    @ObservationIgnored var viewerItemIDs: [String] = []
     /// Columns in the grid at its current width, for the up and down arrows.
     var gridColumns = 1
 

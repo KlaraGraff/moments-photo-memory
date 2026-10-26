@@ -106,7 +106,7 @@ private struct LibraryGridInteraction: ViewModifier {
     private func openFocused() -> KeyPress.Result {
         guard selection.viewerRequest == nil, let focused = selection.focusedItemID,
               state.orderedItemIDs.contains(focused) else { return .ignored }
-        selection.openViewer(focused, in: state.orderedItemIDs)
+        selection.openViewer(focused, in: state.viewerItemIDs)
         return .handled
     }
 }

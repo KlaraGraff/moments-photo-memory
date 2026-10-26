@@ -141,6 +141,32 @@ final class PhotoStackTests: XCTestCase {
         XCTAssertEqual(index.expand(["x", "a", "b"]), ["x", "a", "b"])
     }
 
+    func testPagingWalksAStacksShotsThenTheNextPage() {
+        let stacks = PhotoStackIndex([PhotoStack(id: "s", memberIDs: ["a", "b", "c"], coverID: "b", isCoverChosen: false)])
+        // Newest first, as a screen hands it over.
+        let paging = StackPaging(order: ["x", "c", "b", "a", "y"], stacks: stacks)
+        XCTAssertEqual(paging.pages.map(\.id), ["x", "b", "y"])
+        XCTAssertEqual(paging.page(of: "a"), 1)
+        XCTAssertEqual(paging.shots(of: "c"), ["a", "b", "c"])
+        XCTAssertEqual(paging.neighbour(of: "x", offset: 1), "a")
+        XCTAssertEqual(paging.neighbour(of: "a", offset: 1), "b")
+        XCTAssertEqual(paging.neighbour(of: "c", offset: 1), "y")
+        XCTAssertEqual(paging.neighbour(of: "y", offset: -1), "c")
+        XCTAssertNil(paging.neighbour(of: "y", offset: 1))
+        XCTAssertTrue(paging.shots(of: "x").isEmpty)
+    }
+
+    func testPagingKeepsToTheShotsTheScreenShowed() {
+        let stacks = PhotoStackIndex([PhotoStack(id: "s", memberIDs: ["a", "b", "c", "d"], coverID: "a", isCoverChosen: false)])
+        // A filter left out "a" and "c".
+        let paging = StackPaging(order: ["d", "b"], stacks: stacks)
+        XCTAssertEqual(paging.pages, [StackedEntry(id: "d", stackID: "s", count: 2)])
+        XCTAssertEqual(paging.shots(of: "b"), ["b", "d"])
+        XCTAssertEqual(paging.neighbour(of: "b", offset: 1), "d")
+        XCTAssertNil(paging.neighbour(of: "d", offset: 1))
+        XCTAssertNil(paging.page(of: "a"))
+    }
+
     func testHashFromHex() {
         XCTAssertEqual(StackPhoto.hash(fromHex: "00000000000000ff"), 255)
         XCTAssertNil(StackPhoto.hash(fromHex: "zz"))

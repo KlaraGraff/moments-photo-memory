@@ -175,6 +175,68 @@ public struct PhotoStackIndex: Equatable, Sendable {
     }
 }
 
+/// How the viewer pages through a screen's photos: each stack is one page,
+/// and inside it the arrows walk the stack's shots that the screen showed.
+/// Built once per change of the order or the stacks, so a lookup is cheap.
+public struct StackPaging: Equatable, Sendable {
+    public let pages: [StackedEntry]
+    private let pageByID: [String: Int]
+    /// For each stacked page, its shots in the order, oldest first.
+    private let shotsByPage: [Int: [String]]
+
+    public static let empty = StackPaging(order: [], stacks: .empty)
+
+    public init(order: [String], stacks: PhotoStackIndex) {
+        let pages = stacks.collapse(order)
+        var pageByID: [String: Int] = [:]
+        var pageByStack: [String: Int] = [:]
+        for (page, entry) in pages.enumerated() {
+            pageByID[entry.id] = page
+            if entry.isStack, let stackID = entry.stackID { pageByStack[stackID] = page }
+        }
+        var present = Set<String>()
+        for id in order {
+            present.insert(id)
+            if pageByID[id] == nil, let stackID = stacks.stackIDByMember[id], let page = pageByStack[stackID] {
+                pageByID[id] = page
+            }
+        }
+        var shotsByPage: [Int: [String]] = [:]
+        for (stackID, page) in pageByStack {
+            shotsByPage[page] = stacks.stacks[stackID]?.memberIDs.filter(present.contains) ?? []
+        }
+        self.pages = pages
+        self.pageByID = pageByID
+        self.shotsByPage = shotsByPage
+    }
+
+    /// The page a photo is on, whichever shot of a stack it is.
+    public func page(of id: String) -> Int? {
+        pageByID[id]
+    }
+
+    /// The shots of the stack the photo is on, oldest first; empty when its
+    /// page is a single photo.
+    public func shots(of id: String) -> [String] {
+        pageByID[id].flatMap { shotsByPage[$0] } ?? []
+    }
+
+    /// The photo an arrow leads to: the stack's next shot, then the next
+    /// page. A stack is entered at the end it is reached from.
+    public func neighbour(of id: String, offset: Int) -> String? {
+        guard let page = pageByID[id] else { return nil }
+        if let shots = shotsByPage[page], let position = shots.firstIndex(of: id), shots.indices.contains(position + offset) {
+            return shots[position + offset]
+        }
+        let next = page + offset
+        guard pages.indices.contains(next) else { return nil }
+        if let shots = shotsByPage[next], let first = shots.first, let last = shots.last {
+            return offset > 0 ? first : last
+        }
+        return pages[next].id
+    }
+}
+
 /// Finds bursts: photos taken a few seconds apart that look alike. Someone
 /// tapping the shutter again and again gives one stack; two different
 /// scenes shot quickly one after the other stay apart.

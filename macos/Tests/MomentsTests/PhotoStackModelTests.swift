@@ -118,14 +118,27 @@ final class PhotoStackModelTests: XCTestCase {
         let analysis = PhotoStackAnalysis(featurePrint: [0.25, -1, 3.5], quality: StackQuality(sharpness: 12, faceCount: 1, faceQuality: 0.6, eyesOpen: 1))
         store.merge(["a": analysis])
         XCTAssertEqual(store.revision, 1)
+        store.finish()
 
+        // Written in the background, then read back the same way at launch.
         let deadline = Date().addingTimeInterval(5)
-        var reread = PhotoStackAnalysisStore(fileURL: url)
+        while PhotoStackAnalysisStore.read(from: url)?["a"] == nil, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertEqual(PhotoStackAnalysisStore.read(from: url)?["a"], analysis)
+        let reread = PhotoStackAnalysisStore(fileURL: url)
         while reread.entries["a"] == nil, Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-            reread = PhotoStackAnalysisStore(fileURL: url)
         }
         XCTAssertEqual(reread.entries["a"], analysis)
+    }
+
+    func testFinishDropsResultsForDeletedPhotos() {
+        let store = PhotoStackAnalysisStore(fileURL: nil)
+        let analysis = PhotoStackAnalysis(featurePrint: nil, quality: StackQuality(sharpness: 1))
+        store.merge(["kept": analysis, "deleted": analysis])
+        store.finish(keeping: ["kept"])
+        XCTAssertEqual(Array(store.entries.keys), ["kept"])
     }
 
     func testSharperImageScoresHigher() {

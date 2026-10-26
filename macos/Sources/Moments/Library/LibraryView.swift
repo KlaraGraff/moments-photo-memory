@@ -57,6 +57,8 @@ struct LibraryView: View {
     @AppStorage("moments.library.person") private var personFilterID = ""
 
     @State private var cachedSections: [LibrarySection] = []
+    /// Each section's photos before stacks were folded.
+    @State private var cachedUnfoldedSectionItems: [String: [String]] = [:]
     /// Photos behind each stacked cell, by the id the cell shows.
     @State private var cachedStackCounts: [String: Int] = [:]
     @State private var cachedItemByID: [String: MediaItem] = [:]
@@ -214,7 +216,7 @@ struct LibraryView: View {
             hasher.combine(observation.assignmentSource)
         }
         // Bursts regroup when someone changes a stack or new analysis arrives.
-        hasher.combine(stacks.analysisRevision)
+        hasher.combine(stacks.generation)
         for record in stackRecords {
             hasher.combine(record.id)
             hasher.combine(record.rulesData)
@@ -453,7 +455,8 @@ struct LibraryView: View {
                             state: state,
                             allGroups: allGroups,
                             groupItems: groupItems,
-                            stackCounts: cachedStackCounts
+                            stackCounts: cachedStackCounts,
+                            allItemIDs: cachedUnfoldedSectionItems[section.id] ?? section.itemIDs
                         )
                         .id(LibraryScrollTarget.section(section.id))
                     }
@@ -590,11 +593,11 @@ struct LibraryView: View {
         cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
         // A burst is one cell showing its cover, and counts as one photo.
         let stackIndex = stacks.update(items: allItems, decisions: stackRecords)
-        let folded = LibraryFilterEngine.folding(
-            LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst),
-            with: stackIndex
-        )
+        let unfolded = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
+        let folded = LibraryFilterEngine.folding(unfolded, with: stackIndex)
         cachedSections = folded.sections
+        cachedUnfoldedSectionItems = Dictionary(unfolded.map { ($0.id, $0.itemIDs) }, uniquingKeysWith: { first, _ in first })
+        state.viewerItemIDs = unfolded.flatMap(\.itemIDs)
         cachedStackCounts = folded.stackCounts
         cachedVisibleCount = visible.count
         state.gridSections = cachedSections.map(\.itemIDs)
@@ -718,6 +721,8 @@ private struct LibrarySectionView: View {
     var groupItems: [UserGroupItem] = []
     var group: UserGroup? = nil
     var stackCounts: [String: Int] = [:]
+    /// The section's photos with each stack's shots, for "Show only these".
+    var allItemIDs: [String]? = nil
     @Query private var placeNotes: [PlaceNote]
     @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
@@ -764,7 +769,7 @@ private struct LibrarySectionView: View {
                 .contextMenu {
                     Button(String(localized: "Select these photos")) { selectSection() }
                     Button(String(localized: "Show only these photos")) {
-                        selection.showInLibrary(section.itemIDs, title: section.title)
+                        selection.showInLibrary(allItemIDs ?? section.itemIDs, title: section.title)
                     }
                     if let tripID = sectionTripID {
                         Button(String(localized: "Show Trip")) { selection.showTrip(tripID) }
@@ -1026,7 +1031,7 @@ private struct LibraryPhotoCell: View {
     private func open() {
         selection.select(item.id)
         selection.anchorItemID = item.id
-        selection.openViewer(item.id, in: state.orderedItemIDs)
+        selection.openViewer(item.id, in: state.viewerItemIDs)
     }
 }
 

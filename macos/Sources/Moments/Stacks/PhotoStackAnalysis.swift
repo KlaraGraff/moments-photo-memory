@@ -38,8 +38,9 @@ struct PhotoStackAnalysis: Codable, Equatable, Sendable {
     }
 }
 
-/// The analysis results, kept in a small file next to the thumbnails.
-/// `revision` changes whenever new results arrive, so screens regroup.
+/// The analysis results, kept in a file next to the thumbnails. It is
+/// read in the background at launch and written when a run ends.
+/// `revision` changes when new results are shown, so stacks are detected again.
 @MainActor
 @Observable
 final class PhotoStackAnalysisStore {
@@ -49,15 +50,32 @@ final class PhotoStackAnalysisStore {
     private(set) var revision = 0
     @ObservationIgnored private let fileURL: URL?
     @ObservationIgnored private let writer = Writer()
+    @ObservationIgnored private var loading: Task<Void, Never>?
     @ObservationIgnored private var hasUnpublished = false
     @ObservationIgnored private var lastPublished = Date.distantPast
+    @ObservationIgnored private var lastSaved = Date()
+    @ObservationIgnored private var generation = 0
 
     init(fileURL: URL?) {
         self.fileURL = fileURL
-        if let fileURL, let data = try? Data(contentsOf: fileURL),
-           let decoded = try? PropertyListDecoder().decode([String: PhotoStackAnalysis].self, from: data) {
-            entries = decoded
+        guard let fileURL else { return }
+        loading = Task { [weak self] in
+            let loaded = await Task.detached(priority: .utility) { Self.read(from: fileURL) }.value
+            guard let self, let loaded, !loaded.isEmpty else { return }
+            // Results that arrived while the file was read win.
+            self.entries = loaded.merging(self.entries) { _, current in current }
+            self.revision += 1
         }
+    }
+
+    /// Waits for the file read at launch, so a run doesn't measure again what is known.
+    func loaded() async {
+        await loading?.value
+    }
+
+    nonisolated static func read(from fileURL: URL) -> [String: PhotoStackAnalysis]? {
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        return try? PropertyListDecoder().decode([String: PhotoStackAnalysis].self, from: data)
     }
 
     private static var defaultFileURL: URL? {
@@ -74,23 +92,43 @@ final class PhotoStackAnalysisStore {
             .appending(path: "photo-stacks-v1.plist")
     }
 
-    /// Adds results. Screens regroup on `revision`, so during a long run it
-    /// moves at most every `interval`; `publish()` at the end shows the rest.
+    /// Adds results. During a long run they are shown at most every
+    /// `interval`; `finish(keeping:)` shows the rest and writes the file.
     func merge(_ results: [String: PhotoStackAnalysis], interval: TimeInterval = 0) {
         guard !results.isEmpty else { return }
         entries.merge(results) { _, new in new }
         hasUnpublished = true
-        if Date().timeIntervalSince(lastPublished) >= interval { publish() }
+        if Date().timeIntervalSince(lastPublished) >= interval {
+            hasUnpublished = false
+            lastPublished = Date()
+            revision += 1
+        }
+        // A long first run keeps its progress if the app quits.
+        if Date().timeIntervalSince(lastSaved) >= 300 { save() }
     }
 
-    func publish() {
-        guard hasUnpublished else { return }
+    /// The end of a run: drops results for photos no longer in the library,
+    /// shows what is new and writes the file once.
+    func finish(keeping itemIDs: Set<String>? = nil) {
+        var changed = hasUnpublished
+        if let itemIDs {
+            let gone = entries.keys.filter { !itemIDs.contains($0) }
+            for id in gone { entries[id] = nil }
+            changed = changed || !gone.isEmpty
+        }
+        guard changed else { return }
         hasUnpublished = false
         lastPublished = Date()
         revision += 1
+        save()
+    }
+
+    func save() {
         guard let fileURL else { return }
+        lastSaved = Date()
+        generation += 1
         let snapshot = entries
-        let generation = revision
+        let generation = generation
         Task { await writer.write(snapshot, generation: generation, to: fileURL) }
     }
 
@@ -138,10 +176,12 @@ final class PhotoStackAnalyzer {
             return
         }
         isRunning = true
-        let known = Set(store.entries.keys)
+        let store = store
         let gap = maximumGap
         task = Task { @MainActor [weak self] in
-            let pending = await Task.detached(priority: .utility) {
+            await store.loaded()
+            let known = Set(store.entries.keys)
+            let (pending, allIDs) = await Task.detached(priority: .utility) {
                 Self.pendingPhotos(container: container, known: known, maximumGap: gap)
             }.value
             for batch in stride(from: 0, to: pending.count, by: 12) {
@@ -157,10 +197,10 @@ final class PhotoStackAnalyzer {
                     }
                     return results
                 }.value
-                self?.store.merge(results, interval: 10)
+                store.merge(results, interval: 30)
             }
+            store.finish(keeping: Task.isCancelled ? nil : allIDs)
             guard let self else { return }
-            self.store.publish()
             self.task = nil
             self.isRunning = false
             if self.runAgain {
@@ -178,12 +218,13 @@ final class PhotoStackAnalyzer {
 
     /// Photos with a real image behind them, not yet measured, that have a
     /// neighbour within the burst gap.
-    nonisolated static func pendingPhotos(container: ModelContainer, known: Set<String>, maximumGap: TimeInterval) -> [PendingPhoto] {
+    /// Also returns every photo's id, so results for deleted ones can go.
+    nonisolated static func pendingPhotos(container: ModelContainer, known: Set<String>, maximumGap: TimeInterval) -> ([PendingPhoto], Set<String>?) {
         let context = ModelContext(container)
         // Live Photos stack too; only videos never do.
         let videoKind = MediaKind.video.rawValue
         let descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.isScreenshot == false && $0.kindRaw != videoKind })
-        guard let items = try? context.fetch(descriptor) else { return [] }
+        guard let items = try? context.fetch(descriptor) else { return ([], nil) }
         let dated = items
             .compactMap { item -> (MediaItem, Date)? in item.effectiveCaptureDate.map { (item, $0) } }
             .sorted { $0.1 < $1.1 }
@@ -196,7 +237,7 @@ final class PhotoStackAnalyzer {
             guard before || after else { continue }
             result.append(PendingPhoto(id: item.id, photosLocalIdentifier: item.photosLocalIdentifier, bookmark: item.originalBookmarkData))
         }
-        return result
+        return (result, Set(items.map(\.id)))
     }
 
     /// A copy about 1,000 pixels across: enough for faces and sharpness.

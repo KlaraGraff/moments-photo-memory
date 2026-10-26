@@ -280,40 +280,52 @@ public struct PhotosImportStatusView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            switch controller.authorizationStatus {
-            case .denied, .restricted:
-                Label("Apple Photos access is unavailable", systemImage: "lock.slash")
-                    .foregroundStyle(.secondary)
-                Button("Open System Settings") {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos")!)
+            Group {
+                switch controller.authorizationStatus {
+                case .denied, .restricted:
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Label("Apple Photos access is unavailable", systemImage: "lock.slash")
+                            .foregroundStyle(Paper.muted)
+                        Spacer(minLength: 8)
+                        Button("Open System Settings") {
+                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos")!)
+                        }
+                    }
+                case .limited:
+                    Label("Apple Photos access is limited", systemImage: "photo.on.rectangle.angled")
+                        .foregroundStyle(Paper.muted)
+                default:
+                    EmptyView()
                 }
-            case .limited:
-                Label("Apple Photos access is limited", systemImage: "photo.on.rectangle.angled")
-                    .foregroundStyle(.secondary)
-            default:
-                Label("Apple Photos", systemImage: "photo.on.rectangle")
             }
-            if let preview = controller.preview {
-                Text("\(preview.count) photos or videos selected")
-                    .foregroundStyle(.secondary)
-                Button("Import") { onImport() }
-                    .keyboardShortcut(.defaultAction)
-            } else {
-                Button("Count selection") { controller.preview(selection: selection) }
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                if let preview = controller.preview {
+                    Text("\(preview.count) photos or videos selected")
+                        .foregroundStyle(Paper.muted)
+                        .monospacedDigit()
+                    Spacer(minLength: 8)
+                    Button("Import") { onImport() }
+                        .keyboardShortcut(.defaultAction)
+                        .buttonStyle(.borderedProminent)
+                } else {
+                    Spacer(minLength: 8)
+                    Button("Count selection") { controller.preview(selection: selection) }
+                }
             }
             if controller.state == .importing {
-                if let fraction = controller.progress.fraction {
-                    ProgressView(value: fraction)
-                } else {
-                    ProgressView()
+                HStack(spacing: 10) {
+                    if let fraction = controller.progress.fraction {
+                        ProgressView(value: fraction)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                    Button("Cancel") { controller.cancel() }
                 }
-                Button("Cancel") { controller.cancel() }
             }
         }
         .task {
             if controller.authorizationStatus == .notDetermined { await controller.requestAccess() }
         }
-        .padding()
     }
 }
 
@@ -338,48 +350,71 @@ public struct PhotosImportSheet: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Import from Apple Photos")
-                .font(.title2.weight(.semibold))
-            Picker("Selection", selection: $mode) {
-                Text("All photos").tag("all")
-                Text("Albums").tag("albums")
-                Text("Date range").tag("date")
-            }
-            .pickerStyle(.segmented)
-            if mode == "albums" {
-                if controller.albums.isEmpty {
-                    Text("No albums are available with the current Photos access.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    List(controller.albums, selection: $selectedAlbums) { album in
-                        Text(album.title).tag(album.localIdentifier)
+        PaperSheet(String(localized: "Import from Apple Photos")) {
+            VStack(alignment: .leading, spacing: 16) {
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 14) {
+                    GridRow {
+                        PaperFormLabel(String(localized: "Selection"))
+                        Picker("Selection", selection: $mode) {
+                            Text("All photos").tag("all")
+                            Text("Albums").tag("albums")
+                            Text("Date range").tag("date")
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
                     }
-                    .frame(minHeight: 130)
+                    if mode == "albums" {
+                        GridRow(alignment: .top) {
+                            PaperFormLabel(String(localized: "Albums"))
+                            if controller.albums.isEmpty {
+                                Text("No albums are available with the current Photos access.")
+                                    .foregroundStyle(Paper.muted)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else {
+                                List(controller.albums, selection: $selectedAlbums) { album in
+                                    Text(album.title).tag(album.localIdentifier)
+                                        .listRowBackground(Color.clear)
+                                }
+                                .scrollContentBackground(.hidden)
+                                .paperWell(padding: 2)
+                                .frame(minHeight: 130)
+                            }
+                        }
+                    } else if mode == "date" {
+                        GridRow {
+                            PaperFormLabel(String(localized: "From"))
+                            DatePicker("From", selection: $startDate, displayedComponents: [.date])
+                                .labelsHidden()
+                                .fixedSize()
+                        }
+                        GridRow {
+                            PaperFormLabel(String(localized: "To"))
+                            DatePicker("To", selection: $endDate, displayedComponents: [.date])
+                                .labelsHidden()
+                                .fixedSize()
+                        }
+                    }
                 }
-            } else if mode == "date" {
-                DatePicker("From", selection: $startDate, displayedComponents: [.date])
-                DatePicker("To", selection: $endDate, displayedComponents: [.date])
-            }
-            PhotosImportStatusView(controller: controller, selection: selection) {
-                controller.start(selection: selection)
-            }
-            if !controller.pendingNewAssetIdentifiers.isEmpty {
-                HStack {
-                    Text("\(controller.pendingNewAssetIdentifiers.count) new photos in Apple Photos")
-                        .foregroundStyle(.secondary)
-                    Button("Import new photos") { controller.importPendingChanges() }
+                PhotosImportStatusView(controller: controller, selection: selection) {
+                    controller.start(selection: selection)
+                }
+                .paperWell(padding: 12)
+                if !controller.pendingNewAssetIdentifiers.isEmpty {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("\(controller.pendingNewAssetIdentifiers.count) new photos in Apple Photos")
+                            .foregroundStyle(Paper.muted)
+                        Spacer(minLength: 8)
+                        Button("Import new photos") { controller.importPendingChanges() }
+                    }
                 }
             }
-            HStack {
-                Spacer()
-                Button("Close") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-            }
+        } footer: {
+            Button("Close") { dismiss() }
+                .keyboardShortcut(.cancelAction)
         }
-        .padding(24)
-        .frame(width: 500)
-        .frame(minHeight: 360)
+        .frame(width: 520)
+        .frame(minHeight: 340)
         .task {
             if controller.authorizationStatus == .notDetermined { await controller.requestAccess() }
             controller.loadAlbums()

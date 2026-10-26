@@ -48,7 +48,7 @@ final class FolderImportTests: XCTestCase {
         let folder = try SyntheticMediaFixture.makeFolder()
         defer { SyntheticMediaFixture.removeFolder(folder) }
         let base = Date(timeIntervalSince1970: 1_767_225_600)
-        try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("one.jpg"), date: base, latitude: 0, longitude: 0, marker: 1)
+        try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("one.jpg"), date: base, latitude: 0.0001, longitude: 0, marker: 1)
         try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("two.jpg"), date: base.addingTimeInterval(60), latitude: 0, longitude: 0.01, marker: 2)
         try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("jump.jpg"), date: base.addingTimeInterval(120), latitude: 5, longitude: 5, marker: 3)
         try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("return.jpg"), date: base.addingTimeInterval(180), latitude: 0, longitude: 0.02, marker: 4)
@@ -193,7 +193,7 @@ final class FolderImportTests: XCTestCase {
         let folder = try SyntheticMediaFixture.makeFolder()
         defer { SyntheticMediaFixture.removeFolder(folder) }
         let date = Date(timeIntervalSince1970: 1_767_225_600)
-        try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("named.jpg"), date: date, latitude: 0, longitude: 0, marker: 44)
+        try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("named.jpg"), date: date, latitude: 0.0001, longitude: 0, marker: 44)
         try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("retry.jpg"), date: date.addingTimeInterval(60), latitude: 5, longitude: 5, marker: 45)
         let container = try MomentsPersistence.makeContainer(inMemory: true)
         let importer = FolderImporter(

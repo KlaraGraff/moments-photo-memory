@@ -192,7 +192,7 @@ struct MediaMetadataReader {
         let signedLatitude = latitudeRef == "S" ? -latitude : latitude
         let signedLongitude = longitudeRef == "W" ? -longitude : longitude
         guard (-90...90).contains(signedLatitude), (-180...180).contains(signedLongitude) else { return nil }
-        return (signedLatitude, signedLongitude)
+        return ImportLocation.usable(latitude: signedLatitude, longitude: signedLongitude)
     }
 
     static func sha256(url: URL) throws -> String {

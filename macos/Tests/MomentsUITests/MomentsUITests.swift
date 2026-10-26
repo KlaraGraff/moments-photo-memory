@@ -444,6 +444,25 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(preview.waitForNonExistence(timeout: launchTimeout))
     }
 
+    func testPlusOnTripsStartsANewTrip() {
+        let app = launch(language: "en")
+        element(in: app, identifier: "sidebar.trips").click()
+        let plus = element(in: app, identifier: "trips.new")
+        XCTAssertTrue(plus.waitForExistence(timeout: launchTimeout), "Trips has no + for a new trip")
+        plus.click()
+        let name = element(in: app, identifier: "trips.new.name")
+        XCTAssertTrue(name.waitForExistence(timeout: launchTimeout), "+ did not open the new trip sheet")
+        XCTAssertTrue(element(in: app, identifier: "trips.new.preview").exists, "The new trip sheet shows no preview")
+        name.click()
+        name.typeText("Synthetic new trip")
+        capture(app, named: "trips-09-new-trip-evidence")
+        element(in: app, identifier: "trips.new.create").click()
+        let notice = element(in: app, identifier: "trips.notice")
+        XCTAssertTrue(notice.waitForExistence(timeout: launchTimeout), "Creating a trip showed no note")
+        element(in: app, identifier: "trips.notice.undo").click()
+        XCTAssertTrue(notice.waitForNonExistence(timeout: launchTimeout))
+    }
+
     func testSplitATripAtADayAndUndo() {
         let app = launch(language: "en")
         element(in: app, identifier: "sidebar.trips").click()

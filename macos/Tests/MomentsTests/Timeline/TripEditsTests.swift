@@ -255,6 +255,34 @@ final class TripEditsTests: XCTestCase {
         XCTAssertEqual(trip.startDate, day(8, hour: 0))
     }
 
+    func testCreatingATripGathersFreePhotosAndUndoRemovesIt() throws {
+        let context = try makeContext()
+        let other = Trip(id: "o", name: "Other", startDate: day(12), endDate: day(12))
+        context.insert(other)
+        photo("free", on: day(11), trip: nil, in: context)
+        photo("theirs", on: day(12), trip: other, in: context)
+        photo("far", on: day(20), trip: nil, in: context)
+        try context.save()
+
+        let edit = session(context)
+        let created = TripEdits.create(named: "  Weekend  ", start: day(11), end: day(12), session: edit, locked: [])
+        XCTAssertEqual(created.trip.effectiveName, "Weekend")
+        XCTAssertEqual(try tripID(of: "free", in: context), created.trip.id)
+        XCTAssertEqual(try tripID(of: "theirs", in: context), "o")
+        XCTAssertEqual(created.outcome.elsewhere.map(\.tripID), ["o"])
+
+        TripEdits.undo(edit.undo, context: context, defaults: defaults)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Trip>()).map(\.id), ["o"])
+        XCTAssertNil(try tripID(of: "free", in: context))
+    }
+
+    func testWorldOutlineShipsWithTheApp() {
+        let outline = WorldOutline.shared
+        XCTAssertGreaterThan(outline.rings.count, 100, "The base map file is missing from the app bundle")
+        let morocco = outline.rings(longitudes: -8 ... -4, latitudes: 31...34)
+        XCTAssertFalse(morocco.isEmpty)
+    }
+
     // MARK: Route map
 
     func testRouteMapKeepsStopsInsideTheBoxAndInOrder() {
@@ -271,6 +299,12 @@ final class TripEditsTests: XCTestCase {
         }
         XCTAssertLessThan(points[1].y, points[0].y, "North is up")
         XCTAssertGreaterThan(points[2].x, points[1].x, "East is right")
-        XCTAssertEqual(TripRouteMap.layout([stops[0]], in: box), [CGPoint(x: box.midX, y: box.midY)])
+        let single = TripRouteMap.layout([stops[0]], in: box)
+        XCTAssertEqual(single.count, 1)
+        XCTAssertEqual(single[0].x, box.midX, accuracy: 0.01)
+        XCTAssertEqual(single[0].y, box.midY, accuracy: 0.01)
+        XCTAssertNotNil(TripRouteMap.projection(stops, in: box), "Cities apart get a base map")
+        let nearby = [TripRouteStop(name: "A", latitude: 31.2, longitude: 121.4), TripRouteStop(name: "B", latitude: 31.25, longitude: 121.5)]
+        XCTAssertNil(TripRouteMap.projection(nearby, in: box), "Spots in one city are spread out instead")
     }
 }

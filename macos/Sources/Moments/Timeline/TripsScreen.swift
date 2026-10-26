@@ -29,6 +29,7 @@ struct TripsScreen: View {
     @State private var notice: TripNotice?
     /// Covers chosen by hand, by trip id; kept on this Mac.
     @AppStorage(TripCoverChoice.defaultsKey) private var coverStore = ""
+    @State private var isCreatingTrip = false
 
     private var inputKey: Int {
         var hasher = Hasher()
@@ -127,7 +128,8 @@ struct TripsScreen: View {
                     memories: memories,
                     returnTripID: returnTripID,
                     actions: actions,
-                    onOpen: open
+                    onOpen: open,
+                    onNew: { isCreatingTrip = true }
                 )
                 .transition(.opacity)
             }
@@ -149,6 +151,9 @@ struct TripsScreen: View {
             guard let notice, notice.offer == nil else { return }
             try? await Task.sleep(for: .seconds(10))
             if self.notice?.id == notice.id { self.notice = nil }
+        }
+        .sheet(isPresented: $isCreatingTrip) {
+            TripNewSheet(onCreate: createTrip)
         }
         .task(id: inputKey) {
             document = buildDocument()
@@ -222,6 +227,28 @@ struct TripsScreen: View {
             )
         }
         post(notice)
+    }
+
+    private func createTrip(named name: String, start: Date, end: Date) {
+        let session = TripEdits.Session(context: modelContext)
+        let created = TripEdits.create(named: name, start: start, end: end, session: session)
+        var notice = TripNotice(
+            message: String(localized: "New trip · \(created.outcome.joined) photos added"),
+            undo: created.outcome.undo
+        )
+        let others = created.outcome.elsewhere.flatMap(\.itemIDs)
+        if !others.isEmpty {
+            let names = created.outcome.elsewhere.map { "“\($0.name)”" }.joined(separator: ", ")
+            notice.offer = TripNotice.Offer(
+                tripID: created.trip.id,
+                text: String(localized: "Photos in these dates that belong to \(names): \(others.count)"),
+                itemIDs: others
+            )
+        }
+        post(notice)
+        withAnimation(Motion.animation(Motion.settle, reduceMotion: reduceMotion)) {
+            selection.openTripID = created.trip.id
+        }
     }
 
     private func adopt(_ notice: TripNotice) {
@@ -394,6 +421,7 @@ private struct TripShelfView: View {
     let returnTripID: String?
     let actions: TripActions
     let onOpen: (TimelineTrip) -> Void
+    let onNew: () -> Void
 
     private var tripCount: Int { trips.filter { !$0.isUnsorted }.count }
 
@@ -424,6 +452,16 @@ private struct TripShelfView: View {
             // The page's name lives in the window's title bar, not in the page.
             .navigationTitle(String(localized: "Trips"))
             .navigationSubtitle(String(localized: "\(tripCount) trips"))
+            .toolbar {
+                // On Trips, + starts a trip.
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: onNew) {
+                        Label(String(localized: "New trip"), systemImage: "plus")
+                    }
+                    .help(String(localized: "New trip"))
+                    .accessibilityIdentifier("trips.new")
+                }
+            }
             .onAppear {
                 if let returnTripID { proxy.scrollTo(returnTripID, anchor: .center) }
             }
@@ -1115,6 +1153,82 @@ struct TripTravelRow: View {
         formatter.unitStyle = .short
         formatter.unitOptions = .naturalScale
         return formatter.string(from: Measurement(value: meters, unit: UnitLength.meters))
+    }
+}
+
+/// A new trip: an optional name and its dates, with what they would
+/// gather before Create. Without a name the trip is named after its places.
+private struct TripNewSheet: View {
+    let onCreate: (String, Date, Date) -> Void
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var start = Calendar.current.startOfDay(for: .now)
+    @State private var end = Calendar.current.startOfDay(for: .now)
+    @State private var members: [TripEdits.Member] = []
+
+    private var plan: TripEdits.Plan {
+        let first = TripEdits.dayKey(min(start, end), calendar: .current)
+        let last = TripEdits.dayKey(max(start, end), calendar: .current)
+        // No trip id yet: every photo in another trip is "elsewhere".
+        return TripEdits.plan(tripID: "", first: first, last: last, members: members)
+    }
+
+    var body: some View {
+        let plan = self.plan
+        let elsewhere = plan.elsewhere.values.reduce(0) { $0 + $1.count }
+        VStack(alignment: .leading, spacing: 16) {
+            Text("New trip")
+                .font(.system(size: 20, weight: .medium, design: .serif))
+                .foregroundStyle(Paper.ink)
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                GridRow {
+                    PaperFormLabel(String(localized: "Name"))
+                    TextField("", text: $name, prompt: Text("Named after its places if left empty"))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(minWidth: 260)
+                        .accessibilityIdentifier("trips.new.name")
+                }
+                GridRow {
+                    PaperFormLabel(String(localized: "Starts"))
+                    DatePicker("", selection: $start, displayedComponents: .date)
+                        .labelsHidden()
+                        .accessibilityIdentifier("trips.new.start")
+                }
+                GridRow {
+                    PaperFormLabel(String(localized: "Ends"))
+                    DatePicker("", selection: $end, in: start..., displayedComponents: .date)
+                        .labelsHidden()
+                        .accessibilityIdentifier("trips.new.end")
+                }
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Will add \(plan.joining.count) · will take out 0")
+                if elsewhere > 0 {
+                    Text("\(elsewhere) in other trips stay there")
+                        .foregroundStyle(Paper.muted)
+                }
+            }
+            .font(.callout.monospacedDigit())
+            .foregroundStyle(Paper.ink)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("trips.new.preview")
+            HStack {
+                Spacer()
+                Button(String(localized: "Cancel")) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(String(localized: "Create")) {
+                    onCreate(name, start, max(start, end))
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("trips.new.create")
+            }
+        }
+        .padding(PaperMetrics.sheetInset)
+        .frame(minWidth: 400)
+        .background(Paper.canvas)
+        .onAppear { members = TripEdits.members(context: modelContext) }
     }
 }
 

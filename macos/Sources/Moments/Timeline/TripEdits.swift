@@ -275,6 +275,27 @@ enum TripEdits {
         return DatesOutcome(undo: session.undo, joined: plan.joining.count, left: plan.leaving.count, elsewhere: elsewhere)
     }
 
+    /// A new trip over these dates. Photos in them that belong to no trip
+    /// join, as when a trip's dates change. A typed name is kept as the
+    /// trip's own; without one the trip is named after its places.
+    @MainActor
+    static func create(named name: String, start: Date, end: Date, session: Session, locked: Set<String> = TripAssignmentLocks.lockedIDs()) -> (trip: Trip, outcome: DatesOutcome) {
+        let range = Self.range(start: start, end: end, calendar: session.calendar)
+        let trip = Trip(
+            name: TripNaming.name(cities: [], countries: [], start: range.lowerBound, index: 1, calendar: session.calendar),
+            startDate: range.lowerBound,
+            endDate: range.upperBound,
+            updatedAt: session.now,
+            updatedBy: MomentsAccount.localID
+        )
+        let typed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.isEmpty { trip.overrideName = typed }
+        session.context.insert(trip)
+        session.created(trip)
+        let outcome = changeDates(of: trip, start: start, end: end, session: session, locked: locked)
+        return (trip, outcome)
+    }
+
     // MARK: By hand
 
     /// Photos join the trip, and its dates stretch to hold them.

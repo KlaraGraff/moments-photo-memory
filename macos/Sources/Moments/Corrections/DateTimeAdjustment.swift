@@ -88,6 +88,7 @@ enum DateTimeAdjustment {
         var snapshot = Snapshot()
         guard let reference = reference(in: items) else { return snapshot }
         snapshot.trips = tripSnapshots(for: items)
+        let before = photoRanges(of: items)
         let delta = reference.effectiveCaptureDate.map { referenceDate.timeIntervalSince($0) } ?? 0
         for item in items {
             snapshot.items.append(ItemSnapshot(item))
@@ -109,7 +110,7 @@ enum DateTimeAdjustment {
             item.updatedAt = now
             item.updatedBy = MomentsAccount.localID
         }
-        refreshTripDates(for: items, delta: delta, now: now)
+        refreshTripDates(for: items, before: before, delta: { _ in delta }, now: now)
         return snapshot
     }
 
@@ -119,6 +120,15 @@ enum DateTimeAdjustment {
     @discardableResult
     static func revert(_ items: [MediaItem], now: Date = .now) -> Snapshot {
         var snapshot = Snapshot(trips: tripSnapshots(for: items))
+        let before = photoRanges(of: items)
+        // How far each photo moves back; a trip whose photos all move back by
+        // the same amount moves back with them.
+        var offsets: [String: TimeInterval] = [:]
+        for item in items {
+            if let corrected = item.userCorrectedCaptureDateUTC, let original = item.captureDate {
+                offsets[item.id] = original.timeIntervalSince(corrected)
+            }
+        }
         for item in items where item.userCorrectedCaptureDateUTC != nil {
             snapshot.items.append(ItemSnapshot(item))
             item.userCorrectedCaptureDateUTC = nil
@@ -130,7 +140,10 @@ enum DateTimeAdjustment {
             item.updatedAt = now
             item.updatedBy = MomentsAccount.localID
         }
-        refreshTripDates(for: items, delta: nil, now: now)
+        refreshTripDates(for: items, before: before, delta: { trip in
+            let moved = Set(trip.items.compactMap { offsets[$0.id] })
+            return moved.count == 1 && trip.items.allSatisfy { offsets[$0.id] != nil } ? moved.first : nil
+        }, now: now)
         return snapshot
     }
 
@@ -166,22 +179,44 @@ enum DateTimeAdjustment {
         trips(of: items).map { TripSnapshot(id: $0.id, startDate: $0.startDate, endDate: $0.endDate) }
     }
 
-    /// Moving every photo of a trip moves the trip by the same amount, so a
-    /// chapter's own start and end keep their shape. Moving only some of its
-    /// photos widens the trip to take them in, and never shortens dates
-    /// someone set.
-    private static func refreshTripDates(for items: [MediaItem], delta: TimeInterval?, now: Date) {
-        let movedIDs = Set(items.map(\.id))
+    /// Each trip's first and last photo before a change.
+    private static func photoRanges(of items: [MediaItem]) -> [String: ClosedRange<Date>] {
+        var ranges: [String: ClosedRange<Date>] = [:]
         for trip in trips(of: items) {
-            var start = trip.startDate
-            var end = trip.endDate
-            if let delta, trip.items.allSatisfy({ movedIDs.contains($0.id) }), start != nil || end != nil {
-                start = start?.addingTimeInterval(delta)
-                end = end?.addingTimeInterval(delta)
-            }
             let dates = trip.items.compactMap(\.effectiveCaptureDate)
-            if let first = dates.min() { start = min(start ?? first, first) }
-            if let last = dates.max() { end = max(end ?? last, last) }
+            if let first = dates.min(), let last = dates.max() { ranges[trip.id] = first...last }
+        }
+        return ranges
+    }
+
+    /// A trip's start or end that followed its photos keeps following them,
+    /// so fixing a stray photo also shortens the trip. One someone set wider
+    /// than the photos (a chapter's own days) stays: it moves with the trip
+    /// when all its photos move by the same amount (`delta`), and otherwise
+    /// only widens, to the whole day, to take a photo in.
+    private static func refreshTripDates(
+        for items: [MediaItem],
+        before: [String: ClosedRange<Date>],
+        delta: (Trip) -> TimeInterval?,
+        now: Date
+    ) {
+        let movedIDs = Set(items.map(\.id))
+        let calendar = Calendar.current
+        for trip in trips(of: items) {
+            let dates = trip.items.compactMap(\.effectiveCaptureDate)
+            guard let first = dates.min(), let last = dates.max() else { continue }
+            let old = before[trip.id]
+            let shift = trip.items.allSatisfy({ movedIDs.contains($0.id) }) ? delta(trip) : nil
+            var start = first
+            if let set = trip.startDate, let old, set < old.lowerBound {
+                let kept = set.addingTimeInterval(shift ?? 0)
+                start = kept <= first ? kept : calendar.startOfDay(for: first)
+            }
+            var end = last
+            if let set = trip.endDate, let old, set > old.upperBound {
+                let kept = set.addingTimeInterval(shift ?? 0)
+                end = kept >= last ? kept : TripEdits.endOfDay(last, calendar: calendar)
+            }
             guard trip.startDate != start || trip.endDate != end else { continue }
             trip.startDate = start
             trip.endDate = end

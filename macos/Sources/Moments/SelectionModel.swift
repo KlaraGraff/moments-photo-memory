@@ -71,6 +71,9 @@ final class SelectionModel {
 
     /// Photos whose date and time the window's Adjust Date and Time sheet is open for.
     var dateAdjustmentItemIDs: [String]?
+    /// Rename or Merge Places, asked for from a Place filter. Shown by the
+    /// window, since the filters can be in a popover that closes.
+    var isShowingPlacesEditor = false
     /// The last correction to dates, places or people, while its Undo bar shows.
     var lastCorrection: CorrectionUndo?
 

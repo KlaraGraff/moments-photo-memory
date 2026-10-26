@@ -77,10 +77,14 @@ struct CorrectionUndoBar: View {
                     },
                     onHover: { isHovering = $0 }
                 ))
-                .fixedSize()
                 .padding(.bottom, 6)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
-                .task(id: correction.id) { await hideLater(correction) }
+                // The bar can go while the pointer is on it, with no word
+                // that it left: start each one as not hovered.
+                .task(id: correction.id) {
+                    isHovering = false
+                    await hideLater(correction)
+                }
             }
         }
         .animation(Motion.animation(Motion.snap, reduceMotion: reduceMotion), value: selection.lastCorrection?.id)
@@ -134,14 +138,19 @@ private struct FrontLayer<Content: View>: NSViewRepresentable {
     let content: Content
 
     func makeNSView(context: Context) -> NSHostingView<Content> {
-        NSHostingView(rootView: content)
+        let view = NSHostingView(rootView: content)
+        // SwiftUI sets the frame; no Auto Layout size of its own to fight it.
+        view.sizingOptions = []
+        return view
     }
 
     func updateNSView(_ view: NSHostingView<Content>, context: Context) {
         view.rootView = content
     }
 
+    /// Its own size, but no wider than offered, so a long line truncates.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSHostingView<Content>, context: Context) -> CGSize? {
-        nsView.fittingSize
+        let fitting = nsView.fittingSize
+        return CGSize(width: min(fitting.width, proposal.width ?? fitting.width), height: fitting.height)
     }
 }

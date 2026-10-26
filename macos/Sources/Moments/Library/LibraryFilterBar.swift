@@ -21,7 +21,6 @@ struct LibraryFilterChips: View {
     @AppStorage(LibraryFilterKeys.person) private var personFilterID = ""
     @AppStorage(LibraryFilterKeys.dateMode) private var dateModeRaw = DateFilterMode.days.rawValue
     @State private var showingDatePicker = false
-    @State private var showingPlacesEditor = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -163,13 +162,12 @@ struct LibraryFilterChips: View {
                 if !places.isEmpty {
                     Divider()
                     Button {
-                        showingPlacesEditor = true
+                        selection.isShowingPlacesEditor = true
                     } label: {
                         Label(String(localized: "Rename or Merge Places…"), systemImage: "pencil")
                     }
                 }
             }
-            .sheet(isPresented: $showingPlacesEditor) { PlacesEditorSheet() }
 
             filterMenu(label: String(localized: "Trip"), systemImage: "airplane.departure", identifier: "filter.trip", selected: selectedTripName) {
                 Button(String(localized: "All trips")) { tripFilterKey = "" }

@@ -213,6 +213,12 @@ struct ContentView: View {
         )) {
             DateAdjustmentSheet(itemIDs: shared.dateAdjustmentItemIDs ?? [])
         }
+        .sheet(isPresented: Binding(
+            get: { shared.isShowingPlacesEditor },
+            set: { shared.isShowingPlacesEditor = $0 }
+        )) {
+            PlacesEditorSheet()
+        }
         // One accent everywhere, sheets included: no system blue controls.
         .tint(MomentsPalette.accent)
         .onChange(of: selection) { _, _ in

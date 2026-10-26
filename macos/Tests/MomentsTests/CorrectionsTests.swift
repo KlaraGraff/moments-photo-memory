@@ -146,8 +146,43 @@ final class CorrectionsTests: XCTestCase {
         XCTAssertEqual(trip.startDate, base)
         XCTAssertEqual(trip.endDate, base.addingTimeInterval(72 * hour))
 
+        // Past the chapter's last day: it widens to the whole of that day.
         DateTimeAdjustment.apply(to: [second], referenceDate: base.addingTimeInterval(96 * hour), timeZone: nil)
-        XCTAssertEqual(trip.endDate, base.addingTimeInterval(96 * hour))
+        XCTAssertEqual(trip.endDate, TripEdits.endOfDay(base.addingTimeInterval(96 * hour), calendar: .current))
+        XCTAssertEqual(trip.startDate, base)
+    }
+
+    func testFixingAStrayPhotoShortensATripThatFollowedItsPhotos() throws {
+        let context = try makeContext()
+        // A camera with a reset clock put one photo years early.
+        let stray = base.addingTimeInterval(-1000 * 24 * hour)
+        let trip = Trip(id: "t", name: "Coast", startDate: stray, endDate: base.addingTimeInterval(hour))
+        context.insert(trip)
+        let wrong = MediaItem(id: "a", captureDate: stray, trip: trip)
+        let right = MediaItem(id: "b", captureDate: base.addingTimeInterval(hour), trip: trip)
+        [wrong, right].forEach(context.insert)
+        try context.save()
+
+        DateTimeAdjustment.apply(to: [wrong], referenceDate: base, timeZone: nil)
+        XCTAssertEqual(trip.startDate, base)
+        XCTAssertEqual(trip.endDate, base.addingTimeInterval(hour))
+    }
+
+    func testUseOriginalTimesMovesAWholeTripBack() throws {
+        let context = try makeContext()
+        let trip = Trip(id: "t", name: "Coast", startDate: base.addingTimeInterval(-24 * hour), endDate: base.addingTimeInterval(48 * hour))
+        context.insert(trip)
+        let first = MediaItem(id: "a", captureDate: base, trip: trip)
+        let second = MediaItem(id: "b", captureDate: base.addingTimeInterval(hour), trip: trip)
+        [first, second].forEach(context.insert)
+        try context.save()
+
+        DateTimeAdjustment.apply(to: [first, second], referenceDate: base.addingTimeInterval(24 * hour), timeZone: nil)
+        XCTAssertEqual(trip.startDate, base)
+        XCTAssertEqual(trip.endDate, base.addingTimeInterval(72 * hour))
+        DateTimeAdjustment.revert([first, second])
+        XCTAssertEqual(trip.startDate, base.addingTimeInterval(-24 * hour))
+        XCTAssertEqual(trip.endDate, base.addingTimeInterval(48 * hour))
     }
 
     func testUseOriginalTimesRevertsOnlyCorrectedPhotos() throws {

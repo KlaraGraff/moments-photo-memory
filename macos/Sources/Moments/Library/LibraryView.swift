@@ -459,7 +459,10 @@ struct LibraryView: View {
                 // the user left, in its first layout. Scrolling there after
                 // onAppear showed the top first and then jumped.
                 .scrollPosition(
-                    id: Binding(get: { state.topSectionScrollID }, set: { state.topSectionScrollID = $0 }),
+                    // Written only when the top row really changes: the scroll
+                    // view reports it on every layout, and each write would
+                    // rebuild the whole Library while the sidebar moves.
+                    id: Binding(get: { state.topSectionScrollID }, set: { if state.topSectionScrollID != $0 { state.topSectionScrollID = $0 } }),
                     anchor: .top
                 )
                 .libraryGridInteraction(state: state, proxy: proxy)

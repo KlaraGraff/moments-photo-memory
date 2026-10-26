@@ -12,6 +12,8 @@ struct TimelineScreen: View {
     @State private var collapsedPlaceIDs: Set<String> = []
     /// Rebuilt only when the inputs change, not on every selection change or render.
     @State private var document = TimelineDocument(trips: [])
+    /// Thumbnails need the models; looked up by id, rebuilt with `document`.
+    @State private var itemByID: [String: MediaItem] = [:]
 
     private var inputKey: Int {
         var hasher = Hasher()
@@ -76,7 +78,10 @@ struct TimelineScreen: View {
             }
         }
         .navigationTitle("Timeline")
-        .task(id: inputKey) { document = timeline }
+        .task(id: inputKey) {
+            document = timeline
+            itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        }
     }
 
     private var timelineScroll: some View {
@@ -132,7 +137,9 @@ struct TimelineScreen: View {
                 isExpanded: !collapsedPlaceIDs.contains(place.id),
                 isSelected: !selection.selectedItemIDs.isDisjoint(with: place.itemIDs),
                 reduceMotion: reduceMotion,
+                itemByID: itemByID,
                 onSelect: { select(place) },
+                onOpen: { open($0, in: place) },
                 onToggle: { toggle(placeID: place.id) }
             )
         case let .travel(travel):
@@ -140,10 +147,17 @@ struct TimelineScreen: View {
         }
     }
 
+    /// The place name opens its photos on their own in the Library.
     private func select(_ place: TimelinePlace) {
-        guard !place.itemIDs.isEmpty else { return }
-        selection.select(place.itemIDs, focus: place.itemIDs.first)
-        selection.requestedDestination = .library
+        selection.showInLibrary(
+            place.itemIDs,
+            title: place.name ?? String(localized: "Unknown place", locale: locale)
+        )
+    }
+
+    private func open(_ itemID: String, in place: TimelinePlace) {
+        selection.select(itemID)
+        selection.openViewer(itemID, in: place.itemIDs)
     }
 
     private func toggle(placeID: String) {
@@ -281,7 +295,9 @@ private struct TimelinePlaceCard: View {
     let isExpanded: Bool
     let isSelected: Bool
     let reduceMotion: Bool
+    let itemByID: [String: MediaItem]
     let onSelect: () -> Void
+    let onOpen: (String) -> Void
     let onToggle: () -> Void
 
     var body: some View {
@@ -307,7 +323,8 @@ private struct TimelinePlaceCard: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("timeline.place.\(place.id)")
-                .accessibilityLabel("Select \(place.photoCount) photos at \(place.name ?? String(localized: "Unknown place", locale: locale))")
+                .help("Show these photos in the Library")
+                .accessibilityLabel("Show \(place.photoCount) photos at \(place.name ?? String(localized: "Unknown place", locale: locale)) in the Library")
 
                 Button(action: onToggle) {
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
@@ -324,11 +341,22 @@ private struct TimelinePlaceCard: View {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 7) {
                         ForEach(place.items.prefix(4)) { item in
-                            TimelineThumbnail(item: item)
+                            Button { onOpen(item.id) } label: {
+                                TimelineThumbnail(item: item, media: itemByID[item.id])
+                            }
+                            .buttonStyle(.plain)
+                            .help("Open photo")
+                            .accessibilityLabel(item.title.isEmpty ? item.id : item.title)
+                            .accessibilityIdentifier("timeline.thumbnail.\(item.id)")
                         }
                     }
                     ForEach(place.items) { item in
-                        TimelineItemRow(item: item, locale: locale)
+                        Button { onOpen(item.id) } label: {
+                            TimelineItemRow(item: item, locale: locale)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("timeline.item.\(item.id)")
                     }
                 }
                 .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .top)))
@@ -356,8 +384,19 @@ private struct TimelinePlaceCard: View {
 
 private struct TimelineThumbnail: View {
     let item: TimelineItemSnapshot
+    let media: MediaItem?
 
     var body: some View {
+        if let media {
+            ThumbnailView(item: media, width: 128, height: 96)
+                .frame(width: 64, height: 48)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        } else {
+            placeholder
+        }
+    }
+
+    private var placeholder: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8)
                 .fill(

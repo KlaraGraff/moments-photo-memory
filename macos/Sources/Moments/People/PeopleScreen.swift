@@ -823,6 +823,10 @@ struct PeopleScreen: View {
     @State private var keyPhotoPersonID: String?
     /// Bumped when a key photo changes; UserDefaults alone does not redraw.
     @State private var keyPhotoRevision = 0
+    @State private var addingPerson = false
+    @State private var addPersonName = ""
+    /// The unnamed groups picked in the Add person sheet.
+    @State private var addPersonClusters: Set<String> = []
     @Environment(SelectionModel.self) private var selection
     @AppStorage("moments.library.person") private var libraryPersonFilterID = ""
 
@@ -878,8 +882,15 @@ struct PeopleScreen: View {
                 if !scanner.isAvailable {
                     Spacer(minLength: 0)
                 } else if namedPeople.isEmpty && unnamedClusters.isEmpty {
-                    ContentUnavailableView(String(localized: "No people yet"), systemImage: "person.2", description: Text(String(localized: "Scan your library to find faces on this Mac.")))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ContentUnavailableView {
+                        Label(String(localized: "No people yet"), systemImage: "person.2")
+                    } description: {
+                        Text(String(localized: "Scan your library to find faces on this Mac."))
+                    } actions: {
+                        Button(String(localized: "Scan for people")) { scanner.start() }
+                            .disabled(scanner.isScanning)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 28) {
@@ -905,14 +916,18 @@ struct PeopleScreen: View {
                         .accessibilityIdentifier("people.undo")
                 }
             }
+            // Faces are found on their own after each import, so the page's
+            // + adds a person: name faces that have no name yet.
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    scanner.start()
+                    addPersonName = ""
+                    addPersonClusters = []
+                    addingPerson = true
                 } label: {
-                    Label(String(localized: "Scan for people"), systemImage: "person.crop.circle.badge.magnifyingglass")
+                    Label(String(localized: "Add person"), systemImage: "plus")
                 }
-                .help(String(localized: "Scan for people"))
-                .disabled(!scanner.isAvailable || scanner.isScanning)
+                .help(String(localized: "Add person"))
+                .accessibilityIdentifier("people.add")
             }
         }
         .onAppear {
@@ -925,6 +940,9 @@ struct PeopleScreen: View {
         }
         .sheet(isPresented: Binding(get: { mergeSource != nil }, set: { if !$0 { mergeSource = nil } })) {
             mergeSheet
+        }
+        .sheet(isPresented: $addingPerson) {
+            addPersonSheet
         }
         .alert(
             String(format: String(localized: "Merge with existing %@?"), pendingNameMerge?.targetName ?? ""),
@@ -955,6 +973,84 @@ struct PeopleScreen: View {
             Button(String(localized: "Keep separate")) { commitRename(pending, merge: false) }
             Button(String(localized: "Cancel"), role: .cancel) { pendingRename = nil }
         }
+    }
+
+    /// Picks one or more unnamed face groups and names them as one person,
+    /// like Add People in Photos. A name that already exists adds to that person.
+    private var addPersonSheet: some View {
+        let trimmed = addPersonName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return PaperSheet(String(localized: "Add person")) {
+            VStack(alignment: .leading, spacing: 14) {
+                TextField(String(localized: "Name this person"), text: $addPersonName)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("people.add.name")
+                if unnamedClusters.isEmpty {
+                    Text(String(localized: "Every face found so far has a name. New faces appear here after the next import."))
+                        .font(.callout)
+                        .foregroundStyle(Paper.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("people.add.empty")
+                } else {
+                    Text(String(localized: "Choose the faces of this person"))
+                        .font(.callout)
+                        .foregroundStyle(Paper.muted)
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 10)], spacing: 10) {
+                            ForEach(unnamedClusters) { cluster in
+                                if let face = PeopleFacePicker.cover(cluster.faces) {
+                                    let picked = addPersonClusters.contains(cluster.id)
+                                    Button {
+                                        if picked { addPersonClusters.remove(cluster.id) } else { addPersonClusters.insert(cluster.id) }
+                                    } label: {
+                                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
+                                            .overlay(Circle().stroke(picked ? Paper.accent : .clear, lineWidth: 3).padding(-3))
+                                            .overlay(alignment: .bottomTrailing) {
+                                                if picked {
+                                                    Image(systemName: "checkmark.circle.fill")
+                                                        .foregroundStyle(.white, Paper.accent)
+                                                        .font(.body)
+                                                }
+                                            }
+                                            .padding(4)
+                                            .contentShape(Circle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help(String(localized: "\(cluster.faces.count) photos"))
+                                    .accessibilityIdentifier("people.add.face.\(cluster.id)")
+                                }
+                            }
+                        }
+                        .padding(6)
+                    }
+                    .paperWell(padding: 4)
+                    .frame(maxHeight: 300)
+                }
+            }
+            .frame(width: 380)
+        } footer: {
+            Button(String(localized: "Cancel"), role: .cancel) { addingPerson = false }
+                .keyboardShortcut(.cancelAction)
+            Button(String(localized: "Add")) { addPerson(named: trimmed) }
+                .keyboardShortcut(.defaultAction)
+                .disabled(trimmed.isEmpty || addPersonClusters.isEmpty)
+                .accessibilityIdentifier("people.add.save")
+        }
+    }
+
+    private func addPerson(named name: String) {
+        let faces = cachedUnnamedClusters.filter { addPersonClusters.contains($0.id) }.flatMap(\.faces)
+        guard !name.isEmpty, !faces.isEmpty else { return }
+        PeopleStoreActions.name(
+            faces: faces,
+            as: name,
+            mergingInto: PeopleStoreActions.mergeCandidate(forName: name, people: people),
+            keepSeparate: false,
+            people: people,
+            observations: observations,
+            context: modelContext
+        )
+        try? modelContext.save()
+        addingPerson = false
     }
 
     private var mergeSheet: some View {

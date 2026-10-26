@@ -164,8 +164,11 @@ struct ContentView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    ImportToolbarButton()
+                // Each page's + adds that page's thing; People and Trips bring their own.
+                if selection != .people && selection != .trips {
+                    ToolbarItem(placement: .primaryAction) {
+                        ImportToolbarButton()
+                    }
                 }
             }
             #if DEBUG

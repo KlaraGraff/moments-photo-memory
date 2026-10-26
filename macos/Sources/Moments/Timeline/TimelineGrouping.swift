@@ -142,7 +142,8 @@ struct TimelineBuilder {
             id: definition.id,
             name: definition.name,
             days: dayValues,
-            startDate: definition.startDate ?? orderedItems.compactMap(\.date).min()
+            startDate: definition.startDate ?? orderedItems.compactMap(\.date).min(),
+            plannedEndDate: definition.endDate
         )
     }
 

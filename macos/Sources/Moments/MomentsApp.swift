@@ -13,6 +13,8 @@ struct MomentsApp: App {
     @State private var importController = ImportController()
     @State private var noteService = PhotoNoteService()
     @State private var peopleController = PeopleScanController()
+    @State private var photoStacks = PhotoStackModel()
+    @State private var stackAnalyzer = PhotoStackAnalyzer()
     @State private var photosImportController = PhotosImportController(importer: PhotosImporter(source: PhotoKitAssetSource()))
     @State private var showingPhotosImport = false
 
@@ -87,6 +89,9 @@ struct MomentsApp: App {
                 if ProcessInfo.processInfo.arguments.contains("-MomentsUITestReviewItems") {
                     try? DemoSeeder.flagUndatedDemoItemsForReview(context: container.mainContext)
                 }
+                if ProcessInfo.processInfo.arguments.contains("-MomentsUITestBurst") {
+                    try? DemoSeeder.addSyntheticBurst(context: container.mainContext)
+                }
             }
             if isUITesting || testStoreURL != nil, let count = Self.uiTestStressCount {
                 try? DemoSeeder.generateSyntheticLibrary(count: count, context: container.mainContext)
@@ -119,14 +124,26 @@ struct MomentsApp: App {
                     .environment(importController)
                     .environment(noteService)
                     .environment(peopleController)
+                    .environment(photoStacks)
                     .modelContainer(modelContainer)
                     .onAppear {
                         importController.configure(container: modelContainer)
                         peopleController.configure(container: modelContainer)
                         photosImportController.configure(container: modelContainer)
+                        stackAnalyzer.configure(container: modelContainer)
+                        stackAnalyzer.analyzeIfNeeded()
+                        photoStacks.refresh(container: modelContainer)
                     }
+                    // Map and Chapters only read the stacks, so new results
+                    // are folded in here, whichever screen is showing.
+                    .onChange(of: photoStacks.analysisRevision) {
+                        photoStacks.analysisChanged()
+                    }
+                    // Posted after every import: new photos may be bursts.
                     .onReceive(NotificationCenter.default.publisher(for: .momentsPeopleScanRequested)) { _ in
                         peopleController.scanIfNeeded()
+                        stackAnalyzer.analyzeIfNeeded()
+                        photoStacks.refresh(container: modelContainer)
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
                         showingPhotosImport = true

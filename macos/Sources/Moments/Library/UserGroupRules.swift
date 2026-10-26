@@ -148,6 +148,8 @@ enum UserGroupRuleEngine {
             let pinned = Set(groupMemberships.filter { !$0.excluded }.map(\.mediaID))
             let exclusions = Set(groupMemberships.filter(\.excluded).map(\.mediaID))
             return smartItems(from: items, ruleSet: group.rules, observations: observations, personIDsByMediaID: personIDsByMediaID, pinnedIDs: pinned, exclusions: exclusions, calendar: calendar)
+        case .stack:
+            return []
         }
     }
 

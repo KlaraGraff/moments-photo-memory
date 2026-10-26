@@ -139,6 +139,39 @@ public enum DemoSeeder {
     }
     #endif
 
+    #if DEBUG
+    /// UI tests: four shots a second apart that look alike (same difference
+    /// hash), right after the newest demo photo, so the Library shows a stack.
+    public static func addSyntheticBurst(context: ModelContext) throws {
+        let items = try context.fetch(FetchDescriptor<MediaItem>())
+        guard !items.contains(where: { $0.id.hasPrefix("demo-burst-") }),
+              let newest = items.filter({ $0.captureDate != nil }).max(by: { $0.captureDate! < $1.captureDate! }),
+              let start = newest.captureDate?.addingTimeInterval(60) else { return }
+        var burst: [MediaItem] = []
+        for index in 0..<4 {
+            let item = MediaItem(
+                id: "demo-burst-\(index + 1)",
+                captureDate: start.addingTimeInterval(Double(index)),
+                latitude: newest.latitude,
+                longitude: newest.longitude,
+                kind: .photo,
+                width: 1_600,
+                height: 1_200,
+                source: .demo,
+                title: "Synthetic burst \(index + 1)",
+                tripID: newest.tripID,
+                trip: newest.trip,
+                perceptualHash: String(format: "%016llx", UInt64(0x0F0F_0F0F_0F0F_0F00) | UInt64(index))
+            )
+            item.place = newest.place
+            context.insert(item)
+            burst.append(item)
+        }
+        newest.trip?.items.append(contentsOf: burst)
+        try context.save()
+    }
+    #endif
+
     public static func seedIfNeeded(context: ModelContext, bundle: Bundle = .main) throws {
         guard let url = bundle.url(forResource: "sample-data", withExtension: "json") else { return }
         try seedIfNeeded(context: context, data: Data(contentsOf: url))

@@ -57,6 +57,7 @@ struct MomentsApp: App {
         #if DEBUG
         FlashProbe.startIfRequested()
         ScrollProbe.startIfRequested()
+        ResizeProbe.startIfRequested()
         #endif
         do {
             #if DEBUG

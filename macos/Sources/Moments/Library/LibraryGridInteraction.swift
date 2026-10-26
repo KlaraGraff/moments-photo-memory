@@ -20,18 +20,23 @@ extension View {
         }
     }
 
-    /// Reports the grid's column count to `state` for the up and down arrows.
-    func measuresLibraryGridColumns(_ state: LibraryViewState, minimum: CGFloat, spacing: CGFloat) -> some View {
-        background {
-            GeometryReader { geometry in
-                Color.clear
-                    .onAppear {
-                        state.gridColumns = LibraryGridNavigation.columns(width: geometry.size.width, minimum: minimum, spacing: spacing)
-                    }
-                    .onChange(of: geometry.size.width) { _, width in
-                        state.gridColumns = LibraryGridNavigation.columns(width: width, minimum: minimum, spacing: spacing)
-                    }
-            }
+    /// Keeps `state.gridColumns` (for the up and down arrows) in step with
+    /// the window width and zoom level. On the scroll view's content, not a
+    /// section, so it holds while every heading is scrolled away.
+    func reportsLibraryGridColumns(to state: LibraryViewState) -> some View {
+        modifier(LibraryGridColumnsReporter(state: state))
+    }
+}
+
+private struct LibraryGridColumnsReporter: ViewModifier {
+    let state: LibraryViewState
+    @AppStorage(LibraryThumbnailSize.storageKey) private var level = LibraryThumbnailSize.defaultLevel
+
+    func body(content: Content) -> some View {
+        let size = LibraryThumbnailSize(level: level)
+        let columns = LibraryGridNavigation.columns(windowWidth: state.windowWidth, minimum: size.minimumWidth, spacing: size.spacing)
+        content.onChange(of: columns, initial: true) { _, columns in
+            if state.gridColumns != columns { state.gridColumns = columns }
         }
     }
 }

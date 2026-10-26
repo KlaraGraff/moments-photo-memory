@@ -556,7 +556,7 @@ struct MapScreen: View {
     /// every photo that does. Each says so, and the second offers a way back.
     private var emptyState: some View {
         Group {
-            if items.contains(where: { $0.latitude != nil && $0.longitude != nil }) {
+            if items.contains(where: { !$0.isScreenshot && $0.latitude != nil && $0.longitude != nil }) {
                 ContentUnavailableView {
                     Label("No photos match these filters", systemImage: "line.3.horizontal.decrease.circle")
                 } description: {
@@ -672,8 +672,6 @@ struct MapScreen: View {
         selectedClusterID = snapshot.cluster(containing: itemID)?.id
     }
 
-    /// When the photos span half the world, fitting them is the globe
-    /// already, so there is nothing to zoom to.
     private func fitAll() {
         guard !snapshot.stops.isEmpty else { return }
         moveCamera(to: .region(viewModel.initialRegion(for: snapshot.stops)), isGlobe: false)

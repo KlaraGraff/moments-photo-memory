@@ -61,13 +61,7 @@ struct TimelineScreen: View {
 
     var body: some View {
         Group {
-            if visibleItems.isEmpty && trips.isEmpty {
-                ContentUnavailableView(
-                    "No memories yet",
-                    systemImage: "calendar.badge.plus",
-                    description: Text("Add a photo or import a synthetic demo to begin.")
-                )
-            } else if visibleItems.isEmpty {
+            if !items.isEmpty && visibleItems.isEmpty {
                 ContentUnavailableView {
                     Label("No photos match these filters", systemImage: "line.3.horizontal.decrease.circle")
                 } description: {
@@ -75,6 +69,12 @@ struct TimelineScreen: View {
                 } actions: {
                     Button("Clear filters") { LibraryFilterKeys.clearAll() }
                 }
+            } else if visibleItems.isEmpty && trips.isEmpty {
+                ContentUnavailableView(
+                    "No memories yet",
+                    systemImage: "calendar.badge.plus",
+                    description: Text("Add a photo or import a synthetic demo to begin.")
+                )
             } else if document.trips.isEmpty {
                 ContentUnavailableView(
                     "No timeline entries",

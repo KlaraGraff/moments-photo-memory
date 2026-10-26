@@ -132,6 +132,24 @@ final class CorrectionsTests: XCTestCase {
         XCTAssertEqual(trip.endDate, base.addingTimeInterval(hour))
     }
 
+    func testMovingSomePhotosWidensATripButNeverShortensItsDates() throws {
+        let context = try makeContext()
+        // A chapter set to run three days, with photos on its first day only.
+        let trip = Trip(id: "t", name: "Coast", startDate: base, endDate: base.addingTimeInterval(72 * hour))
+        context.insert(trip)
+        let first = MediaItem(id: "a", captureDate: base, trip: trip)
+        let second = MediaItem(id: "b", captureDate: base.addingTimeInterval(hour), trip: trip)
+        [first, second].forEach(context.insert)
+        try context.save()
+
+        DateTimeAdjustment.apply(to: [second], referenceDate: base.addingTimeInterval(2 * hour), timeZone: nil)
+        XCTAssertEqual(trip.startDate, base)
+        XCTAssertEqual(trip.endDate, base.addingTimeInterval(72 * hour))
+
+        DateTimeAdjustment.apply(to: [second], referenceDate: base.addingTimeInterval(96 * hour), timeZone: nil)
+        XCTAssertEqual(trip.endDate, base.addingTimeInterval(96 * hour))
+    }
+
     func testUseOriginalTimesRevertsOnlyCorrectedPhotos() throws {
         let context = try makeContext()
         let corrected = MediaItem(id: "a", captureDate: base, userCorrectedCaptureDateUTC: base.addingTimeInterval(hour), timeConfidenceRaw: ImportTimeConfidence.userCorrected.rawValue)

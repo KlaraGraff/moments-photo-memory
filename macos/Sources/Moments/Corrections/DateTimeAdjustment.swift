@@ -109,7 +109,7 @@ enum DateTimeAdjustment {
             item.updatedAt = now
             item.updatedBy = MomentsAccount.localID
         }
-        refreshTripDates(for: items, now: now)
+        refreshTripDates(for: items, delta: delta, now: now)
         return snapshot
     }
 
@@ -130,7 +130,7 @@ enum DateTimeAdjustment {
             item.updatedAt = now
             item.updatedBy = MomentsAccount.localID
         }
-        refreshTripDates(for: items, now: now)
+        refreshTripDates(for: items, delta: nil, now: now)
         return snapshot
     }
 
@@ -166,11 +166,22 @@ enum DateTimeAdjustment {
         trips(of: items).map { TripSnapshot(id: $0.id, startDate: $0.startDate, endDate: $0.endDate) }
     }
 
-    /// A trip spans its photos, so moving photos moves the trip on the shelf.
-    private static func refreshTripDates(for items: [MediaItem], now: Date) {
+    /// Moving every photo of a trip moves the trip by the same amount, so a
+    /// chapter's own start and end keep their shape. Moving only some of its
+    /// photos widens the trip to take them in, and never shortens dates
+    /// someone set.
+    private static func refreshTripDates(for items: [MediaItem], delta: TimeInterval?, now: Date) {
+        let movedIDs = Set(items.map(\.id))
         for trip in trips(of: items) {
+            var start = trip.startDate
+            var end = trip.endDate
+            if let delta, trip.items.allSatisfy({ movedIDs.contains($0.id) }), start != nil || end != nil {
+                start = start?.addingTimeInterval(delta)
+                end = end?.addingTimeInterval(delta)
+            }
             let dates = trip.items.compactMap(\.effectiveCaptureDate)
-            guard let start = dates.min(), let end = dates.max() else { continue }
+            if let first = dates.min() { start = min(start ?? first, first) }
+            if let last = dates.max() { end = max(end ?? last, last) }
             guard trip.startDate != start || trip.endDate != end else { continue }
             trip.startDate = start
             trip.endDate = end

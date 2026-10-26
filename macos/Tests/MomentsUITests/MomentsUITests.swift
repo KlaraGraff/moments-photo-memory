@@ -159,6 +159,8 @@ final class MomentsUITests: XCTestCase {
         // SwiftUI reports the field with its scroll view's frame, which has no
         // hit point; click the place line by its position under the date.
         let date = app.buttons["viewer.date"]
+        // Its frame may be reported as the column's; 30 pt down is on the date either way.
+        let dateTitle = date.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: 40, dy: 30))
         date.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 1)).withOffset(CGVector(dx: 30, dy: 47)).click()
         app.typeKey("a", modifierFlags: .command)
         app.typeText("Harbour cafe\r")
@@ -166,7 +168,7 @@ final class MomentsUITests: XCTestCase {
         // The corrected place shows what it was found as.
         let corrected = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@ OR value BEGINSWITH %@", "Corrected, was", "Corrected, was")).firstMatch
         XCTAssertTrue(corrected.waitForExistence(timeout: launchTimeout), "Typing over the place did not correct it")
-        date.click()
+        dateTitle.click()
         let dateDone = app.buttons["viewer.date.done"]
         XCTAssertTrue(dateDone.waitForExistence(timeout: launchTimeout), "Clicking the date did not open the date editor")
         capture(app, named: "grid-02d-viewer-date-evidence")

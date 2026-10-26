@@ -142,13 +142,13 @@ struct PlacesScreen: View {
                         coordinates: [from.coordinate, to.coordinate],
                         contourStyle: .geodesic
                     )
-                    .stroke(.blue.opacity(0.75), lineWidth: 3)
+                    .stroke(Paper.accent.opacity(0.75), lineWidth: 3)
                     .mapOverlayLevel(level: .aboveRoads)
 
                     Annotation(coordinate: midpoint(from, to), anchor: .center) {
                         Image(systemName: "arrowtriangle.right.fill")
                             .font(.caption2)
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(Paper.accent)
                             .rotationEffect(.radians(routeBearing(from, to)))
                             .accessibilityHidden(true)
                     } label: {
@@ -201,7 +201,7 @@ struct PlacesScreen: View {
             .help("Fit all")
         }
         .padding(8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .paperFloatingPanel(cornerRadius: 10)
         .padding(14)
     }
 
@@ -225,7 +225,7 @@ struct PlacesScreen: View {
                         Text("photos")
                             .font(.caption)
                     }
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Paper.muted)
                     .fixedSize()
                     Spacer(minLength: 8)
                     Button {
@@ -274,9 +274,7 @@ struct PlacesScreen: View {
             }
             .frame(maxWidth: 720)
             // Opaque: map labels must not show through the photo panel.
-            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(.primary.opacity(0.12), lineWidth: 1))
-            .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
+            .paperFloatingPanel()
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("places.panel")
             .padding(14)
@@ -297,7 +295,7 @@ struct PlacesScreen: View {
         )
         .frame(maxWidth: 320)
         .padding(24)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .paperFloatingPanel()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
@@ -308,7 +306,7 @@ struct PlacesScreen: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .background(style.background, in: Capsule())
-            .overlay(Capsule().stroke(style.border, lineWidth: 1))
+            .shadow(color: Paper.shadow.opacity(0.12), radius: 6, y: 2)
     }
 
     private func clusterAnnotation(_ cluster: PlaceCluster) -> some View {
@@ -324,9 +322,9 @@ struct PlacesScreen: View {
                         .font(.caption.weight(.semibold).monospacedDigit())
                         .foregroundStyle(.white)
                         .frame(minWidth: 38, minHeight: 38)
-                        .background(isSelected ? Color.accentColor : Color.teal, in: Circle())
+                        .background(isSelected ? Paper.accent : Paper.muted, in: Circle())
                         .overlay(Circle().stroke(.white, lineWidth: 3))
-                        .shadow(radius: 4, y: 2)
+                        .shadow(color: Paper.shadow.opacity(0.3), radius: 4, y: 2)
                 }
             }
         }
@@ -341,11 +339,11 @@ struct PlacesScreen: View {
     private func photoThumbnail(for itemID: String, selected: Bool) -> some View {
         Image(systemName: "mappin.circle.fill")
             .font(.title2)
-            .foregroundStyle(selected ? Color.white : Color.accentColor)
+            .foregroundStyle(selected ? Color.white : Paper.accent)
             .frame(width: 38, height: 38)
-            .background(selected ? Color.accentColor : Color.white, in: Circle())
-            .overlay(Circle().stroke(selected ? .white : .accentColor, lineWidth: 2))
-            .shadow(radius: 4, y: 2)
+            .background(selected ? Paper.accent : Color.white, in: Circle())
+            .overlay(Circle().stroke(selected ? .white : Paper.accent, lineWidth: 2))
+            .shadow(color: Paper.shadow.opacity(0.3), radius: 4, y: 2)
     }
 
     private func photoCard(_ item: MediaItem) -> some View {
@@ -368,7 +366,7 @@ struct PlacesScreen: View {
             if let date = item.captureDate {
                 Text(date, format: .dateTime.year().month().day())
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Paper.muted)
             }
         }
         .frame(width: 112, alignment: .leading)
@@ -486,22 +484,15 @@ private enum MapStatusStyle {
 
     var foreground: Color {
         switch self {
-        case .normal: return .primary
-        case .warning: return .orange
+        case .normal: return Paper.ink
+        case .warning: return Paper.accent
         }
     }
 
     var background: AnyShapeStyle {
         switch self {
-        case .normal: return AnyShapeStyle(.regularMaterial)
-        case .warning: return AnyShapeStyle(Color.orange.opacity(0.12))
-        }
-    }
-
-    var border: Color {
-        switch self {
-        case .normal: return .primary.opacity(0.12)
-        case .warning: return .orange.opacity(0.45)
+        case .normal: return AnyShapeStyle(Paper.raised)
+        case .warning: return AnyShapeStyle(Paper.accent.opacity(0.10))
         }
     }
 }

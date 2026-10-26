@@ -167,20 +167,24 @@ struct ThumbnailView: View {
     @State private var image: NSImage?
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(.quaternary)
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .transition(.opacity)
-            } else {
-                ProgressView()
-                    .controlSize(.small)
+        // The image sits in an overlay so a wide or tall photo fills the frame
+        // it is given instead of growing the cell around it.
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(.quaternary)
+            .overlay {
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .transition(.opacity)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
             }
-        }
-        .clipped()
+            .clipped()
+            // Clipping hides the overflow but not its clicks.
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .task(id: "\(item.id)-\(width)x\(height)") {
             image = await ThumbnailCache.shared.image(for: item, width: width, height: height)
         }

@@ -60,6 +60,7 @@ final class ImportController {
                 self?.progress = ImportProgress(phase: .finished, completed: summary.importedCount, total: summary.importedCount, message: String(localized: "Import complete"))
                 self?.reviewSummary = summary
                 self?.state = .finished
+                NotificationCenter.default.post(name: .momentsPeopleScanRequested, object: nil)
             } catch is CancellationError {
                 self?.progress = ImportProgress(phase: .cancelled, completed: self?.progress.completed ?? 0, total: self?.progress.total ?? 0, message: String(localized: "Import cancelled"))
                 self?.state = .cancelled
@@ -102,7 +103,7 @@ struct ImportStatusView: View {
                     .lineLimit(1)
                 Text("\(controller.progress.completed)/\(controller.progress.total)")
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Paper.muted)
                 if controller.isRunning {
                     Button("Cancel") { controller.cancel() }
                         .buttonStyle(.borderless)
@@ -158,23 +159,28 @@ struct ImportReviewView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Review import")
-                        .font(.title2.weight(.semibold))
-                    Text("\(summary.importedCount) \(String(localized: "imported")) · \(summary.skippedCount) \(String(localized: "already present"))")
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Done") {
-                    saveTypedMemories()
-                    controller.dismissReview()
-                }
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityIdentifier("import.review.done")
+        PaperSheet(
+            String(localized: "Review import"),
+            subtitle: "\(summary.importedCount) \(String(localized: "imported")) · \(summary.skippedCount) \(String(localized: "already present"))"
+        ) {
+            reviewContent
+        } footer: {
+            Button("Done") {
+                saveTypedMemories()
+                controller.dismissReview()
             }
+            .keyboardShortcut(.defaultAction)
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("import.review.done")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("import.review")
+        .onDisappear { saveTypedMemories() }
+        .frame(width: 650, height: 600)
+    }
 
+    private var reviewContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
             if !reviewPartition.pending.isEmpty {
                 HStack(spacing: 6) {
                     Text("Needs your confirmation")
@@ -182,16 +188,19 @@ struct ImportReviewView: View {
                         .accessibilityIdentifier("import.confirmationList")
                     Text("(\(reviewPartition.pending.count))")
                         .font(.headline.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Paper.muted)
                 }
                 List(reviewPartition.pending) { flag in
                     pendingRow(for: flag)
+                        .listRowBackground(Color.clear)
                 }
+                .scrollContentBackground(.hidden)
+                .paperWell(padding: 2)
                 .frame(minHeight: 120, maxHeight: 240)
             } else {
                 Text("Everything is confirmed")
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Paper.muted)
                     .padding(.vertical, 8)
             }
 
@@ -209,7 +218,7 @@ struct ImportReviewView: View {
                             .font(.headline)
                         Text("(\(reviewPartition.handled.count))")
                             .font(.headline.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Paper.muted)
                     }
                 }
                 .accessibilityIdentifier("import.review.handled")
@@ -224,7 +233,7 @@ struct ImportReviewView: View {
             Text("Trips found")
                 .font(.headline)
             List(summary.trips) { trip in
-                HStack {
+                HStack(alignment: .firstTextBaseline) {
                     TextField(
                         "Trip name",
                         text: Binding(
@@ -232,9 +241,10 @@ struct ImportReviewView: View {
                             set: { renameValues[trip.id] = $0 }
                         )
                     )
+                    .textFieldStyle(.paper)
                     .accessibilityIdentifier("import.trip.name.\(trip.id)")
                     Text("\(trip.itemCount) \(String(localized: "items"))")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Paper.muted)
                     Button("Save") { saveRename(for: trip) }
                         .buttonStyle(.borderless)
                         .accessibilityIdentifier("import.trip.rename.\(trip.id)")
@@ -245,7 +255,10 @@ struct ImportReviewView: View {
                         .buttonStyle(.borderless)
                         .accessibilityIdentifier("import.trip.confirm.\(trip.id)")
                 }
+                .listRowBackground(Color.clear)
             }
+            .scrollContentBackground(.hidden)
+            .paperWell(padding: 2)
             .frame(minHeight: 100, maxHeight: 220)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("import.tripSuggestions")
@@ -256,17 +269,12 @@ struct ImportReviewView: View {
                     .accessibilityIdentifier("import.trip.merge")
             }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("import.review")
-        .onDisappear { saveTypedMemories() }
-        .padding(24)
-        .frame(width: 650, height: 560)
     }
 
     @ViewBuilder
     private func pendingRow(for flag: ImportReviewFlag) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
                 Text(flag.fileName)
                     .font(.body.weight(.medium))
                 Spacer()
@@ -281,16 +289,16 @@ struct ImportReviewView: View {
             }
             Text(flag.reasons.map(\.label).joined(separator: " · "))
                 .font(.caption)
-                .foregroundStyle(.orange)
+                .foregroundStyle(Paper.accent)
             if let detail = flag.detail {
                 Text(detail)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Paper.muted)
             }
             if let suggestedPlaceName = flag.suggestedPlaceName {
                 Text(String(localized: "Suggested place:") + " " + suggestedPlaceName)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Paper.muted)
                 TextField(
                     "Place override",
                     text: Binding(
@@ -298,7 +306,7 @@ struct ImportReviewView: View {
                         set: { placeValues[flag.id] = $0 }
                     )
                 )
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.paper)
                 .onSubmit { changePlace(for: flag) }
                 .accessibilityIdentifier("import.confirmation.place.\(flag.id)")
             }
@@ -314,7 +322,7 @@ struct ImportReviewView: View {
                     }
                 )
             )
-            .textFieldStyle(.roundedBorder)
+            .textFieldStyle(.paper)
             .accessibilityLabel(String(localized: "Memory"))
             .onSubmit { saveMemory(for: flag) }
             .accessibilityIdentifier("import.confirmation.memory.\(flag.id)")
@@ -347,7 +355,7 @@ struct ImportReviewView: View {
                     .font(.body.weight(.medium))
                 Text(decisionLabel(for: flag))
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Paper.muted)
             }
             Spacer()
             Button("Undo") { undo(flag) }

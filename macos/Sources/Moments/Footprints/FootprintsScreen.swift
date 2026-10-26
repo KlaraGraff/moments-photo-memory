@@ -39,7 +39,6 @@ struct FootprintsScreen: View {
         let currentInput = input
         VStack(spacing: 0) {
             statsHeader
-            Divider()
             HStack(spacing: 0) {
                 GeometryReader { proxy in
                     mapView
@@ -53,7 +52,6 @@ struct FootprintsScreen: View {
                 // the hidden part; a 1 pt gap keeps it inside its own frame.
                 .padding(.leading, 1)
                 .clipped()
-                Divider()
                 countryPanel
                     .frame(minWidth: 250, idealWidth: 290, maxWidth: 340)
             }
@@ -70,9 +68,7 @@ struct FootprintsScreen: View {
     private var statsHeader: some View {
         HStack(spacing: 0) {
             stat(title: "Countries", value: "\(screenState.statistics.countryCount)", systemImage: "flag")
-            Divider().frame(height: 30)
             stat(title: "Cities", value: "\(screenState.statistics.cityCount)", systemImage: "building.2")
-            Divider().frame(height: 30)
             stat(title: "Kilometres", value: screenState.statistics.formattedKilometres, systemImage: "point.topleft.down.to.point.bottomright.curvepath")
             Spacer()
             if screenState.isGeocoding {
@@ -84,7 +80,8 @@ struct FootprintsScreen: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(.bar)
+        // Stats sit on a band one tone down; spacing, not rules, separates them.
+        .background(Paper.well.opacity(0.6))
     }
 
     private func stat(title: LocalizedStringKey, value: String, systemImage: String) -> some View {
@@ -94,13 +91,14 @@ struct FootprintsScreen: View {
                     .font(.headline.monospacedDigit())
                 Text(title)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Paper.muted)
             }
         } icon: {
             Image(systemName: systemImage)
                 .foregroundStyle(.tint)
         }
         .padding(.horizontal, 12)
+        .padding(.trailing, 10)
     }
 
     private var mapView: some View {
@@ -109,7 +107,7 @@ struct FootprintsScreen: View {
                 if let from = segment.from.center, let to = segment.to.center {
                     let coordinates = [from.coordinate, to.coordinate]
                     MapPolyline(MKGeodesicPolyline(coordinates: coordinates, count: coordinates.count))
-                        .stroke(.orange, lineWidth: 2.5)
+                        .stroke(Paper.accent.opacity(0.8), lineWidth: 2.5)
                 }
             }
 
@@ -122,13 +120,13 @@ struct FootprintsScreen: View {
                             VStack(spacing: 2) {
                                 Image(systemName: "mappin.circle.fill")
                                     .font(.title2)
-                                    .foregroundStyle(.red)
-                                    .shadow(radius: 2)
+                                    .foregroundStyle(Paper.accent)
+                                    .shadow(color: Paper.shadow.opacity(0.3), radius: 2)
                                 Text("\(cluster.stopIDs.count)")
                                     .font(.caption2.monospacedDigit().bold())
                                     .padding(.horizontal, 4)
                                     .padding(.vertical, 1)
-                                    .background(.regularMaterial, in: Capsule())
+                                    .background(Paper.raised, in: Capsule())
                             }
                         }
                         .buttonStyle(.plain)
@@ -164,7 +162,8 @@ struct FootprintsScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text("Visited countries")
-                    .font(.headline)
+                    .font(.system(.title3, design: .serif).weight(.medium))
+                    .foregroundStyle(Paper.ink)
                     .padding(.horizontal, 16)
                     .padding(.top, 16)
                     .padding(.bottom, 8)
@@ -180,7 +179,7 @@ struct FootprintsScreen: View {
                     if screenState.didEncounterGeocodingError {
                         Label("Offline: cached countries only", systemImage: "wifi.slash")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Paper.muted)
                             .padding(.horizontal, 16)
                             .padding(.bottom, 8)
                     }
@@ -196,10 +195,10 @@ struct FootprintsScreen: View {
                                         .frame(width: 28)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(country.name)
-                                            .foregroundStyle(.primary)
+                                            .foregroundStyle(Paper.ink)
                                         Text("\(country.photoCount) \(String(localized: "photos"))")
                                             .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(Paper.muted)
                                     }
                                     Spacer()
                                 }
@@ -214,7 +213,7 @@ struct FootprintsScreen: View {
                             } label: {
                                 Image(systemName: "photo.on.rectangle")
                                     .font(.callout)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(Paper.muted)
                                     .frame(width: 32, height: 32)
                                     .contentShape(Rectangle())
                             }
@@ -224,12 +223,11 @@ struct FootprintsScreen: View {
                             .accessibilityLabel(String(format: String(localized: "Show photos from %@"), country.name))
                             .accessibilityIdentifier("footprints.country.photos.\(country.id)")
                         }
-                        Divider().padding(.leading, 54)
                     }
                 }
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Paper.canvas)
     }
 
     @MainActor

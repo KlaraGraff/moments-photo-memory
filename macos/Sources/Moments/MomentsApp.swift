@@ -11,6 +11,8 @@ struct MomentsApp: App {
     @State private var selection = SelectionModel()
     @State private var libraryState = LibraryViewState()
     @State private var importController = ImportController()
+    @State private var noteService = PhotoNoteService()
+    @State private var peopleController = PeopleScanController()
     @State private var photosImportController = PhotosImportController(importer: PhotosImporter(source: PhotoKitAssetSource()))
     @State private var showingPhotosImport = false
 
@@ -89,10 +91,16 @@ struct MomentsApp: App {
                 ContentView(libraryState: libraryState)
                     .environment(selection)
                     .environment(importController)
+                    .environment(noteService)
+                    .environment(peopleController)
                     .modelContainer(modelContainer)
                     .onAppear {
                         importController.configure(container: modelContainer)
+                        peopleController.configure(container: modelContainer)
                         photosImportController.configure(container: modelContainer)
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: .momentsPeopleScanRequested)) { _ in
+                        peopleController.scanIfNeeded()
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
                         showingPhotosImport = true
@@ -135,6 +143,11 @@ struct MomentsApp: App {
                 Button("Import from Apple Photos…") { showingPhotosImport = true }
                     .keyboardShortcut("p", modifiers: [.command, .shift])
             }
+        }
+
+        Settings {
+            AISettingsView()
+                .preferredColorScheme(.light)
         }
     }
 }

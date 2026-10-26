@@ -29,7 +29,7 @@ final class MomentsUITests: XCTestCase {
         navigateAndCapture(app, prefix: "de-dark-small", settleMap: true)
     }
 
-    func testMemorySurvivesSidebarNavigation() {
+    func testNoteIsSavedWhenLeavingTheField() {
         let app = launch(language: "en")
         let library = element(in: app, identifier: "sidebar.library")
         XCTAssertTrue(library.waitForExistence(timeout: launchTimeout))
@@ -42,12 +42,13 @@ final class MomentsUITests: XCTestCase {
         let photoID = String(photo.identifier.dropFirst("library.photo.".count))
         photo.click()
 
-        let memory = element(in: app, identifier: "library.memory.\(photoID)")
-        XCTAssertTrue(memory.waitForExistence(timeout: launchTimeout))
-        let text = "UI smoke memory \(UUID().uuidString)"
-        memory.click()
-        memory.typeKey("a", modifierFlags: .command)
-        memory.typeText(text)
+        // The ruled line under each photo is the note field. Like a caption in
+        // Photos, leaving the field (here: clicking the sidebar) saves it.
+        let note = element(in: app, identifier: "library.note.\(photoID)")
+        XCTAssertTrue(note.waitForExistence(timeout: launchTimeout))
+        let text = "UI smoke note \(UUID().uuidString)"
+        note.click()
+        note.typeText(text)
 
         for destination in ["sidebar.places", "sidebar.timeline", "sidebar.footprints", "sidebar.library"] {
             let item = element(in: app, identifier: destination)
@@ -55,10 +56,36 @@ final class MomentsUITests: XCTestCase {
             item.click()
         }
 
-        XCTAssertTrue(memory.waitForExistence(timeout: launchTimeout))
-        let value = memory.value as? String ?? ""
-        XCTAssertTrue(value.contains(text), "Memory field did not retain the typed text")
+        XCTAssertTrue(note.waitForExistence(timeout: launchTimeout))
+        let badge = element(in: app, identifier: "library.note.badge.\(photoID)")
+        XCTAssertTrue(badge.waitForExistence(timeout: launchTimeout), "Leaving the field did not save the note")
+        XCTAssertFalse((note.value as? String ?? "").contains(text), "The note line was not cleared after saving")
         capture(app, named: "library-02-memory-persisted")
+    }
+
+    func testSavingANoteKeepsTheWordsUnderThePhoto() {
+        let app = launch(language: "en")
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+            .firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
+        let photoID = String(photo.identifier.dropFirst("library.photo.".count))
+
+        let note = element(in: app, identifier: "library.note.\(photoID)")
+        XCTAssertTrue(note.waitForExistence(timeout: launchTimeout))
+        note.click()
+        note.typeText("Synthetic note about this spot\r")
+
+        // Return saves: the line clears and a mark appears on the place line.
+        let badge = element(in: app, identifier: "library.note.badge.\(photoID)")
+        XCTAssertTrue(badge.waitForExistence(timeout: launchTimeout), "Return did not save the note")
+        XCTAssertFalse((note.value as? String ?? "").contains("Synthetic note"), "The note line was not cleared after saving")
+
+        // Whatever model is available, the popover keeps the original words.
+        badge.click()
+        let original = app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Synthetic note about this spot", "Synthetic note about this spot")).firstMatch
+        XCTAssertTrue(original.waitForExistence(timeout: launchTimeout), "The popover did not show the original words")
+        capture(app, named: "library-03-note-saved")
     }
 
     func testPlacesMapHasSyntheticMarkers() {

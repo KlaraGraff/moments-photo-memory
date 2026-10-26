@@ -260,7 +260,8 @@ struct LibraryView: View {
             Text(String(localized: "Screenshots")).tag(LibraryMediaTypeFilter.screenshot.rawValue)
         }
         .pickerStyle(.segmented)
-        .frame(maxWidth: 410)
+        // The label ("Medientyp") must not wrap onto two lines.
+        .fixedSize()
         .accessibilityIdentifier("library.type-filter")
     }
 
@@ -272,7 +273,8 @@ struct LibraryView: View {
             Text(String(localized: "By month")).tag(LibraryGrouping.month.rawValue)
         }
         .pickerStyle(.menu)
-        .frame(width: 150)
+        // Sized to the longest option so "Nach Reise" never truncates.
+        .fixedSize()
         .accessibilityIdentifier("library.grouping")
     }
 

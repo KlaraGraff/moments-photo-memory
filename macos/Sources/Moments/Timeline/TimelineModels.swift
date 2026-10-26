@@ -167,6 +167,25 @@ struct TimelineTrip: Identifiable {
         return second.map { [first, $0] } ?? [first]
     }
 
+    /// Cities in visiting order with the middle of their photos, for the
+    /// little route drawing on the trip's card.
+    var routeStops: [TripRouteStop] {
+        var order: [String] = []
+        var sums: [String: (latitude: Double, longitude: Double, count: Int)] = [:]
+        for place in days.flatMap(\.places) {
+            guard let name = place.cityName ?? place.name else { continue }
+            for coordinate in place.items.compactMap(\.coordinate) {
+                if sums[name] == nil { order.append(name) }
+                let sum = sums[name] ?? (0, 0, 0)
+                sums[name] = (sum.latitude + coordinate.latitude, sum.longitude + coordinate.longitude, sum.count + 1)
+            }
+        }
+        return order.compactMap { name in
+            guard let sum = sums[name], sum.count > 0 else { return nil }
+            return TripRouteStop(name: name, latitude: sum.latitude / Double(sum.count), longitude: sum.longitude / Double(sum.count))
+        }
+    }
+
     var videoCount: Int {
         orderedItems.filter { $0.kindRaw == MediaKind.video.rawValue }.count
     }
@@ -219,4 +238,10 @@ struct TimelineTravel: Identifiable {
     let distanceMeters: Double
     let fromStopID: String?
     let toStopID: String?
+}
+
+struct TripRouteStop: Equatable {
+    let name: String
+    let latitude: Double
+    let longitude: Double
 }

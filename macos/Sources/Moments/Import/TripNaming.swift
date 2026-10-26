@@ -19,12 +19,17 @@ enum TripNaming {
         guard let start else {
             return place ?? String(localized: "Trip") + " " + String(index)
         }
+        let when = month(start, locale: locale, calendar: calendar)
+        guard let place else { return String(localized: "Trip") + " " + when }
+        return place + " " + when
+    }
+
+    /// "August 2026", the date half of a default name.
+    static func month(_ date: Date, locale: Locale = .current, calendar: Calendar = .current) -> String {
         var style = Date.FormatStyle.dateTime.year().month(.wide).locale(locale)
         style.calendar = calendar
         style.timeZone = calendar.timeZone
-        let when = start.formatted(style)
-        guard let place else { return String(localized: "Trip") + " " + when }
-        return place + " " + when
+        return date.formatted(style)
     }
 
     static func placePart(cities: [String], countries: [String]) -> String? {
@@ -93,9 +98,15 @@ struct TripNameBackfill: Sendable {
 
     /// Named cities in the order the trip's photos first reach them.
     static func orderedCities(of trip: Trip) -> [(name: String, coordinate: GeoPoint?)] {
+        orderedCities(of: trip.orderedItems)
+    }
+
+    /// Named cities in the order these photos, sorted by date, first reach them.
+    static func orderedCities(of items: [MediaItem]) -> [(name: String, coordinate: GeoPoint?)] {
+        let items = items.sorted { ($0.captureDate ?? .distantPast, $0.id) < ($1.captureDate ?? .distantPast, $1.id) }
         var seen = Set<String>()
         var result: [(name: String, coordinate: GeoPoint?)] = []
-        for item in trip.orderedItems {
+        for item in items {
             var current = item.place
             var depth = 0
             while let place = current, place.kind != .city, depth < 4 {

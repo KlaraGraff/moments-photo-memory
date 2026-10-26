@@ -388,9 +388,72 @@ final class MomentsUITests: XCTestCase {
 
         // The Trips card follows.
         element(in: app, identifier: "sidebar.trips").click()
+        let cardName = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == %@ AND (label CONTAINS %@ OR value CONTAINS %@)", "trips.card.name.journeyA", "Synthetic renamed trip", "Synthetic renamed trip"))
+            .firstMatch
+        XCTAssertTrue(cardName.waitForExistence(timeout: launchTimeout), "The trip card kept the old name")
+    }
+
+    func testTripDatesPreviewBeforeApplying() {
+        let app = launch(language: "en")
+        element(in: app, identifier: "sidebar.trips").click()
         let card = element(in: app, identifier: "trips.card.journeyA")
         XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
-        XCTAssertTrue((card.label).contains("Synthetic renamed trip"), "The trip card kept the old name: \(card.label)")
+
+        // The cover: click the prints, pick another photo.
+        let prints = element(in: app, identifier: "trips.cover.journeyA")
+        XCTAssertTrue(prints.waitForExistence(timeout: launchTimeout), "The cover cannot be changed")
+        prints.click()
+        let pick = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.cover.pick."))
+            .element(boundBy: 3)
+        XCTAssertTrue(pick.waitForExistence(timeout: launchTimeout), "The cover picker shows no photos")
+        capture(app, named: "trips-05-cover-picker-evidence")
+        pick.click()
+        XCTAssertTrue(pick.waitForNonExistence(timeout: launchTimeout), "Picking a cover did not close the picker")
+
+        // The dates on the card open the date editor with a preview; nothing changes until Apply.
+        element(in: app, identifier: "trips.card.dates.journeyA").click()
+        let preview = element(in: app, identifier: "trips.dates.preview")
+        XCTAssertTrue(preview.waitForExistence(timeout: launchTimeout), "The trip's dates show no preview")
+        XCTAssertTrue(element(in: app, identifier: "trips.dates.apply").exists)
+        capture(app, named: "trips-06-dates-preview-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(preview.waitForNonExistence(timeout: launchTimeout))
+    }
+
+    func testSplitATripAtADayAndUndo() {
+        let app = launch(language: "en")
+        element(in: app, identifier: "sidebar.trips").click()
+        let card = element(in: app, identifier: "trips.card.journeyA")
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
+        let cards = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (identifier BEGINSWITH %@) AND NOT (identifier BEGINSWITH %@)", "trips.card.", "trips.card.name.", "trips.card.dates."))
+        let cardCount = cards.count
+        card.click()
+        XCTAssertTrue(element(in: app, identifier: "trips.memory.trip").waitForExistence(timeout: launchTimeout))
+
+        // Each day after the first can start a new trip.
+        let menus = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.day.menu."))
+        XCTAssertTrue(menus.firstMatch.waitForExistence(timeout: launchTimeout), "Trip days have no menu")
+        let third = menus.element(boundBy: 2)
+        XCTAssertTrue(third.exists)
+        third.click()
+        let split = app.menuItems["Start a new trip from this day"]
+        XCTAssertTrue(split.waitForExistence(timeout: launchTimeout), "The day menu cannot split the trip")
+        capture(app, named: "trips-07-day-menu-evidence")
+        split.click()
+
+        let notice = element(in: app, identifier: "trips.notice")
+        XCTAssertTrue(notice.waitForExistence(timeout: launchTimeout), "Splitting showed no note")
+        capture(app, named: "trips-08-split-evidence")
+        element(in: app, identifier: "trips.notice.undo").click()
+        XCTAssertTrue(notice.waitForNonExistence(timeout: launchTimeout), "Undo did not finish")
+        element(in: app, identifier: "trips.back").click()
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
+        Thread.sleep(forTimeInterval: 0.8)
+        XCTAssertEqual(cards.count, cardCount, "Undo left the split-off trip behind")
     }
 
     func testTripPlaceShowsItsPhotosInLibrary() {

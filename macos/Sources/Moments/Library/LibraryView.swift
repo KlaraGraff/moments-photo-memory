@@ -325,7 +325,8 @@ struct LibraryView: View {
                 Spacer(minLength: 12)
                 // Only a real filter can become a smart group. Its own row
                 // keeps the chips at full width and the button on one line.
-                if criteria.isFiltered {
+                // A scope is a one-off list, not a rule a smart group could keep.
+                if criteria.isFiltered && selection.libraryScope == nil {
                     Button(String(localized: "Save this filter as a smart group")) {
                         showingSmartGroupEditor = true
                     }

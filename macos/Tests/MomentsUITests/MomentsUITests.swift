@@ -239,7 +239,7 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "timeline-01-place-in-library-evidence")
 
         chip.click()
-        XCTAssertFalse(chip.waitForExistence(timeout: 1), "Clicking the chip should remove the scope")
+        XCTAssertTrue(chip.waitForNonExistence(timeout: 5), "Clicking the chip should remove the scope")
         XCTAssertEqual(libraryPhotoCount(app), allCount)
     }
 

@@ -111,7 +111,7 @@ final class MomentsImportUITests: XCTestCase {
         capture(app, named: "import-19-to-review-evidence")
         let confirmedID = String(confirm.identifier.dropFirst("review.confirm.".count))
         confirm.click()
-        XCTAssertFalse(element(in: app, identifier: "review.confirm.\(confirmedID)").waitForExistence(timeout: 1), "A confirmed photo should leave the list")
+        XCTAssertTrue(element(in: app, identifier: "review.confirm.\(confirmedID)").waitForNonExistence(timeout: 5), "A confirmed photo should leave the list")
         let undo = element(in: app, identifier: "review.undo")
         XCTAssertTrue(undo.waitForExistence(timeout: timeout), "Confirming should offer Undo")
         capture(app, named: "import-20-to-review-confirmed-evidence")

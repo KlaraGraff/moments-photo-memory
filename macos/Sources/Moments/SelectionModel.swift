@@ -45,6 +45,9 @@ final class SelectionModel {
         didSet {
             if requestedDestination == .library {
                 shouldRevealSelectionInLibrary = true
+                // A reveal jump must not land in an older scope that hides
+                // the photo; showInLibrary sets its own scope afterwards.
+                libraryScope = nil
             }
         }
     }
@@ -90,10 +93,10 @@ final class SelectionModel {
     func showInLibrary(_ ids: some Sequence<String>, title: String) {
         let set = Set(ids)
         guard !set.isEmpty else { return }
-        libraryScope = LibraryScope(title: title, itemIDs: set)
         selectedItemIDs = []
         focusedItemID = nil
         requestedDestination = .library
+        libraryScope = LibraryScope(title: title, itemIDs: set)
         // Nothing to reveal: the scoped grid opens at its top.
         shouldRevealSelectionInLibrary = false
     }

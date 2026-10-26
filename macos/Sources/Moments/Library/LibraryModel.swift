@@ -262,7 +262,9 @@ enum LibraryFilterEngine {
             guard let captureDate = item.effectiveCaptureDate, captureDate < toExclusive else { return false }
         }
         if let placeID = criteria.placeID {
-            if placeID.hasPrefix("override:") {
+            if placeID.hasPrefix(PlaceNames.optionPrefix) {
+                guard PlaceNames.matches(item, key: String(placeID.dropFirst(PlaceNames.optionPrefix.count))) else { return false }
+            } else if placeID.hasPrefix("override:") {
                 let overrideName = String(placeID.dropFirst("override:".count))
                 guard item.effectivePlaceName == overrideName else { return false }
             } else {

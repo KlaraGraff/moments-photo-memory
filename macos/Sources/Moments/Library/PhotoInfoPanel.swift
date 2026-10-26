@@ -23,7 +23,6 @@ struct PhotoInfoPanel: View {
     @State private var tripNameText = ""
     @State private var isRenamingTrip = false
     @State private var showingDatePicker = false
-    @State private var draftDate = Date.now
     @State private var namingFaceID: String?
     @State private var faceNameText = ""
     @State private var isHoveringDate = false
@@ -112,12 +111,11 @@ struct PhotoInfoPanel: View {
 
     private var dateSection: some View {
         Button {
-            draftDate = item.effectiveCaptureDate ?? .now
             showingDatePicker = true
         } label: {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(item.effectiveCaptureDate?.formatted(date: .long, time: .omitted) ?? String(localized: "Add a date"))
+                    Text(item.effectiveCaptureDate.map { PhotoDateEditor.dayText($0, in: item.captureTimeZone) } ?? String(localized: "Add a date"))
                         .font(.system(size: 20, weight: .medium, design: .serif))
                         .foregroundStyle(item.effectiveCaptureDate == nil ? LibraryPalette.muted : LibraryPalette.ink)
                     Image(systemName: "pencil")
@@ -126,7 +124,7 @@ struct PhotoInfoPanel: View {
                         .opacity(isHoveringDate || showingDatePicker ? 1 : 0)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    if let time = item.effectiveCaptureDate?.formatted(date: .omitted, time: .shortened) {
+                    if let time = item.effectiveCaptureDate.map({ PhotoDateEditor.timeText($0, in: item.captureTimeZone) }) {
                         Text(time)
                             .font(.callout)
                             .foregroundStyle(LibraryPalette.muted)
@@ -155,7 +153,7 @@ struct PhotoInfoPanel: View {
     }
 
     private var datePopover: some View {
-        PhotoDateEditor(item: item, draftDate: $draftDate) { showingDatePicker = false }
+        PhotoDateEditor(items: [item]) { showingDatePicker = false }
     }
 
     // MARK: Place
@@ -328,7 +326,9 @@ struct PhotoInfoPanel: View {
     private func faceMenu(_ face: FaceObservation) -> some View {
         let current = name(of: face)
         return Menu {
-            Section(String(localized: "Who is this?")) {
+            // On a named face this reads "This isn't Anna, it's…": picking
+            // someone moves the face to them and Anna is not suggested again.
+            Section(current.map { String(localized: "This isn’t \($0), it’s…") } ?? String(localized: "Who is this?")) {
                 ForEach(namedPeople.filter { $0.id != face.personID }, id: \.id) { person in
                     Button(person.name ?? "") { assign(face, to: person) }
                 }
@@ -356,13 +356,18 @@ struct PhotoInfoPanel: View {
     }
 
     private func assign(_ face: FaceObservation, to person: Person) {
-        guard let name = person.name else { return }
         let observations = (try? modelContext.fetch(FetchDescriptor<FaceObservation>())) ?? []
-        PeopleStoreActions.name(
-            faces: [face], as: name, mergingInto: person, keepSeparate: false,
-            people: people, observations: observations, context: modelContext
-        )
+        record(FaceCorrection.reassign(face, to: person, observations: observations), name: person.name ?? "")
+    }
+
+    private func record(_ snapshot: FaceCorrection.Snapshot?, name: String) {
         save()
+        guard let snapshot else { return }
+        selection.recordCorrection(CorrectionUndo(
+            message: FaceCorrection.message(movedTo: name),
+            actionName: String(localized: "Change Person"),
+            restore: { context in FaceCorrection.restore(snapshot, context: context) }
+        ), context: modelContext)
     }
 
     private func commitFaceName(_ face: FaceObservation) {
@@ -371,16 +376,8 @@ struct PhotoInfoPanel: View {
         if field == .faceName { field = nil }
         guard !value.isEmpty else { return }
         // A name someone already has joins them, as on the People screen.
-        if let existing = PeopleStoreActions.mergeCandidate(forName: value, people: people) {
-            assign(face, to: existing)
-            return
-        }
         let observations = (try? modelContext.fetch(FetchDescriptor<FaceObservation>())) ?? []
-        PeopleStoreActions.name(
-            faces: [face], as: value, mergingInto: nil, keepSeparate: false,
-            people: people, observations: observations, context: modelContext
-        )
-        save()
+        record(FaceCorrection.reassign(face, toName: value, people: people, observations: observations, context: modelContext), name: value)
     }
 
     private func save() {
@@ -403,54 +400,5 @@ private struct InlineFieldUnderline: ViewModifier {
                     .frame(height: isFocused ? 1.5 : 1)
                     .animation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), value: isFocused)
             }
-    }
-}
-
-/// Adjusting a photo's date and time, shared by the viewer's info column and
-/// the time under each photo in the Library.
-struct PhotoDateEditor: View {
-    @Environment(\.modelContext) private var modelContext
-    let item: MediaItem
-    @Binding var draftDate: Date
-    let dismiss: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(String(localized: "Adjust date and time"))
-                .font(.headline)
-                .foregroundStyle(LibraryPalette.ink)
-            DatePicker("", selection: $draftDate, displayedComponents: .date)
-                .datePickerStyle(.graphical)
-                .labelsHidden()
-            DatePicker(String(localized: "Time"), selection: $draftDate, displayedComponents: .hourAndMinute)
-                .datePickerStyle(.field)
-            if item.userCorrectedCaptureDateUTC != nil, let original = item.captureDate {
-                Text(String(localized: "Original: \(original.formatted(date: .abbreviated, time: .shortened))"))
-                    .font(.caption)
-                    .foregroundStyle(LibraryPalette.muted)
-            }
-            HStack {
-                if item.userCorrectedCaptureDateUTC != nil, item.captureDate != nil {
-                    Button(String(localized: "Use original")) {
-                        PhotoInfoEditing.revertCaptureDate(on: item)
-                        try? modelContext.save()
-                        dismiss()
-                    }
-                }
-                Spacer()
-                Button(String(localized: "Cancel")) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Button(String(localized: "Done")) {
-                    PhotoInfoEditing.setCaptureDate(draftDate, on: item)
-                    try? modelContext.save()
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .accessibilityIdentifier("viewer.date.done")
-            }
-            .controlSize(.small)
-        }
-        .padding(16)
-        .frame(width: 280)
     }
 }

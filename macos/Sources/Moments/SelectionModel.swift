@@ -69,6 +69,17 @@ final class SelectionModel {
     /// Set by `showInLibrary`; cleared from the Library's chip.
     var libraryScope: LibraryScope?
 
+    /// Photos whose date and time the window's Adjust Date and Time sheet is open for.
+    var dateAdjustmentItemIDs: [String]?
+    /// The last correction to dates, places or people, while its Undo bar shows.
+    var lastCorrection: CorrectionUndo?
+
+    /// Opens Adjust Date and Time for `itemID`, or for the whole selection
+    /// when the photo is part of it, as a context menu in Photos does.
+    func adjustDateAndTime(for itemID: String) {
+        dateAdjustmentItemIDs = selectedItemIDs.contains(itemID) ? Array(selectedItemIDs) : [itemID]
+    }
+
     init() {}
 
     /// A click on a photo, the way Photos and Finder grids handle it:

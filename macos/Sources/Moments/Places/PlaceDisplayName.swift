@@ -19,7 +19,16 @@ enum PlaceDisplayName {
     /// The place's own name, else its closest parent with a real name, else nil.
     static func resolvedName(of place: Place) -> String? {
         // Parent chains are spot → area → city.
-        namingPlace(of: place)?.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        namingPlace(of: place).flatMap(ownName(of:))
+    }
+
+    /// The name this place has itself: this person's rename of it, else the
+    /// name the import gave it, unless that is only a placeholder.
+    static func ownName(of place: Place) -> String? {
+        if let corrected = place.correctedName { return corrected }
+        let name = place.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isPlaceholder(name, placeID: place.id), !importFallbackNames.contains(name) else { return nil }
+        return name
     }
 
     /// Written by the import, in the language it ran in, when a reverse
@@ -36,8 +45,7 @@ enum PlaceDisplayName {
         var current: Place? = place
         var depth = 0
         while let candidate = current, depth < 4 {
-            if !isPlaceholder(candidate.name, placeID: candidate.id),
-               !importFallbackNames.contains(candidate.name) {
+            if ownName(of: candidate) != nil {
                 return candidate
             }
             current = candidate.parent

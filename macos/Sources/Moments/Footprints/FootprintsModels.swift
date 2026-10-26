@@ -181,7 +181,7 @@ enum FootprintsCalculator {
             }
             return PhotoStop(
                 id: item.id,
-                date: item.captureDate ?? .distantPast,
+                date: item.effectiveCaptureDate ?? .distantPast,
                 coordinate: GeoPoint(latitude: latitude, longitude: longitude)
             )
         }

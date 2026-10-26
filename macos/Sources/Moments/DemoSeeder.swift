@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftData
 
@@ -156,6 +157,47 @@ public enum DemoSeeder {
             item.importReviewReasonsRaw = reasons.map(\.rawValue).joined(separator: ",")
         }
         try context.save()
+    }
+
+    /// UI tests: two named people with synthetic faces (flat coloured
+    /// squares, no real faces) on the first demo photos, so People and the
+    /// viewer have someone to correct.
+    public static func seedPeopleForUITests(context: ModelContext) throws {
+        guard try context.fetch(FetchDescriptor<Person>()).isEmpty else { return }
+        let items = try context.fetch(FetchDescriptor<MediaItem>(sortBy: [SortDescriptor(\.id)])).filter { $0.source == .demo }
+        guard items.count >= 3 else { return }
+        let alex = Person(id: "demo-person-alex", name: "Alex")
+        let sam = Person(id: "demo-person-sam", name: "Sam")
+        context.insert(alex)
+        context.insert(sam)
+        let faces: [(item: MediaItem, person: Person, hue: Double)] = [
+            (items[0], alex, 0.05), (items[1], alex, 0.08), (items[2], sam, 0.58)
+        ]
+        for (index, face) in faces.enumerated() {
+            context.insert(FaceObservation(
+                id: "demo-face-\(index + 1)",
+                mediaID: face.item.id,
+                rect: (0.35, 0.3, 0.3, 0.3),
+                embedding: Data(),
+                cropData: syntheticFaceCrop(hue: face.hue),
+                quality: 1,
+                personID: face.person.id,
+                confirmed: true
+            ))
+            context.insert(FaceScanRecord(id: face.item.id))
+        }
+        try context.save()
+    }
+
+    private static func syntheticFaceCrop(hue: Double) -> Data {
+        let image = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
+            NSColor(calibratedHue: hue, saturation: 0.35, brightness: 0.85, alpha: 1).setFill()
+            NSBezierPath(rect: rect).fill()
+            return true
+        }
+        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+              let jpeg = bitmap.representation(using: .jpeg, properties: [:]) else { return Data() }
+        return jpeg
     }
     #endif
 

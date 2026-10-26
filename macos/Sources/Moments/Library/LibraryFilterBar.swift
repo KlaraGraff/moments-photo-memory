@@ -19,6 +19,7 @@ struct LibraryFilterChips: View {
     @AppStorage(LibraryFilterKeys.trip) private var tripFilterKey = ""
     @AppStorage(LibraryFilterKeys.memory) private var memoryFilterRaw = LibraryMemoryFilter.all.rawValue
     @AppStorage(LibraryFilterKeys.person) private var personFilterID = ""
+    @State private var showingPlacesEditor = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -63,21 +64,17 @@ struct LibraryFilterChips: View {
         .onChange(of: people.map(\.id), initial: true) { _, ids in
             if !personFilterID.isEmpty && !ids.contains(personFilterID) { personFilterID = "" }
         }
+        .onAppear {
+            // A place filter saved by id before places were listed by name.
+            if let migrated = PlaceNames.optionID(forLegacy: placeFilterID, items: allItems) { placeFilterID = migrated }
+        }
     }
 
+    /// One row per name: unnamed spots are listed under the area or city
+    /// that names them, places with the same name are one row, and the
+    /// filter matches all of them.
     private var places: [LibraryPlaceOption] {
-        var options: [String: LibraryPlaceOption] = [:]
-        for item in allItems {
-            // One row per name: unnamed spots are listed under the area or
-            // city that names them, and the filter matches all of them.
-            if let place = item.place, let named = PlaceDisplayName.namingPlace(of: place) {
-                options[named.id] = LibraryPlaceOption(id: named.id, name: named.displayName)
-            }
-            if let override = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
-                options["override:\(override)"] = LibraryPlaceOption(id: "override:\(override)", name: override)
-            }
-        }
-        return options.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        PlaceNames.options(for: allItems)
     }
 
     private var trips: [String] {
@@ -173,7 +170,16 @@ struct LibraryFilterChips: View {
                         filterMenuLabel(place.name, selected: place.id == placeFilterID)
                     }
                 }
+                if !places.isEmpty {
+                    Divider()
+                    Button {
+                        showingPlacesEditor = true
+                    } label: {
+                        Label(String(localized: "Rename or Merge Places…"), systemImage: "pencil")
+                    }
+                }
             }
+            .sheet(isPresented: $showingPlacesEditor) { PlacesEditorSheet() }
 
             filterMenu(label: String(localized: "Trip"), selected: selectedTripName) {
                 Button(String(localized: "All trips")) { tripFilterKey = "" }

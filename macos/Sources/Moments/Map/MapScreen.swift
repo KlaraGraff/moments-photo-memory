@@ -65,7 +65,7 @@ struct MapScreen: View {
         var hasher = Hasher()
         for item in items {
             hasher.combine(item.id)
-            hasher.combine(item.captureDate)
+            hasher.combine(item.effectiveCaptureDate)
             hasher.combine(item.latitude)
             hasher.combine(item.longitude)
         }
@@ -95,7 +95,7 @@ struct MapScreen: View {
         return selectedCluster.stopIDs
             .compactMap { itemsByID[$0] }
             .filter { selection.isVisible($0.id) }
-            .sorted { ($0.captureDate ?? .distantPast, $0.id) < ($1.captureDate ?? .distantPast, $1.id) }
+            .sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) < ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
     }
 
     var body: some View {
@@ -583,7 +583,7 @@ struct MapScreen: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(item.title)
             .accessibilityIdentifier("map.panel.photo.\(item.id)")
-            if let date = item.captureDate {
+            if let date = item.effectiveCaptureDate {
                 Text(date, format: .dateTime.year().month().day())
                     .font(.caption2)
                     .foregroundStyle(Paper.muted)

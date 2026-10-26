@@ -188,6 +188,14 @@ struct ContentView: View {
             }
         }
         .animation(reduceMotion ? nil : Motion.snap, value: shared.viewerRequest == nil)
+        // After a correction to dates, places or people: what changed, and Undo.
+        .overlay(alignment: .bottom) { CorrectionUndoBar() }
+        .sheet(isPresented: Binding(
+            get: { shared.dateAdjustmentItemIDs != nil },
+            set: { if !$0 { shared.dateAdjustmentItemIDs = nil } }
+        )) {
+            DateAdjustmentSheet(itemIDs: shared.dateAdjustmentItemIDs ?? [])
+        }
         // One accent everywhere, sheets included: no system blue controls.
         .tint(MomentsPalette.accent)
         .onChange(of: selection) { _, _ in

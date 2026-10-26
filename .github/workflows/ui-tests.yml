@@ -27,6 +27,7 @@ jobs:
       - name: Run UI smoke suite and import check
         env:
           TEST_RUNNER_MOMENTS_UI_IMPORT_FOLDER: ${{ runner.temp }}/synthetic-trip-folder
+          TEST_RUNNER_MOMENTS_FLASH_DIR: ${{ runner.temp }}/flash
         run: |
           # Ad-hoc signing is enough for the test runner on the hosted Mac.
           xcodebuild \
@@ -35,14 +36,22 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -resultBundlePath "$RUNNER_TEMP/MomentsUITests.xcresult" \
-            -only-testing:MomentsUITests/MomentsUITests/testSidebarClicksLayoutProbe \
             CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
             test
-      - name: Print layout probe log
+      - name: Print flash report
         if: always()
         run: |
-          log show --style compact --info --last 2h \
-            --predicate 'subsystem == "org.example.Moments.layoutprobe"' | grep LAYOUTPROBE || true
+          dir="$RUNNER_TEMP/flash"
+          [ -f "$dir/report.txt" ] || { echo "no flash report"; exit 0; }
+          cat "$dir/report.txt"
+          for f in "$dir"/*.png; do
+            [ -f "$f" ] || continue
+            out="$(mktemp -d)/shot.jpg"
+            sips -Z 700 -s format jpeg -s formatOptions 60 "$f" --out "$out" >/dev/null
+            echo "EVIDENCE-BEGIN $(basename "$f")"
+            base64 -i "$out" | fold -w 4000
+            echo "EVIDENCE-END $(basename "$f")"
+          done
       - name: Export screenshots
         if: always()
         run: |

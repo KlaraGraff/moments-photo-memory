@@ -141,21 +141,25 @@ struct ContentView: View {
                 .accessibilityIdentifier("sidebar.import")
             }
             .background(MomentsPalette.sidebar)
-            #if DEBUG
-            .layoutProbeFrame("sidebar")
-            #endif
             .navigationTitle("Moments")
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
         } detail: {
-            detail
-            #if DEBUG
-            .layoutProbeFrame("detail")
-            #endif
+            switch selection ?? .library {
+            case .library:
+                LibraryView(state: libraryState, firstLaunchCompleted: $firstLaunchCompleted)
+            case .review:
+                ReviewListView()
+            case .places:
+                PlacesScreen()
+            case .footprints:
+                FootprintsScreen()
+            case .timeline:
+                TimelineScreen()
+            case .group(let groupID):
+                GroupDetailView(groupID: groupID, state: libraryState)
+            }
         }
         .frame(minWidth: 900, minHeight: 600)
-        #if DEBUG
-        .layoutProbeWindow(trigger: String(describing: selection))
-        #endif
         .onChange(of: shared.requestedDestination) { _, destination in
             guard let destination else { return }
             switch destination {
@@ -192,24 +196,6 @@ struct ContentView: View {
             Button(String(localized: "Cancel"), role: .cancel) { groupToDelete = nil }
         } message: { group in
             Text(String(format: String(localized: "Delete group message"), group.name))
-        }
-    }
-
-    @ViewBuilder
-    private var detail: some View {
-        switch selection ?? .library {
-        case .library:
-            LibraryView(state: libraryState, firstLaunchCompleted: $firstLaunchCompleted)
-        case .review:
-            ReviewListView()
-        case .places:
-            PlacesScreen()
-        case .footprints:
-            FootprintsScreen()
-        case .timeline:
-            TimelineScreen()
-        case .group(let groupID):
-            GroupDetailView(groupID: groupID, state: libraryState)
         }
     }
 

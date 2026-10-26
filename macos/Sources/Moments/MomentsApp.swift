@@ -35,6 +35,9 @@ struct MomentsApp: App {
     #endif
 
     init() {
+        #if DEBUG
+        FlashProbe.startIfRequested()
+        #endif
         do {
             #if DEBUG
             // Tests must never touch the user's store: -MomentsUITesting

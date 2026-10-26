@@ -127,7 +127,7 @@ struct PhotoViewer: View {
             headerButton("xmark", label: String(localized: "Close"), identifier: "viewer.close") { close() }
                 // Esc closes wherever the keyboard focus is, except that it
                 // first ends typing in the column.
-                .keyboardShortcut(isEditingText ? nil : KeyboardShortcut(.cancelAction))
+                .keyboardShortcut(isEditingText ? nil : KeyboardShortcut.cancelAction)
                 .help(String(localized: "Close (Esc)"))
         }
         .padding(.leading, 18)

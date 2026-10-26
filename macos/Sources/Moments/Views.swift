@@ -157,6 +157,13 @@ struct ContentView: View {
                     GroupDetailView(groupID: groupID, state: libraryState)
                 }
             }
+            // The large photo view covers whichever screen opened it.
+            .overlay {
+                if let request = shared.viewerRequest {
+                    PhotoViewer(request: request, libraryState: libraryState)
+                        .transition(.opacity)
+                }
+            }
             // The title bar continues the page's paper instead of a white strip.
             .toolbarBackground(MomentsPalette.content, for: .windowToolbar)
             .toolbarBackground(.visible, for: .windowToolbar)
@@ -164,6 +171,9 @@ struct ContentView: View {
         .frame(minWidth: 900, minHeight: 600)
         // One accent everywhere, sheets included: no system blue controls.
         .tint(MomentsPalette.accent)
+        .onChange(of: selection) { _, _ in
+            shared.viewerRequest = nil
+        }
         .onChange(of: shared.requestedDestination) { _, destination in
             guard let destination else { return }
             switch destination {

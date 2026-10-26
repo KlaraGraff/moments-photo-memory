@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 import SwiftData
@@ -567,8 +568,10 @@ struct LibraryView: View {
                 }
                 .padding(.horizontal, 34)
                 .padding(.vertical, 24)
+                .deselectsOnBackgroundClick(selection)
             }
             .scrollIndicators(.visible)
+            .libraryGridInteraction(state: state, proxy: proxy)
             .onChange(of: selection.focusedItemID) { _, _ in
                 revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
             }
@@ -696,6 +699,7 @@ struct LibraryView: View {
         cachedVisibleCount = visible.count
         cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
         cachedSections = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
+        state.gridSections = cachedSections.map(\.itemIDs)
         hasGrouped = true
         let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
         selection.visibleItemIDs = publishedVisible
@@ -807,8 +811,11 @@ private struct LibrarySectionView: View {
     @Query private var placeNotes: [PlaceNote]
     @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
+    static let minimumCellWidth: CGFloat = 175
+    static let cellSpacing: CGFloat = 24
+
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 175, maximum: 300), spacing: 24, alignment: .top)]
+        [GridItem(.adaptive(minimum: Self.minimumCellWidth, maximum: 300), spacing: Self.cellSpacing, alignment: .top)]
     }
 
     var body: some View {
@@ -833,6 +840,7 @@ private struct LibrarySectionView: View {
                     LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes)
                 }
             }
+            .measuresLibraryGridColumns(state, minimum: Self.minimumCellWidth, spacing: Self.cellSpacing)
         }
     }
 
@@ -879,13 +887,19 @@ private struct LibraryPhotoCell: View {
         VStack(alignment: .leading, spacing: 9) {
             ZStack(alignment: .topLeading) {
                 Button {
-                    selection.select(item.id)
+                    click()
                 } label: {
                     ThumbnailView(item: item, width: 560, height: 420)
                         .aspectRatio(1.33, contentMode: .fit)
                         .padding(5)
                         // A print's white mat, lifted by a warm two-layer shadow.
                         .background(Color.white)
+                        // Selected photos get an accent frame, like Photos.
+                        .overlay {
+                            if selection.isSelected(item.id) {
+                                Rectangle().strokeBorder(LibraryPalette.accent, lineWidth: 3)
+                            }
+                        }
                         .shadow(color: Paper.shadow.opacity(0.08), radius: 1, y: 1)
                         .shadow(color: Paper.shadow.opacity(0.10), radius: 8, y: 5)
                 }
@@ -944,7 +958,10 @@ private struct LibraryPhotoCell: View {
             PhotoNoteSection(item: item, state: state)
         }
         .contextMenu {
-            Button(String(localized: "Select")) { selection.select(item.id) }
+            Button(String(localized: "Open")) { open() }
+            Button(selection.isSelected(item.id) ? String(localized: "Deselect") : String(localized: "Select")) {
+                selection.toggle(item.id)
+            }
             if let group {
                 Button(String(localized: "Remove from this group")) {
                     UserGroupRuleEngine.remove(item, from: group, memberships: groupItems, context: modelContext)
@@ -965,6 +982,24 @@ private struct LibraryPhotoCell: View {
             }
         }
         .onDrag { NSItemProvider(object: item.id as NSString) }
+    }
+
+    /// One click selects, a second click on the only selected photo
+    /// deselects it, Command and Shift extend; a double click opens it.
+    private func click() {
+        let event = NSApp.currentEvent
+        if (event?.clickCount ?? 1) >= 2 {
+            open()
+            return
+        }
+        let flags = event?.modifierFlags ?? []
+        selection.click(item.id, command: flags.contains(.command), shift: flags.contains(.shift), order: state.orderedItemIDs)
+    }
+
+    private func open() {
+        selection.select(item.id)
+        selection.anchorItemID = item.id
+        selection.openViewer(item.id, in: state.orderedItemIDs)
     }
 }
 
@@ -1183,6 +1218,7 @@ struct ReviewListView: View {
 struct GroupDetailView: View {
     let groupID: String
     let state: LibraryViewState
+    @Environment(SelectionModel.self) private var selection
 
     @Environment(\.modelContext) private var modelContext
     @Query private var groups: [UserGroup]
@@ -1275,6 +1311,7 @@ struct GroupDetailView: View {
             .sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) > ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
         cachedVisibleItemIDs = sorted.map(\.id)
         cachedVisibleItemsByID = Dictionary(uniqueKeysWithValues: sorted.map { ($0.id, $0) })
+        state.gridSections = sections.map(\.itemIDs)
     }
 
     private var sections: [LibrarySection] {
@@ -1308,21 +1345,25 @@ struct GroupDetailView: View {
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 34) {
-                                ForEach(sections) { section in
-                                    LibrarySectionView(
-                                        section: section,
-                                        items: section.itemIDs.compactMap { cachedVisibleItemsByID[$0] },
-                                        state: state,
-                                        allGroups: groups,
-                                        groupItems: memberships,
-                                        group: group
-                                    )
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 34) {
+                                    ForEach(sections) { section in
+                                        LibrarySectionView(
+                                            section: section,
+                                            items: section.itemIDs.compactMap { cachedVisibleItemsByID[$0] },
+                                            state: state,
+                                            allGroups: groups,
+                                            groupItems: memberships,
+                                            group: group
+                                        )
+                                    }
                                 }
+                                .padding(.horizontal, PaperMetrics.screenInset)
+                                .padding(.vertical, 24)
+                                .deselectsOnBackgroundClick(selection)
                             }
-                            .padding(.horizontal, PaperMetrics.screenInset)
-                            .padding(.vertical, 24)
+                            .libraryGridInteraction(state: state, proxy: proxy)
                         }
                     }
                 }

@@ -1,0 +1,120 @@
+import SwiftUI
+
+/// Settings › AI Model: which model organizes notes. The on-device Apple model
+/// is the default; a cloud model is optional and uses the person's own key.
+struct AISettingsView: View {
+    @AppStorage(AISettings.engineKey) private var engineRaw = AIEngine.onDevice.rawValue
+    @AppStorage(AISettings.providerKey) private var providerRaw = CloudProvider.claude.rawValue
+    @AppStorage(AISettings.modelKey) private var model = CloudProvider.claude.defaultModel
+    @AppStorage(AISettings.baseURLKey) private var baseURL = ""
+    @AppStorage(AISettings.fallbackKey) private var fallbackRaw = OnDeviceFallback.keepForLater.rawValue
+    @State private var apiKey = ""
+    @State private var testResult: String?
+    @State private var isTesting = false
+
+    private var provider: CloudProvider {
+        CloudProvider(rawValue: providerRaw) ?? .claude
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Picker(String(localized: "Model for organizing notes"), selection: $engineRaw) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(String(localized: "On-device Apple model (recommended)"))
+                        Text(String(localized: "Runs on this Mac; your words never leave it. Free, nothing to set up. Needs Apple Intelligence."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .tag(AIEngine.onDevice.rawValue)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(String(localized: "Cloud model"))
+                        Text(String(localized: "Better with long notes. Uses your own API key; the provider bills you."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .tag(AIEngine.cloud.rawValue)
+                }
+                .pickerStyle(.radioGroup)
+
+                LabeledContent(String(localized: "On-device model")) {
+                    if let reason = AppleOnDeviceOrganizer.unavailableReason() {
+                        Text(reason).foregroundStyle(.secondary)
+                    } else {
+                        Label(String(localized: "Ready"), systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+                .font(.callout)
+            } footer: {
+                Text(String(localized: "Whichever you choose, suggestions are always shown to you first. Nothing is changed until you accept it."))
+            }
+
+            Section(String(localized: "Cloud model")) {
+                Picker(String(localized: "Provider"), selection: $providerRaw) {
+                    Text(verbatim: "Claude").tag(CloudProvider.claude.rawValue)
+                    Text(String(localized: "OpenAI-compatible API")).tag(CloudProvider.openAICompatible.rawValue)
+                }
+                TextField(String(localized: "Model"), text: $model, prompt: Text(provider == .claude ? CloudProvider.claude.defaultModel : "model-name"))
+                if provider == .openAICompatible {
+                    TextField(String(localized: "Endpoint"), text: $baseURL, prompt: Text(verbatim: "https://example.com/v1"))
+                }
+                SecureField(String(localized: "API key"), text: $apiKey)
+                    .onSubmit { AIKeychain.setKey(apiKey, for: provider) }
+                HStack {
+                    Text(String(localized: "The key is kept in your Mac's keychain."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if isTesting { ProgressView().controlSize(.small) }
+                    Button(String(localized: "Test connection")) { test() }
+                        .disabled(isTesting || apiKey.isEmpty)
+                }
+                if let testResult {
+                    Text(testResult)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text(String(localized: "Only the words you wrote, the photo's date and its place name are sent. Never the photo itself or GPS coordinates."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Picker(String(localized: "When the on-device model can't run"), selection: $fallbackRaw) {
+                    Text(String(localized: "Keep my words and organize them later")).tag(OnDeviceFallback.keepForLater.rawValue)
+                    Text(String(localized: "Use the cloud model")).tag(OnDeviceFallback.useCloud.rawValue)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 560)
+        .onAppear { apiKey = AIKeychain.key(for: provider) ?? "" }
+        .onChange(of: providerRaw) { oldValue, newValue in
+            if let old = CloudProvider(rawValue: oldValue) { AIKeychain.setKey(apiKey, for: old) }
+            let new = CloudProvider(rawValue: newValue) ?? .claude
+            apiKey = AIKeychain.key(for: new) ?? ""
+            if model.isEmpty || model == CloudProvider.claude.defaultModel { model = new.defaultModel }
+            testResult = nil
+        }
+        .onDisappear { AIKeychain.setKey(apiKey, for: provider) }
+    }
+
+    private func test() {
+        AIKeychain.setKey(apiKey, for: provider)
+        var settings = AISettings.load()
+        settings.provider = provider
+        let organizer = NoteOrganizerFactory.cloudOrganizer(settings: settings, apiKey: AIKeychain.key(for:))
+        isTesting = true
+        testResult = nil
+        Task {
+            do {
+                _ = try await organizer.organize(NoteOrganizerContext(noteText: String(localized: "The café by the river was quiet in the afternoon.")))
+                testResult = String(localized: "Connected.")
+            } catch {
+                testResult = error.localizedDescription
+            }
+            isTesting = false
+        }
+    }
+}

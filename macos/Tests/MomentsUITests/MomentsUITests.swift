@@ -42,9 +42,11 @@ final class MomentsUITests: XCTestCase {
         let photoID = String(photo.identifier.dropFirst("library.photo.".count))
         photo.click()
 
-        let memory = element(in: app, identifier: "library.memory.\(photoID)")
+        // The ruled line under each photo is the note field; an unsaved note
+        // must survive visiting the other screens.
+        let memory = element(in: app, identifier: "library.note.\(photoID)")
         XCTAssertTrue(memory.waitForExistence(timeout: launchTimeout))
-        let text = "UI smoke memory \(UUID().uuidString)"
+        let text = "UI smoke note \(UUID().uuidString)"
         memory.click()
         memory.typeKey("a", modifierFlags: .command)
         memory.typeText(text)
@@ -57,8 +59,33 @@ final class MomentsUITests: XCTestCase {
 
         XCTAssertTrue(memory.waitForExistence(timeout: launchTimeout))
         let value = memory.value as? String ?? ""
-        XCTAssertTrue(value.contains(text), "Memory field did not retain the typed text")
+        XCTAssertTrue(value.contains(text), "Note field did not retain the typed text")
         capture(app, named: "library-02-memory-persisted")
+    }
+
+    func testSavingANoteKeepsTheWordsUnderThePhoto() {
+        let app = launch(language: "en")
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+            .firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
+        let photoID = String(photo.identifier.dropFirst("library.photo.".count))
+
+        let note = element(in: app, identifier: "library.note.\(photoID)")
+        XCTAssertTrue(note.waitForExistence(timeout: launchTimeout))
+        note.click()
+        note.typeText("Synthetic note about this spot")
+        let save = element(in: app, identifier: "library.note.save.\(photoID)")
+        XCTAssertTrue(save.waitForExistence(timeout: launchTimeout), "The Save button did not appear while typing")
+        save.click()
+
+        // Whatever model is available, the words are saved first and the
+        // line is cleared for the next note.
+        let saved = app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Your words are saved", "Organized into")).firstMatch
+        let nothing = app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "nothing to organize", "nothing to organize")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 30) || nothing.exists, "No saved-note status appeared under the photo")
+        XCTAssertFalse((note.value as? String ?? "").contains("Synthetic note"), "The note line was not cleared after saving")
+        capture(app, named: "library-03-note-saved")
     }
 
     func testPlacesMapHasSyntheticMarkers() {

@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 import SwiftData
 
-private enum LibraryPalette {
+enum LibraryPalette {
     static let sidebar = Color(red: 0.969, green: 0.906, blue: 0.863)
     static let content = Color(red: 0.984, green: 0.945, blue: 0.918)
     static let ink = Color(red: 0.227, green: 0.165, blue: 0.141)
@@ -724,6 +724,8 @@ private struct LibrarySectionView: View {
     var allGroups: [UserGroup] = []
     var groupItems: [UserGroupItem] = []
     var group: UserGroup? = nil
+    @Query private var placeNotes: [PlaceNote]
+    @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: 175, maximum: 300), spacing: 24, alignment: .top)]
@@ -744,10 +746,25 @@ private struct LibrarySectionView: View {
                     .foregroundStyle(LibraryPalette.muted)
             }
 
+            CollectionMemoryLines(memories: sectionMemories)
+
             LazyVGrid(columns: columns, alignment: .leading, spacing: 28) {
                 ForEach(items, id: \.id) { item in
-                    LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group)
+                    LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes)
                 }
+            }
+        }
+    }
+
+    /// Trip memories for a trip section, and day memories for the days its photos were taken.
+    private var sectionMemories: [CollectionMemory] {
+        guard !collectionMemories.isEmpty else { return [] }
+        let tripID = section.id.hasPrefix("trip:") ? String(section.id.dropFirst("trip:".count)) : nil
+        let dayKeys = Set(items.compactMap { $0.effectiveCaptureDate.map { PhotoNoteDay.key(for: $0) } })
+        return collectionMemories.filter { memory in
+            switch memory.scope {
+            case .trip: return memory.scopeKey == tripID
+            case .day, .photo: return dayKeys.contains(memory.scopeKey)
             }
         }
     }
@@ -771,6 +788,12 @@ private struct LibraryPhotoCell: View {
     let allGroups: [UserGroup]
     let groupItems: [UserGroupItem]
     var group: UserGroup? = nil
+    var placeNotes: [PlaceNote] = []
+
+    private var showsMemoryEditor: Bool {
+        state.memoryDrafts[item.id] != nil
+            || item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -823,7 +846,13 @@ private struct LibraryPhotoCell: View {
                 .padding(11)
             }
 
-            MemoryEditor(item: item, state: state)
+            PhotoPlaceLine(item: item, placeNotes: placeNotes)
+            // A written memory stays editable here; the ruled line below is
+            // where new words go, so an empty photo shows only that one line.
+            if showsMemoryEditor {
+                MemoryEditor(item: item, state: state)
+            }
+            PhotoNoteSection(item: item, state: state)
         }
         .contextMenu {
             Button(String(localized: "Select")) { selection.select(item.id) }

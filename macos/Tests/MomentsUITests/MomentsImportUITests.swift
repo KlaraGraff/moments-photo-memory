@@ -74,9 +74,9 @@ final class MomentsImportUITests: XCTestCase {
         capture(app, named: "import-11-relaunched")
 
         let memory = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.memory."))
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.note."))
             .firstMatch
-        XCTAssertTrue(memory.waitForExistence(timeout: timeout), "An imported photo memory editor was not visible after relaunch")
+        XCTAssertTrue(memory.waitForExistence(timeout: timeout), "An imported photo's note line was not visible after relaunch")
         if memoryWasAdded {
             // The memory belongs to whichever photo was first in the review list,
             // which need not be the first card in the Library.

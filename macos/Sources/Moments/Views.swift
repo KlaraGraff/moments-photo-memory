@@ -58,7 +58,7 @@ struct ContentView: View {
                         sidebarRow("People", icon: "person.2", section: .people, identifier: "sidebar.people")
                         sidebarRow("Places", icon: "map", section: .places, identifier: "sidebar.places")
                         sidebarRow("Footprints", icon: "globe.americas", section: .footprints, identifier: "sidebar.footprints")
-                        sidebarRow("Timeline", icon: "calendar", section: .timeline, identifier: "sidebar.timeline")
+                        sidebarRow("Trips", icon: "suitcase", section: .timeline, identifier: "sidebar.timeline")
                     }
 
                     Section {
@@ -152,7 +152,7 @@ struct ContentView: View {
                 case .footprints:
                     FootprintsScreen()
                 case .timeline:
-                    TimelineScreen()
+                    TripsScreen()
                 case .group(let groupID):
                     GroupDetailView(groupID: groupID, state: libraryState)
                 }

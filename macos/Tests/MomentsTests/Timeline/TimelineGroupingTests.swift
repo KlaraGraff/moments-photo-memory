@@ -105,6 +105,44 @@ final class TimelineGroupingTests: XCTestCase {
         XCTAssertEqual(travel.distanceMeters / 1_000, 1_111, accuracy: 3)
     }
 
+    func testTripCardSummaryAndDayMemoryKeys() {
+        let items = [
+            TimelineItemSnapshot(id: "v", date: date("2025-03-01T08:00:00Z"), latitude: 0, longitude: 0, kindRaw: MediaKind.video.rawValue, tripID: "trip", placeHint: "Alpha"),
+            TimelineItemSnapshot(id: "p1", date: date("2025-03-01T09:00:00Z"), latitude: 0, longitude: 0, tripID: "trip", placeHint: "Alpha", dayKey: "2025-03-01"),
+            TimelineItemSnapshot(id: "p2", date: date("2025-03-02T10:00:00Z"), latitude: 0, longitude: 10, tripID: "trip", placeHint: "Beta"),
+            TimelineItemSnapshot(id: "p3", date: date("2025-03-03T10:00:00Z"), latitude: 0, longitude: 0, tripID: "trip", placeHint: "Alpha"),
+            TimelineItemSnapshot(id: "loose", date: date("2025-04-01T10:00:00Z"))
+        ]
+        let trip = TimelineSourceTrip(id: "trip", name: "Route", itemIDs: ["v", "p1", "p2", "p3"])
+
+        let document = TimelineBuilder(
+            clusterer: PlaceClusterer(spotRadiusMeters: 1_000, cityRadiusMeters: 100_000),
+            calendar: testCalendar(timeZone: "UTC")
+        ).build(items: items, trips: [trip])
+
+        let built = document.trips[0]
+        XCTAssertEqual(built.orderedItems.map(\.id), ["v", "p1", "p2", "p3"])
+        XCTAssertEqual(built.cover?.id, "p1", "A video is not the cover while there is a photo")
+        XCTAssertEqual(built.datedDayCount, 3)
+        XCTAssertEqual(built.placeCount, 2, "A place visited twice counts once")
+        XCTAssertEqual(built.cityNames, ["Alpha", "Beta"])
+        XCTAssertEqual(built.endDate, date("2025-03-03T10:00:00Z"))
+        XCTAssertFalse(built.isUnsorted)
+        // The photo's own day key wins; otherwise the builder's calendar day.
+        XCTAssertEqual(built.days.map(\.memoryKey), ["2025-03-01", "2025-03-02", "2025-03-03"])
+
+        XCTAssertEqual(document.trips.last?.id, TimelineBuilder.unassignedTripID)
+        XCTAssertTrue(document.trips.last?.isUnsorted ?? false)
+    }
+
+    func testDayMemoryKeyFollowsThePhotosLocalDay() {
+        // Taken late on the 1st in local time, which is already the 2nd in UTC.
+        let item = TimelineItemSnapshot(id: "late", date: date("2025-03-02T01:00:00Z"), tripID: "trip", dayKey: "2025-03-01")
+        let document = TimelineBuilder(calendar: testCalendar(timeZone: "UTC"))
+            .build(items: [item], trips: [TimelineSourceTrip(id: "trip", name: "T", itemIDs: ["late"])])
+        XCTAssertEqual(document.trips[0].days[0].memoryKey, "2025-03-01")
+    }
+
     private func snapshot(
         _ id: String,
         date: Date?,

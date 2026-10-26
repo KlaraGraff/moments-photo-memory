@@ -4,6 +4,8 @@ import MomentsCore
 /// Builds the stable trip → day → place hierarchy and inserts major city
 /// moves immediately before the place where the move ends.
 struct TimelineBuilder {
+    /// The trip that collects photos which belong to no trip.
+    static let unassignedTripID = "unassigned"
     let clusterer: PlaceClusterer
     var calendar: Calendar
 
@@ -27,12 +29,12 @@ struct TimelineBuilder {
             !assignedIDs.contains(item.id) && item.tripID == nil
         }
         if !unassignedItems.isEmpty {
-            definitions.append(TimelineSourceTrip(id: "unassigned", name: "Unsorted memories"))
+            definitions.append(TimelineSourceTrip(id: Self.unassignedTripID, name: "Unsorted memories"))
         }
 
         var itemsByTrip: [String: [TimelineItemSnapshot]] = [:]
         for item in uniqueItems.values {
-            let tripID = itemTripIDs[item.id] ?? item.tripID ?? "unassigned"
+            let tripID = itemTripIDs[item.id] ?? item.tripID ?? Self.unassignedTripID
             if !definitions.contains(where: { $0.id == tripID }) {
                 definitions.append(TimelineSourceTrip(id: tripID, name: "Unsorted memories"))
             }
@@ -132,7 +134,14 @@ struct TimelineBuilder {
                 events.append(contentsOf: travel.map(TimelineEvent.travel))
                 events.append(.place(place))
             }
-            return TimelineDay(id: "\(definition.id)|day|\(dayKey.id)", date: dayKey.date, events: events)
+            let memoryKey = dayGroups[dayKey]?.flatMap(\.items).compactMap(\.dayKey).first
+                ?? dayKey.date.map { PhotoNoteDay.key(for: $0, calendar: calendar) }
+            return TimelineDay(
+                id: "\(definition.id)|day|\(dayKey.id)",
+                date: dayKey.date,
+                events: events,
+                memoryKey: memoryKey
+            )
         }
 
         return TimelineTrip(

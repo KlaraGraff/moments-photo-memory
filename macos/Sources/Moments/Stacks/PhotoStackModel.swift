@@ -44,20 +44,24 @@ final class PhotoStackModel {
 
     @discardableResult
     func update(items: [MediaItem], decisions: [UserGroup]) -> PhotoStackIndex {
-        var hasher = Hasher()
-        hasher.combine(analysis.revision)
+        // Screens pass the same photos in different orders: the key adds up
+        // per-photo hashes so the order does not matter.
+        var key = analysis.revision.hashValue
         for item in items {
+            var hasher = Hasher()
             hasher.combine(item.id)
             hasher.combine(item.effectiveCaptureDate)
             hasher.combine(item.perceptualHash)
             hasher.combine(item.kindRaw)
             hasher.combine(item.isScreenshot)
+            key &+= hasher.finalize()
         }
         for decision in decisions where decision.kind == .stack {
+            var hasher = Hasher()
             hasher.combine(decision.id)
             hasher.combine(decision.rulesData)
+            key &+= hasher.finalize() &* 31
         }
-        let key = hasher.finalize()
         guard key != lastKey else { return index }
         lastKey = key
 

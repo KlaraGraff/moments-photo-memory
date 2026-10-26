@@ -1053,6 +1053,14 @@ struct TripPlaceBlock: View {
                     .help(String(localized: "Open photo"))
                     .accessibilityLabel(item.title.isEmpty ? item.id : item.title)
                     .accessibilityIdentifier("trips.photo.\(item.id)")
+                    // Outside the button, so the count is its own element.
+                    .overlay(alignment: .bottomTrailing) {
+                        if shown.count > 1 {
+                            StackCountBadge(count: shown.count)
+                                .accessibilityIdentifier("trips.stack.\(item.id)")
+                                .allowsHitTesting(false)
+                        }
+                    }
                 }
             }
 
@@ -1082,12 +1090,6 @@ struct TripPlaceBlock: View {
         }
         .aspectRatio(4.0 / 3.0, contentMode: .fit)
         .clipShape(shape)
-        .overlay(alignment: .bottomTrailing) {
-            if stackCount > 1 {
-                StackCountBadge(count: stackCount)
-                    .accessibilityIdentifier("trips.stack.\(item.id)")
-            }
-        }
         // Rows here are close together: thin edges, like the dense Library grid.
         .stackedPaper(stackCount, isCompact: true, cornerRadius: 10)
         .overlay(shape.strokeBorder(Paper.accent.opacity(selected ? 0.85 : 0), lineWidth: 2))

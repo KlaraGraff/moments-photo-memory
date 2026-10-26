@@ -144,6 +144,7 @@ struct ViewerStackStrip: View {
 struct StackChangeUndoBar: View {
     @Environment(PhotoStackModel.self) private var stacks
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.undoManager) private var undoManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -152,6 +153,8 @@ struct StackChangeUndoBar: View {
                 Text(message(change.kind))
                     .foregroundStyle(LibraryPalette.ink)
                 Button(String(localized: "Undo")) {
+                    // Undone here, so ⌘Z must not undo it a second time.
+                    undoManager?.removeAllActions(withTarget: stacks)
                     stacks.undo(change, context: modelContext)
                 }
                 .buttonStyle(.borderless)

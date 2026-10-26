@@ -596,7 +596,7 @@ struct LibraryView: View {
         )
         cachedSections = folded.sections
         cachedStackCounts = folded.stackCounts
-        cachedVisibleCount = folded.sections.reduce(0) { $0 + $1.count }
+        cachedVisibleCount = visible.count
         state.gridSections = cachedSections.map(\.itemIDs)
         hasGrouped = true
         cachedFilterOptions = Self.filterOptions(for: allItems)
@@ -621,7 +621,14 @@ struct LibraryView: View {
             return
         }
 
-        guard let target = sections.first(where: { $0.itemIDs.contains(focus) }) else { return }
+        guard let target = sections.first(where: { $0.itemIDs.contains(focus) }) else {
+            // A shot inside a stack (Show in Library from the viewer): the
+            // stack's cell stands for it.
+            if let cell = stacks.stack(containing: focus)?.memberIDs.first(where: { cachedStackCounts[$0] != nil }) {
+                selection.select(cell)
+            }
+            return
+        }
         guard state.pendingRevealItemID != focus else { return }
         state.pendingRevealItemID = focus
         state.appearedRevealItemID = nil
@@ -850,7 +857,6 @@ private struct LibraryPhotoCell: View {
                     if isCompact {
                         ThumbnailView(item: item, width: 280, height: 280)
                             .aspectRatio(1, contentMode: .fit)
-                            .overlay(alignment: .bottomTrailing) { stackBadge }
                             .stackedPaper(stackCount, isCompact: true, cornerRadius: 10)
                             .overlay {
                                 if selection.isSelected(item.id) {
@@ -861,7 +867,6 @@ private struct LibraryPhotoCell: View {
                     } else {
                         ThumbnailView(item: item, width: 560, height: 420)
                             .aspectRatio(1.33, contentMode: .fit)
-                            .overlay(alignment: .bottomTrailing) { stackBadge }
                             .padding(5)
                             // A print's white mat, lifted by a warm two-layer shadow.
                             // The mat casts it, not the photo: a shadow over the
@@ -887,6 +892,13 @@ private struct LibraryPhotoCell: View {
                 .id(LibraryScrollTarget.item(item.id))
                 .onAppear {
                     if state.pendingRevealItemID == item.id { state.appearedRevealItemID = item.id }
+                }
+                // Outside the button, so the count is its own element for
+                // VoiceOver and tests; clicks pass through to the photo.
+                .overlay(alignment: .bottomTrailing) {
+                    stackBadge
+                        .padding(isCompact ? 0 : 5)
+                        .allowsHitTesting(false)
                 }
 
                 HStack(spacing: 6) {

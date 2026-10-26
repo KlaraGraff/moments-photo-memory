@@ -48,6 +48,9 @@ final class PhotoStackAnalysisStore {
     private(set) var entries: [String: PhotoStackAnalysis] = [:]
     private(set) var revision = 0
     @ObservationIgnored private let fileURL: URL?
+    @ObservationIgnored private let writer = Writer()
+    @ObservationIgnored private var hasUnpublished = false
+    @ObservationIgnored private var lastPublished = Date.distantPast
 
     init(fileURL: URL?) {
         self.fileURL = fileURL
@@ -71,13 +74,33 @@ final class PhotoStackAnalysisStore {
             .appending(path: "photo-stacks-v1.plist")
     }
 
-    func merge(_ results: [String: PhotoStackAnalysis]) {
+    /// Adds results. Screens regroup on `revision`, so during a long run it
+    /// moves at most every `interval`; `publish()` at the end shows the rest.
+    func merge(_ results: [String: PhotoStackAnalysis], interval: TimeInterval = 0) {
         guard !results.isEmpty else { return }
         entries.merge(results) { _, new in new }
+        hasUnpublished = true
+        if Date().timeIntervalSince(lastPublished) >= interval { publish() }
+    }
+
+    func publish() {
+        guard hasUnpublished else { return }
+        hasUnpublished = false
+        lastPublished = Date()
         revision += 1
         guard let fileURL else { return }
         let snapshot = entries
-        Task.detached(priority: .utility) {
+        let generation = revision
+        Task { await writer.write(snapshot, generation: generation, to: fileURL) }
+    }
+
+    /// Writes one file at a time; an older snapshot never replaces a newer one.
+    private actor Writer {
+        private var written = 0
+
+        func write(_ snapshot: [String: PhotoStackAnalysis], generation: Int, to fileURL: URL) {
+            guard generation > written else { return }
+            written = generation
             let encoder = PropertyListEncoder()
             encoder.outputFormat = .binary
             guard let data = try? encoder.encode(snapshot) else { return }
@@ -134,9 +157,10 @@ final class PhotoStackAnalyzer {
                     }
                     return results
                 }.value
-                self?.store.merge(results)
+                self?.store.merge(results, interval: 10)
             }
             guard let self else { return }
+            self.store.publish()
             self.task = nil
             self.isRunning = false
             if self.runAgain {

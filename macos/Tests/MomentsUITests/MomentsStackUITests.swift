@@ -14,10 +14,10 @@ final class MomentsStackUITests: XCTestCase {
 
     func testBurstShowsAsAStackAndTheViewerPicksTheCover() {
         let app = launch()
-        let stack = element(app, "library.stack.demo-burst-1")
-        XCTAssertTrue(stack.waitForExistence(timeout: timeout), "The burst did not show as a stack")
-        XCTAssertFalse(element(app, "library.photo.demo-burst-2").exists, "A burst shot showed on its own next to its stack")
+        let shown = element(app, "library.stack.demo-burst-1").waitForExistence(timeout: timeout)
         capture(app, "stack-01-library-evidence")
+        XCTAssertTrue(shown, "The burst did not show as a stack")
+        XCTAssertFalse(element(app, "library.photo.demo-burst-2").exists, "A burst shot showed on its own next to its stack")
 
         // Open the stack: the strip lists every shot.
         element(app, "library.photo.demo-burst-1").doubleClick()
@@ -62,8 +62,9 @@ final class MomentsStackUITests: XCTestCase {
 
     func testStacksInASmallWindowAndTheDenseGrid() {
         let app = launch(extra: ["-MomentsUITestSmallWindow", "-moments.library.thumbnailSize", "0"])
-        XCTAssertTrue(element(app, "library.stack.demo-burst-1").waitForExistence(timeout: timeout))
+        let shown = element(app, "library.stack.demo-burst-1").waitForExistence(timeout: timeout)
         capture(app, "stack-06-small-dense-grid-evidence")
+        XCTAssertTrue(shown)
         element(app, "library.photo.demo-burst-1").doubleClick()
         XCTAssertTrue(element(app, "viewer.stack").waitForExistence(timeout: timeout))
         let window = app.windows.firstMatch

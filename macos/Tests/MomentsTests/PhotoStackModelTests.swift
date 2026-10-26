@@ -33,8 +33,10 @@ final class PhotoStackModelTests: XCTestCase {
     }
 
     func testBurstBecomesOneStackWithoutVideosOrScreenshots() throws {
-        let (_, items) = try makeLibrary()
+        // The container must outlive the items, or SwiftData resets them.
+        let (container, items) = try makeLibrary()
         let index = model().update(items: items, decisions: [])
+        withExtendedLifetime(container) {}
         XCTAssertEqual(index.stacks.count, 1)
         XCTAssertEqual(index.stack(containing: "shot-2")?.memberIDs, ["shot-0", "shot-1", "shot-2", "shot-3"])
         XCTAssertNil(index.stack(containing: "clip"))

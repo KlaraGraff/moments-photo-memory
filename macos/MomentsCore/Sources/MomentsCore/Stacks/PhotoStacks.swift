@@ -192,7 +192,7 @@ public struct PhotoStackDetector: Sendable {
         maximumGap: TimeInterval = 5,
         maximumSpan: TimeInterval = 60,
         featurePrintDistance: Double = 0.2,
-        hashDistance: Int = 18
+        hashDistance: Int = 12
     ) {
         self.maximumGap = maximumGap
         self.maximumSpan = maximumSpan

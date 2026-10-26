@@ -208,6 +208,11 @@ struct LibraryView: View {
         .onChange(of: selection.requestedDestination) { _, destination in
             if destination != nil { showingReview = false }
         }
+        // The large viewer opens in the window behind the sheet; close the
+        // list so a photo clicked there is seen.
+        .onChange(of: selection.viewerRequest == nil) { _, isClosed in
+            if !isClosed { showingReview = false }
+        }
         .sheet(
             isPresented: Binding(
                 get: { importController.reviewSummary != nil },

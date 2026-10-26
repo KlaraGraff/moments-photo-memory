@@ -319,8 +319,9 @@ final class MomentsUITests: XCTestCase {
         let importButton = element(in: app, identifier: "toolbar.import")
         XCTAssertTrue(importButton.waitForExistence(timeout: launchTimeout), "The toolbar + import button is missing")
         importButton.click()
-        XCTAssertTrue(app.menuItems["Import Folder…"].waitForExistence(timeout: launchTimeout))
-        XCTAssertTrue(app.menuItems["Import from Apple Photos…"].exists)
+        // Scoped to the button: the File menu has the same two commands.
+        XCTAssertTrue(importButton.menuItems["Import Folder…"].waitForExistence(timeout: launchTimeout), "The + button did not open its menu")
+        XCTAssertTrue(importButton.menuItems["Import from Apple Photos…"].exists)
         capture(app, named: "toolbar-01-import-menu-evidence")
         app.typeKey(.escape, modifierFlags: [])
     }

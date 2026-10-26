@@ -207,6 +207,13 @@ struct MapScreen: View {
         .onMapCameraChange(frequency: .onEnd) { context in
             latitudeDelta = context.region.span.latitudeDelta
             cameraDistance = context.camera.distance
+            // Down among the places the camera is the person's, whatever
+            // brought it there: a resize must never pull it back to the globe.
+            if context.camera.distance < Self.worldDistanceMetres {
+                isShowingGlobeOverview = false
+                awaitingProgrammaticCamera = false
+                return
+            }
             if awaitingProgrammaticCamera {
                 awaitingProgrammaticCamera = false
                 programmaticDistance = context.camera.distance
@@ -627,7 +634,9 @@ struct MapScreen: View {
 
     private func moveCamera(to position: MapCameraPosition, isGlobe: Bool, animated: Bool = true) {
         isShowingGlobeOverview = isGlobe
-        awaitingProgrammaticCamera = isGlobe
+        // MapKit reports nothing for a move to where the camera already is,
+        // so only a real move waits for its report.
+        awaitingProgrammaticCamera = isGlobe && position != cameraPosition
         if animated && !reduceMotion {
             withAnimation(.easeInOut(duration: 0.45)) {
                 cameraPosition = position

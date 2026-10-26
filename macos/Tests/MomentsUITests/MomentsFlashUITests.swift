@@ -83,7 +83,7 @@ final class MomentsLibraryHeaderUITests: XCTestCase {
 
     func testTypeSwitcherStaysInItsSlotAt900() throws { try checkHeader(width: "900") }
     func testTypeSwitcherStaysInItsSlotAt1111() throws { try checkHeader(width: "1111") }
-    func testTypeSwitcherStaysInItsSlotAt1440() throws { try checkHeader(width: "1440") }
+    func testTypeSwitcherStaysInItsSlotAt1400() throws { try checkHeader(width: "1400") }
 
     private func checkHeader(width: String) throws {
         let app = XCUIApplication()
@@ -102,6 +102,7 @@ final class MomentsLibraryHeaderUITests: XCTestCase {
         // under the filters. Both checks still hold where they apply.
         XCTAssertTrue(count.exists)
         let sidebar = app.descendants(matching: .any).matching(identifier: "sidebar.library").firstMatch
+        XCTAssertGreaterThanOrEqual(app.windows.firstMatch.frame.width, (Double(width) ?? 0) - 1, "The window is narrower than requested")
         Thread.sleep(forTimeInterval: 1)
 
         func assertInSlot(_ moment: String) {

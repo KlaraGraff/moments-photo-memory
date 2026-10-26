@@ -291,23 +291,17 @@ struct LibraryView: View {
     /// The page name and photo count live in the window's title bar; the
     /// page itself opens straight on its controls.
     private var libraryHeader: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 22) {
-                libraryTypePicker
-                Spacer(minLength: 8)
-                libraryGroupingPicker
-            }
-            VStack(alignment: .leading, spacing: 12) {
-                libraryTypePicker
-                libraryGroupingPicker
-            }
-            // Narrowest: the picker scrolls rather than pushing the window
-            // wider than it is.
-            VStack(alignment: .leading, spacing: 12) {
-                ScrollView(.horizontal) { libraryTypePicker }
-                    .scrollIndicators(.hidden)
-                libraryGroupingPicker
-            }
+        // One fixed shape at every width, so the grid never moves while the
+        // sidebar animates (a ViewThatFits here switched between one, two and
+        // three rows). The page title is in the window's title bar. Narrower
+        // than the switcher's natural width, it scrolls instead of pushing
+        // the window wider.
+        HStack(alignment: .center, spacing: 22) {
+            ScrollView(.horizontal) { libraryTypePicker }
+                .scrollIndicators(.hidden)
+                .scrollBounceBehavior(.basedOnSize)
+                .fixedSize(horizontal: false, vertical: true)
+            libraryGroupingPicker
         }
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.top, PaperMetrics.screenTopInset)
@@ -329,8 +323,8 @@ struct LibraryView: View {
         // Always its natural width. Capped below it (English needs ~495 pt),
         // AppKit drew the control wider than its slot, over the photo count,
         // and every store save flipped it between the two widths; in a
-        // 900 pt window it also squeezed the sidebar. Narrow windows get the
-        // stacked layout above instead.
+        // 900 pt window it also squeezed the sidebar. It has its own row, so
+        // it fits the narrowest window.
         .fixedSize()
         .accessibilityIdentifier("library.type-filter")
     }

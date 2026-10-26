@@ -96,13 +96,17 @@ enum FlashProbe {
             var segmented = 0
             var splits = 0
             func visit(_ view: NSView) {
+                // Keyed by accessibility identifier where there is one, so a
+                // cell's control appearing or scrolling away cannot shift keys.
                 if view is NSSegmentedControl, !view.isHiddenOrHasHiddenAncestor {
-                    result["w\(window.windowNumber) segmented\(segmented)"] = view.convert(view.bounds, to: nil)
+                    let identifier = view.accessibilityIdentifier()
+                    let name = identifier.isEmpty ? "segmented\(segmented)" : identifier
+                    result["w\(window.windowNumber) \(name)"] = view.convert(view.bounds, to: nil)
                     segmented += 1
                 }
                 if let split = view as? NSSplitView {
                     for (index, column) in split.arrangedSubviews.enumerated() {
-                        result["w\(window.windowNumber) split\(splits) column\(index)"] = column.frame
+                        result["w\(window.windowNumber) split\(splits) column\(index)"] = column.convert(column.bounds, to: nil)
                     }
                     splits += 1
                 }

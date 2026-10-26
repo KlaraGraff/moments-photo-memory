@@ -243,7 +243,7 @@ struct ImportReviewView: View {
                     )
                     .textFieldStyle(.paper)
                     .accessibilityIdentifier("import.trip.name.\(trip.id)")
-                    Text("\(trip.itemCount) items")
+                    Text(String(localized: "\(trip.itemCount) items"))
                         .foregroundStyle(Paper.muted)
                     Button("Save") { saveRename(for: trip) }
                         .buttonStyle(.borderless)

@@ -288,7 +288,7 @@ public struct PhotosImportStatusView: View {
                 case .limited:
                     VStack(alignment: .leading, spacing: 4) {
                         if let preview = controller.preview {
-                            Text("\(preview.count) photos or videos selected")
+                            Text(String(localized: "\(preview.count) photos or videos selected"))
                                 .monospacedDigit()
                         }
                         Label("Apple Photos access is limited", systemImage: "photo.on.rectangle.angled")
@@ -296,7 +296,7 @@ public struct PhotosImportStatusView: View {
                     }
                 default:
                     if let preview = controller.preview {
-                        Text("\(preview.count) photos or videos selected")
+                        Text(String(localized: "\(preview.count) photos or videos selected"))
                             .monospacedDigit()
                     } else {
                         Label("Apple Photos", systemImage: "photo.on.rectangle")
@@ -407,7 +407,7 @@ public struct PhotosImportSheet: View {
                 .paperWell(padding: 12)
                 if !controller.pendingNewAssetIdentifiers.isEmpty {
                     HStack(alignment: .firstTextBaseline) {
-                        Text("\(controller.pendingNewAssetIdentifiers.count) new photos in Apple Photos")
+                        Text(String(localized: "\(controller.pendingNewAssetIdentifiers.count) new photos in Apple Photos"))
                             .foregroundStyle(Paper.muted)
                         Spacer(minLength: 8)
                         Button("Import new photos") { controller.importPendingChanges() }

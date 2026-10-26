@@ -332,7 +332,7 @@ struct PlacesScreen: View {
         .frame(width: 38, height: 38)
         .contentShape(Circle())
         .accessibilityLabel(clusterDisplayName(cluster))
-        .accessibilityValue(Text("\(cluster.stopIDs.count) photos"))
+        .accessibilityValue(Text(String(localized: "\(cluster.stopIDs.count) photos")))
         .accessibilityIdentifier("places.marker.\(cluster.stopIDs.first ?? cluster.id)")
     }
 

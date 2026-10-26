@@ -217,6 +217,24 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "places-03-panel-closed")
     }
 
+    /// The AI model settings are reachable from the sidebar, not only via ⌘,.
+    func testSidebarOpensAIModelSettings() {
+        let app = launch(language: "en")
+        let gear = element(in: app, identifier: "sidebar.settings")
+        XCTAssertTrue(gear.waitForExistence(timeout: launchTimeout))
+        let windowsBefore = app.windows.count
+        gear.click()
+        // A whole-tree label search timed out on the runner; a new window is
+        // enough to prove the Settings window opened.
+        let deadline = Date().addingTimeInterval(launchTimeout)
+        while app.windows.count <= windowsBefore && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+        XCTAssertGreaterThan(app.windows.count, windowsBefore, "The AI model settings window did not open")
+        capture(app, named: "settings-01-from-sidebar-evidence")
+        app.typeKey("w", modifierFlags: .command)
+    }
+
     func testFootprintsGlobeOpens() {
         let app = launch(language: "en")
         assertGlobeFullyVisible(app, screenshot: "footprints-01-globe-evidence")
@@ -373,15 +391,19 @@ final class MomentsUITests: XCTestCase {
     func testDoubleClickRenamesATripInPlace() {
         let app = launch(language: "en")
         // Library groups by trip by default; a trip's title renames in place.
-        let title = element(in: app, identifier: "trip.title.journeyA")
+        // Newest trips come first, so take whichever trip title is on screen.
+        let title = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trip.title."))
+            .firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: launchTimeout), "The Library has no trip title")
+        let tripID = String(title.identifier.dropFirst("trip.title.".count))
         title.doubleClick()
-        let field = element(in: app, identifier: "trip.rename.journeyA")
+        let field = element(in: app, identifier: "trip.rename.\(tripID)")
         XCTAssertTrue(field.waitForExistence(timeout: launchTimeout), "Double-click did not start renaming")
         field.typeKey("a", modifierFlags: .command)
         field.typeText("Synthetic renamed trip\r")
         let renamed = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier == %@ AND (label CONTAINS %@ OR value CONTAINS %@)", "trip.title.journeyA", "Synthetic renamed trip", "Synthetic renamed trip"))
+            .matching(NSPredicate(format: "identifier == %@ AND (label CONTAINS %@ OR value CONTAINS %@)", "trip.title.\(tripID)", "Synthetic renamed trip", "Synthetic renamed trip"))
             .firstMatch
         XCTAssertTrue(renamed.waitForExistence(timeout: launchTimeout), "Return did not save the new name")
         capture(app, named: "library-04-trip-renamed-evidence")
@@ -389,7 +411,7 @@ final class MomentsUITests: XCTestCase {
         // The Trips card follows.
         element(in: app, identifier: "sidebar.trips").click()
         let cardName = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier == %@ AND (label CONTAINS %@ OR value CONTAINS %@)", "trips.card.name.journeyA", "Synthetic renamed trip", "Synthetic renamed trip"))
+            .matching(NSPredicate(format: "identifier == %@ AND (label CONTAINS %@ OR value CONTAINS %@)", "trips.card.name.\(tripID)", "Synthetic renamed trip", "Synthetic renamed trip"))
             .firstMatch
         XCTAssertTrue(cardName.waitForExistence(timeout: launchTimeout), "The trip card kept the old name")
     }

@@ -9121,6 +9121,50 @@
         }
       }
     },
+    "No chapters yet" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch keine Kapitel"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No chapters yet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有篇章"
+          }
+        }
+      }
+    },
+    "Import photos and trips appear here on their own. Use + for an event, a celebration or any stretch of time." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importiere Fotos, und Reisen erscheinen hier von selbst. Mit + legst du ein Ereignis, eine Feier oder eine beliebige Zeitspanne an."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import photos and trips appear here on their own. Use + for an event, a celebration or any stretch of time."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入照片后，旅行会自动出现在这里。点 + 可以新建活动、纪念日或任意一段时光。"
+          }
+        }
+      }
+    },
     "No trips yet" : {
       "localizations" : {
         "de" : {

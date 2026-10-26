@@ -164,9 +164,9 @@ struct TripsScreen: View {
         Group {
             if items.isEmpty {
                 ContentUnavailableView(
-                    "No trips yet",
-                    systemImage: "airplane.departure",
-                    description: Text("Import photos and each trip gets its own card here.")
+                    "No chapters yet",
+                    systemImage: "book.pages",
+                    description: Text("Import photos and trips appear here on their own. Use + for an event, a celebration or any stretch of time.")
                 )
             } else if document.trips.isEmpty && chapterDocs.isEmpty {
                 // Built on appear; until then show the bare page, not "0 trips".
@@ -910,7 +910,7 @@ private struct TripPrints: View {
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(Paper.well)
                     .overlay {
-                        Image(systemName: "airplane.departure")
+                        Image(systemName: "book.pages")
                             .font(.title2)
                             .foregroundStyle(Paper.muted)
                     }

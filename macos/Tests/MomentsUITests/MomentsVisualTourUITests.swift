@@ -32,6 +32,7 @@ final class MomentsVisualTourUITests: XCTestCase {
             let note = element(app, "library.note.\(photoID)")
             if note.waitForExistence(timeout: timeout) {
                 note.click()
+                note.typeText("Focus")
                 capture(app, "tour-02-library-note-focused-evidence")
                 app.typeKey(.escape, modifierFlags: [])
             }
@@ -83,23 +84,25 @@ final class MomentsVisualTourUITests: XCTestCase {
             capture(app, "tour-\(String(format: "%02d", index + 5))-\(step.1)-evidence")
         }
 
-        // Apple Photos import sheet (no permission is asked until the user starts it).
+        // Settings window.
+        app.typeKey(",", modifierFlags: .command)
+        Thread.sleep(forTimeInterval: 1.0)
+        let settings = app.windows.element(boundBy: 0)
+        if settings.exists, app.windows.count > 1 {
+            let attachment = XCTAttachment(screenshot: settings.screenshot())
+            attachment.name = "tour-11-settings-evidence"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            app.typeKey("w", modifierFlags: .command)
+        }
+
+        // Apple Photos import sheet last: it asks for Photos access, and the
+        // system prompt covers everything after it.
         app.typeKey("p", modifierFlags: [.command, .shift])
         if app.sheets.firstMatch.waitForExistence(timeout: timeout) {
             Thread.sleep(forTimeInterval: 0.6)
             capture(app, "tour-10-photos-import-sheet-evidence")
             app.typeKey(.escape, modifierFlags: [])
-        }
-
-        // Settings window.
-        app.typeKey(",", modifierFlags: .command)
-        Thread.sleep(forTimeInterval: 1.0)
-        let settings = app.windows.element(boundBy: 0)
-        if settings.exists {
-            let attachment = XCTAttachment(screenshot: settings.screenshot())
-            attachment.name = "tour-11-settings-evidence"
-            attachment.lifetime = .keepAlways
-            add(attachment)
         }
     }
 

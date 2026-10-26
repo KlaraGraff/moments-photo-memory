@@ -717,8 +717,7 @@ private struct LibrarySectionView: View {
                 // name also changes in place on double-click.
                 HStack(spacing: 0) {
                     if let tripID = sectionTripID, section.id != "trip:unassigned" {
-                        EditableTripTitle(tripID: tripID, title: section.title)
-                            .simultaneousGesture(TapGesture().onEnded { selectSection() })
+                        EditableTripTitle(tripID: tripID, title: section.title, onClick: selectSection)
                     } else {
                         Button { selectSection() } label: {
                             Text(section.title)

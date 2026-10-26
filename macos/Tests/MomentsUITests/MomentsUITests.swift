@@ -259,7 +259,9 @@ final class MomentsUITests: XCTestCase {
         let section = anyID("library.section.")
         XCTAssertTrue(section.waitForExistence(timeout: launchTimeout), "Library section title is not a control")
         section.click()
-        XCTAssertEqual(firstPhoto.value as? String, "Selected", "Clicking the section title did not select its photos")
+        // A trip title waits out the double-click interval (double-click renames).
+        let selected = NSPredicate(format: "value == %@", "Selected")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: selected, evaluatedWith: firstPhoto)], timeout: 5), .completed, "Clicking the section title did not select its photos")
         app.typeKey(.escape, modifierFlags: [])
 
         // The time under a photo opens the date editor.

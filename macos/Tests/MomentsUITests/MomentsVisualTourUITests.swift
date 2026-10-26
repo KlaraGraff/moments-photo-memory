@@ -38,7 +38,11 @@ final class MomentsVisualTourUITests: XCTestCase {
             }
         }
 
-        // The smart group sheet from the screenshot report.
+        // The smart group sheet from the screenshot report. Its button only
+        // shows while a filter is on.
+        let photosOnly = app.radioButtons["Photos"].firstMatch
+        XCTAssertTrue(photosOnly.waitForExistence(timeout: timeout))
+        photosOnly.click()
         let save = element(app, "library.save-smart-group")
         XCTAssertTrue(save.waitForExistence(timeout: timeout))
         save.click()
@@ -55,6 +59,7 @@ final class MomentsVisualTourUITests: XCTestCase {
         }
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: timeout))
+        app.radioButtons["All"].firstMatch.click()
 
         // A manual group from the sidebar menu.
         let newGroup = element(app, "sidebar.new-group")

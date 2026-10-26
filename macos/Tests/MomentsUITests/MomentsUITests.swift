@@ -166,11 +166,21 @@ final class MomentsUITests: XCTestCase {
     /// Settings › General offers the app language, readable in German at the
     /// small window size and in Chinese.
     func testSettingsOfferLanguage() {
-        for (language, smallWindow) in [("de", true), ("zh-Hans", false)] {
+        // The photo count reads as a whole sentence in each language, and the
+        // picker's label comes from the catalog, not the English key.
+        let cases = [
+            ("de", true, "^[0-9]+ Fotos?$", "Sprache"),
+            ("zh-Hans", false, "^[0-9]+ 张照片$", "语言"),
+        ]
+        for (language, smallWindow, countPattern, languageLabel) in cases {
             let app = launch(language: language, smallWindow: smallWindow, extraArguments: ["-MomentsSettingsTab", "general"])
+            let count = app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", countPattern)).firstMatch
+            XCTAssertTrue(count.waitForExistence(timeout: launchTimeout), "No translated photo count in \(language)")
             app.typeKey(",", modifierFlags: .command)
             let picker = element(in: app, identifier: "settings.language")
             XCTAssertTrue(picker.waitForExistence(timeout: launchTimeout), "Settings › General has no language picker (\(language))")
+            let label = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR title == %@", languageLabel, languageLabel)).firstMatch
+            XCTAssertTrue(label.waitForExistence(timeout: launchTimeout), "The language picker is not labelled \(languageLabel)")
             let window = app.windows.containing(.any, identifier: "settings.language").firstMatch
             let attachment = XCTAttachment(screenshot: window.screenshot())
             attachment.name = "settings-02-language-\(language)-evidence"

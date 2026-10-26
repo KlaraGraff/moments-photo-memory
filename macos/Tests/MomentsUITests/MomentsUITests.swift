@@ -164,7 +164,7 @@ final class MomentsUITests: XCTestCase {
         app.typeText("Harbour cafe\r")
         capture(app, named: "grid-02c2-viewer-place-typed-evidence")
         // The corrected place shows what it was found as.
-        let corrected = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Corrected, was")).firstMatch
+        let corrected = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@ OR value BEGINSWITH %@", "Corrected, was", "Corrected, was")).firstMatch
         XCTAssertTrue(corrected.waitForExistence(timeout: launchTimeout), "Typing over the place did not correct it")
         date.click()
         let dateDone = app.buttons["viewer.date.done"]

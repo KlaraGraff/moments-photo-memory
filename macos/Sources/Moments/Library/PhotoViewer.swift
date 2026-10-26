@@ -37,6 +37,11 @@ struct PhotoViewer: View {
         isEditingInfo || libraryState.focusedNoteItemID != nil
     }
 
+    /// A text field or text view in this window is being typed in.
+    private var isTyping: Bool {
+        isEditingText || NSApp.keyWindow?.firstResponder is NSText
+    }
+
     private var index: Int? { request.itemIDs.firstIndex(of: request.itemID) }
     private var hasPrevious: Bool { (index ?? 0) > 0 }
     private var hasNext: Bool { (index ?? request.itemIDs.count) < request.itemIDs.count - 1 }
@@ -80,9 +85,12 @@ struct PhotoViewer: View {
         .onChange(of: isEditingText) { _, editing in
             if !editing { isFocused = true }
         }
-        .onKeyPress(.leftArrow) { step(-1) ? .handled : .ignored }
-        .onKeyPress(.rightArrow) { step(1) ? .handled : .ignored }
+        // Key presses reach these handlers even while a field in the column
+        // has the keyboard; then the keys are the field's own.
+        .onKeyPress(.leftArrow) { !isTyping && step(-1) ? .handled : .ignored }
+        .onKeyPress(.rightArrow) { !isTyping && step(1) ? .handled : .ignored }
         .onKeyPress(.space) {
+            guard !isTyping else { return .ignored }
             close()
             return .handled
         }

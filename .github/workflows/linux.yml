@@ -31,6 +31,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Prototype build and Node checks
         run: |
           python3 -m unittest discover -s tests
@@ -38,4 +40,5 @@ jobs:
       - name: Privacy check
         run: python3 scripts/check_privacy.py
       - name: Whitespace check
-        run: git diff --check
+        if: github.event_name == 'pull_request'
+        run: git diff --check "origin/${{ github.base_ref }}...HEAD"

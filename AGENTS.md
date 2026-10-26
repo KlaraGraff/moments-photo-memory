@@ -13,14 +13,16 @@ The app is a **native SwiftUI rewrite** in `macos/` (macOS 14+, SwiftData, MapKi
 - Every PR is based on `main`. Never base a PR on another PR's branch, and there is no integration or "assemble the preview" thread.
 - Keep PRs small, one concern each. When two PRs touch the same file, whoever merges second merges `main` into their branch and resolves the conflict.
 - Split a PR that mixes fixes with a product decision, so the fixes can merge while the decision waits.
-- Open the PR as a **draft** while iterating: drafts get only the fast Linux checks. Mark it ready for review once the Linux checks are green and you have run your own checks; that starts the Mac build and UI suite once (see CI below).
+- Open the PR as a **draft** while iterating: drafts get only the fast Linux checks. Mark it ready for review once the Linux checks are green and you have run your own checks; that starts the Mac checks the change needs, once per push (see CI below).
 - After opening a PR, subscribe to its activity and end the turn. CI results, reviews and merge conflicts wake the thread; never sleep or poll. Use a scheduled check-in only for something time-based, spacing them further apart each time, and stop after a few with no change and say what the work is waiting on.
 - Tell the owner about a PR at most twice: when it is up, and when it needs them.
 
 ## Merging
-- The author thread squash-merges its own PR as soon as every check is green and its self-test passed, then reports. Pass the PR title with its number as the commit title.
+- The author thread squash-merges its own PR as soon as every check is green on the head commit and its self-test passed, then reports. Pass the PR title with its number as the commit title.
+- "Skipped" is not green. Nothing on GitHub blocks an early merge, so before merging confirm that the `macOS` run, and the `macOS UI tests` run when the PR touches the app, finished successfully on the head commit after the PR was marked ready. Docs-only PRs need only the Linux checks.
 - Only product decisions wait for the owner: new feature shape, UI style, user-visible text, defaults, data handling (anything they would notice and might disagree with). Never ask "can I merge?" for anything else.
-- Red CI: first check whether `main` is red too. Otherwise the author fixes and pushes again until green. Never skip, disable or quarantine a test, push an empty commit, or close and reopen a PR to re-run CI. Never rewrite history on someone else's branch.
+- Red CI: first check whether `main` is red too. If it is, fix `main` in its own small PR (or port that fix) instead of working around it. Otherwise the author fixes and pushes again until green.
+- A job that died before any test ran (checkout, install, runner loss) may be re-run once from GitHub Actions ("Re-run failed jobs"). A second failure is real. Never skip, disable or quarantine a test, push an empty commit, or close and reopen a PR to re-run CI. Never rewrite history on someone else's branch.
 - Tagging and releases always need the owner's go-ahead (see Releases).
 
 ## Review
@@ -30,8 +32,8 @@ The app is a **native SwiftUI rewrite** in `macos/` (macOS 14+, SwiftData, MapKi
 ## CI
 | Workflow | Runs on | When | What |
 |---|---|---|---|
-| `linux.yml` | ubuntu | every push, drafts included, and `main` | `swift test` for the `MomentsCore` package; prototype build, Node checks, privacy check |
-| `macos.yml` | hosted Mac | ready (non-draft) PRs and `main`; not for docs-only changes | app build + `MomentsTests`, UI test compile, Apple Photos bridge checks, translation check |
+| `linux.yml` | ubuntu | every push to a PR (drafts included) and to `main` | `swift test` for the `MomentsCore` package; prototype build, Node checks, privacy check, whitespace check |
+| `macos.yml` | hosted Mac | ready (non-draft) PRs and `main`; not for docs-only changes | app build + `MomentsTests`, UI test compile, `MomentsCore` tests, Apple Photos bridge checks, translation check |
 | `ui-tests.yml` | hosted Mac | ready PRs touching the app and `main` | the whole UI suite with synthetic data |
 
 - A new push cancels the older run of the same PR, so each PR head is checked once. On `main` only the newest commit is checked.

@@ -19,12 +19,9 @@ struct LibraryFilterChips: View {
     @AppStorage(LibraryFilterKeys.trip) private var tripFilterKey = ""
     @AppStorage(LibraryFilterKeys.memory) private var memoryFilterRaw = LibraryMemoryFilter.all.rawValue
     @AppStorage(LibraryFilterKeys.person) private var personFilterID = ""
-<<<<<<< HEAD
-    @State private var showingPlacesEditor = false
-=======
     @AppStorage(LibraryFilterKeys.dateMode) private var dateModeRaw = DateFilterMode.days.rawValue
     @State private var showingDatePicker = false
->>>>>>> origin/main
+    @State private var showingPlacesEditor = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {

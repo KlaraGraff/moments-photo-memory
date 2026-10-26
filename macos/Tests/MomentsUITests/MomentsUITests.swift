@@ -415,9 +415,12 @@ final class MomentsUITests: XCTestCase {
             app.typeKey(",", modifierFlags: .command)
             let picker = element(in: app, identifier: "settings.language")
             XCTAssertTrue(picker.waitForExistence(timeout: launchTimeout), "Settings › General has no language picker (\(language))")
-            let label = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR title == %@", languageLabel, languageLabel)).firstMatch
-            XCTAssertTrue(label.waitForExistence(timeout: launchTimeout), "The language picker is not labelled \(languageLabel)")
             let window = app.windows.containing(.any, identifier: "settings.language").firstMatch
+            // A Form row may show the picker's label as a separate static text,
+            // with its text in the value.
+            let settingsParts = [picker] + window.staticTexts.allElementsBoundByIndex
+            let settingsTexts = settingsParts.flatMap { [$0.label, $0.title, $0.value as? String ?? ""] }.filter { !$0.isEmpty }
+            XCTAssertTrue(settingsTexts.contains(languageLabel), "Settings reads \(settingsTexts), no \(languageLabel), in \(language)")
             let attachment = XCTAttachment(screenshot: window.screenshot())
             attachment.name = "settings-02-language-\(language)-evidence"
             attachment.lifetime = .keepAlways

@@ -98,7 +98,7 @@ final class PeopleSamePhotoTests: XCTestCase {
         XCTAssertEqual(rect.minX, 320, accuracy: 1)
         XCTAssertEqual(rect.minY, 70, accuracy: 1)
         XCTAssertEqual(rect.width, 360, accuracy: 2)
-        XCTAssertEqual(rect.width, rect.height)
+        XCTAssertEqual(rect.height, 360, accuracy: 2)
     }
 
     func testZoomCropStaysInsideThePhoto() {

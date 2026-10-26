@@ -153,6 +153,7 @@ struct MomentsApp: App {
                 .environment(peopleController)
                 .preferredColorScheme(.light)
         }
+        .windowResizability(.contentSize)
     }
 }
 

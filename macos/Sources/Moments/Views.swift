@@ -164,6 +164,11 @@ struct ContentView: View {
                     ImportToolbarButton()
                 }
             }
+            #if DEBUG
+            .background {
+                if MapViewProbe.isEnabled { MapViewProbe() }
+            }
+            #endif
             // The title bar continues the page's paper instead of a white strip.
             .toolbarBackground(MomentsPalette.content, for: .windowToolbar)
             .toolbarBackground(.visible, for: .windowToolbar)
@@ -342,3 +347,28 @@ private struct ImportToolbarButton: View {
         .accessibilityIdentifier("toolbar.import")
     }
 }
+
+#if DEBUG
+/// UI tests only: counts the live map views in the app's windows, so a test
+/// can check the map is gone (and stops drawing) once you leave the Map.
+private struct MapViewProbe: View {
+    static let isEnabled = ProcessInfo.processInfo.arguments.contains("-MomentsUITestMapProbe")
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement()
+                .accessibilityLabel("mapviews=\(Self.liveMapViews())")
+                .accessibilityIdentifier("debug.mapviews")
+        }
+    }
+
+    static func liveMapViews() -> Int {
+        func count(_ view: NSView) -> Int {
+            (view is MKMapView ? 1 : 0) + view.subviews.reduce(0) { $0 + count($1) }
+        }
+        return NSApp.windows.compactMap(\.contentView?.superview).reduce(0) { $0 + count($1) }
+    }
+}
+#endif

@@ -411,6 +411,24 @@ final class MomentsUITests: XCTestCase {
         chip.click()
     }
 
+    /// Leaving the Map removes its map view, so MapKit stops drawing frames
+    /// while you browse the Library or People.
+    func testMapViewIsReleasedAfterLeavingTheMap() {
+        let app = launch(language: "en", mapProbe: true)
+        let probe = element(in: app, identifier: "debug.mapviews")
+        XCTAssertTrue(probe.waitForExistence(timeout: launchTimeout))
+        XCTAssertEqual(probe.label, "mapviews=0")
+        element(in: app, identifier: "sidebar.map").click()
+        XCTAssertTrue(element(in: app, identifier: "map.filters").waitForExistence(timeout: 30))
+        let onMap = NSPredicate(format: "label != %@", "mapviews=0")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: onMap, evaluatedWith: probe)], timeout: 10), .completed, "The probe found no map view on the Map")
+        for destination in ["sidebar.library", "sidebar.people", "sidebar.timeline"] {
+            element(in: app, identifier: destination).click()
+            let gone = NSPredicate(format: "label == %@", "mapviews=0")
+            XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: gone, evaluatedWith: probe)], timeout: 5), .completed, "A map view is still alive on \(destination): \(probe.label)")
+        }
+    }
+
     /// A country on the Map's globe lists its photos in the Library.
     func testMapCountryShowsItsPhotosInLibrary() {
         let app = launch(language: "en")
@@ -479,9 +497,10 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "\(prefix)-04-timeline")
     }
 
-    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false) -> XCUIApplication {
+    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false, mapProbe: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language]
+        if mapProbe { app.launchArguments += ["-MomentsUITestMapProbe"] }
         if reviewItems { app.launchArguments += ["-MomentsUITestReviewItems"] }
         if darkMode { app.launchArguments += ["-MomentsUITestDarkMode"] }
         if smallWindow { app.launchArguments += ["-MomentsUITestSmallWindow"] }

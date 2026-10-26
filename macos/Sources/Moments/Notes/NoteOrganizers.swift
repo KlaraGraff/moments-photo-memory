@@ -80,9 +80,15 @@ public struct AISettings: Equatable, Sendable {
 
     public init() {}
 
+    /// The on-device model when this Mac can run it, otherwise the cloud
+    /// model (e.g. where Apple Intelligence isn't offered yet).
+    public static var defaultEngine: AIEngine {
+        AppleOnDeviceOrganizer.unavailableReason() == nil ? .onDevice : .cloud
+    }
+
     public static func load(from defaults: UserDefaults = .standard) -> AISettings {
         var settings = AISettings()
-        settings.engine = defaults.string(forKey: engineKey).flatMap(AIEngine.init(rawValue:)) ?? .onDevice
+        settings.engine = defaults.string(forKey: engineKey).flatMap(AIEngine.init(rawValue:)) ?? defaultEngine
         settings.provider = defaults.string(forKey: providerKey).flatMap(CloudProvider.init(rawValue:)) ?? .claude
         settings.model = defaults.string(forKey: modelKey) ?? settings.provider.defaultModel
         settings.baseURL = defaults.string(forKey: baseURLKey) ?? ""
@@ -176,8 +182,12 @@ public struct AppleOnDeviceOrganizer: NoteOrganizing {
                 return String(localized: "Turn on Apple Intelligence in System Settings to use the on-device model.")
             case .unavailable(.modelNotReady):
                 return String(localized: "The on-device model is still downloading. Try again later.")
+            case .unavailable(.deviceNotEligible):
+                // Also what a Mac reports where Apple Intelligence isn't
+                // offered yet, such as Macs sold in mainland China.
+                return String(localized: "Not available yet for this Mac's region or model. Use a cloud model for now.")
             case .unavailable:
-                return String(localized: "This Mac can't run Apple's on-device model.")
+                return String(localized: "Not available on this Mac right now. Use a cloud model for now.")
             }
         }
         #endif

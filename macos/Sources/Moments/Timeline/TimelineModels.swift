@@ -13,6 +13,8 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
     let tripID: String?
     let placeHint: String?
     let memories: [TimelineMemorySnippet]
+    /// The `yyyy-MM-dd` key day memories are stored under (see `PhotoNoteDay`).
+    let dayKey: String?
 
     init(
         id: String,
@@ -23,7 +25,8 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
         kindRaw: String = MediaKind.photo.rawValue,
         tripID: String? = nil,
         placeHint: String? = nil,
-        memories: [TimelineMemorySnippet] = []
+        memories: [TimelineMemorySnippet] = [],
+        dayKey: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -34,13 +37,14 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
         self.tripID = tripID
         self.placeHint = placeHint
         self.memories = memories
+        self.dayKey = dayKey
     }
 
     init(item: MediaItem, placeHint: String? = nil) {
         self.init(
             id: item.id,
             title: item.title,
-            date: item.captureDate,
+            date: item.effectiveCaptureDate,
             latitude: item.latitude,
             longitude: item.longitude,
             kindRaw: item.kind.rawValue,
@@ -55,7 +59,8 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
                         text: memory.text,
                         authorRaw: memory.authorRaw
                     )
-                }
+                },
+            dayKey: PhotoNoteDay.key(for: item)
         )
     }
 
@@ -109,7 +114,10 @@ struct TimelineTrip: Identifiable {
     let id: String
     let name: String
     let days: [TimelineDay]
+    /// The trip's own start, else its first photo's.
     let startDate: Date?
+    /// The trip's own end when it has one; `endDate` falls back to the last photo.
+    var plannedEndDate: Date? = nil
 
     var itemCount: Int {
         days.reduce(into: 0) { result, day in
@@ -118,12 +126,84 @@ struct TimelineTrip: Identifiable {
             }
         }
     }
+
+    /// True for the catch-all of photos that are in no trip.
+    var isUnsorted: Bool { id == TimelineBuilder.unassignedTripID }
+
+    /// Every photo in day and place order, the order the viewer pages through.
+    var orderedItems: [TimelineItemSnapshot] {
+        days.flatMap { $0.places.flatMap(\.items) }
+    }
+
+    var endDate: Date? { plannedEndDate ?? orderedItems.compactMap(\.date).max() }
+
+    var datedDayCount: Int { days.filter { $0.date != nil }.count }
+
+    /// Distinct named places, so a place visited on two days counts once.
+    var placeCount: Int {
+        Set(days.flatMap { $0.places.compactMap(\.name) }).count
+    }
+
+    /// Cities in the order they were first visited.
+    var cityNames: [String] {
+        var seen: Set<String> = []
+        return days.flatMap { $0.places.compactMap(\.cityName) }.filter { seen.insert($0).inserted }
+    }
+
+    /// The first photo (not video) of the trip; a video only when there is nothing else.
+    var cover: TimelineItemSnapshot? { covers.first }
+
+    /// Up to two pictures for the card: the first photo, then one from the
+    /// last place visited (or the trip's last photo), so the pair shows two
+    /// moments of the trip. Videos only when there are not enough photos.
+    var covers: [TimelineItemSnapshot] {
+        let items = orderedItems
+        let photos = items.filter { $0.kindRaw != MediaKind.video.rawValue }
+        let pool = photos.count >= 2 ? photos : photos + items.filter { $0.kindRaw == MediaKind.video.rawValue }
+        guard let first = pool.first else { return [] }
+        let lastPlace = days.last?.places.last?.items ?? []
+        let second = pool.last { item in item.id != first.id && lastPlace.contains { $0.id == item.id } }
+            ?? pool.last { $0.id != first.id }
+        return second.map { [first, $0] } ?? [first]
+    }
+
+    /// Cities in visiting order with the middle of their photos, for the
+    /// little route drawing on the trip's card.
+    var routeStops: [TripRouteStop] {
+        var order: [String] = []
+        var sums: [String: (latitude: Double, longitude: Double, count: Int)] = [:]
+        for place in days.flatMap(\.places) {
+            guard let name = place.cityName ?? place.name else { continue }
+            for coordinate in place.items.compactMap(\.coordinate) {
+                if sums[name] == nil { order.append(name) }
+                let sum = sums[name] ?? (0, 0, 0)
+                sums[name] = (sum.latitude + coordinate.latitude, sum.longitude + coordinate.longitude, sum.count + 1)
+            }
+        }
+        return order.compactMap { name in
+            guard let sum = sums[name], sum.count > 0 else { return nil }
+            return TripRouteStop(name: name, latitude: sum.latitude / Double(sum.count), longitude: sum.longitude / Double(sum.count))
+        }
+    }
+
+    var videoCount: Int {
+        orderedItems.filter { $0.kindRaw == MediaKind.video.rawValue }.count
+    }
 }
 
 struct TimelineDay: Identifiable {
     let id: String
     let date: Date?
     let events: [TimelineEvent]
+    /// The key this day's memories are written under; `nil` for undated photos.
+    var memoryKey: String? = nil
+
+    var places: [TimelinePlace] {
+        events.compactMap { event -> TimelinePlace? in
+            if case let .place(place) = event { return place }
+            return nil
+        }
+    }
 }
 
 enum TimelineEvent: Identifiable {
@@ -158,4 +238,10 @@ struct TimelineTravel: Identifiable {
     let distanceMeters: Double
     let fromStopID: String?
     let toStopID: String?
+}
+
+struct TripRouteStop: Equatable {
+    let name: String
+    let latitude: Double
+    let longitude: Double
 }

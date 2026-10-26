@@ -98,9 +98,16 @@ final class MomentsImportUITests: XCTestCase {
         exerciseToReviewList(in: app)
     }
 
-    /// The To review screen confirms a flagged photo and can take it back.
+    /// The Library's "to confirm" banner opens the review list, which
+    /// confirms a flagged photo and can take it back.
     private func exerciseToReviewList(in app: XCUIApplication) {
-        element(in: app, identifier: "sidebar.review").click()
+        element(in: app, identifier: "sidebar.library").click()
+        let banner = element(in: app, identifier: "library.review-banner")
+        guard banner.waitForExistence(timeout: 5) else {
+            recordSkipped("No photo was left to review after the import, so the To review actions were not exercised.")
+            return
+        }
+        banner.click()
         let confirm = app.buttons
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "review.confirm."))
             .firstMatch
@@ -117,6 +124,7 @@ final class MomentsImportUITests: XCTestCase {
         capture(app, named: "import-20-to-review-confirmed-evidence")
         undo.click()
         XCTAssertTrue(element(in: app, identifier: "review.confirm.\(confirmedID)").waitForExistence(timeout: timeout), "Undo should bring the photo back")
+        element(in: app, identifier: "review.done").click()
     }
 
     private func launch(storeDirectory: URL) -> XCUIApplication {

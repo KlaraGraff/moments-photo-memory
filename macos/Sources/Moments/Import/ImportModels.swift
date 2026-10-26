@@ -120,12 +120,15 @@ public struct ImportGeocodeResult: Codable, Equatable, Sendable {
     public let area: String?
     public let spot: String?
     public let timeZoneIdentifier: String?
+    /// Used to name trips. Results cached before it existed decode as `nil`.
+    public let country: String?
 
-    public init(city: String? = nil, area: String? = nil, spot: String? = nil, timeZoneIdentifier: String? = nil) {
+    public init(city: String? = nil, area: String? = nil, spot: String? = nil, timeZoneIdentifier: String? = nil, country: String? = nil) {
         self.city = city
         self.area = area
         self.spot = spot
         self.timeZoneIdentifier = timeZoneIdentifier
+        self.country = country
     }
 }
 

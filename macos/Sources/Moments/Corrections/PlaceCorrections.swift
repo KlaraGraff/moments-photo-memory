@@ -57,7 +57,7 @@ enum PlaceNames {
             groups[key, default: Group(key: key, name: name, itemIDs: [])].itemIDs.append(item.id)
         }
         for (key, counts) in spellings {
-            groups[key]?.name = counts.max { ($0.value, $1.key) < ($1.value, $0.key) }?.key ?? groups[key]?.name ?? key
+            if let name = counts.max(by: { ($0.value, $1.key) < ($1.value, $0.key) })?.key { groups[key]?.name = name }
         }
         return groups.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }

@@ -219,6 +219,31 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "timeline-01-place-selected-in-library")
     }
 
+    /// Diagnostics for the jump maple sees when clicking the sidebar: the app
+    /// logs every geometry change after each click; CI prints the log.
+    func testSidebarClicksLayoutProbe() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-MomentsUITesting", "-MomentsUITestLayoutProbe", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh-Hans"]
+        app.launch()
+        app.activate()
+        requireFrontmostWindow(app)
+        // Scroll the Library down first so returning to it has a position to restore.
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+            .firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
+        photo.scroll(byDeltaX: 0, deltaY: -400)
+        Thread.sleep(forTimeInterval: 1.0)
+        let order = ["review", "places", "footprints", "timeline", "library", "review", "library", "places", "library"]
+        for name in order {
+            let item = element(in: app, identifier: "sidebar.\(name)")
+            XCTAssertTrue(item.waitForExistence(timeout: launchTimeout), "Missing sidebar item \(name)")
+            item.click()
+            Thread.sleep(forTimeInterval: 1.5)
+        }
+        capture(app, named: "layout-probe-final-evidence")
+    }
+
     private func navigateAndCapture(_ app: XCUIApplication, prefix: String, settleMap: Bool) {
         let library = element(in: app, identifier: "sidebar.library")
         XCTAssertTrue(library.waitForExistence(timeout: launchTimeout))

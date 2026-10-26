@@ -522,13 +522,20 @@ struct LibraryView: View {
                             groupItems: groupItems
                         )
                         .id(LibraryScrollTarget.section(section.id))
-                        .onAppear { state.lastVisibleSectionID = section.id }
                     }
                 }
+                .scrollTargetLayout()
                 .padding(.horizontal, 34)
                 .padding(.vertical, 24)
             }
             .scrollIndicators(.visible)
+            // The scroll view opens at the section that was at the top when
+            // the user left, in its first layout. Scrolling there after
+            // onAppear showed the top first and then jumped.
+            .scrollPosition(
+                id: Binding(get: { state.topSectionScrollID }, set: { state.topSectionScrollID = $0 }),
+                anchor: .top
+            )
             .onChange(of: selection.focusedItemID) { _, _ in
                 revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
             }
@@ -552,11 +559,6 @@ struct LibraryView: View {
             .onAppear {
                 if selection.shouldRevealSelectionInLibrary {
                     revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
-                } else if let anchor = state.lastVisibleSectionID,
-                          cachedSections.contains(where: { $0.id == anchor }) {
-                    DispatchQueue.main.async {
-                        proxy.scrollTo(LibraryScrollTarget.section(anchor), anchor: .center)
-                    }
                 }
             }
         }

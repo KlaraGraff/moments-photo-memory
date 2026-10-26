@@ -35,8 +35,14 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -resultBundlePath "$RUNNER_TEMP/MomentsUITests.xcresult" \
+            -only-testing:MomentsUITests/MomentsUITests/testSidebarClicksLayoutProbe \
             CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
             test
+      - name: Print layout probe log
+        if: always()
+        run: |
+          log show --style compact --info --last 2h \
+            --predicate 'subsystem == "org.example.Moments.layoutprobe"' | grep LAYOUTPROBE || true
       - name: Export screenshots
         if: always()
         run: |

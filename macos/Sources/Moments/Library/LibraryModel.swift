@@ -441,7 +441,8 @@ enum LibraryFilterEngine {
 @Observable
 final class LibraryViewState {
     var memoryDrafts: [String: String] = [:]
-    var lastVisibleSectionID: String?
+    /// Scroll ID of the section at the top of the Library, restored on return.
+    var topSectionScrollID: String?
     var focusedMemoryItemID: String?
     /// The card a reveal request is waiting for; lazy grids build cards only
     /// near the viewport, so the final scroll happens when this card appears.

@@ -326,8 +326,11 @@ struct LibraryView: View {
         // The segments name themselves; a visible "Media type" label wrapped
         // onto two lines in narrow windows. VoiceOver still reads it.
         .labelsHidden()
-        // At its own width: squeezed, the segments drew over the count beside
-        // them instead of letting the header wrap.
+        // Always its natural width. Capped below it (English needs ~495 pt),
+        // AppKit drew the control wider than its slot, over the photo count,
+        // and every store save flipped it between the two widths; in a
+        // 900 pt window it also squeezed the sidebar. Narrow windows get the
+        // stacked layout above instead.
         .fixedSize()
         .accessibilityIdentifier("library.type-filter")
     }

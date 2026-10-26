@@ -20,9 +20,29 @@ final class UnitTestHostDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if ProcessInfo.processInfo.arguments.contains("-MomentsUITesting") {
+            ensureUITestWindow()
+            return
+        }
         guard Self.isUnitTestHost else { return }
         NSApp.windows.forEach { $0.orderOut(nil) }
     }
+
+    /// On CI, launches with -MomentsUITesting plus the language arguments
+    /// sometimes leave SwiftUI's WindowGroup without its initial window. UI
+    /// tests need one, so the app opens it itself through its own File > New
+    /// Window command; no keystroke ever leaves the app.
+    private func ensureUITestWindow() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            guard !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) else { return }
+            let items = NSApp.mainMenu?.items.flatMap { $0.submenu?.items ?? [] } ?? []
+            guard let newWindow = items.first(where: { $0.keyEquivalent == "n" && $0.keyEquivalentModifierMask == .command }),
+                  let action = newWindow.action else { return }
+            NSApp.sendAction(action, to: newWindow.target, from: newWindow)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
 }
 
 /// Placed as the only content of the unit-test host's window; hides that

@@ -28,6 +28,7 @@ jobs:
         env:
           TEST_RUNNER_MOMENTS_UI_IMPORT_FOLDER: ${{ runner.temp }}/synthetic-trip-folder
           TEST_RUNNER_MOMENTS_FLASH_DIR: ${{ runner.temp }}/flash
+          TEST_RUNNER_MOMENTS_SCROLL_DIR: ${{ runner.temp }}/scroll
         run: |
           # Ad-hoc signing is enough for the test runner on the hosted Mac.
           xcodebuild \
@@ -38,6 +39,10 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/MomentsUITests.xcresult" \
             CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
             test
+      - name: Print scroll reports
+        if: always()
+        run: |
+          cat "$RUNNER_TEMP"/scroll/scroll-report-*.txt 2>/dev/null || echo "no scroll report"
       - name: Print flash report
         if: always()
         run: |

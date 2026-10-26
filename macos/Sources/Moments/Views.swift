@@ -253,6 +253,9 @@ struct ContentView: View {
     }
 
     private var groupCountsKey: Int {
+        #if DEBUG
+        ScrollProbe.count("sidebar.groupCountsKey")
+        #endif
         var hasher = Hasher()
         for item in items {
             hasher.combine(item.id)

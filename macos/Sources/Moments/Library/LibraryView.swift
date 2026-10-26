@@ -158,7 +158,9 @@ struct LibraryView: View {
         hasher.combine(personFilterID)
         hasher.combine(state.focusedMemoryItemID)
         hasher.combine(selection.libraryScope?.itemIDs)
-        for item in items {
+        // All items, not just the visible type: the Place and Trip menus
+        // are built from both.
+        for item in allItems {
             hasher.combine(item.id)
             hasher.combine(item.captureDate)
             hasher.combine(item.userCorrectedCaptureDateUTC)
@@ -1282,7 +1284,6 @@ struct GroupDetailView: View {
     @State private var cachedVisibleItemIDs: [String] = []
     @State private var cachedVisibleItemsByID: [String: MediaItem] = [:]
     @State private var cachedPersonIndex: [String: Set<String>] = [:]
-    @State private var cachedFilterOptions = LibraryFilterOptions()
 
     init(groupID: String, state: LibraryViewState) {
         self.groupID = groupID

@@ -16,18 +16,25 @@ enum MainThreadSampler {
     private nonisolated(unsafe) static var recording = false
     private nonisolated(unsafe) static var mainThread: pthread_t?
     private nonisolated(unsafe) static var installed = false
+    /// Stops the previous run's thread when a new run starts right away.
+    private nonisolated(unsafe) static var generation = 0
 
     /// Call on the main thread.
     static func start() {
         mainThread = pthread_self()
         count = 0
+        // Allocate the buffers here: the signal handler must not malloc.
+        _ = frames
+        _ = depths
+        generation += 1
+        let run = generation
         if !installed {
             installed = true
             signal(SIGUSR2) { _ in MainThreadSampler.record() }
         }
         recording = true
         Thread.detachNewThread {
-            while recording, let mainThread {
+            while recording, generation == run, let mainThread {
                 pthread_kill(mainThread, SIGUSR2)
                 usleep(2_000)
             }

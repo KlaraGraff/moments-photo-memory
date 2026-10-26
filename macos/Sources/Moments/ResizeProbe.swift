@@ -106,6 +106,13 @@ enum ResizeProbe {
         switch phase {
         case .idle:
             break
+        default:
+            // Where the main thread spends a sidebar change.
+            MainThreadSampler.start()
+        }
+        switch phase {
+        case .idle:
+            break
         case .hideSidebar, .showSidebar:
             // What the toolbar's sidebar button sends.
             NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
@@ -169,6 +176,7 @@ enum ResizeProbe {
         let changes = zip(columns, columns.dropFirst()).filter { $0 != $1 }.count
         report += "  grid: \(grid.count) widths, column changes \(changes): "
             + grid.map { String(format: "%d@%.0f", $0.columns, $0.width) }.joined(separator: " ") + "\n"
+        if phase != .idle { report += MainThreadSampler.stopAndReport(top: 30) }
     }
 
     static let isEnabled = ProcessInfo.processInfo.arguments.contains("-MomentsUITestResizeProbe")

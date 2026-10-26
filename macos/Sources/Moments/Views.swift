@@ -139,22 +139,27 @@ struct ContentView: View {
             .navigationTitle("Moments")
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
         } detail: {
-            switch selection ?? .library {
-            case .library:
-                LibraryView(state: libraryState, firstLaunchCompleted: $firstLaunchCompleted)
-            case .review:
-                ReviewListView()
-            case .people:
-                PeopleScreen()
-            case .places:
-                PlacesScreen()
-            case .footprints:
-                FootprintsScreen()
-            case .timeline:
-                TimelineScreen()
-            case .group(let groupID):
-                GroupDetailView(groupID: groupID, state: libraryState)
+            Group {
+                switch selection ?? .library {
+                case .library:
+                    LibraryView(state: libraryState, firstLaunchCompleted: $firstLaunchCompleted)
+                case .review:
+                    ReviewListView()
+                case .people:
+                    PeopleScreen()
+                case .places:
+                    PlacesScreen()
+                case .footprints:
+                    FootprintsScreen()
+                case .timeline:
+                    TimelineScreen()
+                case .group(let groupID):
+                    GroupDetailView(groupID: groupID, state: libraryState)
+                }
             }
+            // The title bar continues the page's paper instead of a white strip.
+            .toolbarBackground(MomentsPalette.content, for: .windowToolbar)
+            .toolbarBackground(.visible, for: .windowToolbar)
         }
         .frame(minWidth: 900, minHeight: 600)
         // One accent everywhere, sheets included: no system blue controls.

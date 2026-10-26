@@ -23,6 +23,35 @@ private final class CapturingOrganizer: NoteOrganizing, @unchecked Sendable {
     }
 }
 
+/// Answers URLSession requests without touching the network.
+private final class StubURLProtocol: URLProtocol {
+    static var status = 200
+    static var body = Data()
+    static var failure: URLError?
+
+    static func session() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        if let failure = Self.failure {
+            client?.urlProtocol(self, didFailWithError: failure)
+            return
+        }
+        let response = HTTPURLResponse(url: request.url!, statusCode: Self.status, httpVersion: nil, headerFields: ["content-type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
 @MainActor
 final class PhotoNoteTests: XCTestCase {
     private let base = Date(timeIntervalSince1970: 1_700_000_000)
@@ -365,6 +394,76 @@ final class PhotoNoteTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? NoteOrganizerError, .missingKey)
         }
+    }
+
+    func testClaudeRequestUsesLowEffortAndServerFallback() throws {
+        let context = NoteOrganizerContext(noteText: "Quiet café by the river.")
+        let opus = try ClaudeOrganizer(apiKey: "k", model: ClaudeModel.opus.rawValue).makeRequest(context, apiKey: "k")
+        XCTAssertEqual(opus.url?.absoluteString, "https://api.anthropic.com/v1/messages")
+        XCTAssertEqual(opus.value(forHTTPHeaderField: "x-api-key"), "k")
+        XCTAssertEqual(opus.value(forHTTPHeaderField: "anthropic-version"), "2026-10-21")
+        XCTAssertEqual(opus.value(forHTTPHeaderField: "anthropic-beta"), "server-side-fallback-2026-07-01")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(opus.httpBody)) as? [String: Any])
+        XCTAssertEqual(body["model"] as? String, "claude-opus-5-5")
+        XCTAssertEqual(body["fallbacks"] as? String, "default")
+        XCTAssertNil(body["thinking"], "Opus 5.5 rejects disabled thinking; effort is the only control")
+        let output = try XCTUnwrap(body["output_config"] as? [String: Any])
+        XCTAssertEqual(output["effort"] as? String, "low")
+        XCTAssertEqual((output["format"] as? [String: Any])?["type"] as? String, "json_schema")
+
+        // Haiku has no server-side fallback: no header, no parameter.
+        let haiku = try ClaudeOrganizer(apiKey: "k", model: ClaudeModel.haiku.rawValue).makeRequest(context, apiKey: "k")
+        XCTAssertNil(haiku.value(forHTTPHeaderField: "anthropic-beta"))
+        let haikuBody = ClaudeOrganizer.requestBody(model: ClaudeModel.haiku.rawValue, context: context)
+        XCTAssertNil(haikuBody["fallbacks"])
+        XCTAssertEqual((haikuBody["output_config"] as? [String: Any])?["effort"] as? String, "low")
+
+        // A model typed by hand gets only the plain request.
+        let custom = ClaudeOrganizer.requestBody(model: "claude-haiku-4-5", context: context)
+        XCTAssertNil(custom["fallbacks"])
+        XCTAssertNil((custom["output_config"] as? [String: Any])?["effort"])
+        XCTAssertEqual(AISettings().model, ClaudeModel.opus.rawValue)
+    }
+
+    func testClaudeReadsTextAfterThinkingBlocks() async throws {
+        StubURLProtocol.failure = nil
+        StubURLProtocol.status = 200
+        let note = #"{"placeName":"","placeDescription":"Quiet in the afternoon.","memory":"We sat by the river.","memoryScope":"photo"}"#
+        StubURLProtocol.body = try JSONSerialization.data(withJSONObject: [
+            "content": [["type": "thinking", "thinking": ""], ["type": "text", "text": note]],
+            "stop_reason": "end_turn"
+        ])
+        let organizer = ClaudeOrganizer(apiKey: "k", model: ClaudeModel.opus.rawValue, session: StubURLProtocol.session())
+        let result = try await organizer.organize(NoteOrganizerContext(noteText: "x"))
+        XCTAssertEqual(result, NoteOrganizerResult(placeName: nil, placeDescription: "Quiet in the afternoon.", memory: "We sat by the river.", memoryScope: "photo"))
+    }
+
+    func testClaudeExplainsKeyRegionAndNetworkFailures() async throws {
+        let organizer = ClaudeOrganizer(apiKey: "k", model: ClaudeModel.opus.rawValue, session: StubURLProtocol.session())
+        func failure() async -> NoteOrganizerError? {
+            do {
+                _ = try await organizer.organize(NoteOrganizerContext(noteText: "x"))
+                return nil
+            } catch {
+                return error as? NoteOrganizerError
+            }
+        }
+        StubURLProtocol.failure = nil
+        StubURLProtocol.status = 403
+        StubURLProtocol.body = try JSONSerialization.data(withJSONObject: ["type": "error", "error": ["type": "forbidden", "message": "Request not allowed"]])
+        guard case .http(403, let regionMessage)? = await failure() else { return XCTFail("Expected a 403") }
+        XCTAssertTrue(regionMessage.contains("proxy"), regionMessage)
+        XCTAssertTrue(regionMessage.contains("Request not allowed"), regionMessage)
+
+        StubURLProtocol.status = 401
+        StubURLProtocol.body = try JSONSerialization.data(withJSONObject: ["type": "error", "error": ["type": "authentication_error", "message": "invalid x-api-key"]])
+        guard case .http(401, let keyMessage)? = await failure() else { return XCTFail("Expected a 401") }
+        XCTAssertTrue(keyMessage.contains("Settings"), keyMessage)
+
+        // Offline: the note waits instead of failing.
+        StubURLProtocol.failure = URLError(.notConnectedToInternet)
+        guard case .unavailable? = await failure() else { return XCTFail("Expected unavailable") }
+        StubURLProtocol.failure = nil
     }
 
     // MARK: Migration

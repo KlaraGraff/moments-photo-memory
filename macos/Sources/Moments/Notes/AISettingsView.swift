@@ -58,8 +58,18 @@ struct AISettingsView: View {
                     Text(verbatim: "Claude").tag(CloudProvider.claude.rawValue)
                     Text(String(localized: "OpenAI-compatible API")).tag(CloudProvider.openAICompatible.rawValue)
                 }
-                TextField(String(localized: "Model"), text: $model, prompt: Text(provider == .claude ? CloudProvider.claude.defaultModel : "model-name"))
-                if provider == .openAICompatible {
+                if provider == .claude {
+                    Picker(String(localized: "Model"), selection: $model) {
+                        ForEach(ClaudeModel.allCases, id: \.self) { option in
+                            Text(verbatim: "\(option.displayName) · \(option.summary)").tag(option.rawValue)
+                        }
+                        // A model typed in an earlier version stays selectable.
+                        if ClaudeModel(rawValue: model) == nil {
+                            Text(verbatim: model).tag(model)
+                        }
+                    }
+                } else {
+                    TextField(String(localized: "Model"), text: $model, prompt: Text(verbatim: "model-name"))
                     TextField(String(localized: "Endpoint"), text: $baseURL, prompt: Text(verbatim: "https://example.com/v1"))
                 }
                 SecureField(String(localized: "API key"), text: Binding(
@@ -71,6 +81,10 @@ struct AISettingsView: View {
                     Text(String(localized: "The key is kept in your Mac's keychain."))
                         .font(.caption)
                         .foregroundStyle(Paper.muted)
+                    if provider == .claude {
+                        Link(String(localized: "Get a key"), destination: URL(string: "https://console.anthropic.com/settings/keys")!)
+                            .font(.caption)
+                    }
                     Spacer()
                     if isTesting { ProgressView().controlSize(.small) }
                     Button(String(localized: "Test connection")) { test() }
@@ -103,7 +117,11 @@ struct AISettingsView: View {
             if let old = CloudProvider(rawValue: oldValue) { storeKey(for: old) }
             let new = CloudProvider(rawValue: newValue) ?? .claude
             loadKey(for: new)
-            if model.isEmpty || model == CloudProvider.claude.defaultModel { model = new.defaultModel }
+            switch new {
+            case .claude where !model.hasPrefix("claude-"): model = new.defaultModel
+            case .openAICompatible where model.hasPrefix("claude-"): model = new.defaultModel
+            default: break
+            }
             testResult = nil
         }
         .onDisappear { storeKey(for: provider) }
@@ -118,6 +136,12 @@ struct AISettingsView: View {
         guard keyEdited else { return }
         AIKeychain.setKey(apiKey, for: provider)
         keyEdited = false
+        // Pasting a key on a Mac that can't run Apple's model means the
+        // person wants the cloud model; don't make them find a second switch.
+        let hasKey = !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hasKey, engineRaw == AIEngine.onDevice.rawValue, AppleOnDeviceOrganizer.unavailableReason() != nil {
+            engineRaw = AIEngine.cloud.rawValue
+        }
     }
 
     private func test() {

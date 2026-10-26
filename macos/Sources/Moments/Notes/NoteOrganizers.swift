@@ -24,10 +24,36 @@ public enum CloudProvider: String, CaseIterable, Sendable {
 
     public var defaultModel: String {
         switch self {
-        case .claude: return "claude-opus-5-5"
+        case .claude: return ClaudeModel.opus.rawValue
         case .openAICompatible: return ""
         }
     }
+}
+
+/// The Claude models offered in Settings › AI Model, best first.
+public enum ClaudeModel: String, CaseIterable, Sendable {
+    case opus = "claude-opus-5-5"
+    case sonnet = "claude-sonnet-5-5"
+    case haiku = "claude-haiku-5-5"
+
+    public var displayName: String {
+        switch self {
+        case .opus: return "Claude Opus 5.5"
+        case .sonnet: return "Claude Sonnet 5.5"
+        case .haiku: return "Claude Haiku 5.5"
+        }
+    }
+
+    public var summary: String {
+        switch self {
+        case .opus: return String(localized: "Best at understanding notes")
+        case .sonnet: return String(localized: "Good, about half the cost")
+        case .haiku: return String(localized: "Fastest and cheapest")
+        }
+    }
+
+    /// Haiku has no server-side fallback model; a declined note stays declined.
+    var supportsServerFallback: Bool { self != .haiku }
 }
 
 public enum OnDeviceFallback: String, CaseIterable, Sendable {
@@ -197,29 +223,60 @@ struct GeneratedNote {
 // MARK: - Cloud models
 
 struct ClaudeOrganizer: NoteOrganizing {
+    static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+    static let fallbackBeta = "server-side-fallback-2026-07-01"
+
     let apiKey: String?
     let model: String
     var session: URLSession = .shared
 
     var label: String { "Claude" }
 
-    func organize(_ context: NoteOrganizerContext) async throws -> NoteOrganizerResult {
-        guard let apiKey else { throw NoteOrganizerError.missingKey }
-        var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+    /// Splitting a short note is easy work: low effort keeps it quick and
+    /// cheap. Only the models we list get the newer options; a hand-typed
+    /// older model gets the plain request.
+    static func requestBody(model: String, context: NoteOrganizerContext) -> [String: Any] {
+        var outputConfig: [String: Any] = ["format": ["type": "json_schema", "schema": NotePrompt.jsonSchema]]
+        var body: [String: Any] = [
+            "model": model,
+            "max_tokens": 8000,
+            "system": NotePrompt.instructions,
+            "messages": [["role": "user", "content": NotePrompt.message(for: context)]]
+        ]
+        if let known = ClaudeModel(rawValue: model) {
+            outputConfig["effort"] = "low"
+            if known.supportsServerFallback { body["fallbacks"] = "default" }
+        }
+        body["output_config"] = outputConfig
+        return body
+    }
+
+    func makeRequest(_ context: NoteOrganizerContext, apiKey: String) throws -> URLRequest {
+        var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 120
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue("2026-10-21", forHTTPHeaderField: "anthropic-version")
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 4000,
-            "system": NotePrompt.instructions,
-            "messages": [["role": "user", "content": NotePrompt.message(for: context)]],
-            "output_config": ["format": ["type": "json_schema", "schema": NotePrompt.jsonSchema]]
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let object = try await CloudHTTP.send(request, session: session)
+        if ClaudeModel(rawValue: model)?.supportsServerFallback == true {
+            request.setValue(Self.fallbackBeta, forHTTPHeaderField: "anthropic-beta")
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: Self.requestBody(model: model, context: context))
+        return request
+    }
+
+    func organize(_ context: NoteOrganizerContext) async throws -> NoteOrganizerResult {
+        guard let apiKey else { throw NoteOrganizerError.missingKey }
+        let object: [String: Any]
+        do {
+            object = try await CloudHTTP.send(try makeRequest(context, apiKey: apiKey), session: session)
+        } catch NoteOrganizerError.http(401, _) {
+            throw NoteOrganizerError.http(401, String(localized: "The API key was not accepted. Check it in Settings › AI Model."))
+        } catch NoteOrganizerError.http(403, let detail) {
+            // Anthropic turns away requests from regions it doesn't serve.
+            let hint = String(localized: "Anthropic doesn't accept requests from this network. Turn on a proxy for the whole Mac, then try again.")
+            throw NoteOrganizerError.http(403, detail.isEmpty ? hint : "\(hint) (\(detail))")
+        }
         if object["stop_reason"] as? String == "refusal" { throw NoteOrganizerError.refused }
         let blocks = object["content"] as? [[String: Any]] ?? []
         let text = blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined()
@@ -271,7 +328,14 @@ struct OpenAICompatibleOrganizer: NoteOrganizing {
 
 enum CloudHTTP {
     static func send(_ request: URLRequest, session: URLSession) async throws -> [String: Any] {
-        let (data, response) = try await session.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch is URLError {
+            // Offline or blocked: the note keeps its words and waits.
+            throw NoteOrganizerError.unavailable(String(localized: "Can't reach the cloud model. Check the network or proxy, then try again."))
+        }
         let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {

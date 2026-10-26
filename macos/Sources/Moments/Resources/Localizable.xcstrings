@@ -7209,6 +7209,160 @@
           }
         }
       }
+    },
+    "Best at understanding notes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versteht Notizen am besten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Best at understanding notes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最懂你的笔记"
+          }
+        }
+      }
+    },
+    "Good, about half the cost" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gut, etwa halb so teuer"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Good, about half the cost"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "效果不错，费用约一半"
+          }
+        }
+      }
+    },
+    "Fastest and cheapest" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Am schnellsten und günstigsten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fastest and cheapest"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最快、最便宜"
+          }
+        }
+      }
+    },
+    "Get a key" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schlüssel holen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get a key"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "获取密钥"
+          }
+        }
+      }
+    },
+    "The API key was not accepted. Check it in Settings › AI Model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der API-Schlüssel wurde nicht akzeptiert. Prüfe ihn unter Einstellungen › KI-Modell."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The API key was not accepted. Check it in Settings › AI Model."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API 密钥没有通过验证。请在 设置 › AI 模型 里检查。"
+          }
+        }
+      }
+    },
+    "Anthropic doesn't accept requests from this network. Turn on a proxy for the whole Mac, then try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic nimmt keine Anfragen aus diesem Netzwerk an. Schalte einen Proxy für den ganzen Mac ein und versuche es erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic doesn't accept requests from this network. Turn on a proxy for the whole Mac, then try again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic 不接受来自当前网络的请求。请为整台 Mac 开启代理后再试。"
+          }
+        }
+      }
+    },
+    "Can't reach the cloud model. Check the network or proxy, then try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Cloud-Modell ist nicht erreichbar. Prüfe Netzwerk oder Proxy und versuche es erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can't reach the cloud model. Check the network or proxy, then try again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连不上云端模型。请检查网络或代理后再试。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

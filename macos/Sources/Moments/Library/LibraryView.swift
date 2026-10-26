@@ -1371,6 +1371,9 @@ struct GroupEditorSheet: View {
     @Query private var items: [MediaItem]
     @Query(sort: \Person.name) private var people: [Person]
     @Query private var faceObservations: [FaceObservation]
+    @Query(sort: \Trip.id) private var trips: [Trip]
+    @Query(sort: \Tag.displayName) private var tags: [Tag]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var name = ""
     @State private var mode: UserGroupRuleSet.MatchMode = .all
     @State private var rules: [UserGroupRule] = []
@@ -1478,6 +1481,7 @@ struct GroupEditorSheet: View {
                 Text(String(localized: "Date range")).tag(UserGroupRuleField.dateRange)
                 Text(String(localized: "Has memory")).tag(UserGroupRuleField.hasMemory)
                 Text(String(localized: "Tag")).tag(UserGroupRuleField.tag)
+                Text(String(localized: "Person")).tag(UserGroupRuleField.person)
             }
             .labelsHidden()
             .frame(width: 128)
@@ -1536,8 +1540,7 @@ struct GroupEditorSheet: View {
             }
             .datePickerStyle(.field)
         case .person:
-            Text(rule.wrappedValue.value)
-                .foregroundStyle(Paper.muted)
+            valuePicker(rule, options: personOptions)
         }
     }
 
@@ -1548,8 +1551,8 @@ struct GroupEditorSheet: View {
                 Text(rule.wrappedValue.value.isEmpty ? String(localized: "Choose…") : rule.wrappedValue.value)
                     .tag(rule.wrappedValue.value)
             }
-            ForEach(options, id: \.0) { option in
-                Text(option.1).tag(option.0)
+            ForEach(options.indices, id: \.self) { index in
+                Text(options[index].1).tag(options[index].0)
             }
         }
         .labelsHidden()
@@ -1572,7 +1575,7 @@ struct GroupEditorSheet: View {
                 case .dateRange:
                     rule.wrappedValue.value = UserGroupRuleSet.localDayKey(for: Calendar.current.date(byAdding: .month, value: -1, to: .now) ?? .now)
                     rule.wrappedValue.secondaryValue = UserGroupRuleSet.localDayKey(for: .now)
-                case .person: rule.wrappedValue.value = ""
+                case .person: rule.wrappedValue.value = personOptions.first?.0 ?? ""
                 }
             }
         )
@@ -1608,6 +1611,11 @@ struct GroupEditorSheet: View {
     private var tripOptions: [(String, String)] {
         trips.map { ($0.id, $0.effectiveName) }
             .sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
+    }
+
+    private var personOptions: [(String, String)] {
+        people.filter { !$0.hidden && $0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+            .map { ($0.id, $0.name ?? String(localized: "Unnamed person")) }
     }
 
     private var tagOptions: [(String, String)] {

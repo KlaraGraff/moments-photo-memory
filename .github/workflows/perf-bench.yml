@@ -13,7 +13,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 90
     env:
-      REFS: "d7d3627 546d7b7 HEAD"
+      REFS: "d7d3627 546d7b7 HEAD~1 HEAD"
     steps:
       - uses: actions/checkout@v4
         with:

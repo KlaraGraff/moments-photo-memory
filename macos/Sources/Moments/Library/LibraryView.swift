@@ -717,11 +717,6 @@ private struct LibrarySectionView: View {
         selection.select(section.itemIDs, focus: section.itemIDs.first)
     }
 
-    /// The section's photos in rows of `columnCount`.
-    private var rows: [ArraySlice<MediaItem>] {
-        stride(from: 0, to: items.count, by: columnCount).map { items[$0..<min($0 + columnCount, items.count)] }
-    }
-
     /// The heading and each row of photos are separate children of the
     /// Library's lazy stack, so only rows on screen are laid out. A grid per
     /// section sized every photo in it whenever the width changed: half a
@@ -779,25 +774,18 @@ private struct LibrarySectionView: View {
         .modifier(ResizeProbeGridWidth(columns: columnCount))
         #endif
 
-        let rows = self.rows
-        ForEach(rows.indices, id: \.self) { index in
-            HStack(alignment: .top, spacing: size.spacing) {
-                ForEach(rows[index], id: \.id) { item in
-                    LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
-                // A short last row keeps the same column widths.
-                ForEach(rows[index].count..<columnCount, id: \.self) { _ in
-                    Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
-                }
+        LazyVGrid(columns: gridColumns, alignment: .leading, spacing: size.rowSpacing) {
+            ForEach(items, id: \.id) { item in
+                LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact)
             }
-            // The last row carries the space before the next section, so a
-            // heading scrolled to the top sits flush with it.
-            .padding(.bottom, index < rows.count - 1 ? size.rowSpacing : LibrarySectionView.sectionSpacing)
-            // No string id on rows: the scroll position binding takes the
-            // top child with a string id, so row ids made it change every
-            // few frames while scrolling, and each change rebuilt the Library.
         }
+        .padding(.bottom, LibrarySectionView.sectionSpacing)
+    }
+
+    /// A fixed number of equal columns, so when the space changes the
+    /// photos grow and shrink with it instead of reflowing.
+    private var gridColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: size.spacing, alignment: .top), count: columnCount)
     }
 
     /// Space between one section's last row and the next heading.

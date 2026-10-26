@@ -168,9 +168,6 @@ struct ContentView: View {
             .background {
                 if MapViewProbe.isEnabled { MapViewProbe() }
             }
-            .overlay {
-                if SidebarIconGallery.isEnabled { SidebarIconGallery() }
-            }
             #endif
             // The title bar continues the page's paper instead of a white strip.
             .toolbarBackground(MomentsPalette.content, for: .windowToolbar)
@@ -187,6 +184,11 @@ struct ContentView: View {
             }
         }
         .animation(reduceMotion ? nil : Motion.snap, value: shared.viewerRequest == nil)
+        #if DEBUG
+        .overlay {
+            if SidebarIconGallery.isEnabled { SidebarIconGallery() }
+        }
+        #endif
         // One accent everywhere, sheets included: no system blue controls.
         .tint(MomentsPalette.accent)
         .onChange(of: selection) { _, _ in
@@ -404,14 +406,14 @@ private struct SidebarIconGallery: View {
                                     .symbolRenderingMode(.monochrome)
                                     .labelStyle(GalleryLabelStyle())
                                     .padding(.horizontal, 10)
-                                    .frame(width: 170, height: 32, alignment: .leading)
+                                    .frame(width: 190, height: 34, alignment: .leading)
                                     .background(MomentsPalette.sidebar, in: RoundedRectangle(cornerRadius: 8))
                                 Label(title, systemImage: symbol)
                                     .font(.body)
-                                    .labelStyle(GalleryLabelStyle())
+                                    .labelStyle(GalleryLabelStyle(iconColor: .white))
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 10)
-                                    .frame(width: 170, height: 32, alignment: .leading)
+                                    .frame(width: 190, height: 34, alignment: .leading)
                                     .background(MomentsPalette.accent, in: RoundedRectangle(cornerRadius: 8))
                                 Text(tag == "now" ? "Now" : tag)
                                     .font(.caption.weight(.semibold))
@@ -430,10 +432,12 @@ private struct SidebarIconGallery: View {
 }
 
 private struct GalleryLabelStyle: LabelStyle {
+    var iconColor = MomentsPalette.accent
+
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 8) {
             configuration.icon
-                .foregroundStyle(MomentsPalette.accent)
+                .foregroundStyle(iconColor)
                 .frame(width: 22)
             configuration.title
         }

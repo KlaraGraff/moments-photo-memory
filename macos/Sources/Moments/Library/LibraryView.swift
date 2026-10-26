@@ -391,10 +391,10 @@ struct LibraryView: View {
         }
         // Tests read the count here; people see it in the title bar.
         .background(alignment: .topLeading) {
-            Color.clear
-                .frame(width: 1, height: 1)
-                .accessibilityElement()
-                .accessibilityLabel(String(localized: "\(cachedVisibleCount) photos"))
+            Text(String(cachedVisibleCount))
+                .font(.system(size: 1))
+                .foregroundStyle(.clear)
+                .allowsHitTesting(false)
                 .accessibilityValue(String(cachedVisibleCount))
                 .accessibilityIdentifier("library.photoCount")
         }

@@ -259,7 +259,7 @@ struct LibraryFilterChips: View {
                 filterMenuLabel(String(localized: "No memory"), selected: selectedMemoryFilter == .noMemory)
             }
         } label: {
-            filterMenuTitle(String(localized: "Memory"), systemImage: "text.quote", selected: selectedMemoryFilter != .all)
+            filterMenuTitle(String(localized: "Memory"), systemImage: "quote.bubble", selected: selectedMemoryFilter != .all)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

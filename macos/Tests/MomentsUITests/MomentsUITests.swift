@@ -198,6 +198,22 @@ final class MomentsUITests: XCTestCase {
 
     func testTimelinePlaceSelectsLibraryItem() {
         let app = launch(language: "en")
+        timelineJumpSelectsLibraryItem(app)
+    }
+
+    /// The Library restores where the user left it; a Timeline jump must still win.
+    func testTimelinePlaceSelectsLibraryItemAfterScrolling() {
+        let app = launch(language: "en")
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+            .firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
+        photo.scroll(byDeltaX: 0, deltaY: -1500)
+        Thread.sleep(forTimeInterval: 1)
+        timelineJumpSelectsLibraryItem(app)
+    }
+
+    private func timelineJumpSelectsLibraryItem(_ app: XCUIApplication) {
         element(in: app, identifier: "sidebar.timeline").click()
 
         let place = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.place.")).firstMatch

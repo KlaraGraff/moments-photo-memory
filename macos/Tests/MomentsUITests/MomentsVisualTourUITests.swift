@@ -44,6 +44,14 @@ final class MomentsVisualTourUITests: XCTestCase {
         XCTAssertTrue(app.sheets.firstMatch.waitForExistence(timeout: timeout))
         Thread.sleep(forTimeInterval: 0.6)
         capture(app, "tour-03-smart-group-sheet-evidence")
+        // Two conditions show whether rows and the label column line up.
+        let addCondition = element(app, "groupEditor.addCondition")
+        if addCondition.waitForExistence(timeout: timeout) {
+            addCondition.click()
+            addCondition.click()
+            Thread.sleep(forTimeInterval: 0.6)
+            capture(app, "tour-03b-smart-group-conditions-evidence")
+        }
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: timeout))
 

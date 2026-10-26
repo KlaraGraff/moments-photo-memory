@@ -421,6 +421,8 @@ struct LibraryView: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        // Chip labels read as ink; the app accent would turn every chip red.
+        .tint(LibraryPalette.ink)
         .fixedSize()
         .paperChip(selected: selected != nil)
         .foregroundStyle(LibraryPalette.ink)
@@ -466,6 +468,8 @@ struct LibraryView: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        // Chip labels read as ink; the app accent would turn every chip red.
+        .tint(LibraryPalette.ink)
         .fixedSize()
         .paperChip(selected: dateFilterLabel != nil)
     }
@@ -492,6 +496,8 @@ struct LibraryView: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        // Chip labels read as ink; the app accent would turn every chip red.
+        .tint(LibraryPalette.ink)
         .fixedSize()
         .paperChip(selected: selectedMemoryFilter != .all)
     }
@@ -512,6 +518,8 @@ struct LibraryView: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        // Chip labels read as ink; the app accent would turn every chip red.
+        .tint(LibraryPalette.ink)
         .fixedSize()
         .paperChip(selected: !personFilterID.isEmpty)
     }
@@ -1416,9 +1424,9 @@ struct GroupEditorSheet: View {
                         .labelsHidden()
                         .fixedSize()
                     }
-                    GridRow(alignment: .top) {
+                    // First-baseline: the label lines up with the first condition's text.
+                    GridRow {
                         PaperFormLabel(String(localized: "Conditions"))
-                            .padding(.top, 15)
                         VStack(alignment: .leading, spacing: 10) {
                             if !rules.isEmpty {
                                 VStack(alignment: .leading, spacing: 8) {
@@ -1438,6 +1446,7 @@ struct GroupEditorSheet: View {
                                 }
                                 .buttonStyle(.borderless)
                                 .foregroundStyle(Paper.accent)
+                                .accessibilityIdentifier("groupEditor.addCondition")
                                 Text(String(format: String(localized: "Matches now message"), matchCount))
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(Paper.muted)

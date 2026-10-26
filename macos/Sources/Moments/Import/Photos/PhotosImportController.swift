@@ -280,36 +280,36 @@ public struct PhotosImportStatusView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Group {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 switch controller.authorizationStatus {
                 case .denied, .restricted:
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Label("Apple Photos access is unavailable", systemImage: "lock.slash")
-                            .foregroundStyle(Paper.muted)
-                        Spacer(minLength: 8)
-                        Button("Open System Settings") {
-                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos")!)
-                        }
-                    }
-                case .limited:
+                    Label("Apple Photos access is unavailable", systemImage: "lock.slash")
+                        .foregroundStyle(Paper.muted)
+                case .limited where controller.preview == nil:
                     Label("Apple Photos access is limited", systemImage: "photo.on.rectangle.angled")
                         .foregroundStyle(Paper.muted)
                 default:
-                    EmptyView()
+                    if let preview = controller.preview {
+                        Text("\(preview.count) photos or videos selected")
+                            .monospacedDigit()
+                    } else {
+                        Label("Apple Photos", systemImage: "photo.on.rectangle")
+                    }
                 }
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                if let preview = controller.preview {
-                    Text("\(preview.count) photos or videos selected")
-                        .foregroundStyle(Paper.muted)
-                        .monospacedDigit()
-                    Spacer(minLength: 8)
-                    Button("Import") { onImport() }
-                        .keyboardShortcut(.defaultAction)
-                        .buttonStyle(.borderedProminent)
-                } else {
-                    Spacer(minLength: 8)
-                    Button("Count selection") { controller.preview(selection: selection) }
+                Spacer(minLength: 8)
+                switch controller.authorizationStatus {
+                case .denied, .restricted:
+                    Button("Open System Settings") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos")!)
+                    }
+                default:
+                    if controller.preview != nil {
+                        Button("Import") { onImport() }
+                            .keyboardShortcut(.defaultAction)
+                            .buttonStyle(.borderedProminent)
+                    } else {
+                        Button("Count selection") { controller.preview(selection: selection) }
+                    }
                 }
             }
             if controller.state == .importing {

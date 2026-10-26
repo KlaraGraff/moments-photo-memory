@@ -15,7 +15,9 @@ EXACT={'.gitignore','README.md','AGENTS.md','demo/sample-data.json','docs/design
        'scripts/run-ui-smoke.sh','scripts/run-ui-import-check.sh','scripts/make_synthetic_import_fixtures.swift',
        'vendor/leaflet/leaflet.js','vendor/leaflet/leaflet.css','vendor/leaflet/LICENSE',
        'vendor/leaflet/manifest.json','docs/sharing-design.md',
-       'macos/Config/Signing.xcconfig','macos/Config/Local.xcconfig.example'}
+       'macos/Config/Signing.xcconfig','macos/Config/Local.xcconfig.example',
+       'macos/Sources/Moments/Assets.xcassets/Contents.json',
+       'macos/Sources/Moments/Assets.xcassets/AccentColor.colorset/Contents.json'}
 # Third-party binaries allowed only byte for byte. Regenerate SFace with
 # scripts/convert_sface_coreml.py and update these hashes in the same commit.
 PINNED={

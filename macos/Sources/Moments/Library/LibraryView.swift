@@ -434,7 +434,7 @@ struct LibraryView: View {
     private var results: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                // Headings and photo rows space themselves (LibrarySectionView).
+                // Headings and section grids space themselves (LibrarySectionView).
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(cachedSections) { section in
                         LibrarySectionView(
@@ -457,7 +457,7 @@ struct LibraryView: View {
             // the user left, in its first layout. Scrolling there after
             // onAppear showed the top first and then jumped.
             .scrollPosition(
-                // Written only when the top row really changes: the scroll
+                // Written only when the top section really changes: the scroll
                 // view reports it on every layout, and each write would
                 // rebuild the whole Library while the sidebar moves.
                 id: Binding(get: { state.topSectionScrollID }, set: { if state.topSectionScrollID != $0 { state.topSectionScrollID = $0 } }),

@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import QuartzCore
+import SwiftUI
 
 /// UI-test-only, enabled by `-MomentsUITestResizeProbe <folder>`: measures how
 /// smoothly the photos follow the sidebar. Pressing "r" makes the app hide the
@@ -140,9 +141,25 @@ enum ResizeProbe {
             + grid.map { String(format: "%d@%.0f", $0.columns, $0.width) }.joined(separator: " ") + "\n"
     }
 
+    static let isEnabled = ProcessInfo.processInfo.arguments.contains("-MomentsUITestResizeProbe")
+
     private final class Target: NSObject {
         @objc func tick(_ link: CADisplayLink) {
             MainActor.assumeIsolated { ResizeProbe.tick() }
+        }
+    }
+}
+/// Reports a Library grid's width to the probe while it measures.
+struct ResizeProbeGridWidth: ViewModifier {
+    let columns: Int
+
+    func body(content: Content) -> some View {
+        if ResizeProbe.isEnabled {
+            content.onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
+                ResizeProbe.noteGrid(columns: columns, width: width)
+            }
+        } else {
+            content
         }
     }
 }

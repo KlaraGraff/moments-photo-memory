@@ -646,8 +646,14 @@ private struct LibrarySectionView: View {
 
     private var size: LibraryThumbnailSize { LibraryThumbnailSize(level: sizeLevel) }
 
+    private var columnCount: Int {
+        LibraryGridNavigation.columns(windowWidth: state.windowWidth, minimum: size.minimumWidth, spacing: size.spacing)
+    }
+
+    /// A fixed number of flexible columns: when the space changes the photos
+    /// grow or shrink with it, and a row never reflows mid-animation.
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: size.minimumWidth, maximum: size.maximumWidth), spacing: size.spacing, alignment: .top)]
+        Array(repeating: GridItem(.flexible(), spacing: size.spacing, alignment: .top), count: columnCount)
     }
 
     var body: some View {
@@ -672,7 +678,7 @@ private struct LibrarySectionView: View {
                     LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact)
                 }
             }
-            .measuresLibraryGridColumns(state, minimum: size.minimumWidth, spacing: size.spacing)
+            .reportsLibraryGridColumns(columnCount, to: state)
         }
     }
 

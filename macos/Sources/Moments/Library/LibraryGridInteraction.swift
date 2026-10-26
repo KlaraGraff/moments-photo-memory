@@ -21,21 +21,13 @@ extension View {
     }
 
     /// Reports the grid's column count to `state` for the up and down arrows.
-    func measuresLibraryGridColumns(_ state: LibraryViewState, minimum: CGFloat, spacing: CGFloat) -> some View {
-        background {
-            GeometryReader { geometry in
-                Color.clear
-                    .onAppear {
-                        state.gridColumns = LibraryGridNavigation.columns(width: geometry.size.width, minimum: minimum, spacing: spacing)
-                    }
-                    .onChange(of: geometry.size.width) { _, width in
-                        state.gridColumns = LibraryGridNavigation.columns(width: width, minimum: minimum, spacing: spacing)
-                        #if DEBUG
-                        ResizeProbe.noteGrid(columns: state.gridColumns, width: width)
-                        #endif
-                    }
-            }
+    func reportsLibraryGridColumns(_ columns: Int, to state: LibraryViewState) -> some View {
+        onChange(of: columns, initial: true) { _, columns in
+            if state.gridColumns != columns { state.gridColumns = columns }
         }
+        #if DEBUG
+        .modifier(ResizeProbeGridWidth(columns: columns))
+        #endif
     }
 }
 

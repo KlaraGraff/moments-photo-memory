@@ -145,7 +145,7 @@ struct ContentView: View {
             }
             .background(MomentsPalette.sidebar)
             .navigationTitle("Moments")
-            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
+            .navigationSplitViewColumnWidth(min: 176, ideal: LibraryGridNavigation.defaultSidebarWidth, max: 240)
         } detail: {
             Group {
                 switch selection ?? .library {
@@ -178,6 +178,9 @@ struct ContentView: View {
             .toolbarBackground(.visible, for: .windowToolbar)
         }
         .frame(minWidth: 900, minHeight: 600)
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
+            if libraryState.windowWidth != width { libraryState.windowWidth = width }
+        }
         // The large photo view is a card over the whole window, sidebar included.
         .overlay {
             if let request = shared.viewerRequest {

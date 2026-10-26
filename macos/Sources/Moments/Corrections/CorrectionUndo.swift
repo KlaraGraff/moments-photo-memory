@@ -137,6 +137,12 @@ private struct CorrectionUndoCapsule: View {
 private struct FrontLayer<Content: View>: NSViewRepresentable {
     let content: Content
 
+    func makeCoordinator() -> NSHostingController<Content> {
+        // Measures the content: the shown view has no Auto Layout size, so
+        // its own fitting size is zero.
+        NSHostingController(rootView: content)
+    }
+
     func makeNSView(context: Context) -> FirstClickHostingView<Content> {
         let view = FirstClickHostingView(rootView: content)
         // SwiftUI sets the frame; no Auto Layout size of its own to fight it.
@@ -146,12 +152,14 @@ private struct FrontLayer<Content: View>: NSViewRepresentable {
 
     func updateNSView(_ view: FirstClickHostingView<Content>, context: Context) {
         view.rootView = content
+        context.coordinator.rootView = content
     }
 
     /// Its own size, but no wider than offered, so a long line truncates.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: FirstClickHostingView<Content>, context: Context) -> CGSize? {
-        let fitting = nsView.fittingSize
-        return CGSize(width: min(fitting.width, proposal.width ?? fitting.width), height: fitting.height)
+        let unbounded = CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        let ideal = context.coordinator.sizeThatFits(in: unbounded)
+        return CGSize(width: min(ideal.width, proposal.width ?? ideal.width), height: ideal.height)
     }
 }
 

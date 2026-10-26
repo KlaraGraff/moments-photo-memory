@@ -75,6 +75,27 @@ final class CorrectionsTests: XCTestCase {
         XCTAssertEqual(photo.timeZoneIdentifier, "Asia/Tokyo")
     }
 
+    func testAZoneFromAnEarlierCorrectionStaysProtected() throws {
+        let context = try makeContext()
+        let photo = MediaItem(id: "a", captureDate: base, timeZoneIdentifier: "Asia/Shanghai")
+        context.insert(photo)
+        DateTimeAdjustment.apply(to: [photo], referenceDate: base.addingTimeInterval(hour), timeZone: TimeZone(identifier: "Asia/Tokyo"))
+        // Back to the camera's moment, still in Tokyo: the zone is still the person's.
+        DateTimeAdjustment.apply(to: [photo], referenceDate: base, timeZone: nil)
+        XCTAssertNotNil(photo.userCorrectedCaptureDateUTC)
+        XCTAssertEqual(photo.timeZoneIdentifier, "Asia/Tokyo")
+    }
+
+    func testUseOriginalGoesBackToTheCamerasZone() throws {
+        let context = try makeContext()
+        let photo = MediaItem(id: "a", captureDate: base, localTimeZoneOffsetMinutes: 120, timeZoneIdentifier: "Asia/Tokyo")
+        context.insert(photo)
+        DateTimeAdjustment.apply(to: [photo], referenceDate: base.addingTimeInterval(hour), timeZone: nil)
+        DateTimeAdjustment.revert([photo])
+        XCTAssertNil(photo.userCorrectedCaptureDateUTC)
+        XCTAssertEqual(photo.captureTimeZone.secondsFromGMT(for: base), 120 * 60)
+    }
+
     func testAdjustingBackToTheCameraTimeDropsTheCorrection() throws {
         let context = try makeContext()
         let photo = MediaItem(id: "a", captureDate: base)
@@ -208,6 +229,29 @@ final class CorrectionsTests: XCTestCase {
         PlaceNames.restore(changes, context: context)
         try context.save()
         XCTAssertEqual(PlaceNames.groups(for: items).map(\.name).sorted(), ["Kyoto", "Kyōto", "Osaka", "京都"])
+    }
+
+    func testSmartGroupsAndPlaceDescriptionsFollowARename() throws {
+        let context = try makeContext()
+        let city = Place(id: "city", name: "Kyoto", kind: .city)
+        context.insert(city)
+        let a = MediaItem(id: "a", captureDate: base, place: city)
+        context.insert(a)
+        let key = PlaceNames.key("Kyoto")
+        let group = UserGroup(name: "Kyoto days", kind: .smart, rules: UserGroupRuleSet(rules: [UserGroupRule(field: .place, value: PlaceNames.optionPrefix + key)]))
+        context.insert(group)
+        let note = PlaceNote(placeName: "Kyoto", text: "Synthetic description")
+        context.insert(note)
+        try context.save()
+
+        let changes = PlaceNames.rename(key: key, to: "京都", items: [a], context: context)
+        XCTAssertEqual(group.rules.rules.first?.value, PlaceNames.optionPrefix + PlaceNames.key("京都"))
+        XCTAssertTrue(UserGroupRuleEngine.matches(a, ruleSet: group.rules))
+        XCTAssertEqual(note.placeKey, PlaceNote.key(for: "京都"))
+
+        PlaceNames.restore(changes, context: context)
+        XCTAssertEqual(group.rules.rules.first?.value, PlaceNames.optionPrefix + key)
+        XCTAssertEqual(note.placeName, "Kyoto")
     }
 
     func testRenamingBackToTheImportedNameRemovesTheRename() throws {

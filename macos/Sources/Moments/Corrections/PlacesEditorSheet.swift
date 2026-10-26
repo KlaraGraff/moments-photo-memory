@@ -158,7 +158,7 @@ struct PlacesEditorSheet: View {
         record(changes, message: String(localized: "Merged \(sources.count + 1) places into “\(target.name)”"), moving: sources, to: target.key)
     }
 
-    private func record(_ changes: [PlaceNames.OverrideChange], message: String, moving oldKeys: [String], to newKey: String) {
+    private func record(_ changes: PlaceNames.Changes, message: String, moving oldKeys: [String], to newKey: String) {
         guard !changes.isEmpty else { return }
         try? modelContext.save()
         // A filter on a name that just went away follows it to the new one,

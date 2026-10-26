@@ -114,13 +114,47 @@ enum PlaceNames {
         let created: Bool
     }
 
+    /// A smart group's place rule that followed a renamed name.
+    struct RuleChange: Equatable {
+        let groupID: String
+        let ruleID: UUID
+        let previousValue: String
+    }
+
+    /// One of this person's place descriptions that followed a renamed name.
+    struct NoteChange: Equatable {
+        let noteID: String
+        let previousName: String
+        let previousKey: String
+    }
+
+    /// Everything one rename or merge wrote.
+    struct Changes: Equatable {
+        var overrides: [OverrideChange] = []
+        var rules: [RuleChange] = []
+        var notes: [NoteChange] = []
+
+        var isEmpty: Bool { overrides.isEmpty && rules.isEmpty && notes.isEmpty }
+
+        mutating func append(_ other: Changes) {
+            overrides += other.overrides
+            rules += other.rules
+            notes += other.notes
+        }
+    }
+
     /// Renames every place and photo listed under `key` to `newName`. Places
     /// get this person's place-wide name; photos with their own correction
-    /// get the new name in it. Renaming to a name another place has merges them.
+    /// get the new name in it. Smart groups on the old name and this
+    /// person's description of the place follow. Renaming to a name another
+    /// place has merges them.
     @discardableResult
-    static func rename(key: String, to newName: String, items: [MediaItem], context: ModelContext, now: Date = .now) -> [OverrideChange] {
+    static func rename(key: String, to newName: String, items: [MediaItem], context: ModelContext, now: Date = .now) -> Changes {
         let value = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return [] }
+        guard !value.isEmpty else { return Changes() }
+        var result = Changes()
+        result.rules = moveGroupRules(from: key, to: Self.key(value), context: context, now: now)
+        result.notes = movePlaceNotes(from: key, to: value, context: context, now: now)
         var changes: [OverrideChange] = []
         var renamedPlaceIDs = Set<String>()
         for item in items where matches(item, key: key) {
@@ -148,15 +182,57 @@ enum PlaceNames {
                 depth += 1
             }
         }
+        result.overrides = changes
+        return result
+    }
+
+    private static func moveGroupRules(from oldKey: String, to newKey: String, context: ModelContext, now: Date) -> [RuleChange] {
+        guard oldKey != newKey else { return [] }
+        var changes: [RuleChange] = []
+        for group in (try? context.fetch(FetchDescriptor<UserGroup>())) ?? [] {
+            var rules = group.rules
+            var changed = false
+            for index in rules.rules.indices where rules.rules[index].field == .place && rules.rules[index].value == optionPrefix + oldKey {
+                changes.append(RuleChange(groupID: group.id, ruleID: rules.rules[index].id, previousValue: rules.rules[index].value))
+                rules.rules[index].value = optionPrefix + newKey
+                changed = true
+            }
+            if changed {
+                group.rules = rules
+                group.updatedAt = now
+            }
+        }
+        return changes
+    }
+
+    /// This person's descriptions are found by place name, so they follow a
+    /// rename, unless the new name already has one of theirs.
+    private static func movePlaceNotes(from oldKey: String, to newName: String, context: ModelContext, now: Date) -> [NoteChange] {
+        let notes = ((try? context.fetch(FetchDescriptor<PlaceNote>())) ?? []).filter { $0.authorAccountID == MomentsAccount.localID }
+        let newNoteKey = PlaceNote.key(for: newName)
+        guard !notes.contains(where: { $0.placeKey == newNoteKey }) else { return [] }
+        var changes: [NoteChange] = []
+        for note in notes where Self.key(note.placeName) == oldKey && note.placeKey != newNoteKey {
+            changes.append(NoteChange(noteID: note.id, previousName: note.placeName, previousKey: note.placeKey))
+            note.placeName = newName
+            note.placeKey = newNoteKey
+            note.updatedAt = now
+            // One description per place: the first moved, the rest stay.
+            break
+        }
         return changes
     }
 
     /// Merges the places listed under `sourceKeys` into the one under
     /// `targetKey`: they all take its name.
     @discardableResult
-    static func merge(_ sourceKeys: [String], into targetKey: String, items: [MediaItem], context: ModelContext, now: Date = .now) -> [OverrideChange] {
-        guard let target = groups(for: items).first(where: { $0.key == targetKey }) else { return [] }
-        return sourceKeys.filter { $0 != targetKey }.flatMap { rename(key: $0, to: target.name, items: items, context: context, now: now) }
+    static func merge(_ sourceKeys: [String], into targetKey: String, items: [MediaItem], context: ModelContext, now: Date = .now) -> Changes {
+        guard let target = groups(for: items).first(where: { $0.key == targetKey }) else { return Changes() }
+        var changes = Changes()
+        for source in sourceKeys where source != targetKey {
+            changes.append(rename(key: source, to: target.name, items: items, context: context, now: now))
+        }
+        return changes
     }
 
     /// Gives a place this person's name for it. Its own name back removes the rename.
@@ -179,7 +255,24 @@ enum PlaceNames {
         return OverrideChange(overrideID: override.id, previousName: nil, created: true)
     }
 
-    static func restore(_ changes: [OverrideChange], context: ModelContext, now: Date = .now) {
+    static func restore(_ all: Changes, context: ModelContext, now: Date = .now) {
+        let groups = (try? context.fetch(FetchDescriptor<UserGroup>())) ?? []
+        for change in all.rules.reversed() {
+            guard let group = groups.first(where: { $0.id == change.groupID }) else { continue }
+            var rules = group.rules
+            guard let index = rules.rules.firstIndex(where: { $0.id == change.ruleID }) else { continue }
+            rules.rules[index].value = change.previousValue
+            group.rules = rules
+            group.updatedAt = now
+        }
+        let notes = (try? context.fetch(FetchDescriptor<PlaceNote>())) ?? []
+        for change in all.notes.reversed() {
+            guard let note = notes.first(where: { $0.id == change.noteID }) else { continue }
+            note.placeName = change.previousName
+            note.placeKey = change.previousKey
+            note.updatedAt = now
+        }
+        let changes = all.overrides
         let ids = Array(Set(changes.map(\.overrideID)))
         let overrides = (try? context.fetch(FetchDescriptor<PlaceOverride>(predicate: #Predicate { ids.contains($0.id) }))) ?? []
         let byID = Dictionary(overrides.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })

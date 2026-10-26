@@ -45,7 +45,8 @@ final class MomentsCorrectionsUITests: XCTestCase {
         // One hour (or minute) later for the earliest photo moves both.
         let time = element(in: app, identifier: "date.editor.time")
         XCTAssertTrue(time.waitForExistence(timeout: timeout))
-        time.click()
+        // Into the field's digits, clear of its "Time" label.
+        time.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).click()
         app.typeKey(.upArrow, modifierFlags: [])
         XCTAssertTrue(element(in: app, identifier: "date.editor.shift").waitForExistence(timeout: timeout), "The sheet does not say how far the photos move")
         capture(app, named: "\(prefix)-02-shift-evidence")
@@ -103,7 +104,8 @@ final class MomentsCorrectionsUITests: XCTestCase {
         element(in: app, identifier: "sidebar.map").click()
         let filters = element(in: app, identifier: "map.filters")
         XCTAssertTrue(filters.waitForExistence(timeout: 30), "The Map has no filter bar")
-        let place = filters.menuButtons["Place"].firstMatch
+        // The menu's label becomes the chosen place, so find it by identifier.
+        let place = filters.descendants(matching: .any).matching(identifier: "filter.place").firstMatch
         XCTAssertTrue(place.waitForExistence(timeout: timeout))
         place.click()
         let merged = app.menuItems["Demo place 1"].firstMatch
@@ -119,7 +121,7 @@ final class MomentsCorrectionsUITests: XCTestCase {
     }
 
     private func openPlacesEditor(_ app: XCUIApplication) {
-        let place = app.menuButtons["Place"].firstMatch
+        let place = element(in: app, identifier: "filter.place")
         XCTAssertTrue(place.waitForExistence(timeout: timeout), "The Library has no Place filter")
         place.click()
         let edit = app.menuItems["Rename or Merge Places…"].firstMatch
@@ -157,7 +159,8 @@ final class MomentsCorrectionsUITests: XCTestCase {
 
         // In the large viewer: Sam's photo, "This isn't Sam, it's… Alex".
         element(in: app, identifier: "people.person.demo-person-sam").click()
-        let photo = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo.")).firstMatch
+        // The seeded Sam face is on the third demo photo.
+        let photo = element(in: app, identifier: "library.photo.D0003")
         XCTAssertTrue(photo.waitForExistence(timeout: timeout))
         photo.doubleClick()
         XCTAssertTrue(element(in: app, identifier: "viewer").waitForExistence(timeout: timeout), "Double click did not open the photo")

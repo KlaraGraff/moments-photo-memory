@@ -13,6 +13,9 @@ final class CorrectionUndo: Identifiable {
     /// The Edit menu's name for it ("Undo Adjust Date and Time").
     let actionName: String
     private var restore: (@MainActor (ModelContext) -> Void)?
+    /// The window's undo manager it was put on, so Undo from the bar can
+    /// take it off the Edit menu again.
+    weak var undoManager: UndoManager?
 
     init(message: String, actionName: String, restore: @escaping @MainActor (ModelContext) -> Void) {
         self.message = message
@@ -25,6 +28,7 @@ final class CorrectionUndo: Identifiable {
     func perform(in context: ModelContext) {
         guard let restore else { return }
         self.restore = nil
+        if undoManager?.isUndoing != true { undoManager?.removeAllActions(withTarget: self) }
         restore(context)
         try? context.save()
     }
@@ -37,10 +41,11 @@ extension SelectionModel {
     func recordCorrection(_ correction: CorrectionUndo, context: ModelContext) {
         lastCorrection = correction
         let undoManager = NSApp.mainWindow?.undoManager
-        undoManager?.registerUndo(withTarget: self) { model in
+        correction.undoManager = undoManager
+        undoManager?.registerUndo(withTarget: correction) { [weak self] correction in
             MainActor.assumeIsolated {
                 correction.perform(in: context)
-                if model.lastCorrection === correction { model.lastCorrection = nil }
+                if self?.lastCorrection === correction { self?.lastCorrection = nil }
             }
         }
         undoManager?.setActionName(correction.actionName)

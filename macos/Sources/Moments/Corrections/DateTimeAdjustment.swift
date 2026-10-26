@@ -93,9 +93,12 @@ enum DateTimeAdjustment {
             snapshot.items.append(ItemSnapshot(item))
             let newDate = item.effectiveCaptureDate.map { $0.addingTimeInterval(delta) } ?? referenceDate
             let zoneChanged = timeZone.map { $0.identifier != item.timeZoneIdentifier } ?? false
+            // A zone set by an earlier correction is the person's too; keeping
+            // the correction keeps imports from putting the old zone back.
+            let keepsEarlierZone = item.userCorrectedCaptureDateUTC != nil && item.timeZoneIdentifier != nil
             if let timeZone { item.timeZoneIdentifier = timeZone.identifier }
             // Back to the camera's own time, in its own zone: the correction goes.
-            if !zoneChanged, let original = item.captureDate, abs(original.timeIntervalSince(newDate)) < 1 {
+            if !zoneChanged, !keepsEarlierZone, let original = item.captureDate, abs(original.timeIntervalSince(newDate)) < 1 {
                 item.userCorrectedCaptureDateUTC = nil
                 if item.timeConfidenceRaw == ImportTimeConfidence.userCorrected.rawValue { item.timeConfidenceRaw = nil }
             } else {
@@ -110,13 +113,18 @@ enum DateTimeAdjustment {
         return snapshot
     }
 
-    /// Goes back to the camera's time for every photo that was adjusted.
+    /// Goes back to the camera's time for every photo that was adjusted, in
+    /// the zone the camera recorded when it did (otherwise the next Photos
+    /// import looks the zone up again).
     @discardableResult
     static func revert(_ items: [MediaItem], now: Date = .now) -> Snapshot {
         var snapshot = Snapshot(trips: tripSnapshots(for: items))
         for item in items where item.userCorrectedCaptureDateUTC != nil {
             snapshot.items.append(ItemSnapshot(item))
             item.userCorrectedCaptureDateUTC = nil
+            if let minutes = item.localTimeZoneOffsetMinutes, let zone = TimeZone(secondsFromGMT: minutes * 60) {
+                item.timeZoneIdentifier = zone.identifier
+            }
             if item.timeConfidenceRaw == ImportTimeConfidence.userCorrected.rawValue { item.timeConfidenceRaw = nil }
             if let date = item.captureDate { item.localDayKey = dayKey(for: date, in: item.captureTimeZone) }
             item.updatedAt = now

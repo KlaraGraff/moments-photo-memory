@@ -179,6 +179,7 @@ struct LibraryFilterChips: View {
                     }
                 }
             }
+            .accessibilityIdentifier("filter.place")
             .sheet(isPresented: $showingPlacesEditor) { PlacesEditorSheet() }
 
             filterMenu(label: String(localized: "Trip"), selected: selectedTripName) {

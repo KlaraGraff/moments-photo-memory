@@ -155,7 +155,7 @@ struct PaperScreenHeader<Detail: View, Trailing: View>: View {
     @ViewBuilder var detail: Detail
     @ViewBuilder var trailing: Trailing
 
-    init(_ title: String, @ViewBuilder detail: () -> Detail = { EmptyView() }, @ViewBuilder trailing: () -> Trailing = { EmptyView() }) {
+    init(_ title: String, @ViewBuilder detail: () -> Detail, @ViewBuilder trailing: () -> Trailing) {
         self.title = title
         self.detail = detail()
         self.trailing = trailing()
@@ -180,6 +180,18 @@ struct PaperScreenHeader<Detail: View, Trailing: View>: View {
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.top, PaperMetrics.screenTopInset)
         .padding(.bottom, 18)
+    }
+}
+
+extension PaperScreenHeader where Trailing == EmptyView {
+    init(_ title: String, @ViewBuilder detail: () -> Detail) {
+        self.init(title, detail: detail, trailing: { EmptyView() })
+    }
+}
+
+extension PaperScreenHeader where Detail == EmptyView, Trailing == EmptyView {
+    init(_ title: String) {
+        self.init(title, detail: { EmptyView() }, trailing: { EmptyView() })
     }
 }
 

@@ -401,12 +401,18 @@ private struct TripDetailView: View {
     }
 }
 
-private struct TripDaySection: View {
+/// One day: its heading, its memory line, then its places and travel.
+/// Shared by a trip ("Day 2") and the Timeline (the date as the heading,
+/// with the trips that day belongs to).
+struct TripDaySection: View {
     let day: TimelineDay
     let number: Int?
     let memories: [CollectionMemory]
     let itemByID: [String: MediaItem]
     let onOpen: (String) -> Void
+    /// Trips this day belongs to, shown as links on the Timeline.
+    var trips: [TripLink] = []
+    var onOpenTrip: (String) -> Void = { _ in }
     @Environment(\.locale) private var locale
 
     private var photoCount: Int { day.places.reduce(0) { $0 + $1.photoCount } }
@@ -418,15 +424,32 @@ private struct TripDaySection: View {
                     Text("Day \(number)")
                         .font(.system(size: 21, weight: .medium, design: .serif))
                         .foregroundStyle(Paper.ink)
+                    if let date = day.date {
+                        Text(date, format: .dateTime.weekday(.wide).month(.wide).day().year().locale(locale))
+                            .font(.caption)
+                            .foregroundStyle(Paper.muted)
+                    }
+                } else if let date = day.date {
+                    Text(date, format: .dateTime.weekday(.wide).month(.wide).day().locale(locale))
+                        .font(.system(size: 21, weight: .medium, design: .serif))
+                        .foregroundStyle(Paper.ink)
+                    Text(date, format: .dateTime.year().locale(locale))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Paper.muted)
                 } else {
                     Text("Date to add")
                         .font(.system(size: 21, weight: .medium, design: .serif))
                         .foregroundStyle(Paper.muted)
                 }
-                if let date = day.date {
-                    Text(date, format: .dateTime.weekday(.wide).month(.wide).day().year().locale(locale))
-                        .font(.caption)
-                        .foregroundStyle(Paper.muted)
+                ForEach(trips) { trip in
+                    Button { onOpenTrip(trip.id) } label: {
+                        Label(trip.name, systemImage: "suitcase")
+                            .font(.caption)
+                            .foregroundStyle(Paper.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Open this trip"))
+                    .accessibilityIdentifier("timeline.trip.\(trip.id)")
                 }
                 Spacer()
                 Text(String(localized: "\(photoCount) photos"))
@@ -457,7 +480,7 @@ private struct TripDaySection: View {
     }
 }
 
-private struct TripPlaceBlock: View {
+struct TripPlaceBlock: View {
     let place: TimelinePlace
     let itemByID: [String: MediaItem]
     let onOpen: (String) -> Void
@@ -553,7 +576,7 @@ private struct TripPlaceBlock: View {
     }
 }
 
-private struct TripTravelRow: View {
+struct TripTravelRow: View {
     let travel: TimelineTravel
     @Environment(\.locale) private var locale
 
@@ -583,6 +606,12 @@ private struct TripTravelRow: View {
         formatter.unitOptions = .naturalScale
         return formatter.string(from: Measurement(value: meters, unit: UnitLength.meters))
     }
+}
+
+/// A trip a Timeline day belongs to.
+struct TripLink: Identifiable, Hashable {
+    let id: String
+    let name: String
 }
 
 // MARK: - Text

@@ -6,6 +6,7 @@ enum SidebarDestination: Hashable {
     case places
     case footprints
     case timeline
+    case trips
 }
 
 /// A request to show photos in the large viewer, with the order to page through.

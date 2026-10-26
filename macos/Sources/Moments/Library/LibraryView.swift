@@ -297,6 +297,19 @@ struct LibraryView: View {
                     libraryGroupingPicker
                 }
             }
+            VStack(alignment: .leading, spacing: 12) {
+                libraryHeaderTitle
+                libraryTypePicker
+                libraryGroupingPicker
+            }
+            // Narrowest: the picker scrolls rather than pushing the window
+            // wider than it is.
+            VStack(alignment: .leading, spacing: 12) {
+                libraryHeaderTitle
+                ScrollView(.horizontal) { libraryTypePicker }
+                    .scrollIndicators(.hidden)
+                libraryGroupingPicker
+            }
         }
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.top, PaperMetrics.screenTopInset)

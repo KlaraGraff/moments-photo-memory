@@ -232,7 +232,6 @@ final class MomentsUITests: XCTestCase {
         let gear = element(in: app, identifier: "sidebar.settings")
         XCTAssertTrue(gear.waitForExistence(timeout: launchTimeout))
         let windowsBefore = app.windows.count
-        capture(app, named: "settings-00-before-gear-evidence")
         gear.click()
         // A whole-tree label search timed out on the runner; a new window is
         // enough to prove the Settings window opened.
@@ -511,6 +510,11 @@ final class MomentsUITests: XCTestCase {
                 XCTAssertLessThanOrEqual(count.frame.maxX, after.minX, "The count runs under the picker after choosing \(segment)")
             }
         }
+        // The header never makes the window's content wider than the window.
+        let window = app.windows.firstMatch.frame
+        let grouping = element(in: app, identifier: "library.grouping")
+        XCTAssertLessThanOrEqual(grouping.frame.maxX, window.maxX + 0.5, "The header pushes past the window's right edge")
+        XCTAssertGreaterThanOrEqual(element(in: app, identifier: "sidebar.library").frame.minX, window.minX - 0.5, "The sidebar was pushed off the window")
         capture(app, named: "library-05-header-evidence")
     }
 

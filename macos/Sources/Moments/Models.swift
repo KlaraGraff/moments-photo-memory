@@ -2547,7 +2547,75 @@ public enum MomentsStoreError: LocalizedError, Equatable {
     }
 }
 
+/// What happened when the store could not be opened and was moved aside.
+public struct StoreRecovery: Equatable, Sendable {
+    public let backupFolder: URL
+}
+
+/// Remembers a recovery until the user has seen the alert once.
+public enum StoreRecoveryNotice {
+    public static let defaultsKey = "moments.store.recoveredBackupPath"
+
+    public static func record(_ recovery: StoreRecovery, in defaults: UserDefaults = .standard) {
+        defaults.set(recovery.backupFolder.path, forKey: defaultsKey)
+    }
+}
+
 public enum MomentsPersistence {
+    /// Opens the store; if it cannot be opened, moves the whole store set into
+    /// `Backups/<timestamp>/` next to it (never deleting or overwriting
+    /// anything) and opens a fresh, empty store at the normal path. If the
+    /// backup cannot be made, the original error is rethrown unchanged.
+    public static func openWithRecovery(url: URL? = nil, now: Date = .now) throws -> (container: ModelContainer, recovery: StoreRecovery?) {
+        let storeURL = try url ?? defaultStoreURL()
+        do {
+            return (try makeContainer(url: storeURL), nil)
+        } catch {
+            guard FileManager.default.fileExists(atPath: storeURL.path),
+                  let backupFolder = try? backUpStoreSet(at: storeURL, now: now) else { throw error }
+            return (try makeContainer(url: storeURL), StoreRecovery(backupFolder: backupFolder))
+        }
+    }
+
+    /// Moves Moments.store, its -wal/-shm companions and its external-storage
+    /// folder (`.Moments_SUPPORT`) into a new timestamped backup folder.
+    static func backUpStoreSet(at storeURL: URL, now: Date) throws -> URL {
+        let fileManager = FileManager.default
+        let folder = storeURL.deletingLastPathComponent()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate, .withTime, .withTimeZone]
+        // Finder shows ":" as "/", so use dashes in the time.
+        let stamp = formatter.string(from: now).replacingOccurrences(of: ":", with: "-")
+        let backupRoot = folder.appending(path: "Backups", directoryHint: .isDirectory)
+        var backupFolder = backupRoot.appending(path: stamp, directoryHint: .isDirectory)
+        var suffix = 2
+        while fileManager.fileExists(atPath: backupFolder.path) {
+            backupFolder = backupRoot.appending(path: "\(stamp)-\(suffix)", directoryHint: .isDirectory)
+            suffix += 1
+        }
+        try fileManager.createDirectory(at: backupFolder, withIntermediateDirectories: true)
+        let storeName = storeURL.lastPathComponent
+        let supportName = "." + storeURL.deletingPathExtension().lastPathComponent + "_SUPPORT"
+        let members = try fileManager.contentsOfDirectory(atPath: folder.path).filter { name in
+            name == storeName || name.hasPrefix(storeName + "-") || name == supportName
+        }
+        var moved: [(from: URL, to: URL)] = []
+        do {
+            for name in members {
+                let source = folder.appending(path: name)
+                let destination = backupFolder.appending(path: name)
+                try fileManager.moveItem(at: source, to: destination)
+                moved.append((source, destination))
+            }
+        } catch {
+            // Put back whatever already moved, so the store set stays together.
+            for item in moved.reversed() { try? fileManager.moveItem(at: item.to, to: item.from) }
+            try? fileManager.removeItem(at: backupFolder)
+            throw error
+        }
+        return backupFolder
+    }
+
     public static func makeContainer(inMemory: Bool = false, url: URL? = nil) throws -> ModelContainer {
         if inMemory {
             let configuration = ModelConfiguration(isStoredInMemoryOnly: true)

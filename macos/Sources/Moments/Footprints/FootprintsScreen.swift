@@ -17,6 +17,15 @@ struct FootprintsScreen: View {
         )
     )
     @State private var cameraInputSignature: String?
+    /// Size of the map area; the overview camera is fitted to it.
+    @State private var mapSize: CGSize = .zero
+    /// The overview is refitted on resize; after the user flies to a country
+    /// the camera stays where they put it.
+    @State private var isShowingGlobeOverview = true
+    /// MapKit reports a programmatic camera with its own distance value, so
+    /// the first report after a move is the baseline for spotting user zooms.
+    @State private var awaitingProgrammaticCamera = false
+    @State private var programmaticDistance: Double?
 
     /// Created once per screen; a stored `let` would re-read the cache file
     /// from disk every time SwiftUI re-creates this view value.
@@ -32,7 +41,18 @@ struct FootprintsScreen: View {
             statsHeader
             Divider()
             HStack(spacing: 0) {
-                mapView
+                GeometryReader { proxy in
+                    mapView
+                        .onChange(of: proxy.size, initial: true) { _, size in
+                            mapSize = size
+                            refitGlobeOverview()
+                        }
+                }
+                // Map ignores the safe area. Flush against the floating
+                // sidebar it would extend under it and centre the globe on
+                // the hidden part; a 1 pt gap keeps it inside its own frame.
+                .padding(.leading, 1)
+                .clipped()
                 Divider()
                 countryPanel
                     .frame(minWidth: 250, idealWidth: 290, maxWidth: 340)
@@ -118,6 +138,18 @@ struct FootprintsScreen: View {
             }
         }
         .mapStyle(.imagery(elevation: .realistic))
+        .onMapCameraChange(frequency: .onEnd) { context in
+            if awaitingProgrammaticCamera {
+                awaitingProgrammaticCamera = false
+                programmaticDistance = context.camera.distance
+                return
+            }
+            guard isShowingGlobeOverview, let programmaticDistance else { return }
+            // Zooming by hand changes the distance; keep the user's camera.
+            if abs(context.camera.distance - programmaticDistance) > programmaticDistance * 0.05 {
+                isShowingGlobeOverview = false
+            }
+        }
         .mapControls {
             MapCompass()
             MapScaleView()
@@ -216,11 +248,21 @@ struct FootprintsScreen: View {
         moveCamera(to: center)
     }
 
+    private func refitGlobeOverview() {
+        guard isShowingGlobeOverview else { return }
+        moveCamera(to: screenState.snapshot.cameraTarget, animated: false)
+    }
+
     private func moveCamera(to target: FootprintsCameraTarget, animated: Bool = true) {
+        isShowingGlobeOverview = target.isGlobeOverview
+        let distance = target.isGlobeOverview
+            ? FootprintsCameraTarget.globeDistance(fitting: mapSize)
+            : target.distanceMetres
+        awaitingProgrammaticCamera = true
         let position = MapCameraPosition.camera(
             MapCamera(
                 centerCoordinate: target.coordinate,
-                distance: target.distanceMetres
+                distance: distance
             )
         )
         if animated && !reduceMotion {

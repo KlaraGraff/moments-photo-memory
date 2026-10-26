@@ -26,6 +26,7 @@ final class ImportController {
 
     func configure(container: ModelContainer) {
         modelContainer = container
+        PlaceNameBackfillScheduler.shared.start(container: container)
     }
 
     func chooseFolder() {
@@ -41,12 +42,14 @@ final class ImportController {
     func start(folder: URL) {
         guard let modelContainer else { return }
         task?.cancel()
+        PlaceNameBackfillScheduler.shared.beginImport()
         lastFolderURL = folder
         reviewSummary = nil
         state = .importing
         progress = ImportProgress(phase: .scanning, completed: 0, total: 0, message: String(localized: "Scanning folder"))
         let importer = FolderImporter()
         task = Task { [weak self] in
+            defer { PlaceNameBackfillScheduler.shared.endImport() }
             do {
                 let summary = try await importer.importFolder(folder, container: modelContainer) { progress in
                     Task { @MainActor [weak self] in
@@ -57,6 +60,7 @@ final class ImportController {
                 self?.progress = ImportProgress(phase: .finished, completed: summary.importedCount, total: summary.importedCount, message: String(localized: "Import complete"))
                 self?.reviewSummary = summary
                 self?.state = .finished
+                NotificationCenter.default.post(name: .momentsPeopleScanRequested, object: nil)
             } catch is CancellationError {
                 self?.progress = ImportProgress(phase: .cancelled, completed: self?.progress.completed ?? 0, total: self?.progress.total ?? 0, message: String(localized: "Import cancelled"))
                 self?.state = .cancelled

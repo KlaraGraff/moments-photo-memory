@@ -1,6 +1,28 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Looking up places" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orte werden gesucht"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Looking up places"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在查找地点"
+          }
+        }
+      }
+    },
     "Your library couldn't be opened" : {
       "localizations" : {
         "de" : {
@@ -4335,24 +4357,24 @@
         }
       }
     },
-  "+ New group": {
+  "New group": {
     "localizations": {
       "de": {
         "stringUnit": {
           "state": "translated",
-          "value": "+ Neue Gruppe"
+          "value": "Neue Gruppe"
         }
       },
       "en": {
         "stringUnit": {
           "state": "translated",
-          "value": "+ New group"
+          "value": "New group"
         }
       },
       "zh-Hans": {
         "stringUnit": {
           "state": "translated",
-          "value": "＋ 新建分组"
+          "value": "新建分组"
         }
       }
     }
@@ -4555,24 +4577,24 @@
       }
     }
   },
-  "+ Add condition": {
+  "Add condition": {
     "localizations": {
       "de": {
         "stringUnit": {
           "state": "translated",
-          "value": "+ Bedingung hinzufügen"
+          "value": "Bedingung hinzufügen"
         }
       },
       "en": {
         "stringUnit": {
           "state": "translated",
-          "value": "+ Add condition"
+          "value": "Add condition"
         }
       },
       "zh-Hans": {
         "stringUnit": {
           "state": "translated",
-          "value": "＋ 添加条件"
+          "value": "添加条件"
         }
       }
     }
@@ -5127,6 +5149,219 @@
       }
     }
   },
+  "Scan for people": {
+    "localizations": {
+      "de": { "stringUnit": { "state": "translated", "value": "Nach Personen suchen" } },
+      "en": { "stringUnit": { "state": "translated", "value": "Scan for people" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "扫描人物" } }
+    }
+  },
+  "People scanning is unavailable on this device.": {
+    "localizations": {
+      "de": { "stringUnit": { "state": "translated", "value": "Die Personensuche ist auf diesem Gerät nicht verfügbar." } },
+      "en": { "stringUnit": { "state": "translated", "value": "People scanning is unavailable on this device." } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "此设备无法使用人物扫描。" } }
+    }
+  },
+  "Paused to save battery": {
+    "localizations": {
+      "de": { "stringUnit": { "state": "translated", "value": "Zum Energiesparen pausiert" } },
+      "en": { "stringUnit": { "state": "translated", "value": "Paused to save battery" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "为节省电量已暂停" } }
+    }
+  },
+  "No people yet": {
+    "localizations": {
+      "de": { "stringUnit": { "state": "translated", "value": "Noch keine Personen" } },
+      "en": { "stringUnit": { "state": "translated", "value": "No people yet" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "暂未找到人物" } }
+    }
+  },
+  "Scan your library to find faces on this Mac.": {
+    "localizations": {
+      "de": { "stringUnit": { "state": "translated", "value": "Scanne deine Mediathek, um Gesichter auf diesem Mac zu finden." } },
+      "en": { "stringUnit": { "state": "translated", "value": "Scan your library to find faces on this Mac." } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "扫描图库，在这台 Mac 上查找人脸。" } }
+    }
+  },
+  "Named people": {
+    "localizations": {
+      "de": { "stringUnit": { "state": "translated", "value": "Benannte Personen" } },
+      "en": { "stringUnit": { "state": "translated", "value": "Named people" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "已命名人物" } }
+    }
+  },
+  "of": {
+    "localizations": {
+      "de": { "stringUnit": { "state": "translated", "value": "von" } },
+      "en": { "stringUnit": { "state": "translated", "value": "of" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "/" } }
+    }
+  },
+  "People": {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Personen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "People" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "人物" } }
+      }
+    },
+    "Person": {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Person" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Person" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "人物" } }
+      }
+    },
+    "Person:": {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Person:" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Person:" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "人物：" } }
+      }
+    },
+    "All people": {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Alle Personen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "All people" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "所有人物" } }
+      }
+    },
+    "Unnamed person": {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Unbenannte Person" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unnamed person" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未命名人物" } }
+      }
+    },
+    "People photo count": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "%d Fotos" } },
+        "en": { "stringUnit": { "state": "translated", "value": "%d photos" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "%d 张照片" } }
+      }
+    },
+    "Finding faces progress": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Gesichter werden gesucht… %d von %d" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Finding faces… %d of %d" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在查找人脸… %d / %d" } }
+      }
+    },
+    "Finding faces…": {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Gesichter werden gesucht…" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Finding faces…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在查找人脸…" } }
+      }
+    },
+    "Is this the same person?": {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Ist das dieselbe Person?" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Is this the same person?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这是同一个人吗？" } }
+      }
+    },
+    "Name this person": {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Diese Person benennen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Name this person" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "给这个人起名" } }
+      }
+    },
+    "Merge two people": {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Zwei Personen zusammenführen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Merge two people" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "合并两个人物" } }
+      }
+    },
+    "Remove a face from a person": {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Gesicht aus einer Person entfernen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove a face from a person" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从人物中移除一张脸" } }
+      }
+    },
+    "Hide a person": {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Person ausblenden" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Hide a person" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "隐藏人物" } }
+      }
+    },
+    "Merge with existing %@?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit vorhandener Person „%@“ zusammenführen?"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Merge with existing %@?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要合并到已有的「%@」吗？"
+          }
+        }
+      }
+    },
+    "Merge" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zusammenführen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Merge"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "合并"
+          }
+        }
+      }
+    },
+    "Keep separate" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Getrennt lassen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep separate"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分开保留"
+          }
+        }
+      }
+    },
+    "Skipped unavailable": {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nicht verfügbar, übersprungen: %d" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Skipped (unavailable): %d" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已跳过（不可用）：%d" } }
+      }
+    },
     "%lld suggestions waiting" : {
       "localizations" : {
         "de" : {

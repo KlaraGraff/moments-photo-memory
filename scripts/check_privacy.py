@@ -1,6 +1,7 @@
 """Check the publishable source tree or the exact staged Git blobs."""
 from pathlib import Path
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -15,6 +16,14 @@ EXACT={'.gitignore','README.md','AGENTS.md','demo/sample-data.json','docs/design
        'vendor/leaflet/leaflet.js','vendor/leaflet/leaflet.css','vendor/leaflet/LICENSE',
        'vendor/leaflet/manifest.json','docs/sharing-design.md',
        'macos/Config/Signing.xcconfig','macos/Config/Local.xcconfig.example'}
+# Third-party binaries allowed only byte for byte. Regenerate SFace with
+# scripts/convert_sface_coreml.py and update these hashes in the same commit.
+PINNED={
+ 'macos/Sources/Moments/People/SFace-LICENSE.txt':'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30',
+ 'macos/Sources/Moments/People/SFace.mlpackage/Manifest.json':'9a9a0616a0d8c0169fe56b4c7afe25aee2a6c2099881b0d2b598a78bcfd874be',
+ 'macos/Sources/Moments/People/SFace.mlpackage/Data/com.apple.CoreML/model.mlmodel':'eb4d04780c12c424aca59df914a703a687906a667b7af761fb355f1f4f8a379e',
+ 'macos/Sources/Moments/People/SFace.mlpackage/Data/com.apple.CoreML/weights/weight.bin':'1b29383ae452c0cba52dbf7158cd84ea3d896b8f05e1bc606edb366b0f3f8c34',
+}
 # Gitignored per-developer files: skipped when scanning the working tree, and
 # never allowlisted, so staging one fails the --staged check.
 LOCAL_ONLY={'macos/Config/Local.xcconfig'}
@@ -54,6 +63,8 @@ def candidates(staged=False):
                 yield path.relative_to(ROOT).as_posix(),path.read_bytes() if not path.is_symlink() else b'\0'
 
 def inspect(name,data):
+    if name in PINNED:
+        return [] if hashlib.sha256(data).hexdigest()==PINNED[name] else ['pinned-file-changed']
     errors=[]
     if not allowed(name):errors.append('outside-source-allowlist')
     if len(data)>300_000:errors.append('oversized-file')

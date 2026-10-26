@@ -320,6 +320,34 @@ final class PhotoNoteTests: XCTestCase {
 
     // MARK: Migration
 
+    func testFrozenV6StoreWithPeopleOpensWithNoteEntities() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "moments-v6-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let storeURL = folder.appending(path: "Moments.store")
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let legacy = try MomentsPersistence.makeV6Container(url: storeURL)
+        let oldContext = legacy.mainContext
+        let item = SchemaV6.MediaItem(id: "frozen-v6-item", title: "Synthetic V6 item")
+        oldContext.insert(item)
+        oldContext.insert(SchemaV6.Memory(text: "Synthetic memory", mediaItem: item))
+        oldContext.insert(SchemaV6.Person(id: "person-1", name: "Synthetic person"))
+        oldContext.insert(SchemaV6.FaceScanRecord(id: "frozen-v6-item"))
+        try oldContext.save()
+
+        let current = try MomentsPersistence.makeContainer(url: storeURL)
+        let context = current.mainContext
+        XCTAssertEqual(try context.fetch(FetchDescriptor<MediaItem>()).map(\.id), ["frozen-v6-item"])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Memory>()).map(\.text), ["Synthetic memory"])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Person>()).map(\.name), ["Synthetic person"])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<FaceScanRecord>()).map(\.id), ["frozen-v6-item"])
+        XCTAssertTrue(try context.fetch(FetchDescriptor<PhotoNote>()).isEmpty)
+
+        context.insert(PhotoNote(mediaID: "frozen-v6-item", text: "Synthetic note"))
+        context.insert(CollectionMemory(scope: .trip, scopeKey: "trip-1", text: "Synthetic trip memory"))
+        try context.save()
+        XCTAssertEqual(try context.fetch(FetchDescriptor<PhotoNote>()).count, 1)
+    }
+
     func testFrozenV5StoreOpensWithNoteEntities() throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "moments-v5-\(UUID().uuidString)", directoryHint: .isDirectory)
         let storeURL = folder.appending(path: "Moments.store")

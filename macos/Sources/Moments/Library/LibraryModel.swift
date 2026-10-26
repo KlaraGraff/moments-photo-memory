@@ -63,6 +63,10 @@ struct LibraryFilterCriteria: Equatable, Sendable {
     var memoryFilter: LibraryMemoryFilter
     /// Optional tag identifier or normalized/display name used by smart groups.
     var tagID: String?
+    /// A local Person identifier. The relationship is intentionally resolved
+    /// by the caller from FaceObservation records so the media schema stays
+    /// independent from the private People data.
+    var personID: String?
 
     init(
         fromDate: Date? = nil,
@@ -73,7 +77,8 @@ struct LibraryFilterCriteria: Equatable, Sendable {
         tripKey: String? = nil,
         screenshotFilter: LibraryScreenshotFilter = .all,
         memoryFilter: LibraryMemoryFilter = .all,
-        tagID: String? = nil
+        tagID: String? = nil,
+        personID: String? = nil
     ) {
         self.fromDate = fromDate
         self.toDate = toDate
@@ -84,6 +89,7 @@ struct LibraryFilterCriteria: Equatable, Sendable {
         self.screenshotFilter = screenshotFilter
         self.memoryFilter = memoryFilter
         self.tagID = tagID
+        self.personID = personID
     }
 
     static let `default` = LibraryFilterCriteria()
@@ -225,9 +231,10 @@ enum LibraryFilterEngine {
     static func filteredItems(
         _ items: [MediaItem],
         by criteria: LibraryFilterCriteria,
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        personIDsByMediaID: [String: Set<String>] = [:]
     ) -> [MediaItem] {
-        items.filter { matches($0, criteria: criteria, calendar: calendar, hidesScreenshots: true) }
+        items.filter { matches($0, criteria: criteria, calendar: calendar, hidesScreenshots: true, personIDsByMediaID: personIDsByMediaID) }
     }
 
     /// Evaluates a single item against the shared filter semantics. Screenshot
@@ -237,7 +244,8 @@ enum LibraryFilterEngine {
         _ item: MediaItem,
         criteria: LibraryFilterCriteria,
         calendar: Calendar = .current,
-        hidesScreenshots: Bool = false
+        hidesScreenshots: Bool = false,
+        personIDsByMediaID: [String: Set<String>] = [:]
     ) -> Bool {
         if criteria.mediaType == .screenshot {
             guard item.isScreenshot else { return false }
@@ -258,7 +266,7 @@ enum LibraryFilterEngine {
                 let overrideName = String(placeID.dropFirst("override:".count))
                 guard item.effectivePlaceName == overrideName else { return false }
             } else {
-                guard item.place?.id == placeID else { return false }
+                guard PlaceDisplayName.place(item.place, isWithin: placeID) else { return false }
             }
         }
         if criteria.mediaType != .all,
@@ -270,6 +278,10 @@ enum LibraryFilterEngine {
         if let tripKey = criteria.tripKey, item.tripID != tripKey { return false }
         if let tagID = criteria.tagID,
            !item.tags.contains(where: { $0.id == tagID || $0.normalizedName == tagID || $0.displayName == tagID }) {
+            return false
+        }
+        if let personID = criteria.personID,
+           !personIDsByMediaID[item.id, default: []].contains(personID) {
             return false
         }
         switch criteria.memoryFilter {
@@ -287,9 +299,10 @@ enum LibraryFilterEngine {
         _ items: [MediaItem],
         by criteria: LibraryFilterCriteria,
         preservingEditingItemID editingItemID: String?,
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        personIDsByMediaID: [String: Set<String>] = [:]
     ) -> [MediaItem] {
-        let filtered = filteredItems(items, by: criteria, calendar: calendar)
+        let filtered = filteredItems(items, by: criteria, calendar: calendar, personIDsByMediaID: personIDsByMediaID)
         guard criteria.memoryFilter != .all,
               let editingItemID,
               !filtered.contains(where: { $0.id == editingItemID }) else {
@@ -299,7 +312,7 @@ enum LibraryFilterEngine {
         var withoutMemoryFilter = criteria
         withoutMemoryFilter.memoryFilter = .all
         guard let editingItem = items.first(where: { $0.id == editingItemID }),
-              filteredItems([editingItem], by: withoutMemoryFilter, calendar: calendar).isEmpty == false else {
+              filteredItems([editingItem], by: withoutMemoryFilter, calendar: calendar, personIDsByMediaID: personIDsByMediaID).isEmpty == false else {
             return filtered
         }
         return filtered + [editingItem]
@@ -307,13 +320,27 @@ enum LibraryFilterEngine {
 
     /// Screenshots are a Library-only segment. Other screens receive the same
     /// filters without the segment selector narrowing them to screenshots.
-    static func publishedItems(_ items: [MediaItem], by criteria: LibraryFilterCriteria) -> [MediaItem] {
+    static func publishedItems(_ items: [MediaItem], by criteria: LibraryFilterCriteria, personIDsByMediaID: [String: Set<String>] = [:]) -> [MediaItem] {
         guard criteria.mediaType == .screenshot else {
-            return filteredItems(items, by: criteria)
+            return filteredItems(items, by: criteria, personIDsByMediaID: personIDsByMediaID)
         }
         var withoutScreenshotSegment = criteria
         withoutScreenshotSegment.mediaType = .all
-        return filteredItems(items, by: withoutScreenshotSegment)
+        return filteredItems(items, by: withoutScreenshotSegment, personIDsByMediaID: personIDsByMediaID)
+    }
+
+    static func filteredItems(
+        _ items: [MediaItem],
+        by criteria: LibraryFilterCriteria,
+        observations: [FaceObservation],
+        calendar: Calendar = .current
+    ) -> [MediaItem] {
+        var ids: [String: Set<String>] = [:]
+        for observation in observations {
+            guard let personID = observation.personID else { continue }
+            ids[observation.mediaID, default: []].insert(personID)
+        }
+        return filteredItems(items, by: criteria, calendar: calendar, personIDsByMediaID: ids)
     }
 
     /// The legacy burst groups remain available to older callers. LibraryView
@@ -393,7 +420,7 @@ enum LibraryFilterEngine {
         case .trip:
             return "trip:\(item.tripID ?? "unassigned")"
         case .place:
-            return "place:\(item.effectivePlaceName ?? "")"
+            return "place:\(item.displayPlaceName ?? "")"
         case .type:
             return "type:\(typeKey(for: item))"
         case .month:
@@ -407,7 +434,7 @@ enum LibraryFilterEngine {
         case .trip:
             return item.trip?.effectiveName ?? String(localized: "Unsorted")
         case .place:
-            return item.effectivePlaceName ?? String(localized: "No place")
+            return item.displayPlaceName ?? String(localized: "No place")
         case .type:
             switch typeKey(for: item) {
             case "screenshot": return String(localized: "Screenshots")

@@ -170,11 +170,13 @@ public final class PhotosImportController {
     ) {
         guard let container else { return }
         task?.cancel()
+        PlaceNameBackfillScheduler.shared.beginImport()
         lastImportSelection = changeScope
         persistLastImportSelection(changeScope)
         state = .importing
         summary = nil
         task = Task { [weak self] in
+            defer { PlaceNameBackfillScheduler.shared.endImport() }
             guard let self else { return }
             do {
                 authorizationStatus = await importer.requestAccess()
@@ -189,6 +191,7 @@ public final class PhotosImportController {
                 }
                 summary = value
                 state = .finished
+                NotificationCenter.default.post(name: .momentsPeopleScanRequested, object: nil)
             } catch is CancellationError {
                 progress = ImportProgress(phase: .cancelled, completed: progress.completed, total: progress.total, message: String(localized: "Apple Photos import cancelled"))
                 state = .cancelled

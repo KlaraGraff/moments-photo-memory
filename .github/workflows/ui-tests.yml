@@ -15,8 +15,6 @@ on:
 jobs:
   ui:
     runs-on: macos-latest
-    permissions:
-      contents: write
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -74,34 +72,6 @@ jobs:
                       print(data[start:start + 4000])
                   print(f"EVIDENCE-END {name}")
           PY
-      - name: Publish evidence screenshots to a hidden ref (WIP)
-        if: always() && github.event_name == 'workflow_dispatch'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - "$RUNNER_TEMP/ui-screenshots" "$RUNNER_TEMP/evidence" <<'PY'
-          import json, os, subprocess, sys
-          folder, out = sys.argv[1], sys.argv[2]
-          os.makedirs(out, exist_ok=True)
-          manifest = os.path.join(folder, "manifest.json")
-          if os.path.exists(manifest):
-              for test in json.load(open(manifest)):
-                  for item in test.get("attachments", []):
-                      name = item.get("suggestedHumanReadableName", "")
-                      if "evidence" not in name:
-                          continue
-                      safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)[:80]
-                      subprocess.run(["sips", "-Z", "1400", "-s", "format", "jpeg", "-s", "formatOptions", "75",
-                                      os.path.join(folder, item["exportedFileName"]), "--out", os.path.join(out, safe + ".jpg")],
-                                     check=True, capture_output=True)
-          PY
-          cd "$RUNNER_TEMP/evidence"
-          ls
-          git init -q
-          git add -A
-          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "UI evidence ${{ github.run_id }}"
-          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}" HEAD:refs/ci-evidence/${{ github.run_id }}
-          echo "EVIDENCE-SHA $(git rev-parse HEAD)"
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4

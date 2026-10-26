@@ -48,8 +48,8 @@ struct ContentView: View {
                     Section {
                         sidebarRow("Library", icon: "photo.on.rectangle.angled", section: .library, identifier: "sidebar.library")
                         sidebarRow("People", icon: "person.2", section: .people, identifier: "sidebar.people")
-                        sidebarRow("Map", icon: "map", section: .map, identifier: "sidebar.map")
-                        sidebarRow("Timeline", icon: "calendar", section: .timeline, identifier: "sidebar.timeline")
+                        sidebarRow("Map", icon: "globe.europe.africa", section: .map, identifier: "sidebar.map")
+                        sidebarRow("Timeline", icon: "point.topleft.down.to.point.bottomright.curvepath", section: .timeline, identifier: "sidebar.timeline")
                     }
 
                     Section {
@@ -143,7 +143,7 @@ struct ContentView: View {
             }
             .background(MomentsPalette.sidebar)
             .navigationTitle("Moments")
-            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
         } detail: {
             Group {
                 switch selection ?? .library {
@@ -167,6 +167,9 @@ struct ContentView: View {
             #if DEBUG
             .background {
                 if MapViewProbe.isEnabled { MapViewProbe() }
+            }
+            .overlay {
+                if SidebarIconGallery.isEnabled { SidebarIconGallery() }
             }
             #endif
             // The title bar continues the page's paper instead of a white strip.
@@ -369,6 +372,71 @@ private struct MapViewProbe: View {
             (view is MKMapView ? 1 : 0) + view.subviews.reduce(0) { $0 + count($1) }
         }
         return NSApp.windows.compactMap(\.contentView?.superview).reduce(0) { $0 + count($1) }
+    }
+}
+#endif
+
+#if DEBUG
+/// UI tests only: the candidate sidebar icons side by side, as they would
+/// look in the sidebar, so a screenshot can be shown for picking one.
+private struct SidebarIconGallery: View {
+    static let isEnabled = ProcessInfo.processInfo.arguments.contains("-MomentsUITestIconGallery")
+
+    private let rows: [(String, [(String, String)])] = [
+        ("Trips", [("now", "suitcase"), ("A", "airplane.departure"), ("B", "suitcase.rolling"), ("C", "beach.umbrella")]),
+        ("Map", [("now", "map"), ("A", "globe.europe.africa"), ("B", "mappin.and.ellipse"), ("C", "signpost.right")]),
+        ("Timeline", [("now", "calendar"), ("A", "point.topleft.down.to.point.bottomright.curvepath"), ("B", "point.3.connected.trianglepath.dotted"), ("C", "sparkles")]),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            ForEach(rows, id: \.0) { row in
+                let (title, candidates) = row
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(title).font(.headline).foregroundStyle(MomentsPalette.ink)
+                    HStack(spacing: 18) {
+                        ForEach(candidates, id: \.0) { candidate in
+                            let (tag, symbol) = candidate
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label(title, systemImage: symbol)
+                                    .font(.body)
+                                    .foregroundStyle(MomentsPalette.ink)
+                                    .symbolRenderingMode(.monochrome)
+                                    .labelStyle(GalleryLabelStyle())
+                                    .padding(.horizontal, 10)
+                                    .frame(width: 170, height: 32, alignment: .leading)
+                                    .background(MomentsPalette.sidebar, in: RoundedRectangle(cornerRadius: 8))
+                                Label(title, systemImage: symbol)
+                                    .font(.body)
+                                    .labelStyle(GalleryLabelStyle())
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 10)
+                                    .frame(width: 170, height: 32, alignment: .leading)
+                                    .background(MomentsPalette.accent, in: RoundedRectangle(cornerRadius: 8))
+                                Text(tag == "now" ? "Now" : tag)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(MomentsPalette.muted)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(MomentsPalette.content)
+        .accessibilityIdentifier("debug.icon-gallery")
+    }
+}
+
+private struct GalleryLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 8) {
+            configuration.icon
+                .foregroundStyle(MomentsPalette.accent)
+                .frame(width: 22)
+            configuration.title
+        }
     }
 }
 #endif

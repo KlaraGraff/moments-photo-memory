@@ -67,6 +67,14 @@ struct TimelineScreen: View {
                     systemImage: "calendar.badge.plus",
                     description: Text("Add a photo or import a synthetic demo to begin.")
                 )
+            } else if visibleItems.isEmpty {
+                ContentUnavailableView {
+                    Label("No photos match these filters", systemImage: "line.3.horizontal.decrease.circle")
+                } description: {
+                    Text("Change or clear the filters to see more of your days.")
+                } actions: {
+                    Button("Clear filters") { LibraryFilterKeys.clearAll() }
+                }
             } else if document.trips.isEmpty {
                 ContentUnavailableView(
                     "No timeline entries",
@@ -81,6 +89,8 @@ struct TimelineScreen: View {
             document = timeline
             itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         }
+        .compactLibraryFilters()
+        .navigationTitle(String(localized: "Timeline"))
     }
 
     private var timelineScroll: some View {
@@ -96,7 +106,6 @@ struct TimelineScreen: View {
         }
         .scrollIndicators(.automatic)
         .background(Paper.canvas)
-        .navigationTitle(String(localized: "Timeline"))
     }
 
     @ViewBuilder

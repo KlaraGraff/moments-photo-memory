@@ -448,7 +448,7 @@ struct MapScreen: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(country.name)
                                         .foregroundStyle(Paper.ink)
-                                    Text("\(country.photoCount) \(String(localized: "photos"))")
+                                    Text(String(localized: "\(country.photoCount) photos"))
                                         .font(.caption)
                                         .foregroundStyle(Paper.muted)
                                 }

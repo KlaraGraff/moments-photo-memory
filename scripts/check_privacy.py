@@ -25,6 +25,9 @@ PINNED={
  'macos/Sources/Moments/People/SFace.mlpackage/Manifest.json':'9a9a0616a0d8c0169fe56b4c7afe25aee2a6c2099881b0d2b598a78bcfd874be',
  'macos/Sources/Moments/People/SFace.mlpackage/Data/com.apple.CoreML/model.mlmodel':'eb4d04780c12c424aca59df914a703a687906a667b7af761fb355f1f4f8a379e',
  'macos/Sources/Moments/People/SFace.mlpackage/Data/com.apple.CoreML/weights/weight.bin':'1b29383ae452c0cba52dbf7158cd84ea3d896b8f05e1bc606edb366b0f3f8c34',
+ # Country outlines for trip route maps: Natural Earth 1:50m (public domain),
+ # simplified and packed by hand; see WorldOutline.swift for the format.
+ 'macos/Sources/Moments/Resources/WorldOutline.bin':'fced4d2ac26d2c30e25ff10421ff7f196bc8f240c4b56e20516592100f9b8881',
 }
 # Gitignored per-developer files: skipped when scanning the working tree, and
 # never allowlisted, so staging one fails the --staged check.
@@ -69,7 +72,9 @@ def inspect(name,data):
         return [] if hashlib.sha256(data).hexdigest()==PINNED[name] else ['pinned-file-changed']
     errors=[]
     if not allowed(name):errors.append('outside-source-allowlist')
-    if len(data)>300_000:errors.append('oversized-file')
+    # String Catalogs grow with every translated string; their text is still
+    # scanned by every pattern below.
+    if len(data)>(2_000_000 if name.endswith('.xcstrings') else 300_000):errors.append('oversized-file')
     try:text=data.decode('utf-8')
     except UnicodeDecodeError:return errors+['binary-file']
     if '\0' in text:errors.append('binary-or-symlink')

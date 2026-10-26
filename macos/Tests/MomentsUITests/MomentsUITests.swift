@@ -453,13 +453,6 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "small-04-timeline-evidence")
     }
 
-    /// Not a check: the candidate sidebar icons, for picking one.
-    func testSidebarIconCandidates() {
-        let app = launch(language: "en", iconGallery: true)
-        XCTAssertTrue(element(in: app, identifier: "debug.icon-gallery").waitForExistence(timeout: launchTimeout))
-        capture(app, named: "icons-01-candidates-evidence")
-    }
-
     func testFootprintsGlobeFitsSmallWindow() {
         let app = launch(language: "en", smallWindow: true)
         assertGlobeFullyVisible(app, screenshot: "map-05-globe-small-window-evidence")
@@ -699,6 +692,56 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "trips-06-dates-preview-evidence")
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(preview.waitForNonExistence(timeout: launchTimeout))
+    }
+
+    func testPlusOnTripsStartsANewTrip() {
+        let app = launch(language: "en")
+        element(in: app, identifier: "sidebar.trips").click()
+        let plus = element(in: app, identifier: "trips.new")
+        XCTAssertTrue(plus.waitForExistence(timeout: launchTimeout), "Trips has no + for a new trip")
+        plus.click()
+        let name = element(in: app, identifier: "trips.new.name")
+        XCTAssertTrue(name.waitForExistence(timeout: launchTimeout), "+ did not open the new trip sheet")
+        XCTAssertTrue(element(in: app, identifier: "trips.new.preview").exists, "The new trip sheet shows no preview")
+        name.click()
+        name.typeText("Synthetic new trip")
+        capture(app, named: "trips-09-new-trip-evidence")
+        element(in: app, identifier: "trips.new.create").click()
+        let notice = element(in: app, identifier: "trips.notice")
+        XCTAssertTrue(notice.waitForExistence(timeout: launchTimeout), "Creating a trip showed no note")
+        element(in: app, identifier: "trips.notice.undo").click()
+        XCTAssertTrue(notice.waitForNonExistence(timeout: launchTimeout))
+    }
+
+    func testNewCelebrationChapterGetsItsOwnCardAndFilter() {
+        let app = launch(language: "en")
+        element(in: app, identifier: "sidebar.trips").click()
+        element(in: app, identifier: "trips.new").click()
+        let celebration = element(in: app, identifier: "chapters.new.type.celebration")
+        XCTAssertTrue(celebration.waitForExistence(timeout: launchTimeout), "New chapter offers no kinds")
+        celebration.click()
+        let name = element(in: app, identifier: "trips.new.name")
+        name.click()
+        name.typeText("Synthetic birthday")
+        capture(app, named: "chapters-01-new-celebration-evidence")
+        element(in: app, identifier: "trips.new.create").click()
+
+        // The new chapter opens; back on the shelf it has its own card and a filter.
+        let back = element(in: app, identifier: "trips.back")
+        XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The new chapter did not open")
+        back.click()
+        let card = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.card.chapter."))
+            .firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout), "The celebration has no card")
+        let filter = element(in: app, identifier: "chapters.filter.celebration")
+        XCTAssertTrue(filter.waitForExistence(timeout: launchTimeout), "No filter for celebrations")
+        capture(app, named: "chapters-02-shelf-evidence")
+        filter.click()
+        XCTAssertTrue(element(in: app, identifier: "trips.card.journeyA").waitForNonExistence(timeout: launchTimeout), "The filter kept the trips")
+        capture(app, named: "chapters-03-filtered-evidence")
+        element(in: app, identifier: "chapters.filter.all").click()
+        XCTAssertTrue(element(in: app, identifier: "trips.card.journeyA").waitForExistence(timeout: launchTimeout))
     }
 
     func testSplitATripAtADayAndUndo() {
@@ -945,10 +988,9 @@ final class MomentsUITests: XCTestCase {
         element(in: app, identifier: "trips.back").click()
     }
 
-    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false, mapProbe: Bool = false, iconGallery: Bool = false, extraArguments: [String] = []) -> XCUIApplication {
+    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false, mapProbe: Bool = false, extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language] + extraArguments
-        if iconGallery { app.launchArguments += ["-MomentsUITestIconGallery"] }
         if mapProbe { app.launchArguments += ["-MomentsUITestMapProbe"] }
         if reviewItems { app.launchArguments += ["-MomentsUITestReviewItems"] }
         if darkMode { app.launchArguments += ["-MomentsUITestDarkMode"] }

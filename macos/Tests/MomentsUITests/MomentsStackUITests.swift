@@ -47,11 +47,11 @@ final class MomentsStackUITests: XCTestCase {
         XCTAssertTrue(waitForSelected(element(app, "viewer.stack.demo-burst-2")), "The right arrow did not move to the next shot")
 
         // Click the third shot and make it the cover.
-        element(app, "viewer.stack.demo-burst-3").click()
+        clickCentre(element(app, "viewer.stack.demo-burst-3"))
         XCTAssertTrue(waitForSelected(element(app, "viewer.stack.demo-burst-3")))
         let setCover = element(app, "viewer.stack.setCover")
         XCTAssertTrue(setCover.isEnabled)
-        setCover.click()
+        clickCentre(setCover)
         XCTAssertTrue(element(app, "viewer.stack.undo").waitForExistence(timeout: timeout), "No Undo after changing the cover")
         XCTAssertFalse(setCover.isEnabled, "The cover's own button should be off")
         capture(app, "stack-03-cover-set-evidence")
@@ -63,7 +63,7 @@ final class MomentsStackUITests: XCTestCase {
         pauseLongerThanADoubleClick()
         element(app, "library.photo.demo-burst-3").doubleClick()
         XCTAssertTrue(element(app, "viewer.stack.unstack").waitForExistence(timeout: timeout))
-        element(app, "viewer.stack.unstack").click()
+        clickCentre(element(app, "viewer.stack.unstack"))
         XCTAssertTrue(element(app, "viewer.stack").waitForNonExistence(timeout: timeout), "The strip stayed after unstacking")
         capture(app, "stack-04-unstacked-viewer-evidence")
         app.typeKey(.escape, modifierFlags: [])
@@ -113,6 +113,12 @@ final class MomentsStackUITests: XCTestCase {
         // The open shot carries the Selected trait.
         let selected = NSPredicate(format: "selected == true")
         return XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: selected, object: element)], timeout: timeout) == .completed
+    }
+
+    /// XCUITest does not count the viewer's strip and header buttons as
+    /// hittable over the dimmed window, so they are clicked where they are.
+    private func clickCentre(_ element: XCUIElement) {
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
     }
 
     private func pauseLongerThanADoubleClick() {

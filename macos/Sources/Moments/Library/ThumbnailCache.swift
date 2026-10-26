@@ -282,25 +282,29 @@ struct ThumbnailView: View {
         // A thumbnail already in memory is drawn in the first frame, so cells
         // that scroll back into view do not blink through the placeholder.
         let shown = image ?? ThumbnailCache.shared.cachedImage(for: source.id, width: width, height: height)
-        ZStack {
-            // A still tint, not a spinner per cell: spinners animate every
-            // frame and make fast scrolling heavier.
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(.quaternary)
-            if let shown {
-                Image(nsImage: shown)
-                    .resizable()
-                    .scaledToFill()
+        // A still tint, not a spinner per cell: spinners animate every frame
+        // and make fast scrolling heavier. The image sits in an overlay so a
+        // wide or tall photo fills the frame it is given instead of growing
+        // the cell around it.
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(.quaternary)
+            .overlay {
+                if let shown {
+                    Image(nsImage: shown)
+                        .resizable()
+                        .scaledToFill()
+                }
             }
-        }
-        .clipped()
-        .task(id: "\(source.id)-\(width)x\(height)") {
-            if let cached = ThumbnailCache.shared.cachedImage(for: source.id, width: width, height: height) {
-                image = cached
-                return
+            .clipped()
+            // Clipping hides the overflow but not its clicks.
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .task(id: "\(source.id)-\(width)x\(height)") {
+                if let cached = ThumbnailCache.shared.cachedImage(for: source.id, width: width, height: height) {
+                    image = cached
+                    return
+                }
+                image = nil
+                image = await ThumbnailCache.shared.image(for: source, width: width, height: height)
             }
-            image = nil
-            image = await ThumbnailCache.shared.image(for: source, width: width, height: height)
-        }
     }
 }

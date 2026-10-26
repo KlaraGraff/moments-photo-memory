@@ -508,8 +508,8 @@ final class LibraryViewState {
         didSet { orderedItemIDs = gridSections.flatMap { $0 } }
     }
     private(set) var orderedItemIDs: [String] = []
-    /// Columns in the grid, for the up and down arrows.
-    var gridColumns = 1
+    /// Columns in the Library grid: its rows and the up and down arrows.
+    var gridColumns = 4
     /// The window's width. The grid's columns follow it, not the space next
     /// to the sidebar, so hiding, showing or dragging the sidebar scales the
     /// photos instead of changing how many fit in a row, like Photos.

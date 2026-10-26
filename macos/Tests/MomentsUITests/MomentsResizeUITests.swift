@@ -46,5 +46,10 @@ final class MomentsResizeUITests: XCTestCase {
         add(note)
         print("RESIZE-REPORT-BEGIN\n\(report)\nRESIZE-REPORT-END")
         XCTAssertFalse(report.hasPrefix("missing"), report)
+        // maple's jump: moving the sidebar must never change how many photos
+        // are in a row (it went from 4 to 5 mid-animation).
+        XCTAssertTrue(report.contains("hide sidebar:"), report)
+        XCTAssertFalse(report.contains("column changes 1") || report.contains("column changes 2"),
+                       "The grid changed its column count while the sidebar moved:\n\(report)")
     }
 }

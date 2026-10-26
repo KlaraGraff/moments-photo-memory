@@ -54,16 +54,33 @@ struct WorldOutline: Sendable {
                 points.append(SIMD2(int16(offset + index * 4), int16(offset + index * 4 + 2)))
             }
             offset += pointCount * 4
-            let longitudes = points.map(\.x), latitudes = points.map(\.y)
-            rings.append(Ring(
-                points: points,
-                minLongitude: longitudes.min() ?? 0,
-                maxLongitude: longitudes.max() ?? 0,
-                minLatitude: latitudes.min() ?? 0,
-                maxLatitude: latitudes.max() ?? 0
-            ))
+            // Rings that cross the 180° meridian (Russia's far east, Fiji)
+            // jump from +180 to -180; unwrap them so they stay one shape,
+            // and add a copy a world away so both sides of the line see it.
+            for index in points.indices.dropFirst() {
+                let step = points[index].x - points[index - 1].x
+                if step > 180 { points[index].x -= 360 } else if step < -180 { points[index].x += 360 }
+            }
+            let ring = Self.ring(points)
+            rings.append(ring)
+            if ring.maxLongitude > 180 {
+                rings.append(Self.ring(points.map { SIMD2($0.x - 360, $0.y) }))
+            } else if ring.minLongitude < -180 {
+                rings.append(Self.ring(points.map { SIMD2($0.x + 360, $0.y) }))
+            }
         }
         self.rings = rings
+    }
+
+    private static func ring(_ points: [SIMD2<Double>]) -> Ring {
+        let longitudes = points.map(\.x), latitudes = points.map(\.y)
+        return Ring(
+            points: points,
+            minLongitude: longitudes.min() ?? 0,
+            maxLongitude: longitudes.max() ?? 0,
+            minLatitude: latitudes.min() ?? 0,
+            maxLatitude: latitudes.max() ?? 0
+        )
     }
 
     /// Rings that reach into the given box of longitudes and latitudes.

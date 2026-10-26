@@ -156,7 +156,7 @@ enum TripEdits {
         private(set) var undo: Undo
         private let defaults: UserDefaults
 
-        init(context: ModelContext, now: Date = .now, calendar: Calendar = .current, defaults: UserDefaults = .standard, continuing undo: Undo = Undo()) {
+        init(context: ModelContext, now: Date = .now, calendar: Calendar = .current, defaults: UserDefaults = TripAssignmentLocks.store, continuing undo: Undo = Undo()) {
             self.context = context
             self.now = now
             self.calendar = calendar
@@ -219,7 +219,7 @@ enum TripEdits {
 
     /// Puts back the dates, names, photos and memories one change touched.
     @MainActor
-    static func undo(_ undo: Undo, context: ModelContext, defaults: UserDefaults = .standard, now: Date = .now) {
+    static func undo(_ undo: Undo, context: ModelContext, defaults: UserDefaults = TripAssignmentLocks.store, now: Date = .now) {
         var tripByID = Dictionary(
             ((try? context.fetch(FetchDescriptor<Trip>())) ?? []).map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -301,7 +301,14 @@ enum TripEdits {
                 }
             }
         }
-        for (id, state) in undo.groups where state == nil {
+        let createdGroups = Set(undo.groups.filter { $0.value == nil }.map(\.key))
+        if !createdGroups.isEmpty {
+            // Rows added to a created chapter after it was made go with it.
+            for membership in (try? context.fetch(FetchDescriptor<UserGroupItem>())) ?? [] where createdGroups.contains(membership.groupID) {
+                context.delete(membership)
+            }
+        }
+        for id in createdGroups {
             if let group = groupByID[id] { context.delete(group) }
         }
 

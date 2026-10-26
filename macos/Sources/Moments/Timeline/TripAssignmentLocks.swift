@@ -6,17 +6,25 @@ import Foundation
 enum TripAssignmentLocks {
     static let defaultsKey = "moments.trip.lockedItemIDs"
 
-    static func lock(_ itemID: String, defaults: UserDefaults = .standard) {
+    /// Where locks and covers live. UI tests get their own suite, wiped at
+    /// launch, so running them never touches this Mac's real choices.
+    static let store: UserDefaults = {
+        guard ProcessInfo.processInfo.arguments.contains("-MomentsUITesting"),
+              let suite = UserDefaults(suiteName: "moments.uitesting.trips") else { return .standard }
+        return suite
+    }()
+
+    static func lock(_ itemID: String, defaults: UserDefaults = TripAssignmentLocks.store) {
         var ids = lockedIDs(defaults: defaults)
         guard ids.insert(itemID).inserted else { return }
         defaults.set(Array(ids).sorted(), forKey: defaultsKey)
     }
 
-    static func isLocked(_ itemID: String, defaults: UserDefaults = .standard) -> Bool {
+    static func isLocked(_ itemID: String, defaults: UserDefaults = TripAssignmentLocks.store) -> Bool {
         lockedIDs(defaults: defaults).contains(itemID)
     }
 
-    static func lockedIDs(defaults: UserDefaults = .standard) -> Set<String> {
+    static func lockedIDs(defaults: UserDefaults = TripAssignmentLocks.store) -> Set<String> {
         Set(defaults.stringArray(forKey: defaultsKey) ?? [])
     }
 }

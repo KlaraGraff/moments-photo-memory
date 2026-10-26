@@ -35,7 +35,7 @@ struct TripsScreen: View {
     /// The last change, with its Undo.
     @State private var notice: TripNotice?
     /// Covers chosen by hand, by trip id; kept on this Mac.
-    @AppStorage(TripCoverChoice.defaultsKey) private var coverStore = ""
+    @AppStorage(TripCoverChoice.defaultsKey, store: TripAssignmentLocks.store) private var coverStore = ""
     @State private var isCreatingTrip = false
     /// Chapters that are not trips, built like trips, by "chapter.<id>".
     @State private var chapterDocs: [String: TimelineTrip] = [:]
@@ -118,7 +118,9 @@ struct TripsScreen: View {
     /// Every chapter, newest first, like a photo album shelf; photos in no
     /// trip last. Chapters other than trips show even before they have photos.
     private var allChapters: [TimelineTrip] {
-        let real = document.trips.filter { !$0.isUnsorted && $0.itemCount > 0 } + Array(chapterDocs.values)
+        // A trip someone made by hand keeps its card even before photos join.
+        let planned = Set(trips.filter { $0.startDate != nil }.map(\.id))
+        let real = document.trips.filter { !$0.isUnsorted && ($0.itemCount > 0 || planned.contains($0.id)) } + Array(chapterDocs.values)
         let dated = real.filter { $0.startDate != nil }.sorted { ($0.startDate ?? .distantPast, $0.id) > ($1.startDate ?? .distantPast, $1.id) }
         let undated = real.filter { $0.startDate == nil }
         let unsorted = document.trips.filter { $0.isUnsorted && $0.itemCount > 0 }

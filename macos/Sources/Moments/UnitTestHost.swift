@@ -22,9 +22,9 @@ final class UnitTestHostDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if ProcessInfo.processInfo.arguments.contains("-MomentsUITesting") {
             // Each UI test starts from the demo store; trip locks and covers
-            // kept on this Mac must not carry over from the test before.
-            UserDefaults.standard.removeObject(forKey: TripAssignmentLocks.defaultsKey)
-            UserDefaults.standard.removeObject(forKey: TripCoverChoice.defaultsKey)
+            // from the test before must not carry over (they live in a test suite).
+            TripAssignmentLocks.store.removeObject(forKey: TripAssignmentLocks.defaultsKey)
+            TripAssignmentLocks.store.removeObject(forKey: TripCoverChoice.defaultsKey)
             ensureUITestWindow()
             return
         }

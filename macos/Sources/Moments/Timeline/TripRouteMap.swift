@@ -168,6 +168,7 @@ struct TripRouteMap: View {
                 context.stroke(ring, with: .color(Paper.accent), lineWidth: 1.4)
             }
         }
+        guard !points.isEmpty else { return }
         // Labels after the stamps, ends first, so they keep theirs when space runs out.
         let order = points.count > 1 ? [0, points.count - 1] + Array(1..<(points.count - 1)) : [0]
         for index in order {

@@ -281,6 +281,15 @@ final class TripEditsTests: XCTestCase {
         XCTAssertGreaterThan(outline.rings.count, 100, "The base map file is missing from the app bundle")
         let morocco = outline.rings(longitudes: -8 ... -4, latitudes: 31...34)
         XCTAssertFalse(morocco.isEmpty)
+        for ring in outline.rings {
+            for (previous, next) in zip(ring.points, ring.points.dropFirst()) {
+                XCTAssertLessThanOrEqual(abs(next.x - previous.x), 180, "A ring jumps across the 180° meridian")
+            }
+        }
+        // Northern Iceland must not catch a band of Russia's far east.
+        let iceland = outline.rings(longitudes: -20 ... -16, latitudes: 64...67)
+        XCTAssertFalse(iceland.contains { $0.maxLongitude - $0.minLongitude > 300 })
+        XCTAssertFalse(outline.rings(longitudes: -179 ... -172, latitudes: 64...70).isEmpty, "Chukotka still shows west of the line")
     }
 
     // MARK: Chapters that are not trips
@@ -309,6 +318,7 @@ final class TripEditsTests: XCTestCase {
 
         TripEdits.undo(edit.undo, context: context, defaults: defaults)
         XCTAssertTrue(try context.fetch(FetchDescriptor<UserGroup>()).filter(\.isChapter).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<UserGroupItem>()).isEmpty, "No rows left for a chapter that is gone")
     }
 
     func testDeletingAChapterCanBeUndone() throws {

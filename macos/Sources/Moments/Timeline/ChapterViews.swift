@@ -155,8 +155,8 @@ struct ChapterNewSheet: View {
         let last = TripEdits.dayKey(max(start, end), calendar: .current)
         let plan = TripEdits.plan(tripID: "", first: first, last: last, members: members)
         guard chosenType == .trip else {
-            // Other chapters take every photo in their dates.
-            return (plan.joining.count + plan.elsewhere.values.reduce(0) { $0 + $1.count }, 0)
+            // Other chapters take every photo in their dates, locked or not.
+            return (members.filter { $0.dayKey.map { first <= $0 && $0 <= last } ?? false }.count, 0)
         }
         return (plan.joining.count, plan.elsewhere.values.reduce(0) { $0 + $1.count })
     }
@@ -247,12 +247,17 @@ struct ChapterNewSheet: View {
 
     /// The preset kinds, the tags already used, and "Other…" for a new tag.
     private var typePicker: some View {
-        let options: [(ChapterType?, String, String)] =
-            ChapterType.presets.map { ($0, $0.label, $0.defaultSymbol) }
-            + customTypes.map { ($0, $0.label, "tag") }
-            + [(nil, String(localized: "Other…"), "plus")]
+        let presets: [(ChapterType?, String, String)] = ChapterType.presets.map { ($0, $0.label, $0.defaultSymbol) }
+        let tags: [(ChapterType?, String, String)] = customTypes.map { ($0, $0.label, "tag") }
+        let other: [(ChapterType?, String, String)] = [(nil, String(localized: "Other…"), "plus")]
+        let options = presets + tags + other
         return FlowChips(options.map { option in
-            let isOn = option.0.map { !isCustom && type == $0 || (isCustom && chosenType == $0) } ?? (isCustom && !customTypes.contains(chosenType))
+            let isOn: Bool
+            if let kind = option.0 {
+                if case .custom = kind { isOn = isCustom && chosenType == kind } else { isOn = !isCustom && type == kind }
+            } else {
+                isOn = isCustom && !customTypes.contains(chosenType)
+            }
             return FlowChips.Chip(id: option.0?.raw ?? "other", label: option.1, symbol: option.2, isOn: isOn) {
                 if let picked = option.0 {
                     if case let .custom(label) = picked {

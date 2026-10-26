@@ -1,5 +1,6 @@
 import AppKit
 import AVKit
+import MomentsCore
 import Photos
 import SwiftData
 import SwiftUI

@@ -225,6 +225,9 @@ struct LibraryView: View {
                 results
             }
         }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
+        }
     }
 
     private var libraryHeader: some View {
@@ -811,11 +814,12 @@ private struct LibrarySectionView: View {
     @Query private var placeNotes: [PlaceNote]
     @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
-    static let minimumCellWidth: CGFloat = 175
-    static let cellSpacing: CGFloat = 24
+    @AppStorage(LibraryThumbnailSize.storageKey) private var sizeLevel = LibraryThumbnailSize.defaultLevel
+
+    private var size: LibraryThumbnailSize { LibraryThumbnailSize(level: sizeLevel) }
 
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: Self.minimumCellWidth, maximum: 300), spacing: Self.cellSpacing, alignment: .top)]
+        [GridItem(.adaptive(minimum: size.minimumWidth, maximum: size.maximumWidth), spacing: size.spacing, alignment: .top)]
     }
 
     var body: some View {
@@ -835,12 +839,12 @@ private struct LibrarySectionView: View {
 
             CollectionMemoryLines(memories: sectionMemories)
 
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 28) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: size.rowSpacing) {
                 ForEach(items, id: \.id) { item in
-                    LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes)
+                    LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact)
                 }
             }
-            .measuresLibraryGridColumns(state, minimum: Self.minimumCellWidth, spacing: Self.cellSpacing)
+            .measuresLibraryGridColumns(state, minimum: size.minimumWidth, spacing: size.spacing)
         }
     }
 
@@ -877,10 +881,22 @@ private struct LibraryPhotoCell: View {
     let groupItems: [UserGroupItem]
     var group: UserGroup? = nil
     var placeNotes: [PlaceNote] = []
+    /// The smallest zoom levels: a dense grid of photos only; place, memory
+    /// and note are read and written in the large viewer.
+    var isCompact = false
+    @State private var isHovering = false
 
     private var showsMemoryEditor: Bool {
         state.memoryDrafts[item.id] != nil
             || item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    /// A photo with a memory shows just that memory; its note line appears
+    /// while the pointer is over the photo or the line is in use. It keeps
+    /// its space, so the grid never shifts.
+    private var showsNoteLine: Bool {
+        !showsMemoryEditor || isHovering || state.focusedNoteItemID == item.id
+            || !(state.noteDrafts[item.id] ?? "").isEmpty
     }
 
     var body: some View {
@@ -889,19 +905,30 @@ private struct LibraryPhotoCell: View {
                 Button {
                     click()
                 } label: {
-                    ThumbnailView(item: item, width: 560, height: 420)
-                        .aspectRatio(1.33, contentMode: .fit)
-                        .padding(5)
-                        // A print's white mat, lifted by a warm two-layer shadow.
-                        .background(Color.white)
-                        // Selected photos get an accent frame, like Photos.
-                        .overlay {
-                            if selection.isSelected(item.id) {
-                                Rectangle().strokeBorder(LibraryPalette.accent, lineWidth: 3)
+                    if isCompact {
+                        ThumbnailView(item: item, width: 280, height: 280)
+                            .aspectRatio(1, contentMode: .fit)
+                            .overlay {
+                                if selection.isSelected(item.id) {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .strokeBorder(LibraryPalette.accent, lineWidth: 3)
+                                }
                             }
-                        }
-                        .shadow(color: Paper.shadow.opacity(0.08), radius: 1, y: 1)
-                        .shadow(color: Paper.shadow.opacity(0.10), radius: 8, y: 5)
+                    } else {
+                        ThumbnailView(item: item, width: 560, height: 420)
+                            .aspectRatio(1.33, contentMode: .fit)
+                            .padding(5)
+                            // A print's white mat, lifted by a warm two-layer shadow.
+                            .background(Color.white)
+                            // Selected photos get an accent frame, like Photos.
+                            .overlay {
+                                if selection.isSelected(item.id) {
+                                    Rectangle().strokeBorder(LibraryPalette.accent, lineWidth: 3)
+                                }
+                            }
+                            .shadow(color: Paper.shadow.opacity(0.08), radius: 1, y: 1)
+                            .shadow(color: Paper.shadow.opacity(0.10), radius: 8, y: 5)
+                    }
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("library.photo.\(item.id)")
@@ -917,7 +944,7 @@ private struct LibraryPhotoCell: View {
                         selection.click(item.id, command: true)
                     } label: {
                         Image(systemName: selection.isSelected(item.id) ? "checkmark.circle.fill" : "circle")
-                            .font(.title3)
+                            .font(isCompact ? .body : .title3)
                             .symbolRenderingMode(.palette)
                             .foregroundStyle(.white, Paper.shadow.opacity(0.45))
                             .shadow(color: Paper.shadow.opacity(0.35), radius: 2)
@@ -933,7 +960,7 @@ private struct LibraryPhotoCell: View {
                         try? modelContext.save()
                     } label: {
                         Image(systemName: item.isFavorite ? "star.fill" : "star")
-                            .font(.title3)
+                            .font(isCompact ? .body : .title3)
                             .foregroundStyle(item.isFavorite ? .yellow : .white)
                             .shadow(color: Paper.shadow.opacity(0.35), radius: 2)
                             // Confirmations get one small, friendly bounce.
@@ -942,21 +969,27 @@ private struct LibraryPhotoCell: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel(String(localized: "Favorite"))
                 }
-                .padding(11)
+                .padding(isCompact ? 6 : 11)
+                // In the dense grid the marks show on hover, or when they mean something.
+                .opacity(!isCompact || isHovering || selection.isSelected(item.id) || item.isFavorite ? 1 : 0)
             }
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                PhotoPlaceLine(item: item, placeNotes: placeNotes)
-                Spacer(minLength: 0)
-                PhotoNoteBadge(item: item)
+            if !isCompact {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    PhotoPlaceLine(item: item, placeNotes: placeNotes)
+                    Spacer(minLength: 0)
+                    PhotoNoteBadge(item: item)
+                }
+                // A written memory stays editable here; the ruled line below is
+                // where new words go, so an empty photo shows only that one line.
+                if showsMemoryEditor {
+                    MemoryEditor(item: item, state: state)
+                }
+                PhotoNoteSection(item: item, state: state)
+                    .opacity(showsNoteLine ? 1 : 0)
             }
-            // A written memory stays editable here; the ruled line below is
-            // where new words go, so an empty photo shows only that one line.
-            if showsMemoryEditor {
-                MemoryEditor(item: item, state: state)
-            }
-            PhotoNoteSection(item: item, state: state)
         }
+        .onHover { isHovering = $0 }
         .contextMenu {
             Button(String(localized: "Open")) { open() }
             Button(selection.isSelected(item.id) ? String(localized: "Deselect") : String(localized: "Select")) {
@@ -1011,7 +1044,7 @@ private struct LibraryPhotoCell: View {
     }
 }
 
-private struct MemoryEditor: View {
+struct MemoryEditor: View {
     @Environment(\.modelContext) private var modelContext
 
     let item: MediaItem
@@ -1377,6 +1410,7 @@ struct GroupDetailView: View {
                 }
                 .background(LibraryPalette.content)
                 .toolbar {
+                    ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
                     ToolbarItemGroup {
                         Button(String(localized: "Edit")) { showingEditor = true }
                         if group.kind == .smart {

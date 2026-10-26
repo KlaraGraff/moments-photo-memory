@@ -44,6 +44,10 @@ struct PhotoViewer: View {
                         Spacer(minLength: 0)
                         PhotoNoteBadge(item: item)
                     }
+                    if libraryState.memoryDrafts[item.id] != nil
+                        || item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                        MemoryEditor(item: item, state: libraryState)
+                    }
                     PhotoNoteSection(item: item, state: libraryState)
                 }
                 .frame(maxWidth: 640)

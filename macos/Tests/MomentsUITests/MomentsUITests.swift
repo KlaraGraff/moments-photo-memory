@@ -138,6 +138,20 @@ final class MomentsUITests: XCTestCase {
         app.typeKey(" ", modifierFlags: [])
         expectation(for: gone, evaluatedWith: viewer)
         waitForExpectations(timeout: launchTimeout)
+
+        // ⌘− twice: the dense grid has photos only, no note lines.
+        let photoID = String(first.identifier.dropFirst("library.photo.".count))
+        let note = element(in: app, identifier: "library.note.\(photoID)")
+        XCTAssertTrue(note.exists)
+        app.typeKey("-", modifierFlags: .command)
+        app.typeKey("-", modifierFlags: .command)
+        let noteGone = NSPredicate(format: "exists == false")
+        expectation(for: noteGone, evaluatedWith: note)
+        waitForExpectations(timeout: launchTimeout)
+        capture(app, named: "grid-03-compact-evidence")
+        app.typeKey("=", modifierFlags: .command)
+        app.typeKey("=", modifierFlags: .command)
+        XCTAssertTrue(note.waitForExistence(timeout: launchTimeout), "⌘+ did not bring the print size back")
     }
 
     /// Two clicks closer together than the double-click interval are a double click.

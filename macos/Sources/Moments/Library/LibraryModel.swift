@@ -226,6 +226,25 @@ enum MediaDescriptorMapper {
 
 /// Pure Library filtering and grouping logic, kept outside the view for XCTest.
 enum LibraryFilterEngine {
+    /// Folds each burst in a section into one cell showing its cover. The
+    /// returned counts say how many photos stand behind each stacked cell.
+    static func folding(_ sections: [LibrarySection], with index: PhotoStackIndex) -> (sections: [LibrarySection], stackCounts: [String: Int]) {
+        guard !index.isEmpty else { return (sections, [:]) }
+        var counts: [String: Int] = [:]
+        let folded = sections.map { section -> LibrarySection in
+            let entries = index.collapse(section.itemIDs)
+            for entry in entries where entry.isStack { counts[entry.id] = entry.count }
+            return LibrarySection(
+                id: section.id,
+                title: section.title,
+                itemIDs: entries.map(\.id),
+                startDate: section.startDate,
+                endDate: section.endDate
+            )
+        }
+        return (folded, counts)
+    }
+
     private static let detector = ScreenshotDetector()
 
     static func detection(for item: MediaItem) -> ScreenshotDetection {
@@ -505,9 +524,16 @@ final class LibraryViewState {
     /// The grid's photos section by section, in on-screen order, for
     /// Shift-click ranges, arrow keys and paging in the viewer.
     var gridSections: [[String]] = [] {
-        didSet { orderedItemIDs = gridSections.flatMap { $0 } }
+        didSet {
+            orderedItemIDs = gridSections.flatMap { $0 }
+            // Screens without stacks (a group's page) page through what they show.
+            viewerItemIDs = orderedItemIDs
+        }
     }
     private(set) var orderedItemIDs: [String] = []
+    /// Every photo the grid shows, each stack's shots in place of its cell,
+    /// for the viewer, which folds them itself.
+    @ObservationIgnored var viewerItemIDs: [String] = []
     /// Columns in the Library grid: its rows and the up and down arrows.
     var gridColumns = 4
     /// The window's width. The grid's columns follow it, not the space next

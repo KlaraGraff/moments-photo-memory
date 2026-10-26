@@ -1299,9 +1299,18 @@ struct TripPlaceBlock: View {
     let itemByID: [String: MediaItem]
     let onOpen: (String) -> Void
     @Environment(SelectionModel.self) private var selection
+    @Environment(PhotoStackModel.self) private var stacks
     @Environment(\.locale) private var locale
 
     private let columns = [GridItem(.adaptive(minimum: 128, maximum: 200), spacing: 8, alignment: .top)]
+
+    /// A burst shows once, as a stack with its cover.
+    private var shownItems: [(item: TimelineItemSnapshot, count: Int)] {
+        let byID = Dictionary(place.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return stacks.collapse(place.items.map(\.id)).compactMap { entry in
+            byID[entry.id].map { ($0, entry.isStack ? entry.count : 1) }
+        }
+    }
 
     private var placeName: String { place.name ?? String(localized: "Unknown place") }
 
@@ -1339,14 +1348,23 @@ struct TripPlaceBlock: View {
             }
 
             LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
-                ForEach(place.items) { item in
+                ForEach(shownItems, id: \.item.id) { shown in
+                    let item = shown.item
                     Button { onOpen(item.id) } label: {
-                        thumbnail(for: item)
+                        thumbnail(for: item, stackCount: shown.count)
                     }
                     .buttonStyle(.plain)
                     .help(String(localized: "Open photo"))
                     .accessibilityLabel(item.title.isEmpty ? item.id : item.title)
                     .accessibilityIdentifier("trips.photo.\(item.id)")
+                    // Outside the button, so the count is its own element.
+                    .overlay(alignment: .bottomTrailing) {
+                        if shown.count > 1 {
+                            StackCountBadge(count: shown.count)
+                                .accessibilityIdentifier("trips.stack.\(item.id)")
+                                .allowsHitTesting(false)
+                        }
+                    }
                 }
             }
 
@@ -1364,7 +1382,7 @@ struct TripPlaceBlock: View {
         }
     }
 
-    private func thumbnail(for item: TimelineItemSnapshot) -> some View {
+    private func thumbnail(for item: TimelineItemSnapshot, stackCount: Int) -> some View {
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
         let selected = selection.isSelected(item.id)
         return Group {
@@ -1376,6 +1394,8 @@ struct TripPlaceBlock: View {
         }
         .aspectRatio(4.0 / 3.0, contentMode: .fit)
         .clipShape(shape)
+        // Rows here are close together: thin edges, like the dense Library grid.
+        .stackedPaper(stackCount, isCompact: true, cornerRadius: 10)
         .overlay(shape.strokeBorder(Paper.accent.opacity(selected ? 0.85 : 0), lineWidth: 2))
         .overlay(alignment: .bottomLeading) {
             if item.kindRaw == MediaKind.video.rawValue {

@@ -55,8 +55,7 @@ final class MomentsCorrectionsUITests: XCTestCase {
         let bar = element(in: app, identifier: "correction.bar")
         XCTAssertTrue(bar.waitForExistence(timeout: timeout), "No Undo bar after adjusting the date")
         capture(app, named: "\(prefix)-03-undo-bar-evidence")
-        element(in: app, identifier: "correction.undo").click()
-        XCTAssertTrue(bar.waitForNonExistence(timeout: timeout), "Undo did not close the bar")
+        undoFromBar(app, bar: bar, prefix: prefix)
     }
 
     // MARK: Places
@@ -106,10 +105,10 @@ final class MomentsCorrectionsUITests: XCTestCase {
         XCTAssertTrue(filters.waitForExistence(timeout: 30), "The Map has no filter bar")
         // The menu's label becomes the chosen place, so find it by identifier.
         let place = filters.descendants(matching: .any).matching(identifier: "filter.place").firstMatch
-        XCTAssertTrue(place.waitForExistence(timeout: timeout))
+        XCTAssertTrue(place.waitForExistence(timeout: timeout), "The Map's filter bar has no Place filter: \(filters.debugDescription)")
         place.click()
         let merged = app.menuItems["Demo place 1"].firstMatch
-        XCTAssertTrue(merged.waitForExistence(timeout: timeout))
+        XCTAssertTrue(merged.waitForExistence(timeout: timeout), "The Map's Place filter does not list the merged place: \(app.menus.firstMatch.debugDescription)")
         XCTAssertFalse(app.menuItems["Demo place 2"].exists, "The Map still lists the merged place")
         merged.click()
         Thread.sleep(forTimeInterval: 1.5)
@@ -153,8 +152,7 @@ final class MomentsCorrectionsUITests: XCTestCase {
         let bar = element(in: app, identifier: "correction.bar")
         XCTAssertTrue(bar.waitForExistence(timeout: timeout), "No Undo bar after moving the face")
         capture(app, named: "\(prefix)-02-moved-evidence")
-        element(in: app, identifier: "correction.undo").click()
-        XCTAssertTrue(bar.waitForNonExistence(timeout: timeout))
+        undoFromBar(app, bar: bar, prefix: prefix)
         XCTAssertTrue(face.waitForExistence(timeout: timeout), "Undo did not bring the face back to Alex")
 
         // In the large viewer: Sam's photo, "This isn't Sam, it's… Alex".
@@ -180,6 +178,17 @@ final class MomentsCorrectionsUITests: XCTestCase {
     }
 
     // MARK: Helpers
+
+    /// Undo from the bar at the bottom of the window; the bar goes away.
+    private func undoFromBar(_ app: XCUIApplication, bar: XCUIElement, prefix: String) {
+        let undo = element(in: app, identifier: "correction.undo")
+        XCTAssertTrue(undo.waitForExistence(timeout: timeout), "The bar has no Undo button")
+        let before = "undo \(undo.frame) hittable \(undo.isHittable), bar \(bar.frame), window \(app.windows.firstMatch.frame)"
+        undo.click()
+        let closed = bar.waitForNonExistence(timeout: timeout)
+        if !closed { capture(app, named: "\(prefix)-undo-still-open-evidence") }
+        XCTAssertTrue(closed, "Undo did not close the bar (\(before)): \(bar.debugDescription)")
+    }
 
     private func launch(smallWindow: Bool = false, people: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()

@@ -83,7 +83,8 @@ final class MomentsStackUITests: XCTestCase {
         XCTAssertTrue(element(app, "viewer.stack").waitForExistence(timeout: timeout))
         let window = app.windows.firstMatch
         XCTAssertTrue(window.frame.contains(element(app, "viewer.stack").frame), "The strip spills outside a small window")
-        XCTAssertTrue(element(app, "viewer.stack.unstack").isHittable, "The stack buttons do not fit a small window")
+        let unstack = element(app, "viewer.stack.unstack")
+        XCTAssertTrue(unstack.exists && !unstack.frame.isEmpty && window.frame.contains(unstack.frame), "The stack buttons do not fit a small window")
         capture(app, "stack-07-small-viewer-evidence")
     }
 
@@ -109,7 +110,8 @@ final class MomentsStackUITests: XCTestCase {
     }
 
     private func waitForSelected(_ element: XCUIElement) -> Bool {
-        let selected = NSPredicate(format: "value CONTAINS %@", "Current")
+        // The open shot carries the Selected trait.
+        let selected = NSPredicate(format: "selected == true")
         return XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: selected, object: element)], timeout: timeout) == .completed
     }
 

@@ -29,6 +29,7 @@ jobs:
           TEST_RUNNER_MOMENTS_UI_IMPORT_FOLDER: ${{ runner.temp }}/synthetic-trip-folder
           TEST_RUNNER_MOMENTS_FLASH_DIR: ${{ runner.temp }}/flash
           TEST_RUNNER_MOMENTS_SCROLL_DIR: ${{ runner.temp }}/scroll
+          TEST_RUNNER_MOMENTS_RESIZE_DIR: ${{ runner.temp }}/resize
         run: |
           # While the scroll test scrolls, sample the app's call stacks so a
           # stall can be traced to the code that caused it. Without sudo,
@@ -38,6 +39,12 @@ jobs:
               [ -f "$scroll_dir/scrolling" ] && { sudo sample Moments 10 -mayDie -file "$RUNNER_TEMP/scroll-sample.txt" >/dev/null 2>&1; break; }
               sleep 0.2
             done ) &
+          # The same while the sidebar test hides, shows and drags the sidebar.
+          resize_dir="$RUNNER_TEMP/resize"
+          ( for _ in $(seq 1 6000); do
+              [ -f "$resize_dir/resizing" ] && { sudo sample Moments 3 1 -mayDie -file "$RUNNER_TEMP/resize-sample.txt" >/dev/null 2>&1; break; }
+              sleep 0.1
+            done ) &
           # Ad-hoc signing is enough for the test runner on the hosted Mac.
           xcodebuild \
             -project macos/Moments.xcodeproj \
@@ -46,6 +53,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -resultBundlePath "$RUNNER_TEMP/MomentsUITests.xcresult" \
             CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
+            -only-testing:MomentsUITests/MomentsResizeUITests \
             test
       - name: Print scroll reports
         if: always()
@@ -57,6 +65,15 @@ jobs:
           echo "SAMPLE-BEGIN"
           sudo chmod a+r "$sample"; gzip -9c "$sample" | base64 | fold -w 4000
           echo "SAMPLE-END"
+      - name: Print resize report
+        if: always()
+        run: |
+          cat "$RUNNER_TEMP"/resize/resize-report.txt 2>/dev/null || echo "no resize report"
+          sample="$RUNNER_TEMP/resize-sample.txt"
+          [ -f "$sample" ] || { echo "no resize sample"; exit 0; }
+          echo "RESIZE-SAMPLE-BEGIN"
+          sudo chmod a+r "$sample"; gzip -9c "$sample" | base64 | fold -w 4000
+          echo "RESIZE-SAMPLE-END"
       - name: Print flash report
         if: always()
         run: |

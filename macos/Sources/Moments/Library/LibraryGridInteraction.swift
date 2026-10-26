@@ -30,6 +30,9 @@ extension View {
                     }
                     .onChange(of: geometry.size.width) { _, width in
                         state.gridColumns = LibraryGridNavigation.columns(width: width, minimum: minimum, spacing: spacing)
+                        #if DEBUG
+                        ResizeProbe.noteGrid(columns: state.gridColumns, width: width)
+                        #endif
                     }
             }
         }

@@ -407,7 +407,9 @@ final class MomentsUITests: XCTestCase {
             let sidebarShown = library.waitForExistence(timeout: smallWindow ? 5 : launchTimeout)
             XCTAssertTrue(sidebarShown || smallWindow, "The sidebar is missing in \(language)")
             if sidebarShown {
-                let texts = [library.label, library.title] + library.staticTexts.allElementsBoundByIndex.map(\.label)
+                // macOS puts a sidebar row's text in the value of its static text.
+                let parts = [library] + library.descendants(matching: .any).allElementsBoundByIndex
+                let texts = parts.flatMap { [$0.label, $0.title, $0.value as? String ?? ""] }.filter { !$0.isEmpty }
                 XCTAssertTrue(texts.contains(libraryLabel), "The sidebar reads \(texts), not \(libraryLabel), in \(language)")
             }
             app.typeKey(",", modifierFlags: .command)

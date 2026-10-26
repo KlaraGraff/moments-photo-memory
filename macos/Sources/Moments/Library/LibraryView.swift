@@ -597,10 +597,10 @@ struct LibraryView: View {
         let folded = LibraryFilterEngine.folding(unfolded, with: stackIndex)
         cachedSections = folded.sections
         cachedUnfoldedSectionItems = Dictionary(unfolded.map { ($0.id, $0.itemIDs) }, uniquingKeysWith: { first, _ in first })
-        state.viewerItemIDs = unfolded.flatMap(\.itemIDs)
         cachedStackCounts = folded.stackCounts
         cachedVisibleCount = visible.count
         state.gridSections = cachedSections.map(\.itemIDs)
+        state.viewerItemIDs = unfolded.flatMap(\.itemIDs)
         hasGrouped = true
         cachedFilterOptions = Self.filterOptions(for: allItems)
         let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))

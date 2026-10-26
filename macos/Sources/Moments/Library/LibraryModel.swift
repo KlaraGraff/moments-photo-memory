@@ -524,7 +524,11 @@ final class LibraryViewState {
     /// The grid's photos section by section, in on-screen order, for
     /// Shift-click ranges, arrow keys and paging in the viewer.
     var gridSections: [[String]] = [] {
-        didSet { orderedItemIDs = gridSections.flatMap { $0 } }
+        didSet {
+            orderedItemIDs = gridSections.flatMap { $0 }
+            // Screens without stacks (a group's page) page through what they show.
+            viewerItemIDs = orderedItemIDs
+        }
     }
     private(set) var orderedItemIDs: [String] = []
     /// Every photo the grid shows, each stack's shots in place of its cell,

@@ -29,6 +29,10 @@ final class PhotoStackModel {
     @ObservationIgnored private var detectedRevision: Int?
     @ObservationIgnored private var detection: Task<Void, Never>?
     @ObservationIgnored private var refreshToken = 0
+    /// Move whenever newer photos or decisions arrive, so a slower
+    /// background refresh never puts older ones back.
+    @ObservationIgnored private var photosVersion = 0
+    @ObservationIgnored private var decisionsVersion = 0
 
     struct Change: Equatable {
         enum Kind: Equatable { case cover, unstack, remove }
@@ -73,10 +77,12 @@ final class PhotoStackModel {
         if photosKey != self.photosKey {
             photos = Self.photos(of: items)
             self.photosKey = photosKey
+            photosVersion += 1
         }
         if decisionsKey != self.decisionsKey {
             decisions = records.compactMap(Self.decision(of:))
             self.decisionsKey = decisionsKey
+            decisionsVersion += 1
         }
         detect(waits: waits || isFirst)
         return index
@@ -93,6 +99,8 @@ final class PhotoStackModel {
     func refresh(container: ModelContainer) {
         refreshToken += 1
         let token = refreshToken
+        let photosVersion = self.photosVersion
+        let decisionsVersion = self.decisionsVersion
         Task { [weak self] in
             let snapshot = await Task.detached(priority: .utility) { () -> Snapshot in
                 let context = ModelContext(container)
@@ -107,13 +115,21 @@ final class PhotoStackModel {
                 )
             }.value
             guard let self, token == self.refreshToken else { return }
-            guard snapshot.photosKey != self.photosKey || snapshot.decisionsKey != self.decisionsKey
-                    || self.analysis.revision != self.detectedRevision else { return }
-            self.photos = snapshot.photos
-            self.photosKey = snapshot.photosKey
-            self.decisions = snapshot.decisions
-            self.decisionsKey = snapshot.decisionsKey
-            self.detect(waits: false)
+            var changed = self.analysis.revision != self.detectedRevision
+            // Only parts nobody replaced while the store was read.
+            if photosVersion == self.photosVersion, snapshot.photosKey != self.photosKey {
+                self.photos = snapshot.photos
+                self.photosKey = snapshot.photosKey
+                self.photosVersion += 1
+                changed = true
+            }
+            if decisionsVersion == self.decisionsVersion, snapshot.decisionsKey != self.decisionsKey {
+                self.decisions = snapshot.decisions
+                self.decisionsKey = snapshot.decisionsKey
+                self.decisionsVersion += 1
+                changed = true
+            }
+            if changed { self.detect(waits: false) }
         }
     }
 
@@ -127,16 +143,22 @@ final class PhotoStackModel {
     private func detect(waits: Bool) {
         let photos = self.photos
         let decisions = self.decisions
-        let entries = analysis.entries
         let detector = self.detector
+        let analysis = self.analysis
         detectedRevision = analysis.revision
         detection?.cancel()
         detection = nil
-        if waits {
-            apply(Self.detect(photos, analysis: entries, decisions: decisions, detector: detector))
+        // While the saved analysis is still being read, wait for it, so
+        // stacks don't fold once by hash and again by feature print.
+        if waits, analysis.isLoaded {
+            apply(Self.detect(photos, analysis: analysis.entries, decisions: decisions, detector: detector))
             return
         }
         detection = Task { [weak self] in
+            await analysis.loaded()
+            guard !Task.isCancelled else { return }
+            self?.detectedRevision = analysis.revision
+            let entries = analysis.entries
             let next = await Task.detached(priority: .userInitiated) {
                 Self.detect(photos, analysis: entries, decisions: decisions, detector: detector)
             }.value
@@ -315,6 +337,7 @@ final class PhotoStackModel {
         let records = (try? context.fetch(FetchDescriptor<UserGroup>(predicate: #Predicate { $0.kindRaw == stackKind }))) ?? []
         decisions = records.compactMap(Self.decision(of:))
         decisionsKey = Self.key(of: records)
+        decisionsVersion += 1
         detect(waits: true)
     }
 

@@ -51,6 +51,8 @@ final class PhotoStackAnalysisStore {
     @ObservationIgnored private let fileURL: URL?
     @ObservationIgnored private let writer = Writer()
     @ObservationIgnored private var loading: Task<Void, Never>?
+    /// The file has been read (or there is none).
+    @ObservationIgnored private(set) var isLoaded = true
     @ObservationIgnored private var hasUnpublished = false
     @ObservationIgnored private var lastPublished = Date.distantPast
     @ObservationIgnored private var lastSaved = Date()
@@ -59,8 +61,10 @@ final class PhotoStackAnalysisStore {
     init(fileURL: URL?) {
         self.fileURL = fileURL
         guard let fileURL else { return }
+        isLoaded = false
         loading = Task { [weak self] in
             let loaded = await Task.detached(priority: .utility) { Self.read(from: fileURL) }.value
+            self?.isLoaded = true
             guard let self, let loaded, !loaded.isEmpty else { return }
             // Results that arrived while the file was read win.
             self.entries = loaded.merging(self.entries) { _, current in current }

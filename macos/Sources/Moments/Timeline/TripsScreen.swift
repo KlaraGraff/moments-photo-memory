@@ -158,9 +158,6 @@ private struct TripShelfView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                PaperScreenHeader(String(localized: "Trips")) {
-                    Text(String(localized: "\(tripCount) trips"))
-                }
                 LazyVStack(alignment: .leading, spacing: 22) {
                     ForEach(trips) { trip in
                         TripCoverCard(
@@ -173,10 +170,14 @@ private struct TripShelfView: View {
                     }
                 }
                 .padding(.horizontal, PaperMetrics.screenInset)
+                .padding(.top, PaperMetrics.screenTopInset)
                 .padding(.bottom, 32)
             }
             .scrollIndicators(.automatic)
             .background(Paper.canvas)
+            // The page's name lives in the window's title bar, not in the page.
+            .navigationTitle(String(localized: "Trips"))
+            .navigationSubtitle(String(localized: "\(tripCount) trips"))
             .onAppear {
                 if let returnTripID { proxy.scrollTo(returnTripID, anchor: .center) }
             }
@@ -334,13 +335,14 @@ private struct TripDetailView: View {
 
     var body: some View {
         ScrollView {
-            PaperScreenHeader(TripText.name(trip)) {
-                if let span = TripText.dateSpan(trip, locale: locale) {
-                    Text(span)
-                }
-            }
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 10) {
+                    // The trip's name is in the title bar; its dates lead the page.
+                    if let span = TripText.dateSpan(trip, locale: locale) {
+                        Text(span)
+                            .font(.system(size: 21, weight: .medium, design: .serif))
+                            .foregroundStyle(Paper.ink)
+                    }
                     Text(TripText.summary(trip))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(Paper.muted)
@@ -378,10 +380,13 @@ private struct TripDetailView: View {
                 }
             }
             .padding(.horizontal, PaperMetrics.screenInset)
+            .padding(.top, PaperMetrics.screenTopInset)
             .padding(.bottom, 40)
         }
         .scrollIndicators(.automatic)
         .background(Paper.canvas)
+        .navigationTitle(TripText.name(trip))
+        .navigationSubtitle(String(localized: "Trips"))
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button(action: onBack) {

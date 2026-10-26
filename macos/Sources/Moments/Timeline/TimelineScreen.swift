@@ -71,14 +71,14 @@ struct TimelineScreen: View {
                 timelineScroll
             }
         }
+        // The page's name lives in the window's title bar, not in the page.
+        .navigationTitle(String(localized: "Timeline"))
+        .navigationSubtitle(isBuilt && dayCount > 0 ? String(localized: "\(dayCount) days") : "")
         .task(id: inputKey) { rebuild() }
     }
 
     private var timelineScroll: some View {
         ScrollView {
-            PaperScreenHeader(String(localized: "Timeline")) {
-                Text(String(localized: "\(dayCount) days"))
-            }
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                 ForEach(months) { month in
                     Section {
@@ -104,6 +104,7 @@ struct TimelineScreen: View {
                 }
             }
             .padding(.horizontal, PaperMetrics.screenInset)
+            .padding(.top, PaperMetrics.screenTopInset)
             .padding(.bottom, 32)
         }
         .scrollIndicators(.automatic)

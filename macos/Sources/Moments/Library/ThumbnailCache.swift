@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -194,7 +195,7 @@ final class ThumbnailCache {
             made = decodedImage(data: data, maxPixelSize: max(width, height))
         }
         if made == nil, let bookmark = source.bookmark {
-            made = fileThumbnail(bookmark: bookmark, maxPixelSize: max(width, height))
+            made = await fileThumbnail(bookmark: bookmark, maxPixelSize: max(width, height))
         }
         if let made {
             if let diskURL { writeJPEG(made, to: diskURL) }
@@ -206,19 +207,36 @@ final class ThumbnailCache {
         return (generated, !source.hasOriginal)
     }
 
-    nonisolated private static func fileThumbnail(bookmark: Data, maxPixelSize: Int) -> CGImage? {
+    nonisolated private static func fileThumbnail(bookmark: Data, maxPixelSize: Int) async -> CGImage? {
         guard let resolved = try? OriginalMediaBookmark.resolve(bookmark) else { return nil }
         // Outside the sandbox this returns false for plain paths; the file is
         // still readable, so it only decides whether to stop access again.
         let scoped = resolved.url.startAccessingSecurityScopedResource()
         defer { if scoped { resolved.url.stopAccessingSecurityScopedResource() } }
-        guard let source = CGImageSourceCreateWithURL(resolved.url as CFURL, nil) else { return nil }
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+        if let source = CGImageSourceCreateWithURL(resolved.url as CFURL, nil),
+           let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
             kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
-        ] as CFDictionary)
+           ] as CFDictionary) {
+            return image
+        }
+        // ImageIO cannot read videos: their thumbnail is a frame near the start.
+        return await videoFrame(url: resolved.url, maxPixelSize: maxPixelSize)
+    }
+
+    nonisolated private static func videoFrame(url: URL, maxPixelSize: Int) async -> CGImage? {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: maxPixelSize, height: maxPixelSize)
+        // The very first frame of a phone video is often black or blurred.
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
+        if let frame = try? await generator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image {
+            return frame
+        }
+        return try? await generator.image(at: .zero).image
     }
 
     nonisolated private static func decodedImage(at url: URL) -> CGImage? {

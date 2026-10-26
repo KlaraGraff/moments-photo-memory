@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
@@ -38,6 +39,22 @@ final class ThumbnailCacheTests: XCTestCase {
         XCTAssertLessThan(pixel.blue, 40)
         let saved = try FileManager.default.contentsOfDirectory(atPath: cacheFolder.path)
         XCTAssertEqual(saved, ["folder-1-120x90.jpg"])
+    }
+
+    func testFolderVideoShowsAFrame() async throws {
+        let video = folder.appending(path: "green.mov")
+        try await writeSolidVideo(red: 0, green: 255, blue: 0, to: video)
+        let bookmark = Data(OriginalMediaBookmark.pathFallbackPrefix.utf8) + Data(video.path.utf8)
+        let cacheFolder = folder.appending(path: "cache", directoryHint: .isDirectory)
+        let cache = ThumbnailCache(directory: cacheFolder, photos: nil)
+
+        let image = await cache.image(for: ThumbnailSource(id: "video-1", bookmark: bookmark), width: 120, height: 90)
+
+        let pixel = try XCTUnwrap(image.flatMap(centrePixel))
+        XCTAssertLessThan(pixel.red, 60)
+        XCTAssertGreaterThan(pixel.green, 180)
+        XCTAssertLessThan(pixel.blue, 60)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: cacheFolder.path), ["video-1-120x90.jpg"])
     }
 
     func testPhotosItemShowsThePhotoKitImage() async throws {
@@ -98,6 +115,42 @@ final class ThumbnailCacheTests: XCTestCase {
         let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
         CGImageDestinationAddImage(destination, try solidImage(red: red, green: green, blue: blue), nil)
         XCTAssertTrue(CGImageDestinationFinalize(destination))
+    }
+
+    /// One second of a single colour, H.264 in a QuickTime file.
+    private func writeSolidVideo(red: UInt8, green: UInt8, blue: UInt8, to url: URL) async throws {
+        let width = 64, height = 48
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height
+        ])
+        writer.add(input)
+        XCTAssertTrue(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+        for frame in 0..<30 {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 5_000_000) }
+            var buffer: CVPixelBuffer?
+            CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA, nil, &buffer)
+            let pixels = try XCTUnwrap(buffer)
+            CVPixelBufferLockBaseAddress(pixels, [])
+            let base = try XCTUnwrap(CVPixelBufferGetBaseAddress(pixels)).assumingMemoryBound(to: UInt8.self)
+            let rowBytes = CVPixelBufferGetBytesPerRow(pixels)
+            for y in 0..<height {
+                for x in 0..<width {
+                    let offset = y * rowBytes + x * 4
+                    base[offset] = blue; base[offset + 1] = green; base[offset + 2] = red; base[offset + 3] = 255
+                }
+            }
+            CVPixelBufferUnlockBaseAddress(pixels, [])
+            XCTAssertTrue(adaptor.append(pixels, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30)))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        XCTAssertEqual(writer.status, .completed, String(describing: writer.error))
     }
 
     private func solidPNG(red: UInt8, green: UInt8, blue: UInt8) throws -> Data {

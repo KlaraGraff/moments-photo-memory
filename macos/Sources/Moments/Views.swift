@@ -385,9 +385,9 @@ private struct SidebarIconGallery: View {
     static let isEnabled = ProcessInfo.processInfo.arguments.contains("-MomentsUITestIconGallery")
 
     private let rows: [(String, [(String, String)])] = [
-        ("Trips", [("now", "suitcase"), ("A", "airplane.departure"), ("B", "suitcase.rolling"), ("C", "beach.umbrella")]),
-        ("Map", [("now", "map"), ("A", "globe.europe.africa"), ("B", "mappin.and.ellipse"), ("C", "signpost.right")]),
-        ("Timeline", [("now", "calendar"), ("A", "point.topleft.down.to.point.bottomright.curvepath"), ("B", "point.3.connected.trianglepath.dotted"), ("C", "sparkles")]),
+        ("Trips", [("now", "airplane.departure"), ("A", "suitcase.rolling"), ("B", "rectangle.stack"), ("C", "tag")]),
+        ("Map", [("now", "globe.europe.africa"), ("A", "globe.desk"), ("B", "mappin.circle"), ("C", "map.circle")]),
+        ("Timeline", [("now", "point.topleft.down.to.point.bottomright.curvepath"), ("A", "point.forward.to.point.capsulepath"), ("B", "timeline.selection"), ("C", "sparkles")]),
     ]
 
     var body: some View {

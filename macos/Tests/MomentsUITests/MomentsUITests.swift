@@ -162,8 +162,10 @@ final class MomentsUITests: XCTestCase {
         date.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 1)).withOffset(CGVector(dx: 30, dy: 47)).click()
         app.typeKey("a", modifierFlags: .command)
         app.typeText("Harbour cafe\r")
-        expectation(for: NSPredicate(format: "value == %@", "Harbour cafe"), evaluatedWith: place)
-        waitForExpectations(timeout: launchTimeout)
+        capture(app, named: "grid-02c2-viewer-place-typed-evidence")
+        // The corrected place shows what it was found as.
+        let corrected = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Corrected, was")).firstMatch
+        XCTAssertTrue(corrected.waitForExistence(timeout: launchTimeout), "Typing over the place did not correct it")
         date.click()
         let dateDone = app.buttons["viewer.date.done"]
         XCTAssertTrue(dateDone.waitForExistence(timeout: launchTimeout), "Clicking the date did not open the date editor")

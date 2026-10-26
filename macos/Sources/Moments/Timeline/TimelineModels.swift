@@ -13,6 +13,8 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
     let tripID: String?
     let placeHint: String?
     let memories: [TimelineMemorySnippet]
+    /// The `yyyy-MM-dd` key day memories are stored under (see `PhotoNoteDay`).
+    let dayKey: String?
 
     init(
         id: String,
@@ -23,7 +25,8 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
         kindRaw: String = MediaKind.photo.rawValue,
         tripID: String? = nil,
         placeHint: String? = nil,
-        memories: [TimelineMemorySnippet] = []
+        memories: [TimelineMemorySnippet] = [],
+        dayKey: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -34,13 +37,14 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
         self.tripID = tripID
         self.placeHint = placeHint
         self.memories = memories
+        self.dayKey = dayKey
     }
 
     init(item: MediaItem, placeHint: String? = nil) {
         self.init(
             id: item.id,
             title: item.title,
-            date: item.captureDate,
+            date: item.effectiveCaptureDate,
             latitude: item.latitude,
             longitude: item.longitude,
             kindRaw: item.kind.rawValue,
@@ -55,7 +59,8 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
                         text: memory.text,
                         authorRaw: memory.authorRaw
                     )
-                }
+                },
+            dayKey: PhotoNoteDay.key(for: item)
         )
     }
 
@@ -118,12 +123,50 @@ struct TimelineTrip: Identifiable {
             }
         }
     }
+
+    /// True for the catch-all of photos that are in no trip.
+    var isUnsorted: Bool { id == TimelineBuilder.unassignedTripID }
+
+    /// Every photo in day and place order, the order the viewer pages through.
+    var orderedItems: [TimelineItemSnapshot] {
+        days.flatMap { $0.places.flatMap(\.items) }
+    }
+
+    var endDate: Date? { orderedItems.compactMap(\.date).max() }
+
+    var datedDayCount: Int { days.filter { $0.date != nil }.count }
+
+    /// Distinct named places, so a place visited on two days counts once.
+    var placeCount: Int {
+        Set(days.flatMap { $0.places.compactMap(\.name) }).count
+    }
+
+    /// Cities in the order they were first visited.
+    var cityNames: [String] {
+        var seen: Set<String> = []
+        return days.flatMap { $0.places.compactMap(\.cityName) }.filter { seen.insert($0).inserted }
+    }
+
+    /// The first photo (not video) of the trip; a video only when there is nothing else.
+    var cover: TimelineItemSnapshot? {
+        let items = orderedItems
+        return items.first { $0.kindRaw != MediaKind.video.rawValue } ?? items.first
+    }
 }
 
 struct TimelineDay: Identifiable {
     let id: String
     let date: Date?
     let events: [TimelineEvent]
+    /// The key this day's memories are written under; `nil` for undated photos.
+    var memoryKey: String? = nil
+
+    var places: [TimelinePlace] {
+        events.compactMap { event -> TimelinePlace? in
+            if case let .place(place) = event { return place }
+            return nil
+        }
+    }
 }
 
 enum TimelineEvent: Identifiable {

@@ -359,13 +359,68 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: launchTimeout))
     }
 
-    func testTimelinePlaceShowsItsPhotosInLibrary() {
+    func testTripsOpenATripWriteItsMemoryAndOpenAPhoto() {
         let app = launch(language: "en")
-        timelineJumpShowsPlaceInLibrary(app)
+        element(in: app, identifier: "sidebar.timeline").click()
+
+        // The shelf: one cover card per trip.
+        let card = element(in: app, identifier: "trips.card.journeyA")
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout), "Trip cover card was not exposed")
+        XCTAssertTrue(element(in: app, identifier: "trips.card.journeyB").exists, "Every trip gets a card")
+        Thread.sleep(forTimeInterval: 0.8)
+        capture(app, named: "trips-01-shelf-evidence")
+        card.click()
+
+        // The trip: its memory line, then days with places and photos.
+        let tripMemory = element(in: app, identifier: "trips.memory.trip")
+        XCTAssertTrue(tripMemory.waitForExistence(timeout: launchTimeout), "Opening a trip did not show it")
+        let dayLine = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.memory.day."))
+            .firstMatch
+        XCTAssertTrue(dayLine.waitForExistence(timeout: launchTimeout), "A dated day has no memory line")
+
+        tripMemory.click()
+        tripMemory.typeText("Synthetic trip memory\r")
+        let written = app.staticTexts
+            .matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Synthetic trip memory", "Synthetic trip memory"))
+            .firstMatch
+        let saved = written.waitForExistence(timeout: launchTimeout)
+        capture(app, named: "trips-02a-after-return-evidence")
+        XCTAssertTrue(saved, "Return did not save the trip memory")
+        XCTAssertFalse((tripMemory.value as? String ?? "").contains("Synthetic trip memory"), "The memory line was not cleared after saving")
+        Thread.sleep(forTimeInterval: 0.8)
+        capture(app, named: "trips-02-trip-evidence")
+
+        // A photo opens the large viewer, which pages through the trip.
+        let photo = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.photo.")).firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
+        photo.click()
+        let viewer = element(in: app, identifier: "viewer")
+        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout), "Clicking a photo did not open it")
+        capture(app, named: "trips-03-viewer-evidence")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(viewer.waitForNonExistence(timeout: launchTimeout))
+
+        // The open trip survives a visit to another screen.
+        element(in: app, identifier: "sidebar.library").click()
+        element(in: app, identifier: "sidebar.timeline").click()
+        XCTAssertTrue(tripMemory.waitForExistence(timeout: launchTimeout), "The open trip was lost on a screen switch")
+
+        // Back to the shelf.
+        let back = element(in: app, identifier: "trips.back")
+        XCTAssertTrue(back.waitForExistence(timeout: launchTimeout))
+        back.click()
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout), "Back did not return to the trip cards")
+        capture(app, named: "trips-04-shelf-with-memory-evidence")
     }
 
-    /// The Library restores where the user left it; a Timeline jump must still win.
-    func testTimelinePlaceShowsItsPhotosInLibraryAfterScrolling() {
+    func testTripPlaceShowsItsPhotosInLibrary() {
+        let app = launch(language: "en")
+        tripPlaceShowsItsPhotosInLibrary(app)
+    }
+
+    /// The Library restores where the user left it; a jump from a trip must still win.
+    func testTripPlaceShowsItsPhotosInLibraryAfterScrolling() {
         let app = launch(language: "en")
         let photo = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
@@ -373,15 +428,19 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
         photo.scroll(byDeltaX: 0, deltaY: -1500)
         Thread.sleep(forTimeInterval: 1)
-        timelineJumpShowsPlaceInLibrary(app)
+        tripPlaceShowsItsPhotosInLibrary(app)
     }
 
-    private func timelineJumpShowsPlaceInLibrary(_ app: XCUIApplication) {
+    private func tripPlaceShowsItsPhotosInLibrary(_ app: XCUIApplication) {
         let allCount = libraryPhotoCount(app)
         element(in: app, identifier: "sidebar.timeline").click()
+        let card = element(in: app, identifier: "trips.card.journeyA")
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
+        card.click()
 
-        let place = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.place.")).firstMatch
-        XCTAssertTrue(place.waitForExistence(timeout: launchTimeout), "Timeline place row was not exposed")
+        // A place's name lists its photos on their own in the Library.
+        let place = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.place.")).firstMatch
+        XCTAssertTrue(place.waitForExistence(timeout: launchTimeout), "Trip place name was not exposed")
         place.click()
 
         let chip = element(in: app, identifier: "library.scope-chip")
@@ -390,16 +449,18 @@ final class MomentsUITests: XCTestCase {
         XCTAssertGreaterThan(scopedCount, 0)
         XCTAssertLessThan(scopedCount, allCount, "Only the place's photos should be listed")
 
-        let photo = element(in: app, identifier: "library.photo.D0001")
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+            .firstMatch
         XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
         XCTAssertTrue(photo.isHittable, "The place's photos should be in view")
         // A sliver at the edge counts as hittable; the whole card must be visible
         // below the filter chips and inside the window.
         let window = app.windows.firstMatch.frame
-        let card = photo.frame
-        XCTAssertGreaterThanOrEqual(card.minY, chip.frame.maxY - 1, "The card is cut off at the top (card \(card), chip \(chip.frame))")
-        XCTAssertLessThanOrEqual(card.maxY, window.maxY + 1, "The card is cut off at the bottom (card \(card), window \(window))")
-        capture(app, named: "timeline-01-place-in-library-evidence")
+        let frame = photo.frame
+        XCTAssertGreaterThanOrEqual(frame.minY, chip.frame.maxY - 1, "The card is cut off at the top (card \(frame), chip \(chip.frame))")
+        XCTAssertLessThanOrEqual(frame.maxY, window.maxY + 1, "The card is cut off at the bottom (card \(frame), window \(window))")
+        capture(app, named: "trips-05-place-in-library-evidence")
 
         chip.click()
         XCTAssertTrue(chip.waitForNonExistence(timeout: 5), "Clicking the chip should remove the scope")
@@ -466,12 +527,12 @@ final class MomentsUITests: XCTestCase {
         let timeline = element(in: app, identifier: "sidebar.timeline")
         XCTAssertTrue(timeline.waitForExistence(timeout: launchTimeout))
         timeline.click()
-        // Locale-independent: a timeline place row proves the screen rendered.
-        let placeRow = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.place."))
+        // Locale-independent: a trip cover card proves the screen rendered.
+        let tripCard = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.card."))
             .firstMatch
-        XCTAssertTrue(placeRow.waitForExistence(timeout: launchTimeout))
-        capture(app, named: "\(prefix)-04-timeline")
+        XCTAssertTrue(tripCard.waitForExistence(timeout: launchTimeout))
+        capture(app, named: "\(prefix)-04-trips-evidence")
     }
 
     private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false) -> XCUIApplication {

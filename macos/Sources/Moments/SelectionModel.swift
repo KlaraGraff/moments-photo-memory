@@ -59,6 +59,8 @@ final class SelectionModel {
     func openViewer(_ itemID: String, in itemIDs: [String]) {
         viewerRequest = ViewerRequest(itemIDs: itemIDs.isEmpty ? [itemID] : itemIDs, itemID: itemID)
     }
+    /// The trip open on the Trips screen, kept while visiting other screens.
+    var openTripID: String?
     /// Where a Shift-click range starts: the last item clicked without Shift.
     var anchorItemID: String?
 

@@ -877,7 +877,7 @@ struct PeopleScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Paper.canvas)
         .navigationTitle(String(localized: "People"))
-        .navigationSubtitle(namedPeople.isEmpty ? "" : String(format: String(localized: "%lld people"), namedPeople.count))
+        .navigationSubtitle(namedPeople.isEmpty ? "" : String(localized: "\(namedPeople.count) people"))
         .toolbar {
             if lastFaceChange != nil {
                 ToolbarItem(placement: .primaryAction) {

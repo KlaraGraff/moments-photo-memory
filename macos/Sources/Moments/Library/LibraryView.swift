@@ -254,7 +254,7 @@ struct LibraryView: View {
         }
         .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search places, trips, notes")))
         .navigationTitle(String(localized: "Library"))
-        .navigationSubtitle(String(format: String(localized: "%lld photos"), cachedVisibleCount))
+        .navigationSubtitle(String(localized: "\(cachedVisibleCount) photos"))
     }
 
     /// "12 photos to confirm" under the filters; opens the review list.
@@ -394,7 +394,7 @@ struct LibraryView: View {
             Color.clear
                 .frame(width: 1, height: 1)
                 .accessibilityElement()
-                .accessibilityLabel(String(format: String(localized: "%lld photos"), cachedVisibleCount))
+                .accessibilityLabel(String(localized: "\(cachedVisibleCount) photos"))
                 .accessibilityValue(String(cachedVisibleCount))
                 .accessibilityIdentifier("library.photoCount")
         }
@@ -1336,7 +1336,7 @@ struct GroupDetailView: View {
                 .background(LibraryPalette.content)
                 .navigationTitle(group.name)
                 .navigationSubtitle(
-                    String(format: String(localized: "%lld photos"), visibleItems.count) + " · "
+                    String(localized: "\(visibleItems.count) photos") + " · "
                         + (group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
                 )
                 .toolbar {

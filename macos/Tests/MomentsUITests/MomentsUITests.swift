@@ -147,9 +147,9 @@ final class MomentsUITests: XCTestCase {
         app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language]
         if darkMode { app.launchArguments += ["-MomentsUITestDarkMode"] }
         if smallWindow { app.launchArguments += ["-MomentsUITestSmallWindow"] }
-        // The app declines saved window state in UI-test mode itself; passing
-        // -ApplePersistenceIgnoreState here left it without a window.
-        app.launchArguments += ["-NSQuitAlwaysKeepsWindows", "NO"]
+        // No window-state arguments: with -MomentsUITesting, both
+        // -ApplePersistenceIgnoreState and -NSQuitAlwaysKeepsWindows left
+        // SwiftUI's WindowGroup without its initial window on CI.
         app.launch()
         app.activate()
         requireFrontmostWindow(app)

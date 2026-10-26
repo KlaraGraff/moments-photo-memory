@@ -45,31 +45,115 @@ public actor ImportGeocodeCache {
 /// Limits reverse-geocoding during one import. CLGeocoder is rate-limited
 /// (roughly one request a second, then throttling errors), so an import makes
 /// at most `maxLookups` calls, gives each `timeout`, and stops after
-/// `maxConsecutiveFailures` failures in a row. Places it skips are flagged for
-/// a later retry instead of blocking the import.
+/// `maxConsecutiveFailures` failures in a row. Cities it skips keep an empty
+/// name and are named later by `PlaceNameBackfill`.
 actor ImportGeocodeGate {
+    enum Purpose { case timeZone, placeName }
+
     let maxLookups: Int
+    /// Time-zone lookups run first, so they get a smaller share and leave
+    /// most of the budget for naming places.
+    let maxTimeZoneLookups: Int
     let maxConsecutiveFailures: Int
     let timeout: Duration
     private(set) var lookups = 0
+    private var timeZoneLookups = 0
     private var consecutiveFailures = 0
 
-    init(maxLookups: Int = 40, maxConsecutiveFailures: Int = 3, timeout: Duration = .seconds(10)) {
+    init(maxLookups: Int = 40, maxTimeZoneLookups: Int = 10, maxConsecutiveFailures: Int = 3, timeout: Duration = .seconds(10)) {
         self.maxLookups = maxLookups
+        self.maxTimeZoneLookups = maxTimeZoneLookups
         self.maxConsecutiveFailures = maxConsecutiveFailures
         self.timeout = timeout
     }
 
     /// Reserves one lookup, or returns false when the budget is spent or
     /// the service keeps failing.
-    func reserve() -> Bool {
+    func reserve(for purpose: Purpose) -> Bool {
         guard lookups < maxLookups, consecutiveFailures < maxConsecutiveFailures else { return false }
+        if purpose == .timeZone {
+            guard timeZoneLookups < maxTimeZoneLookups else { return false }
+            timeZoneLookups += 1
+        }
         lookups += 1
         return true
     }
 
     func recordSuccess() { consecutiveFailures = 0 }
     func recordFailure() { consecutiveFailures += 1 }
+}
+
+extension ImportGeocodeGate {
+    /// Returns the lookup's result, or nil once `timeout` passes, without
+    /// waiting for a lookup that ignores cancellation (a task group would wait
+    /// for every child). The losing task is cancelled.
+    static func firstResult(
+        within timeout: Duration,
+        _ operation: @escaping @Sendable () async throws -> ImportGeocodeResult
+    ) async throws -> ImportGeocodeResult? {
+        let race = ResumeOnce<ImportGeocodeResult?>()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                race.attach(continuation)
+                let work = Task {
+                    do { race.finish(.success(try await operation())) } catch { race.finish(.failure(error)) }
+                }
+                let timer = Task {
+                    try? await Task.sleep(for: timeout)
+                    race.finish(.success(nil))
+                }
+                race.onFinish { work.cancel(); timer.cancel() }
+            }
+        } onCancel: {
+            race.finish(.failure(CancellationError()))
+        }
+    }
+}
+
+/// Resumes a continuation exactly once, whichever side finishes first, and
+/// keeps an early result until the continuation is attached.
+final class ResumeOnce<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Error>?
+    private var pending: Result<Value, Error>?
+    private var finished = false
+    private var cleanup: (() -> Void)?
+
+    func attach(_ continuation: CheckedContinuation<Value, Error>) {
+        lock.lock()
+        if let pending {
+            lock.unlock()
+            continuation.resume(with: pending)
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func onFinish(_ action: @escaping () -> Void) {
+        lock.lock()
+        if finished {
+            lock.unlock()
+            action()
+            return
+        }
+        cleanup = action
+        lock.unlock()
+    }
+
+    func finish(_ result: Result<Value, Error>) {
+        lock.lock()
+        guard !finished else { lock.unlock(); return }
+        finished = true
+        let continuation = self.continuation
+        self.continuation = nil
+        if continuation == nil { pending = result }
+        let cleanup = self.cleanup
+        self.cleanup = nil
+        lock.unlock()
+        continuation?.resume(with: result)
+        cleanup?()
+    }
 }
 
 struct OrganizedPlace: Equatable, Sendable {
@@ -160,6 +244,7 @@ struct ImportOrganizer {
             for itemID in event.itemIDs { result[itemID, default: []].append(event) }
         }
         let nearDuplicateIDs = nearDuplicateIDs(in: ordered)
+        let orderedIndex = Dictionary(ordered.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         var outsideDateIDs = Set<String>()
         for index in 1..<tripGroups.count {
             guard let previous = tripGroups[index - 1].last,
@@ -237,7 +322,7 @@ struct ImportOrganizer {
             }
             places.append(contentsOf: placeByID.values)
 
-            for item in group {
+            for (groupIndex, item) in group.enumerated() {
                 let coordinate = item.latitude.flatMap { latitude in
                     item.longitude.map { longitude in GeoPoint(latitude: latitude, longitude: longitude) }
                 }
@@ -253,8 +338,8 @@ struct ImportOrganizer {
                     reasons.append(.airDropReceived)
                     detailParts.append("The file name suggests a received/shared copy; check its date and place.")
                 }
-                if isGPSJump(item: item, in: ordered) { reasons.append(.gpsJump) }
-                if outsideDateIDs.contains(item.id) || isCaptureDateOutsideTrip(item: item, in: group) {
+                if isGPSJump(item: item, in: ordered, index: orderedIndex) { reasons.append(.gpsJump) }
+                if outsideDateIDs.contains(item.id) || isCaptureDateOutsideTrip(item: item, at: groupIndex, in: group) {
                     reasons.append(.captureDateOutsideTrip)
                 }
                 if nearDuplicateIDs.contains(item.id) { reasons.append(.nearDuplicate) }
@@ -322,9 +407,10 @@ struct ImportOrganizer {
             MediaDescriptor(id: $0.id, captureDate: $0.captureDate, pixelWidth: $0.width, pixelHeight: $0.height, fileNameHint: $0.fileName)
         }
         let collectionCount = CollectionGrouper().group(descriptors).count
+        let metadataByID = Dictionary(metadata.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let routeCount = trips.reduce(into: 0) { result, trip in
             let stops = trip.itemIDs.compactMap { id -> PhotoStop? in
-                guard let item = metadata.first(where: { $0.id == id }), let latitude = item.latitude, let longitude = item.longitude else { return nil }
+                guard let item = metadataByID[id], let latitude = item.latitude, let longitude = item.longitude else { return nil }
                 return PhotoStop(id: id, date: item.captureDate, coordinate: GeoPoint(latitude: latitude, longitude: longitude))
             }
             result += RouteBuilder(
@@ -370,7 +456,7 @@ struct ImportOrganizer {
         for (_, members) in cells.sorted(by: { $0.key < $1.key }) {
             try Task.checkCancellation()
             guard let representative = members.first.flatMap(coordinate(for:)),
-                  let result = try await lookupGeocode(coordinate: representative),
+                  let result = try await lookupGeocode(coordinate: representative, for: .timeZone),
                   let identifier = result.timeZoneIdentifier else { continue }
             for member in members { timeZones[member.id] = identifier }
         }
@@ -378,16 +464,12 @@ struct ImportOrganizer {
         let candidates = metadata.compactMap { item -> (date: Date, identifier: String)? in
             guard let identifier = timeZones[item.id] else { return nil }
             return (item.captureDate, identifier)
-        }
+        }.sorted { $0.date == $1.date ? $0.identifier < $1.identifier : $0.date < $1.date }
 
         return metadata.map { item in
             guard let wallClockDate = wallClockDate(for: item) else { return item }
             let identifier = timeZones[item.id]
-                ?? candidates.min { lhs, rhs in
-                    let leftGap = abs(lhs.date.timeIntervalSince(item.captureDate))
-                    let rightGap = abs(rhs.date.timeIntervalSince(item.captureDate))
-                    return leftGap == rightGap ? lhs.identifier < rhs.identifier : leftGap < rightGap
-                }?.identifier
+                ?? Self.nearestIdentifier(in: candidates, to: item.captureDate)
             let zoneUnknown = identifier == nil
             let resolvedIdentifier = identifier ?? TimeZone.autoupdatingCurrent.identifier
             let resolvedDate = resolveWallClockDate(
@@ -402,6 +484,28 @@ struct ImportOrganizer {
                 timeZoneIdentifier: resolvedIdentifier
             )
         }
+    }
+
+    /// The identifier closest in time (ties go to the smaller identifier),
+    /// found by binary search in `sorted` (by date, then identifier).
+    static func nearestIdentifier(in sorted: [(date: Date, identifier: String)], to date: Date) -> String? {
+        guard !sorted.isEmpty else { return nil }
+        var low = 0, high = sorted.count
+        while low < high {
+            let mid = (low + high) / 2
+            if sorted[mid].date < date { low = mid + 1 } else { high = mid }
+        }
+        // The nearest entries are the run of equal dates just before `low`
+        // and the run starting at `low`; the first of each run has the
+        // smallest identifier.
+        var options: [(gap: TimeInterval, identifier: String)] = []
+        if low < sorted.count { options.append((sorted[low].date.timeIntervalSince(date), sorted[low].identifier)) }
+        if low > 0 {
+            var start = low - 1
+            while start > 0, sorted[start - 1].date == sorted[low - 1].date { start -= 1 }
+            options.append((date.timeIntervalSince(sorted[start].date), sorted[start].identifier))
+        }
+        return options.min { $0.gap == $1.gap ? $0.identifier < $1.identifier : $0.gap < $1.gap }?.identifier
     }
 
     private func resolveWallClockDate(_ wallClockDate: Date, in timeZone: TimeZone) -> Date {
@@ -428,22 +532,15 @@ struct ImportOrganizer {
         return GeoPoint(latitude: latitude, longitude: longitude)
     }
 
-    private func lookupGeocode(coordinate: GeoPoint) async throws -> ImportGeocodeResult? {
+    private func lookupGeocode(coordinate: GeoPoint, for purpose: ImportGeocodeGate.Purpose) async throws -> ImportGeocodeResult? {
         if let cached = await geocodeCache.result(for: coordinate) { return cached }
-        guard await geocodeGate.reserve() else { return nil }
+        guard await geocodeGate.reserve(for: purpose) else { return nil }
         geocodeProgress(await geocodeGate.lookups, geocodeGate.maxLookups)
         await geocodeDelay()
         do {
             let geocoder = self.geocoder
-            let timeout = geocodeGate.timeout
-            let result = try await withThrowingTaskGroup(of: ImportGeocodeResult?.self) { group in
-                group.addTask { try await geocoder.reverseGeocode(coordinate: coordinate) }
-                group.addTask {
-                    try await Task.sleep(for: timeout)
-                    return nil
-                }
-                defer { group.cancelAll() }
-                return try await group.next() ?? nil
+            let result = try await ImportGeocodeGate.firstResult(within: geocodeGate.timeout) {
+                try await geocoder.reverseGeocode(coordinate: coordinate)
             }
             guard let result else {
                 await geocodeGate.recordFailure()
@@ -499,8 +596,8 @@ struct ImportOrganizer {
         return true
     }
 
-    private func isGPSJump(item: ImportedMediaMetadata, in ordered: [ImportedMediaMetadata]) -> Bool {
-        guard let index = ordered.firstIndex(where: { $0.id == item.id }) else { return false }
+    private func isGPSJump(item: ImportedMediaMetadata, in ordered: [ImportedMediaMetadata], index orderedIndex: [String: Int]) -> Bool {
+        guard let index = orderedIndex[item.id] else { return false }
         guard index > 0, index + 1 < ordered.count else { return false }
         let before = ordered[index - 1]
         let after = ordered[index + 1]
@@ -512,9 +609,8 @@ struct ImportOrganizer {
             && first.distance(to: last) <= configuration.gpsJumpDistanceMeters
     }
 
-    private func isCaptureDateOutsideTrip(item: ImportedMediaMetadata, in group: [ImportedMediaMetadata]) -> Bool {
-        guard group.count > 1,
-              let index = group.firstIndex(where: { $0.id == item.id }) else { return false }
+    private func isCaptureDateOutsideTrip(item: ImportedMediaMetadata, at index: Int, in group: [ImportedMediaMetadata]) -> Bool {
+        guard group.count > 1 else { return false }
         let neighbours = [index > 0 ? group[index - 1] : nil, index + 1 < group.count ? group[index + 1] : nil].compactMap { $0 }
         return neighbours.contains { abs(item.captureDate.timeIntervalSince($0.captureDate)) > configuration.captureDateConflictThreshold }
     }
@@ -545,7 +641,7 @@ struct ImportOrganizer {
                 continue
             }
             do {
-                if let result = try await lookupGeocode(coordinate: center) {
+                if let result = try await lookupGeocode(coordinate: center, for: .placeName) {
                     values[cluster.id] = result
                 } else {
                     failed.insert(cluster.id)

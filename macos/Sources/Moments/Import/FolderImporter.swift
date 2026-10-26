@@ -5,9 +5,27 @@ import SwiftData
 
 struct CoreLocationImportGeocoder: ImportGeocoder {
     func reverseGeocode(coordinate: GeoPoint) async throws -> ImportGeocodeResult {
-        let placemarks = try await CLGeocoder().reverseGeocodeLocation(
-            CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        )
+        // Keep the geocoder so a cancelled or timed-out lookup really stops:
+        // the async CLGeocoder API ignores task cancellation.
+        let geocoder = CLGeocoder()
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        // A cancellation that lands before the request goes out can't cancel it.
+        try Task.checkCancellation()
+        let placemarks: [CLPlacemark]
+        do {
+            placemarks = try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[CLPlacemark], Error>) in
+                    geocoder.reverseGeocodeLocation(location) { placemarks, error in
+                        if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: placemarks ?? []) }
+                    }
+                }
+            } onCancel: {
+                geocoder.cancelGeocode()
+            }
+        } catch CLError.geocodeFoundNoResult {
+            // Open sea or remote land: a lasting answer, not a failure to retry.
+            placemarks = []
+        }
         guard let placemark = placemarks.first else { return ImportGeocodeResult() }
         return ImportGeocodeResult(
             city: placemark.locality ?? placemark.subAdministrativeArea,
@@ -118,6 +136,7 @@ struct FolderImporter {
         let freshSourceCount = fresh.reduce(into: 0) { $0 += $1.sourceReferences.count }
         let skippedCount = sourceFileCount - freshSourceCount
         if fresh.isEmpty {
+            await geocodeCache.persist()
             if didUpdateSourceMappings { try context.save() }
             return ImportSummary(importedCount: 0, skippedCount: skippedCount, tripCount: 0, placeCount: 0, collectionCount: 0, routeCount: 0, trips: [], flags: [])
         }

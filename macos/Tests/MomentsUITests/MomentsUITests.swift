@@ -153,15 +153,16 @@ final class MomentsUITests: XCTestCase {
         waitForExpectations(timeout: launchTimeout)
 
         // The column edits in place: type over the place, adjust the date.
-        let place = element(in: app, identifier: "viewer.place")
+        // By type: the column's scroll view also answers to its children's identifiers.
+        let place = app.textFields["viewer.place"]
         XCTAssertTrue(place.waitForExistence(timeout: launchTimeout))
         place.click()
         place.typeKey("a", modifierFlags: .command)
         place.typeText("Harbour cafe\r")
         expectation(for: NSPredicate(format: "value == %@", "Harbour cafe"), evaluatedWith: place)
         waitForExpectations(timeout: launchTimeout)
-        element(in: app, identifier: "viewer.date").click()
-        let dateDone = element(in: app, identifier: "viewer.date.done")
+        app.buttons["viewer.date"].click()
+        let dateDone = app.buttons["viewer.date.done"]
         XCTAssertTrue(dateDone.waitForExistence(timeout: launchTimeout), "Clicking the date did not open the date editor")
         capture(app, named: "grid-02d-viewer-date-evidence")
         dateDone.click()

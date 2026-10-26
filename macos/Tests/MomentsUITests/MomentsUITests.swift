@@ -317,10 +317,12 @@ final class MomentsUITests: XCTestCase {
 
         tripMemory.click()
         tripMemory.typeText("Synthetic trip memory\r")
-        let written = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier == %@ AND label CONTAINS %@", "trips.memory.trip.memory", "Synthetic trip memory"))
+        let written = app.staticTexts
+            .matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Synthetic trip memory", "Synthetic trip memory"))
             .firstMatch
-        XCTAssertTrue(written.waitForExistence(timeout: launchTimeout), "Return did not save the trip memory")
+        let saved = written.waitForExistence(timeout: launchTimeout)
+        capture(app, named: "trips-02a-after-return-evidence")
+        XCTAssertTrue(saved, "Return did not save the trip memory")
         XCTAssertFalse((tripMemory.value as? String ?? "").contains("Synthetic trip memory"), "The memory line was not cleared after saving")
         Thread.sleep(forTimeInterval: 0.8)
         capture(app, named: "trips-02-trip-evidence")

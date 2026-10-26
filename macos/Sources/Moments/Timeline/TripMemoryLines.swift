@@ -114,7 +114,6 @@ struct TripMemoryLines: View {
                 }
             }
         }
-        .accessibilityElement(children: .combine)
         .accessibilityIdentifier("\(identifier).memory")
     }
 

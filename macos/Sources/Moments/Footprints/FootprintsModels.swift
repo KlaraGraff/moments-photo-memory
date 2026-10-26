@@ -38,7 +38,31 @@ struct FootprintsCameraTarget: Equatable {
 
     static let globeDistanceMetres = 20_000_000.0
 
+    /// MapKit's camera keeps a fixed vertical field of view; a narrow map
+    /// therefore sees less of the globe sideways than vertically.
+    static let verticalFieldOfViewDegrees = 30.0
+    /// Fraction of the shorter visible axis the globe may fill.
+    static let globeFillFraction = 0.86
+    private static let earthRadiusMetres = 6_371_000.0
+
     var coordinate: CLLocationCoordinate2D { center.coordinate }
+
+    /// True for the whole-globe overview, which is refitted when the map resizes.
+    var isGlobeOverview: Bool { distanceMetres == Self.globeDistanceMetres }
+
+    /// Camera distance at which the whole globe fits inside a map of `size`.
+    /// Never closer than `globeDistanceMetres`, so a large window keeps the
+    /// usual overview.
+    static func globeDistance(fitting size: CGSize) -> Double {
+        guard size.width > 0, size.height > 0 else { return globeDistanceMetres }
+        let halfVertical = verticalFieldOfViewDegrees / 2 * .pi / 180
+        let halfTangent = tan(halfVertical) * min(1, Double(size.width / size.height))
+        // The globe's silhouette subtends asin(R / D) from a camera D metres
+        // from the Earth's centre; MapKit measures distance from the surface.
+        let angularRadius = atan(halfTangent * globeFillFraction)
+        let fromCentre = earthRadiusMetres / sin(angularRadius)
+        return max(globeDistanceMetres, fromCentre - earthRadiusMetres)
+    }
 }
 
 struct FootprintsCountrySummary: Identifiable, Equatable {

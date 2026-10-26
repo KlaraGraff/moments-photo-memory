@@ -93,8 +93,10 @@ struct LibraryView: View {
     private var places: [LibraryPlaceOption] {
         var options: [String: LibraryPlaceOption] = [:]
         for item in allItems {
-            if let place = item.place {
-                options[place.id] = LibraryPlaceOption(id: place.id, name: place.name)
+            // One row per name: unnamed spots are listed under the area or
+            // city that names them, and the filter matches all of them.
+            if let place = item.place, let named = PlaceDisplayName.namingPlace(of: place) {
+                options[named.id] = LibraryPlaceOption(id: named.id, name: named.displayName)
             }
             if let override = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
                 options["override:\(override)"] = LibraryPlaceOption(id: "override:\(override)", name: override)
@@ -271,6 +273,8 @@ struct LibraryView: View {
                 .accessibilityIdentifier("library.photoCount")
                 .accessibilityValue(String(cachedVisibleCount))
         }
+        // Never squeezed: a compressed title wraps one letter per line.
+        .fixedSize()
     }
 
     private var libraryTypePicker: some View {
@@ -282,6 +286,9 @@ struct LibraryView: View {
             Text(String(localized: "Screenshots")).tag(LibraryMediaTypeFilter.screenshot.rawValue)
         }
         .pickerStyle(.segmented)
+        // The segments name themselves; a visible "Media type" label wrapped
+        // onto two lines in narrow windows. VoiceOver still reads it.
+        .labelsHidden()
         .frame(maxWidth: 410)
         .accessibilityIdentifier("library.type-filter")
     }
@@ -294,62 +301,20 @@ struct LibraryView: View {
             Text(String(localized: "By month")).tag(LibraryGrouping.month.rawValue)
         }
         .pickerStyle(.menu)
-        .frame(width: 150)
+        // Sized to the longest option so "Nach Reise" never truncates.
+        .fixedSize()
         .accessibilityIdentifier("library.grouping")
     }
 
     private var filterBar: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                filterMenu(label: String(localized: "Place"), selected: selectedPlaceName) {
-                    Button(String(localized: "All places")) { placeFilterID = "" }
-                    if !places.isEmpty { Divider() }
-                    ForEach(places) { place in
-                        Button {
-                            placeFilterID = place.id
-                        } label: {
-                            filterMenuLabel(place.name, selected: place.id == placeFilterID)
-                        }
-                    }
-                }
-
-                filterMenu(label: String(localized: "Trip"), selected: selectedTripName) {
-                    Button(String(localized: "All trips")) { tripFilterKey = "" }
-                    if !trips.isEmpty { Divider() }
-                    ForEach(trips, id: \.self) { trip in
-                        Button {
-                            tripFilterKey = trip
-                        } label: {
-                            filterMenuLabel(selectedTripName(for: trip), selected: trip == tripFilterKey)
-                        }
-                    }
-                }
-
-                dateFilterMenu
-                memoryFilterMenu
-                personFilterMenu
-
-                Button {
-                    // The filter builder is intentionally a disabled stub until #30.
-                } label: {
-                    Label(String(localized: "Add filter"), systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(LibraryPalette.muted)
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 3])).foregroundStyle(LibraryPalette.muted.opacity(0.5)))
-                .disabled(true)
-                .accessibilityIdentifier("library.add-filter")
-
-                Spacer(minLength: 12)
-
-                Button(String(localized: "Save this filter as a smart group")) {
-                    showingSmartGroupEditor = true
-                }
-                    .buttonStyle(.link)
-                    .font(.caption)
-                    .foregroundStyle(LibraryPalette.accent)
-                    .accessibilityIdentifier("library.save-smart-group")
+            // Chips never truncate; when they do not fit, drop the disabled
+            // "Add filter" stub, then scroll rather than clip.
+            ViewThatFits(in: .horizontal) {
+                filterChipRow(showsAddFilter: true)
+                filterChipRow(showsAddFilter: false)
+                ScrollView(.horizontal) { filterChipRow(showsAddFilter: false) }
+                    .scrollIndicators(.hidden)
             }
 
             if hasActiveFilters {
@@ -383,7 +348,18 @@ struct LibraryView: View {
                 Text(String(format: String(localized: "Filtered count"), cachedVisibleCount))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(LibraryPalette.muted)
-                Spacer()
+                Spacer(minLength: 12)
+                // Its own row keeps the filter chips at full width and the
+                // button on one line in the smallest window.
+                Button(String(localized: "Save this filter as a smart group")) {
+                    showingSmartGroupEditor = true
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+                .foregroundStyle(LibraryPalette.accent)
+                .lineLimit(1)
+                .fixedSize()
+                .accessibilityIdentifier("library.save-smart-group")
             }
         }
         .padding(.horizontal, 34)
@@ -394,22 +370,78 @@ struct LibraryView: View {
         }
     }
 
+    private func filterChipRow(showsAddFilter: Bool) -> some View {
+        HStack(spacing: 8) {
+            filterMenu(label: String(localized: "Place"), selected: selectedPlaceName) {
+                Button(String(localized: "All places")) { placeFilterID = "" }
+                if !places.isEmpty { Divider() }
+                ForEach(places) { place in
+                    Button {
+                        placeFilterID = place.id
+                    } label: {
+                        filterMenuLabel(place.name, selected: place.id == placeFilterID)
+                    }
+                }
+            }
+
+            filterMenu(label: String(localized: "Trip"), selected: selectedTripName) {
+                Button(String(localized: "All trips")) { tripFilterKey = "" }
+                if !trips.isEmpty { Divider() }
+                ForEach(trips, id: \.self) { trip in
+                    Button {
+                        tripFilterKey = trip
+                    } label: {
+                        filterMenuLabel(selectedTripName(for: trip), selected: trip == tripFilterKey)
+                    }
+                }
+            }
+
+            dateFilterMenu
+            memoryFilterMenu
+            personFilterMenu
+
+            if showsAddFilter {
+                Button {
+                    // The filter builder is intentionally a disabled stub until #30.
+                } label: {
+                    Label(String(localized: "Add filter"), systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(LibraryPalette.muted)
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 3])).foregroundStyle(LibraryPalette.muted.opacity(0.5)))
+                .disabled(true)
+                .accessibilityIdentifier("library.add-filter")
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
     private func filterMenu<Content: View>(label: String, selected: String?, @ViewBuilder content: () -> Content) -> some View {
         Menu {
             content()
         } label: {
             HStack(spacing: 5) {
-                Text(selected ?? label)
+                Text(selected.map(Self.chipTitle) ?? label)
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.semibold))
             }
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color.white.opacity(0.48), in: Capsule())
         .overlay(Capsule().stroke(LibraryPalette.line, lineWidth: 1))
         .foregroundStyle(LibraryPalette.ink)
+    }
+
+    /// A long place or trip name would push the other chips out of the row;
+    /// the full name stays in the menu and in the active-filter chip below.
+    static func chipTitle(_ name: String) -> String {
+        name.count > 22 ? String(name.prefix(21)) + "…" : name
     }
 
     private func filterMenuLabel(_ text: String, selected: Bool) -> some View {
@@ -445,6 +477,8 @@ struct LibraryView: View {
             filterMenuTitle(String(localized: "Date"), selected: dateFilterLabel != nil)
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color.white.opacity(0.48), in: Capsule())
@@ -472,6 +506,8 @@ struct LibraryView: View {
             filterMenuTitle(String(localized: "Memory"), selected: selectedMemoryFilter != .all)
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color.white.opacity(0.48), in: Capsule())
@@ -493,6 +529,8 @@ struct LibraryView: View {
             filterMenuTitle(String(localized: "Person"), selected: !personFilterID.isEmpty)
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color.white.opacity(0.48), in: Capsule())
@@ -1390,7 +1428,7 @@ struct GroupEditorSheet: View {
                         Button {
                             rules.append(UserGroupRule(field: .place, value: ""))
                         } label: {
-                            Label(String(localized: "+ Add condition"), systemImage: "plus")
+                            Label(String(localized: "Add condition"), systemImage: "plus")
                         }
                         Text(String(format: String(localized: "Matches now message"), matchCount))
                             .font(.caption)

@@ -148,9 +148,24 @@ struct TimelineTrip: Identifiable {
     }
 
     /// The first photo (not video) of the trip; a video only when there is nothing else.
-    var cover: TimelineItemSnapshot? {
+    var cover: TimelineItemSnapshot? { covers.first }
+
+    /// Up to two pictures for the card: the first photo, then one from the
+    /// last place visited (or the trip's last photo), so the pair shows two
+    /// moments of the trip. Videos only when there are not enough photos.
+    var covers: [TimelineItemSnapshot] {
         let items = orderedItems
-        return items.first { $0.kindRaw != MediaKind.video.rawValue } ?? items.first
+        let photos = items.filter { $0.kindRaw != MediaKind.video.rawValue }
+        let pool = photos.count >= 2 ? photos : photos + items.filter { $0.kindRaw == MediaKind.video.rawValue }
+        guard let first = pool.first else { return [] }
+        let lastPlace = days.last?.places.last?.items ?? []
+        let second = pool.last { item in item.id != first.id && lastPlace.contains { $0.id == item.id } }
+            ?? pool.last { $0.id != first.id }
+        return second.map { [first, $0] } ?? [first]
+    }
+
+    var videoCount: Int {
+        orderedItems.filter { $0.kindRaw == MediaKind.video.rawValue }.count
     }
 }
 

@@ -153,21 +153,16 @@ private struct TripShelfView: View {
     let returnTripID: String?
     let onOpen: (TimelineTrip) -> Void
 
-    private let columns = [GridItem(.adaptive(minimum: 250, maximum: 360), spacing: 24, alignment: .top)]
-
     private var tripCount: Int { trips.filter { !$0.isUnsorted }.count }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                PaperScreenHeader(String(localized: "Trips")) {
-                    Text(String(localized: "\(tripCount) trips"))
-                }
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 28) {
+                LazyVStack(alignment: .leading, spacing: 22) {
                     ForEach(trips) { trip in
                         TripCoverCard(
                             trip: trip,
-                            cover: trip.cover.flatMap { itemByID[$0.id] },
+                            covers: trip.covers.compactMap { itemByID[$0.id] },
                             memory: memories.first { $0.scope == .trip && $0.scopeKey == trip.id }?.text,
                             onOpen: { onOpen(trip) }
                         )
@@ -175,10 +170,14 @@ private struct TripShelfView: View {
                     }
                 }
                 .padding(.horizontal, PaperMetrics.screenInset)
+                .padding(.top, PaperMetrics.screenTopInset)
                 .padding(.bottom, 32)
             }
             .scrollIndicators(.automatic)
             .background(Paper.canvas)
+            // The page's name lives in the window's title bar, not in the page.
+            .navigationTitle(String(localized: "Trips"))
+            .navigationSubtitle(String(localized: "\(tripCount) trips"))
             .onAppear {
                 if let returnTripID { proxy.scrollTo(returnTripID, anchor: .center) }
             }
@@ -186,56 +185,74 @@ private struct TripShelfView: View {
     }
 }
 
+/// One trip as a wide card, like the import's suggested trips: two photos
+/// laid on top of each other like prints on the left; dates and length, the
+/// serif name, the route and the counts on the right; the trip's first
+/// memory in a quiet column at the end. One tone lighter than the page, no
+/// outline.
 private struct TripCoverCard: View {
     let trip: TimelineTrip
-    let cover: MediaItem?
+    let covers: [MediaItem]
     let memory: String?
     let onOpen: () -> Void
     @Environment(\.locale) private var locale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
-    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 14, style: .continuous) }
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 8, style: .continuous) }
 
     var body: some View {
         Button(action: onOpen) {
-            VStack(alignment: .leading, spacing: 0) {
-                coverImage
-                    .frame(height: 176)
-                    .frame(maxWidth: .infinity)
-                    .clipped()
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(TripText.name(trip))
-                        .font(.system(size: 19, weight: .medium, design: .serif))
-                        .foregroundStyle(Paper.ink)
-                        .lineLimit(1)
+            HStack(alignment: .top, spacing: 26) {
+                TripPrints(covers: covers, lifted: isHovering)
+                    .frame(width: 262, height: 186)
+
+                VStack(alignment: .leading, spacing: 9) {
                     if let span = TripText.dateSpan(trip, locale: locale) {
-                        Text(span)
-                            .font(.caption)
+                        Text(TripText.dateLine(span: span, trip: trip))
+                            .font(.callout)
                             .foregroundStyle(Paper.muted)
                     }
-                    Text(TripText.summary(trip))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(Paper.muted)
+                    Text(TripText.name(trip))
+                        .font(.system(size: 28, weight: .medium, design: .serif))
+                        .foregroundStyle(Paper.ink)
                         .lineLimit(1)
-                    if let memory {
-                        Text(memory)
-                            .font(.system(.callout, design: .serif))
+                        .minimumScaleFactor(0.8)
+                        .padding(.bottom, 5)
+                        .overlay(alignment: .bottom) {
+                            Rectangle()
+                                .stroke(Paper.rule, style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                                .frame(height: 1)
+                        }
+                    if !trip.cityNames.isEmpty {
+                        Text(trip.cityNames.joined(separator: " → "))
+                            .font(.callout)
                             .foregroundStyle(Paper.ink)
                             .lineLimit(2)
-                            .padding(.top, 4)
                     }
+                    Text(TripText.counts(trip))
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(Paper.muted)
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-                .padding(.bottom, 14)
+                .padding(.top, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let memory {
+                    Text(memory)
+                        .font(.system(.callout, design: .serif))
+                        .foregroundStyle(Paper.ink)
+                        .lineLimit(5)
+                        .frame(width: 220, alignment: .topLeading)
+                        .padding(.top, 8)
+                }
             }
-            .background(trip.isUnsorted ? Paper.well : Paper.raised)
-            .clipShape(shape)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(trip.isUnsorted ? Paper.well.opacity(0.6) : Paper.raised, in: shape)
             .contentShape(shape)
-            .shadow(color: Paper.shadow.opacity(isHovering ? 0.08 : 0.05), radius: 1, y: 1)
-            .shadow(color: Paper.shadow.opacity(isHovering ? 0.10 : 0.04), radius: isHovering ? 14 : 8, y: isHovering ? 6 : 3)
+            .shadow(color: Paper.shadow.opacity(isHovering ? 0.07 : 0.04), radius: 1, y: 1)
+            .shadow(color: Paper.shadow.opacity(isHovering ? 0.08 : 0.03), radius: isHovering ? 12 : 6, y: isHovering ? 4 : 2)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -245,20 +262,53 @@ private struct TripCoverCard: View {
         .accessibilityLabel(Text(TripText.name(trip)))
         .accessibilityIdentifier("trips.card.\(trip.id)")
     }
+}
 
-    @ViewBuilder
-    private var coverImage: some View {
-        if let cover {
-            ThumbnailView(item: cover, width: 720, height: 440)
-        } else {
-            Rectangle()
-                .fill(Paper.well)
-                .overlay {
-                    Image(systemName: "suitcase")
-                        .font(.title2)
-                        .foregroundStyle(Paper.muted)
-                }
+/// Two photos as prints with a white border, the second laid over the first,
+/// each turned a little. Hovering the card spreads them slightly apart.
+private struct TripPrints: View {
+    let covers: [MediaItem]
+    let lifted: Bool
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if covers.count > 1 {
+                printed(covers[1])
+                    .frame(width: 186, height: 150)
+                    .rotationEffect(.degrees(lifted ? -4 : -2.5))
+                    .offset(x: lifted ? 0 : 4, y: 6)
+                printed(covers[0])
+                    .frame(width: 192, height: 156)
+                    .rotationEffect(.degrees(lifted ? 2.5 : 1.5))
+                    .offset(x: 70, y: lifted ? 22 : 24)
+            } else if let only = covers.first {
+                printed(only)
+                    .frame(width: 214, height: 164)
+                    .rotationEffect(.degrees(-1.5))
+                    .offset(x: 22, y: 10)
+            } else {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(Paper.well)
+                    .overlay {
+                        Image(systemName: "suitcase")
+                            .font(.title2)
+                            .foregroundStyle(Paper.muted)
+                    }
+                    .frame(width: 214, height: 164)
+                    .offset(x: 22, y: 10)
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityHidden(true)
+    }
+
+    private func printed(_ item: MediaItem) -> some View {
+        ThumbnailView(item: item, width: 400, height: 320)
+            .clipShape(Rectangle())
+            .padding(6)
+            .background(Color(red: 0.998, green: 0.996, blue: 0.992))
+            .shadow(color: Paper.shadow.opacity(0.10), radius: 1, y: 1)
+            .shadow(color: Paper.shadow.opacity(0.12), radius: 6, y: 3)
     }
 }
 
@@ -285,13 +335,14 @@ private struct TripDetailView: View {
 
     var body: some View {
         ScrollView {
-            PaperScreenHeader(TripText.name(trip)) {
-                if let span = TripText.dateSpan(trip, locale: locale) {
-                    Text(span)
-                }
-            }
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 10) {
+                    // The trip's name is in the title bar; its dates lead the page.
+                    if let span = TripText.dateSpan(trip, locale: locale) {
+                        Text(span)
+                            .font(.system(size: 21, weight: .medium, design: .serif))
+                            .foregroundStyle(Paper.ink)
+                    }
                     Text(TripText.summary(trip))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(Paper.muted)
@@ -329,10 +380,13 @@ private struct TripDetailView: View {
                 }
             }
             .padding(.horizontal, PaperMetrics.screenInset)
+            .padding(.top, PaperMetrics.screenTopInset)
             .padding(.bottom, 40)
         }
         .scrollIndicators(.automatic)
         .background(Paper.canvas)
+        .navigationTitle(TripText.name(trip))
+        .navigationSubtitle(String(localized: "Trips"))
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button(action: onBack) {
@@ -352,12 +406,18 @@ private struct TripDetailView: View {
     }
 }
 
-private struct TripDaySection: View {
+/// One day: its heading, its memory line, then its places and travel.
+/// Shared by a trip ("Day 2") and the Timeline (the date as the heading,
+/// with the trips that day belongs to).
+struct TripDaySection: View {
     let day: TimelineDay
     let number: Int?
     let memories: [CollectionMemory]
     let itemByID: [String: MediaItem]
     let onOpen: (String) -> Void
+    /// Trips this day belongs to, shown as links on the Timeline.
+    var trips: [TripLink] = []
+    var onOpenTrip: (String) -> Void = { _ in }
     @Environment(\.locale) private var locale
 
     private var photoCount: Int { day.places.reduce(0) { $0 + $1.photoCount } }
@@ -369,15 +429,32 @@ private struct TripDaySection: View {
                     Text("Day \(number)")
                         .font(.system(size: 21, weight: .medium, design: .serif))
                         .foregroundStyle(Paper.ink)
+                    if let date = day.date {
+                        Text(date, format: .dateTime.weekday(.wide).month(.wide).day().year().locale(locale))
+                            .font(.caption)
+                            .foregroundStyle(Paper.muted)
+                    }
+                } else if let date = day.date {
+                    Text(date, format: .dateTime.weekday(.wide).month(.wide).day().locale(locale))
+                        .font(.system(size: 21, weight: .medium, design: .serif))
+                        .foregroundStyle(Paper.ink)
+                    Text(date, format: .dateTime.year().locale(locale))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Paper.muted)
                 } else {
                     Text("Date to add")
                         .font(.system(size: 21, weight: .medium, design: .serif))
                         .foregroundStyle(Paper.muted)
                 }
-                if let date = day.date {
-                    Text(date, format: .dateTime.weekday(.wide).month(.wide).day().year().locale(locale))
-                        .font(.caption)
-                        .foregroundStyle(Paper.muted)
+                ForEach(trips) { trip in
+                    Button { onOpenTrip(trip.id) } label: {
+                        Label(trip.name, systemImage: "suitcase")
+                            .font(.caption)
+                            .foregroundStyle(Paper.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Open this trip"))
+                    .accessibilityIdentifier("timeline.trip.\(trip.id)")
                 }
                 Spacer()
                 Text(String(localized: "\(photoCount) photos"))
@@ -408,7 +485,7 @@ private struct TripDaySection: View {
     }
 }
 
-private struct TripPlaceBlock: View {
+struct TripPlaceBlock: View {
     let place: TimelinePlace
     let itemByID: [String: MediaItem]
     let onOpen: (String) -> Void
@@ -504,7 +581,7 @@ private struct TripPlaceBlock: View {
     }
 }
 
-private struct TripTravelRow: View {
+struct TripTravelRow: View {
     let travel: TimelineTravel
     @Environment(\.locale) private var locale
 
@@ -536,6 +613,12 @@ private struct TripTravelRow: View {
     }
 }
 
+/// A trip a Timeline day belongs to.
+struct TripLink: Identifiable, Hashable {
+    let id: String
+    let name: String
+}
+
 // MARK: - Text
 
 private enum TripText {
@@ -551,6 +634,20 @@ private enum TripText {
         formatter.dateStyle = .medium
         formatter.timeStyle = .none
         return formatter.string(from: start, to: max(trip.endDate ?? start, start))
+    }
+
+    /// "Apr 20 – 25, 2026 · 6 days"
+    static func dateLine(span: String, trip: TimelineTrip) -> String {
+        guard trip.datedDayCount > 0 else { return span }
+        return "\(span) · \(String(localized: "\(trip.datedDayCount) days"))"
+    }
+
+    /// "128 photos · 156 videos"; videos only when there are any.
+    static func counts(_ trip: TimelineTrip) -> String {
+        let videos = trip.videoCount
+        let photos = String(localized: "\(trip.itemCount - videos) photos")
+        guard videos > 0 else { return photos }
+        return "\(photos) · \(String(localized: "\(videos) videos"))"
     }
 
     /// "4 days · 6 places · 38 photos"; parts that are zero are left out.

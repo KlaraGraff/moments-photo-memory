@@ -79,6 +79,7 @@ final class MomentsVisualTourUITests: XCTestCase {
             ("sidebar.people", "people"),
             ("sidebar.map", "map"),
             ("sidebar.timeline", "timeline"),
+            ("sidebar.trips", "trips"),
         ].enumerated() {
             let item = element(app, step.0)
             XCTAssertTrue(item.waitForExistence(timeout: timeout), "Missing \(step.0)")

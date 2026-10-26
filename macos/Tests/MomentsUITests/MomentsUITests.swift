@@ -404,7 +404,7 @@ final class MomentsUITests: XCTestCase {
 
     func testTripsOpenATripWriteItsMemoryAndOpenAPhoto() {
         let app = launch(language: "en")
-        element(in: app, identifier: "sidebar.timeline").click()
+        element(in: app, identifier: "sidebar.trips").click()
 
         // The shelf: one cover card per trip.
         let card = element(in: app, identifier: "trips.card.journeyA")
@@ -446,7 +446,7 @@ final class MomentsUITests: XCTestCase {
 
         // The open trip survives a visit to another screen.
         element(in: app, identifier: "sidebar.library").click()
-        element(in: app, identifier: "sidebar.timeline").click()
+        element(in: app, identifier: "sidebar.trips").click()
         XCTAssertTrue(tripMemory.waitForExistence(timeout: launchTimeout), "The open trip was lost on a screen switch")
 
         // Back to the shelf.
@@ -455,6 +455,26 @@ final class MomentsUITests: XCTestCase {
         back.click()
         XCTAssertTrue(card.waitForExistence(timeout: launchTimeout), "Back did not return to the trip cards")
         capture(app, named: "trips-04-shelf-with-memory-evidence")
+    }
+
+    func testTimelineShowsDaysAndLinksToTheirTrip() {
+        let app = launch(language: "en")
+        element(in: app, identifier: "sidebar.timeline").click()
+
+        // Every photo by day, each day with its memory line.
+        let dayLine = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.memory.day."))
+            .firstMatch
+        XCTAssertTrue(dayLine.waitForExistence(timeout: launchTimeout), "Timeline days have no memory line")
+        let photo = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.photo.")).firstMatch
+        XCTAssertTrue(photo.exists, "Timeline days show their photos")
+
+        // A day inside a trip links to that trip.
+        let tripLink = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.trip.")).firstMatch
+        XCTAssertTrue(tripLink.waitForExistence(timeout: launchTimeout), "A trip day has no link to its trip")
+        capture(app, named: "timeline-01-days-evidence")
+        tripLink.click()
+        XCTAssertTrue(element(in: app, identifier: "trips.memory.trip").waitForExistence(timeout: launchTimeout), "The trip link did not open the trip")
     }
 
     func testTripPlaceShowsItsPhotosInLibrary() {
@@ -476,7 +496,7 @@ final class MomentsUITests: XCTestCase {
 
     private func tripPlaceShowsItsPhotosInLibrary(_ app: XCUIApplication) {
         let allCount = libraryPhotoCount(app)
-        element(in: app, identifier: "sidebar.timeline").click()
+        element(in: app, identifier: "sidebar.trips").click()
         let card = element(in: app, identifier: "trips.card.journeyA")
         XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
         card.click()
@@ -637,12 +657,22 @@ final class MomentsUITests: XCTestCase {
         let timeline = element(in: app, identifier: "sidebar.timeline")
         XCTAssertTrue(timeline.waitForExistence(timeout: launchTimeout))
         timeline.click()
+        // Locale-independent: a month header proves the screen rendered.
+        let month = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.month."))
+            .firstMatch
+        XCTAssertTrue(month.waitForExistence(timeout: launchTimeout))
+        capture(app, named: "\(prefix)-04-timeline-evidence")
+
+        let trips = element(in: app, identifier: "sidebar.trips")
+        XCTAssertTrue(trips.waitForExistence(timeout: launchTimeout))
+        trips.click()
         // Locale-independent: a trip cover card proves the screen rendered.
         let tripCard = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.card."))
             .firstMatch
         XCTAssertTrue(tripCard.waitForExistence(timeout: launchTimeout))
-        capture(app, named: "\(prefix)-04-trips-evidence")
+        capture(app, named: "\(prefix)-05-trips-evidence")
     }
 
     private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false, mapProbe: Bool = false) -> XCUIApplication {

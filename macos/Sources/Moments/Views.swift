@@ -9,6 +9,7 @@ private enum MomentsSection: Hashable {
     case people
     case map
     case timeline
+    case trips
     case group(String)
 }
 
@@ -49,7 +50,8 @@ struct ContentView: View {
                         sidebarRow("Library", icon: "photo.on.rectangle.angled", section: .library, identifier: "sidebar.library")
                         sidebarRow("People", icon: "person.2", section: .people, identifier: "sidebar.people")
                         sidebarRow("Map", icon: "map", section: .map, identifier: "sidebar.map")
-                        sidebarRow("Trips", icon: "suitcase", section: .timeline, identifier: "sidebar.timeline")
+                        sidebarRow("Timeline", icon: "calendar", section: .timeline, identifier: "sidebar.timeline")
+                        sidebarRow("Trips", icon: "suitcase", section: .trips, identifier: "sidebar.trips")
                     }
 
                     Section {
@@ -154,6 +156,8 @@ struct ContentView: View {
                 case .map:
                     MapScreen()
                 case .timeline:
+                    TimelineScreen()
+                case .trips:
                     TripsScreen()
                 case .group(let groupID):
                     GroupDetailView(groupID: groupID, state: libraryState)
@@ -200,6 +204,7 @@ struct ContentView: View {
             case .library: selection = .library
             case .map: selection = .map
             case .timeline: selection = .timeline
+            case .trips: selection = .trips
             }
             shared.requestedDestination = nil
         }

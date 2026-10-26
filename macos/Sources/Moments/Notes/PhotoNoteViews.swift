@@ -12,6 +12,9 @@ struct PhotoNoteSection: View {
     @Environment(PhotoNoteService.self) private var service
     let item: MediaItem
     let state: LibraryViewState
+    /// The large viewer has room for longer words: a box of several lines
+    /// instead of the single ruled line under a grid photo.
+    var isLarge = false
     @FocusState private var isFocused: Bool
     @State private var savedCount = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -32,16 +35,9 @@ struct PhotoNoteSection: View {
             .textFieldStyle(.plain)
             .font(.system(.body, design: .serif))
             .foregroundStyle(LibraryPalette.ink)
-            .lineLimit(1...6)
+            .lineLimit(isLarge ? 6...20 : 1...6)
             .focused($isFocused)
-            .padding(.vertical, 4)
-            .overlay(alignment: .bottom) {
-                // Focus deepens the ruled line instead of switching to a bright one.
-                Rectangle()
-                    .fill(isFocused ? LibraryPalette.muted.opacity(0.7) : LibraryPalette.rule)
-                    .frame(height: isFocused ? 1.5 : 1)
-                    .animation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), value: isFocused)
-            }
+            .modifier(NoteFieldChrome(isLarge: isLarge, isFocused: isFocused, reduceMotion: reduceMotion))
             // Return submits and Option-Return inserts a line break (the
             // vertical field's own behavior), so Return that confirms an input
             // method's candidate never saves half-typed words.
@@ -76,6 +72,38 @@ struct PhotoNoteSection: View {
             state.noteDrafts[item.id] = nil
             isFocused = false
             savedCount += 1
+        }
+    }
+}
+
+/// The ruled line under a grid photo, or a soft box in the large viewer.
+private struct NoteFieldChrome: ViewModifier {
+    let isLarge: Bool
+    let isFocused: Bool
+    let reduceMotion: Bool
+
+    func body(content: Content) -> some View {
+        if isLarge {
+            content
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .background(LibraryPalette.well.opacity(isFocused ? 0.55 : 0.8), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(isFocused ? LibraryPalette.muted.opacity(0.45) : LibraryPalette.rule.opacity(0.6))
+                )
+                .shadow(color: Paper.shadow.opacity(isFocused ? 0.08 : 0), radius: 6, y: 1)
+                .animation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), value: isFocused)
+        } else {
+            content
+                .padding(.vertical, 4)
+                .overlay(alignment: .bottom) {
+                    // Focus deepens the ruled line instead of switching to a bright one.
+                    Rectangle()
+                        .fill(isFocused ? LibraryPalette.muted.opacity(0.7) : LibraryPalette.rule)
+                        .frame(height: isFocused ? 1.5 : 1)
+                        .animation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), value: isFocused)
+                }
         }
     }
 }
@@ -164,10 +192,12 @@ struct PhotoNoteBadge: View {
 
 /// The popover behind `PhotoNoteBadge`: anything still open, what each note
 /// wrote (editable, with Undo), then every note's original words.
-private struct PhotoNoteDetails: View {
+struct PhotoNoteDetails: View {
     let item: MediaItem
     let notes: [PhotoNote]
-    let close: () -> Void
+    /// Shown in the viewer's column rather than in a popover.
+    var isInline = false
+    var close: (() -> Void)?
 
     private var openNotes: [PhotoNote] {
         let open: Set<PhotoNoteStatus> = [.organizing, .ready, .waiting, .failed]
@@ -213,9 +243,28 @@ private struct PhotoNoteDetails: View {
                 .overlay(alignment: .leading) { Rectangle().fill(LibraryPalette.rule).frame(width: 2) }
             }
         }
-        .padding(16)
-        .frame(width: 360, alignment: .leading)
-        .background(LibraryPalette.content)
+        .padding(isInline ? 0 : 16)
+        .frame(width: isInline ? nil : 360, alignment: .leading)
+        .frame(maxWidth: isInline ? .infinity : nil, alignment: .leading)
+        .background(isInline ? Color.clear : LibraryPalette.content)
+    }
+}
+
+/// The AI's result and the original words under the viewer's note box.
+struct PhotoNoteResults: View {
+    let item: MediaItem
+    @Query private var notes: [PhotoNote]
+
+    init(item: MediaItem) {
+        self.item = item
+        let mediaID = item.id
+        _notes = Query(filter: #Predicate<PhotoNote> { $0.mediaID == mediaID }, sort: \PhotoNote.createdAt)
+    }
+
+    var body: some View {
+        if !notes.isEmpty {
+            PhotoNoteDetails(item: item, notes: notes, isInline: true)
+        }
     }
 }
 
@@ -263,7 +312,7 @@ private struct PhotoNoteStatusView: View {
     @Environment(PhotoNoteService.self) private var service
     let note: PhotoNote
     let item: MediaItem
-    let close: () -> Void
+    let close: (() -> Void)?
 
     var body: some View {
         switch note.status {
@@ -351,8 +400,10 @@ private struct PhotoNoteStatusView: View {
                     .buttonStyle(.link)
                     .controlSize(.small)
                 }
-                Button(String(localized: "Later")) { close() }
-                .controlSize(.small)
+                if let close {
+                    Button(String(localized: "Later")) { close() }
+                        .controlSize(.small)
+                }
                 Button(String(localized: "Use all")) {
                     let ids = Set(note.suggestions.filter { $0.decision == .pending }.map(\.id))
                     _ = try? NoteApplier.accept(ids, of: note, item: item, context: modelContext)

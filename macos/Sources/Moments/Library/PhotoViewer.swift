@@ -14,15 +14,24 @@ struct PhotoViewer: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let request: ViewerRequest
     let libraryState: LibraryViewState
-    @Query private var placeNotes: [PlaceNote]
     @State private var item: MediaItem?
     @State private var image: NSImage?
     @State private var player: AVPlayer?
     @State private var scopedURL: URL?
     @State private var isHovering = false
-    @State private var peopleNames: [String] = []
-    @State private var zoom: CGFloat = 1
+    @State private var zoom = ViewerZoom()
+    /// The zoom at the start of a pinch, and the offset at the start of a drag.
+    @State private var gestureBase: ViewerZoom?
+    @State private var hoverLocation: CGPoint?
+    @State private var areaSize: CGSize = .zero
+    @State private var scrollMonitor: Any?
+    @State private var isEditingInfo = false
     @FocusState private var isFocused: Bool
+
+    /// A text field in the column has the keyboard: Esc and the arrows are its own.
+    private var isEditingText: Bool {
+        isEditingInfo || libraryState.focusedNoteItemID != nil
+    }
 
     private var index: Int? { request.itemIDs.firstIndex(of: request.itemID) }
     private var hasPrevious: Bool { (index ?? 0) > 0 }
@@ -41,7 +50,7 @@ struct PhotoViewer: View {
                 HStack(spacing: 0) {
                     imageArea
                     infoPanel
-                        .frame(width: 300)
+                        .frame(width: 340)
                         .frame(maxHeight: .infinity, alignment: .top)
                         .background(Paper.raised)
                 }
@@ -59,7 +68,14 @@ struct PhotoViewer: View {
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onAppear { isFocused = true }
+        .onAppear {
+            isFocused = true
+            installScrollMonitor()
+        }
+        // When a field in the column lets go of the keyboard, the arrows page again.
+        .onChange(of: isEditingText) { _, editing in
+            if !editing { isFocused = true }
+        }
         .onKeyPress(.leftArrow) { step(-1) ? .handled : .ignored }
         .onKeyPress(.rightArrow) { step(1) ? .handled : .ignored }
         .onKeyPress(.space) {
@@ -68,7 +84,10 @@ struct PhotoViewer: View {
         }
         .onExitCommand { close() }
         .task(id: request.itemID) { await load(request.itemID) }
-        .onDisappear { stopVideo() }
+        .onDisappear {
+            stopVideo()
+            removeScrollMonitor()
+        }
     }
 
     /// Across the top of the card: the date, where it sits in the set, and the actions.
@@ -106,8 +125,9 @@ struct PhotoViewer: View {
                 .accessibilityLabel(String(localized: "Favorite"))
             }
             headerButton("xmark", label: String(localized: "Close"), identifier: "viewer.close") { close() }
-                // Esc closes wherever the keyboard focus is.
-                .keyboardShortcut(.cancelAction)
+                // Esc closes wherever the keyboard focus is, except that it
+                // first ends typing in the column.
+                .keyboardShortcut(isEditingText ? nil : KeyboardShortcut(.cancelAction))
                 .help(String(localized: "Close (Esc)"))
         }
         .padding(.leading, 18)
@@ -136,6 +156,16 @@ struct PhotoViewer: View {
                 pagingButtons
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                GeometryReader { geometry in
+                    Color.clear
+                        .onAppear { areaSize = geometry.size }
+                        .onChange(of: geometry.size) { _, size in
+                            areaSize = size
+                            zoom.clampOffset(fitted: fittedSize, area: size)
+                        }
+                }
+            }
             if player == nil, image != nil {
                 zoomBar.padding(.bottom, 16)
             }
@@ -148,9 +178,9 @@ struct PhotoViewer: View {
     /// A small floating bar under the photo, like Claude's file preview.
     private var zoomBar: some View {
         HStack(spacing: 2) {
-            zoomButton("minus.magnifyingglass", label: String(localized: "Zoom out"), enabled: zoom > 1) { setZoom(zoom / 2) }
+            zoomButton("minus.magnifyingglass", label: String(localized: "Zoom out"), enabled: zoom.isZoomed) { zoomStep(1 / 1.5) }
                 .keyboardShortcut("-", modifiers: .command)
-            zoomButton("plus.magnifyingglass", label: String(localized: "Zoom in"), enabled: zoom < Self.maximumZoom) { setZoom(zoom * 2) }
+            zoomButton("plus.magnifyingglass", label: String(localized: "Zoom in"), enabled: zoom.scale < ViewerZoom.maximum) { zoomStep(1.5) }
                 .keyboardShortcut("=", modifiers: .command)
         }
         .padding(4)
@@ -172,74 +202,100 @@ struct PhotoViewer: View {
         .accessibilityLabel(label)
     }
 
-    private static let maximumZoom: CGFloat = 4
+ 
+    private var fittedSize: CGSize {
+        guard let image else { return .zero }
+        return Self.fittedSize(image.size, in: CGSize(width: areaSize.width - 56, height: areaSize.height - 56))
+    }
 
-    private func setZoom(_ value: CGFloat) {
-        let clamped = min(max(value, 1), Self.maximumZoom)
+    private var areaCenter: CGPoint {
+        CGPoint(x: areaSize.width / 2, y: areaSize.height / 2)
+    }
+
+    /// The zoom buttons and ⌘− / ⌘=: around the pointer when it is over the
+    /// photo, otherwise around the centre.
+    private func zoomStep(_ factor: CGFloat) {
+        animateZoom { $0.zoom(to: $0.scale * factor, anchor: hoverLocation ?? areaCenter, fitted: fittedSize, area: areaSize) }
+    }
+
+    private func animateZoom(_ change: (inout ViewerZoom) -> Void) {
+        var next = zoom
+        change(&next)
         if reduceMotion {
-            zoom = clamped
+            zoom = next
         } else {
-            withAnimation(Motion.snap) { zoom = clamped }
+            withAnimation(Motion.snap) { zoom = next }
         }
     }
 
-    /// The right-hand column: where and when, who, and the words written for this photo.
-    private var infoPanel: some View {
-        ScrollView {
-            if let item {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(dateTitle)
-                            .font(.system(size: 20, weight: .medium, design: .serif))
-                            .foregroundStyle(LibraryPalette.ink)
-                        if let time = timeTitle {
-                            Text(time)
-                                .font(.callout)
-                                .foregroundStyle(LibraryPalette.muted)
-                        }
-                    }
+    /// Pinch on the trackpad zooms around the fingers.
+    private var magnify: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                let base = gestureBase ?? zoom
+                if gestureBase == nil { gestureBase = zoom }
+                var next = base
+                next.zoom(to: base.scale * value.magnification, anchor: value.startLocation, fitted: fittedSize, area: areaSize)
+                zoom = next
+            }
+            .onEnded { _ in gestureBase = nil }
+    }
 
-                    infoRow(String(localized: "Place")) {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            PhotoPlaceLine(item: item, placeNotes: placeNotes)
-                            Spacer(minLength: 0)
-                            PhotoNoteBadge(item: item)
-                        }
-                    }
-                    if let trip = item.trip?.effectiveName, !trip.isEmpty {
-                        infoRow(String(localized: "Trip")) {
-                            Text(trip).foregroundStyle(LibraryPalette.ink)
-                        }
-                    }
-                    if !peopleNames.isEmpty {
-                        infoRow(String(localized: "People")) {
-                            Text(peopleNames.joined(separator: ", ")).foregroundStyle(LibraryPalette.ink)
-                        }
-                    }
-                    if libraryState.memoryDrafts[item.id] != nil
-                        || item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                        infoRow(String(localized: "Memory")) {
-                            MemoryEditor(item: item, state: libraryState)
-                        }
-                    }
-                    infoRow(String(localized: "Note")) {
-                        PhotoNoteSection(item: item, state: libraryState)
-                    }
+    /// Dragging a zoomed photo moves it.
+    private var pan: some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { value in
+                guard zoom.isZoomed else { return }
+                let base = gestureBase ?? zoom
+                if gestureBase == nil { gestureBase = zoom }
+                var next = base
+                next.pan(by: value.translation, fitted: fittedSize, area: areaSize)
+                zoom = next
+            }
+            .onEnded { _ in gestureBase = nil }
+    }
+
+    /// The mouse wheel or ⌘-scroll zooms around the pointer; two fingers on the
+    /// trackpad move a zoomed photo, as in Preview.
+    private func installScrollMonitor() {
+        guard scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            MainActor.assumeIsolated {
+                guard selection.viewerRequest != nil, player == nil, image != nil,
+                      let location = hoverLocation else { return event }
+                let wheel = !event.hasPreciseScrollingDeltas
+                if event.modifierFlags.contains(.command) || wheel {
+                    let delta = wheel ? event.scrollingDeltaY * 12 : event.scrollingDeltaY
+                    guard delta != 0 else { return nil }
+                    var next = zoom
+                    next.zoom(to: zoom.scale * exp(delta / 120), anchor: location, fitted: fittedSize, area: areaSize)
+                    zoom = next
+                    return nil
                 }
-                .padding(20)
+                guard zoom.isZoomed else { return event }
+                var next = zoom
+                next.pan(by: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY), fitted: fittedSize, area: areaSize)
+                zoom = next
+                return nil
             }
         }
     }
 
-    private func infoRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .textCase(.uppercase)
-                .foregroundStyle(LibraryPalette.muted)
-            content()
+    private func removeScrollMonitor() {
+        if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
+        scrollMonitor = nil
+    }
+
+    /// The right-hand column: when, where, who, and the words written for
+    /// this photo, each editable in place.
+    @ViewBuilder
+    private var infoPanel: some View {
+        if let item {
+            PhotoInfoPanel(item: item, libraryState: libraryState, isEditing: $isEditingInfo)
+                .id(item.id)
+        } else {
+            Color.clear
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -249,23 +305,35 @@ struct PhotoViewer: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .padding(28)
         } else if let image {
-            GeometryReader { geometry in
-                let fitted = Self.fittedSize(image.size, in: CGSize(width: geometry.size.width - 56, height: geometry.size.height - 56))
-                ScrollView([.horizontal, .vertical]) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: fitted.width * zoom, height: fitted.height * zoom)
-                        .shadow(color: Paper.shadow.opacity(0.12), radius: 10, y: 4)
-                        .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
-                        // Double click toggles between fitted and twice the size, like Photos.
-                        .onTapGesture(count: 2) { setZoom(zoom > 1 ? 1 : 2) }
-                        .accessibilityLabel(title)
-                        .accessibilityIdentifier("viewer.image")
+            let fitted = fittedSize
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: fitted.width, height: fitted.height)
+                .shadow(color: Paper.shadow.opacity(zoom.isZoomed ? 0 : 0.12), radius: 10, y: 4)
+                .scaleEffect(zoom.scale)
+                .offset(zoom.offset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                // Double click zooms to twice the size at that point, and back to fit.
+                .gesture(SpatialTapGesture(count: 2).onEnded { value in
+                    animateZoom { zoom in
+                        if zoom.isZoomed {
+                            zoom.reset()
+                        } else {
+                            zoom.zoom(to: 2, anchor: value.location, fitted: fitted, area: areaSize)
+                        }
+                    }
+                })
+                .simultaneousGesture(magnify)
+                .simultaneousGesture(pan)
+                .onContinuousHover { phase in
+                    if case .active(let location) = phase { hoverLocation = location } else { hoverLocation = nil }
                 }
-                .scrollIndicators(zoom > 1 ? .automatic : .hidden)
-                .scrollDisabled(zoom <= 1)
-            }
+                .clipped()
+                .accessibilityLabel(title)
+                .accessibilityIdentifier("viewer.image")
+                .accessibilityValue(String(format: "%.0f%%", zoom.scale * 100))
         } else {
             ProgressView().controlSize(.small)
         }
@@ -308,15 +376,6 @@ struct PhotoViewer: View {
         return date.formatted(date: .long, time: .shortened)
     }
 
-    private var dateTitle: String {
-        guard let date = item?.effectiveCaptureDate else { return item?.title ?? String(localized: "Undated") }
-        return date.formatted(date: .long, time: .omitted)
-    }
-
-    private var timeTitle: String? {
-        item?.effectiveCaptureDate?.formatted(date: .omitted, time: .shortened)
-    }
-
     /// Moves to the neighbouring photo; false at either end.
     private func step(_ offset: Int) -> Bool {
         guard let index else { return false }
@@ -344,8 +403,7 @@ struct PhotoViewer: View {
             return
         }
         item = found
-        zoom = 1
-        peopleNames = names(of: id)
+        zoom = ViewerZoom()
         if let cached = PhotoViewerImageCache.shared.image(for: id) {
             image = cached
         } else {
@@ -359,19 +417,6 @@ struct PhotoViewer: View {
         guard !Task.isCancelled else { return }
         if found.kind == .video { startVideo(found) }
         prefetchNeighbours()
-    }
-
-    /// Named, visible people found in this photo.
-    private func names(of mediaID: String) -> [String] {
-        let faces = (try? modelContext.fetch(FetchDescriptor<FaceObservation>(predicate: #Predicate { $0.mediaID == mediaID }))) ?? []
-        let personIDs = Set(faces.compactMap(\.personID))
-        guard !personIDs.isEmpty else { return [] }
-        let people = (try? modelContext.fetch(FetchDescriptor<Person>())) ?? []
-        return people
-            .filter { personIDs.contains($0.id) && !$0.hidden }
-            .compactMap { $0.name?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .sorted()
     }
 
     private func prefetchNeighbours() {

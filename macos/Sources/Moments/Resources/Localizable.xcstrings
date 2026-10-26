@@ -1,6 +1,126 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Add a date" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Datum hinzufügen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add a date" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加日期" } }
+      }
+    },
+    "Adjust date and time" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Datum und Uhrzeit anpassen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Adjust date and time" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "调整日期和时间" } }
+      }
+    },
+    "Edited" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Bearbeitet" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Edited" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已修改" } }
+      }
+    },
+    "Time" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Uhrzeit" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Time" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "时间" } }
+      }
+    },
+    "Original: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Original: %@" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Original: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "原始：%@" } }
+      }
+    },
+    "Use original" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Original verwenden" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Use original" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "恢复原始" } }
+      }
+    },
+    "Add a place" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Ort hinzufügen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add a place" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加地点" } }
+      }
+    },
+    "Type a place name. Return saves; empty goes back to the place found when importing." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Ortsnamen eingeben. Return sichert; leer stellt den beim Import erkannten Ort wieder her." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Type a place name. Return saves; empty goes back to the place found when importing." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "输入地点名称。回车保存；清空则恢复导入时识别的地点。" } }
+      }
+    },
+    "Not in a trip" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "In keiner Reise" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Not in a trip" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "不属于任何旅行" } }
+      }
+    },
+    "Rename “%@”…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "„%@“ umbenennen …" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Rename “%@”…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重命名“%@”…" } }
+      }
+    },
+    "Name" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Name" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Name" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "名字" } }
+      }
+    },
+    "Who is this?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Wer ist das?" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Who is this?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这是谁？" } }
+      }
+    },
+    "New name…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Neuer Name …" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "New name…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "新名字…" } }
+      }
+    },
+    "Not %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nicht %@" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Not %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "不是%@" } }
+      }
+    },
+    "this person" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "diese Person" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "this person" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这个人" } }
+      }
+    },
     "Zoom in" : {
       "localizations" : {
         "de" : {

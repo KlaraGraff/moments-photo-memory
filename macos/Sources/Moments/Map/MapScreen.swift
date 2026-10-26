@@ -107,6 +107,8 @@ struct MapScreen: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .background(Paper.well.opacity(0.45))
+                // A container, so the menus inside keep their own identifiers.
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("map.filters")
             mapArea
         }

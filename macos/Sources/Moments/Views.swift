@@ -163,6 +163,12 @@ struct ContentView: View {
                     GroupDetailView(groupID: groupID, state: libraryState)
                 }
             }
+            // After a correction to dates, places or people: what changed, and
+            // Undo. In the detail column, not over the whole split view, where
+            // it is drawn but does not get clicks; the viewer shows its own.
+            .overlay(alignment: .bottom) {
+                if shared.viewerRequest == nil { CorrectionUndoBar() }
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     ImportToolbarButton()
@@ -188,8 +194,6 @@ struct ContentView: View {
             }
         }
         .animation(reduceMotion ? nil : Motion.snap, value: shared.viewerRequest == nil)
-        // After a correction to dates, places or people: what changed, and Undo.
-        .overlay(alignment: .bottom) { CorrectionUndoBar() }
         .sheet(isPresented: Binding(
             get: { shared.dateAdjustmentItemIDs != nil },
             set: { if !$0 { shared.dateAdjustmentItemIDs = nil } }

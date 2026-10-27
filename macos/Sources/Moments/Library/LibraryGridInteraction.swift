@@ -11,8 +11,8 @@ extension View {
         modifier(LibraryGridInteraction(state: state, proxy: proxy))
     }
 
-    /// Keeps `state.gridColumns` (for the up and down arrows) in step with
-    /// the window width and zoom level. On the scroll view's content, not a
+    /// Keeps `state.gridColumns` (for the grid and the up and down arrows)
+    /// in step with the zoom level. On the scroll view's content, not a
     /// section, so it holds while every heading is scrolled away.
     func reportsLibraryGridColumns(to state: LibraryViewState) -> some View {
         modifier(LibraryGridColumnsReporter(state: state))
@@ -24,8 +24,7 @@ private struct LibraryGridColumnsReporter: ViewModifier {
     @AppStorage(LibraryThumbnailSize.storageKey) private var level = LibraryThumbnailSize.defaultLevel
 
     func body(content: Content) -> some View {
-        let size = LibraryThumbnailSize(level: level)
-        let columns = LibraryGridNavigation.columns(windowWidth: state.windowWidth, minimum: size.minimumWidth, spacing: size.spacing)
+        let columns = LibraryThumbnailSize(level: level).columns
         content.onChange(of: columns, initial: true) { _, columns in
             if state.gridColumns != columns { state.gridColumns = columns }
         }

@@ -53,4 +53,76 @@ final class MomentsResizeUITests: XCTestCase {
         XCTAssertFalse(changes.isEmpty, report)
         XCTAssertEqual(changes.reduce(0, +), 0, "The grid changed its column count while the sidebar moved:\n\(report)")
     }
+
+    /// Like Photos: zooming the window (a double click on its top bar) makes
+    /// the photos larger or smaller but keeps how many are in a row; only the
+    /// toolbar's − and + change that, at any window size.
+    func testZoomingTheWindowKeepsPhotosPerRow() throws {
+        let setting = UserDefaults(suiteName: UserDefaults.globalDomain)?.string(forKey: "AppleActionOnDoubleClick")
+        if setting == "Minimize" || setting == "None" {
+            throw XCTSkip("This Mac is set to \(setting ?? "") on a title bar double click")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-MomentsUITesting", "-MomentsUITestSmallWindow", "-MomentsUITestStressCount", "120",
+            "-moments.library.thumbnailSize", "2", "-AppleLanguages", "(en)", "-AppleLocale", "en"
+        ]
+        app.launch()
+        app.activate()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(photos(in: app).firstMatch.waitForExistence(timeout: launchTimeout))
+        Thread.sleep(forTimeInterval: 1.5)
+        let titleBar = window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 260, dy: 26))
+        let zoomOut = app.descendants(matching: .any).matching(identifier: "library.zoom-out").firstMatch
+
+        let small = rows(in: app)
+        evidence(app, "photos-per-row-small-evidence")
+        XCTAssertEqual(small.perRow, 4, "Default zoom at the small window")
+
+        let smallFrame = window.frame
+        titleBar.doubleClick()
+        Thread.sleep(forTimeInterval: 1.5)
+        XCTAssertGreaterThan(window.frame.width, smallFrame.width + 100, "The window did not zoom")
+        let large = rows(in: app)
+        evidence(app, "photos-per-row-large-evidence")
+        XCTAssertEqual(large.perRow, 4, "Zooming the window changed how many photos are in a row")
+        XCTAssertGreaterThan(large.photoWidth, small.photoWidth + 20, "The photos did not grow with the window")
+
+        // − adds photos to each row, in the large window and after going back.
+        XCTAssertTrue(zoomOut.isEnabled)
+        zoomOut.click()
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertEqual(rows(in: app).perRow, 6, "− at the large window")
+        titleBar.doubleClick()
+        Thread.sleep(forTimeInterval: 1.5)
+        XCTAssertEqual(window.frame, smallFrame, "The window did not zoom back")
+        XCTAssertEqual(rows(in: app).perRow, 6, "Zooming back changed how many photos are in a row")
+        zoomOut.click()
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertEqual(rows(in: app).perRow, 8, "The densest level at the small window")
+        evidence(app, "photos-per-row-small-densest-evidence")
+    }
+
+    private func photos(in app: XCUIApplication) -> XCUIElementQuery {
+        app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'library.photo.'"))
+    }
+
+    /// The most photos side by side in one row on screen, and their width.
+    private func rows(in app: XCUIApplication) -> (perRow: Int, photoWidth: CGFloat) {
+        XCTAssertEqual(app.state, .runningForeground, "Moments lost focus")
+        let window = app.windows.firstMatch.frame
+        let frames = photos(in: app).allElementsBoundByIndex.map(\.frame)
+            .filter { !$0.isEmpty && window.contains(CGPoint(x: $0.midX, y: $0.midY)) }
+        let rows = Dictionary(grouping: frames) { Int($0.minY.rounded()) }
+        let fullest = rows.values.max { $0.count < $1.count } ?? []
+        return (fullest.count, fullest.first?.width ?? 0)
+    }
+
+    private func evidence(_ app: XCUIApplication, _ name: String) {
+        let shot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        shot.name = name
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
 }

@@ -742,9 +742,8 @@ private struct LibrarySectionView: View {
 
     private var size: LibraryThumbnailSize { LibraryThumbnailSize(level: sizeLevel) }
 
-    /// Set from the window width and zoom level by the scroll content
-    /// (reportsLibraryGridColumns); read from there so a live window resize
-    /// only rebuilds sections when the count really changes.
+    /// Set from the zoom level by the scroll content
+    /// (reportsLibraryGridColumns), never from the window's size.
     private var columnCount: Int { max(1, state.gridColumns) }
 
     @Environment(SelectionModel.self) private var selection
@@ -758,9 +757,9 @@ private struct LibrarySectionView: View {
     }
 
     /// The heading and the section's grid are children of the Library's lazy
-    /// stack. The grid has a fixed number of equal columns, taken from the
-    /// window width, so when the sidebar moves the photos grow and shrink
-    /// with it instead of jumping to another column count, like Photos.
+    /// stack. The grid has a fixed number of equal columns, set by the zoom
+    /// level, so when the window or the sidebar changes size the photos grow
+    /// and shrink instead of jumping to another column count, like Photos.
     /// (One HStack per row instead of a grid scrolled with several times
     /// more stalls on 2,000 photos.)
     var body: some View {

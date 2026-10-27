@@ -99,10 +99,12 @@ final class LibraryGridInteractionTests: XCTestCase {
         XCTAssertEqual(LibraryGridNavigation.move(from: "a", .up, sections: sections, columns: 3), "a")
     }
 
-    func testAdaptiveColumnCount() {
-        XCTAssertEqual(LibraryGridNavigation.columns(width: 174, minimum: 175, spacing: 24), 1)
-        XCTAssertEqual(LibraryGridNavigation.columns(width: 374, minimum: 175, spacing: 24), 2)
-        XCTAssertEqual(LibraryGridNavigation.columns(width: 800, minimum: 175, spacing: 24), 4)
+    /// Like Photos, each zoom level is a number of photos per row; larger
+    /// thumbnails mean fewer of them.
+    func testEachZoomLevelIsAColumnCount() {
+        let counts = (0...LibraryThumbnailSize.maximumLevel).map { LibraryThumbnailSize(level: $0).columns }
+        XCTAssertEqual(counts, [8, 6, 4, 3])
+        XCTAssertEqual(LibraryViewState().gridColumns, 4)
     }
 
     func testThumbnailSizeLevelsClampAndCompactAtTheSmallestTwo() {
@@ -111,7 +113,7 @@ final class LibraryGridInteractionTests: XCTestCase {
         XCTAssertTrue(LibraryThumbnailSize(level: 0).isCompact)
         XCTAssertTrue(LibraryThumbnailSize(level: 1).isCompact)
         XCTAssertFalse(LibraryThumbnailSize(level: LibraryThumbnailSize.defaultLevel).isCompact)
-        // The default keeps today's print size.
-        XCTAssertEqual(LibraryThumbnailSize(level: LibraryThumbnailSize.defaultLevel).minimumWidth, 175)
+        // The default keeps four prints in a row.
+        XCTAssertEqual(LibraryThumbnailSize(level: LibraryThumbnailSize.defaultLevel).columns, 4)
     }
 }

@@ -537,11 +537,7 @@ final class LibraryViewState {
     /// for the viewer, which folds them itself.
     @ObservationIgnored var viewerItemIDs: [String] = []
     /// Columns in the Library grid: its rows and the up and down arrows.
-    var gridColumns = 4
-    /// The window's width. The grid's columns follow it, not the space next
-    /// to the sidebar, so hiding, showing or dragging the sidebar scales the
-    /// photos instead of changing how many fit in a row, like Photos.
-    var windowWidth: CGFloat = 0
+    var gridColumns = LibraryThumbnailSize(level: LibraryThumbnailSize.defaultLevel).columns
     /// Rubber-band selection on the grid; its rectangle redraws on its own.
     let marquee = LibraryMarquee()
 
@@ -603,32 +599,21 @@ enum LibraryGridNavigation {
         }
     }
 
-    /// Columns an adaptive grid lays out in `width`.
-    static func columns(width: CGFloat, minimum: CGFloat, spacing: CGFloat) -> Int {
-        max(1, Int((width + spacing) / (minimum + spacing)))
-    }
-
-    /// Columns for a window `windowWidth` wide: as many as fit next to the
-    /// sidebar at its default width, whether or not it is showing.
-    static func columns(windowWidth: CGFloat, minimum: CGFloat, spacing: CGFloat) -> Int {
-        let window = max(windowWidth, minimumWindowWidth)
-        return columns(width: window - defaultSidebarWidth - 2 * gridInset, minimum: minimum, spacing: spacing)
-    }
-
-    static let minimumWindowWidth: CGFloat = 900
-    static let defaultSidebarWidth: CGFloat = 190
-    /// The grid's horizontal padding in the Library.
-    static let gridInset: CGFloat = 34
 }
 
 /// The Library's zoom levels, smallest first. The two smallest are a dense
 /// grid of photos only, like Photos; the larger ones are prints with their
 /// place, memory and note line.
+///
+/// Each level is a number of photos per row, as in Photos: resizing or
+/// zooming the window, or moving the sidebar, makes the photos larger or
+/// smaller but keeps the count; only − and + change it. The counts are what
+/// fitted maple's 1,111 pt window before, so that window looks the same.
 struct LibraryThumbnailSize: Equatable {
     static let storageKey = "moments.library.thumbnailSize"
-    static let minimumWidths: [CGFloat] = [92, 130, 175, 240]
+    static let columnCounts = [8, 6, 4, 3]
     static let defaultLevel = 2
-    static var maximumLevel: Int { minimumWidths.count - 1 }
+    static var maximumLevel: Int { columnCounts.count - 1 }
 
     let level: Int
 
@@ -636,7 +621,7 @@ struct LibraryThumbnailSize: Equatable {
         self.level = min(max(level, 0), Self.maximumLevel)
     }
 
-    var minimumWidth: CGFloat { Self.minimumWidths[level] }
+    var columns: Int { Self.columnCounts[level] }
     var isCompact: Bool { level < 2 }
     var spacing: CGFloat { isCompact ? 6 : 24 }
     var rowSpacing: CGFloat { isCompact ? 6 : 28 }

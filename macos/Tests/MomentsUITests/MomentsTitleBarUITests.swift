@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 /// As in every Apple app, a double click on an empty part of the window's top
@@ -54,9 +55,50 @@ final class MomentsTitleBarUITests: XCTestCase {
             }
         }
         print("TITLEBAR-REPORT-BEGIN\n\(results.joined(separator: "\n"))\nTITLEBAR-REPORT-END")
-        let shot = XCTAttachment(screenshot: window.screenshot())
-        shot.name = "titlebar-window"
-        shot.lifetime = .keepAlways
-        add(shot)
+    }
+
+    /// Diagnosis: which x positions along the top bar zoom, and what the toolbar holds.
+    func testProbeTopBarHitMap() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(en)", "-AppleLocale", "en"]
+        app.launch()
+        app.activate()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: launchTimeout))
+        var lines: [String] = []
+        for page in ["sidebar.library", "sidebar.people"] {
+            let item = app.descendants(matching: .any).matching(identifier: page).firstMatch
+            XCTAssertTrue(item.waitForExistence(timeout: launchTimeout))
+            item.click()
+            Thread.sleep(forTimeInterval: 1)
+            let frame = window.frame
+            lines.append("== \(page) window \(frame)")
+            for element in app.toolbars.firstMatch.descendants(matching: .any).allElementsBoundByIndex.prefix(60) {
+                lines.append("  el \(element.elementType.rawValue) id=\(element.identifier) label=\(element.label) frame=\(element.frame.offsetBy(dx: -frame.minX, dy: -frame.minY))")
+            }
+            for title in app.staticTexts.allElementsBoundByIndex.prefix(80) where title.frame.minY - frame.minY < 52 {
+                lines.append("  text \(title.label) frame=\(title.frame.offsetBy(dx: -frame.minX, dy: -frame.minY))")
+            }
+            var x = 200.0
+            var row = ""
+            while x < frame.width - 10 {
+                let point = CGVector(dx: x, dy: 26)
+                window.coordinate(withNormalizedOffset: .zero).withOffset(point).doubleClick()
+                Thread.sleep(forTimeInterval: 1.2)
+                let zoomed = window.frame != frame
+                row += " \(Int(x)):\(zoomed ? "Z" : "-")"
+                if zoomed {
+                    window.coordinate(withNormalizedOffset: .zero).withOffset(point).doubleClick()
+                    Thread.sleep(forTimeInterval: 1.2)
+                }
+                x += 40
+            }
+            lines.append("  hits\(row)")
+            if let data = window.screenshot().image.tiffRepresentation,
+               let jpeg = NSBitmapImageRep(data: data)?.representation(using: .jpeg, properties: [.compressionFactor: 0.6]) {
+                lines.append("EVIDENCE-BEGIN \(page)\n\(jpeg.base64EncodedString())\nEVIDENCE-END")
+            }
+        }
+        print("HITMAP-BEGIN\n\(lines.joined(separator: "\n"))\nHITMAP-END")
     }
 }

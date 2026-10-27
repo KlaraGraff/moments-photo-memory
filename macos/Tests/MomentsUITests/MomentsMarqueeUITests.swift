@@ -60,6 +60,47 @@ final class MomentsMarqueeUITests: XCTestCase {
         XCTAssertFalse(text.contains("missing"), text)
     }
 
+    /// Photos the grid built in an earlier drag, scrolled away and then
+    /// scrolled back into the rectangle, are selected too. They used to be
+    /// skipped: coming back, their frames had not changed, so they never
+    /// reported one for the new drag (seen in a screen recording: the
+    /// middle rows of a month stayed unselected inside the rectangle).
+    func testPhotosScrolledBackIntoTheRectangleAreSelected() {
+        let app = launch(extraArguments: ["-MomentsUITestStressCount", "2000"])
+        let visible = visiblePhotos(app)
+        guard let first = visible.first else { return XCTFail("No photo on screen") }
+        let window = app.windows.firstMatch.frame
+        let lastColumn = visible.map(\.frame.midX).max() ?? first.frame.midX
+        let start = point(app, x: first.frame.minX - 12, y: first.frame.minY - 4)
+        let edge = point(app, x: lastColumn, y: window.maxY - 6)
+
+        // The first drag scrolls the grid down past many rows, so it builds them.
+        start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 2.5)
+        let firstCount = Int(selectionCount(app)) ?? 0
+        XCTAssertGreaterThan(firstCount, visible.count, "The first drag did not scroll and select")
+        app.typeKey(.escape, modifierFlags: [])
+
+        // Back to the top, where the first photo is where it was.
+        let scrollView = app.scrollViews.containing(.any, identifier: first.element.identifier).firstMatch
+        for _ in 0..<40 where first.element.frame != first.frame {
+            scrollView.scroll(byDeltaX: 0, deltaY: 2000)
+        }
+        XCTAssertEqual(first.element.frame, first.frame, "Could not scroll back to the top")
+        pauseLongerThanADoubleClick()
+
+        // The second drag goes over the same rows again, not as far.
+        start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 1)
+        let count = Int(selectionCount(app)) ?? 0
+        XCTAssertGreaterThan(count, visible.count, "The second drag did not scroll and select")
+        capture(app, named: "marquee-scrolled-back-evidence")
+        // The rectangle runs from above the first photo to the bottom edge,
+        // across every column: every photo on screen now is inside it.
+        let onScreen = visiblePhotos(app, scanning: 400)
+        XCTAssertFalse(onScreen.isEmpty)
+        let missed = onScreen.filter { $0.element.value as? String != "Selected" }.map(\.element.identifier)
+        XCTAssertTrue(missed.isEmpty, "Inside the rectangle but not selected (\(missed.count) of \(onScreen.count) on screen, \(count) selected): \(missed)")
+    }
+
     private func exerciseMarquee(_ app: XCUIApplication, prefix: String) {
         let visible = visiblePhotos(app)
         guard let first = visible.first else { return XCTFail("No photo on screen") }
@@ -126,13 +167,14 @@ final class MomentsMarqueeUITests: XCTestCase {
     }
 
     /// Photos fully inside the window, read before any drag so the test
-    /// does not query the app while it works.
-    private func visiblePhotos(_ app: XCUIApplication) -> [Photo] {
+    /// does not query the app while it works. The grid's built photos come
+    /// in order; `limit` is how many of them to look at.
+    private func visiblePhotos(_ app: XCUIApplication, scanning limit: Int = 40) -> [Photo] {
         let photos = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
         XCTAssertTrue(photos.element(boundBy: 1).waitForExistence(timeout: launchTimeout))
         let window = app.windows.firstMatch.frame
         var visible: [Photo] = []
-        for index in 0..<min(photos.count, 40) {
+        for index in 0..<min(photos.count, limit) {
             let element = photos.element(boundBy: index)
             let frame = element.frame
             if window.insetBy(dx: 0, dy: 8).contains(frame), element.isHittable {

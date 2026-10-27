@@ -23,10 +23,17 @@ enum TitleBarDoubleClick {
     private static func take(_ event: NSEvent) -> Bool {
         guard event.clickCount == 2, let window = event.window,
               isOnEmptyTopBar(event, in: window) else { return false }
-        perform(in: window)
-        #if DEBUG
-        TitleBarProbe.note("performed \(UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "default") from \(window.frame)")
-        #endif
+        // After this click is done with: zooming from inside the title bar's
+        // own click handling left the window as it was.
+        DispatchQueue.main.async {
+            #if DEBUG
+            let before = window.frame
+            #endif
+            perform(in: window)
+            #if DEBUG
+            TitleBarProbe.note("performed \(UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "default") \(before) -> \(window.frame)")
+            #endif
+        }
         return true
     }
 
@@ -59,7 +66,10 @@ enum TitleBarDoubleClick {
         while let current = view {
             let name = String(describing: type(of: current))
             chain.append(name)
-            if current is NSControl || current is NSText || name.contains("ItemViewer") { isControl = true }
+            // The page title is a label (a text field that can't be edited
+            // or selected); a double click there belongs to the window.
+            let isLabel = (current as? NSTextField).map { !$0.isEditable && !$0.isSelectable } ?? false
+            if (current is NSControl && !isLabel) || current is NSText || name.contains("ItemViewer") { isControl = true }
             view = current.superview
         }
         #if DEBUG

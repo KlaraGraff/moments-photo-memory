@@ -1,9 +1,11 @@
 // Writes a synthetic photo folder for import checks: JPEGs with EXIF capture
 // dates, time-zone offsets and GPS near 0,0, plus the edge cases the importer
-// flags. Everything is generated; no real photos, places or people.
+// flags, and one short video for the viewer's player. Everything is
+// generated; no real photos, places or people.
 //
 // Usage: swift scripts/make_synthetic_import_fixtures.swift <output-folder>
 // The output folder must be outside the repository.
+import AVFoundation
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -121,4 +123,38 @@ for fixture in fixtures {
     CGImageDestinationAddImage(destination, image(shade: fixture.shade, width: fixture.size.width, height: fixture.size.height), properties as CFDictionary)
     guard CGImageDestinationFinalize(destination) else { fatalError("Cannot write \(url.lastPathComponent)") }
 }
-print("Wrote \(fixtures.count) synthetic photos to \(output.path)")
+// One second of solid colour as H.264, so the viewer has a real video to play.
+func writeVideo(to url: URL) throws {
+    try? FileManager.default.removeItem(at: url)
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 320, AVVideoHeightKey: 240
+    ])
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
+        kCVPixelBufferWidthKey as String: 320, kCVPixelBufferHeightKey as String: 240
+    ])
+    writer.add(input)
+    guard writer.startWriting() else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
+    writer.startSession(atSourceTime: .zero)
+    for frame in 0..<10 {
+        while !input.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.01) }
+        var buffer: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &buffer)
+        guard let buffer else { throw CocoaError(.fileWriteUnknown) }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        let context = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: 320, height: 240, bitsPerComponent: 8,
+                                bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue)!
+        context.draw(image(shade: Double(frame) / 10, width: 320, height: 240), in: CGRect(x: 0, y: 0, width: 320, height: 240))
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 10))
+    }
+    input.markAsFinished()
+    let done = DispatchSemaphore(value: 0)
+    writer.finishWriting { done.signal() }
+    done.wait()
+    guard writer.status == .completed else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
+}
+try writeVideo(to: output.appendingPathComponent("clip-1.mov"))
+print("Wrote \(fixtures.count) synthetic photos and 1 video to \(output.path)")

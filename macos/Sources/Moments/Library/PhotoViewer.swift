@@ -594,9 +594,13 @@ struct PhotoViewer: View {
     private var current: some View {
         if let player {
             VideoPlayerView(player: player)
-                .accessibilityIdentifier("viewer.video")
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .padding(28)
+                // Neither a SwiftUI nor an AppKit identifier on the player view
+                // itself reaches the accessibility tree, so a SwiftUI container
+                // around it carries one.
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("viewer.video")
         } else if let image {
             let fitted = fittedSize
             Image(nsImage: image)

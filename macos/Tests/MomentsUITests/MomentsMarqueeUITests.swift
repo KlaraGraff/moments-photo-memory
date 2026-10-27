@@ -60,13 +60,16 @@ final class MomentsMarqueeUITests: XCTestCase {
         XCTAssertFalse(text.contains("missing"), text)
     }
 
-    /// Photos the grid built in an earlier drag, scrolled away and then
-    /// scrolled back into the rectangle, are selected too. They used to be
-    /// skipped: coming back, their frames had not changed, so they never
-    /// reported one for the new drag (seen in a screen recording: the
+    /// Held at the bottom edge over a Library of small month sections, the
+    /// rectangle selects every photo it scrolls over, also on a second drag
+    /// over rows the grid built before (seen in a screen recording: the
     /// middle rows of a month stayed unselected inside the rectangle).
-    func testPhotosScrolledBackIntoTheRectangleAreSelected() {
-        let app = launch(extraArguments: ["-MomentsUITestStressCount", "2000"])
+    func testEveryPhotoScrolledIntoTheRectangleIsSelected() {
+        // About 13 photos a month, grouped by month, as in the recording.
+        let app = launch(extraArguments: [
+            "-MomentsUITestStressCount", "600", "-MomentsUITestStressSpacing", "200000",
+            "-moments.library.grouping", "month",
+        ])
         let visible = visiblePhotos(app)
         guard let first = visible.first else { return XCTFail("No photo on screen") }
         let window = app.windows.firstMatch.frame
@@ -74,10 +77,9 @@ final class MomentsMarqueeUITests: XCTestCase {
         let start = point(app, x: first.frame.minX - 12, y: first.frame.minY - 4)
         let edge = point(app, x: lastColumn, y: window.maxY - 6)
 
-        // The first drag scrolls the grid down past many rows, so it builds them.
+        // The first drag scrolls the grid down past several months.
         start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 2.5)
-        let firstCount = Int(selectionCount(app)) ?? 0
-        XCTAssertGreaterThan(firstCount, visible.count, "The first drag did not scroll and select")
+        assertEveryPhotoOnScreenIsSelected(app, after: "the first drag", moreThan: visible.count)
         app.typeKey(.escape, modifierFlags: [])
 
         // Back to the top, where the first photo is where it was.
@@ -90,16 +92,20 @@ final class MomentsMarqueeUITests: XCTestCase {
         pauseLongerThanADoubleClick()
 
         // The second drag goes over the same rows again, not as far.
-        start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 1)
+        start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 1.5)
+        capture(app, named: "marquee-scrolled-over-evidence")
+        assertEveryPhotoOnScreenIsSelected(app, after: "the second drag", moreThan: visible.count)
+    }
+
+    /// After a drag from above the first photo to the bottom edge, across
+    /// every column, every photo on screen is inside the rectangle.
+    private func assertEveryPhotoOnScreenIsSelected(_ app: XCUIApplication, after drag: String, moreThan minimum: Int) {
         let count = Int(selectionCount(app)) ?? 0
-        XCTAssertGreaterThan(count, visible.count, "The second drag did not scroll and select")
-        capture(app, named: "marquee-scrolled-back-evidence")
-        // The rectangle runs from above the first photo to the bottom edge,
-        // across every column: every photo on screen now is inside it.
-        let onScreen = visiblePhotos(app, scanning: 400)
+        XCTAssertGreaterThan(count, minimum, "\(drag) did not scroll and select")
+        let onScreen = visiblePhotos(app, scanning: 600)
         XCTAssertFalse(onScreen.isEmpty)
         let missed = onScreen.filter { $0.element.value as? String != "Selected" }.map(\.element.identifier)
-        XCTAssertTrue(missed.isEmpty, "Inside the rectangle but not selected (\(missed.count) of \(onScreen.count) on screen, \(count) selected): \(missed)")
+        XCTAssertTrue(missed.isEmpty, "After \(drag), inside the rectangle but not selected (\(missed.count) of \(onScreen.count) on screen, \(count) selected): \(missed)")
     }
 
     private func exerciseMarquee(_ app: XCUIApplication, prefix: String) {

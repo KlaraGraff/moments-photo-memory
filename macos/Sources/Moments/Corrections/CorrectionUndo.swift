@@ -133,7 +133,21 @@ private struct CorrectionUndoCapsule: View {
         .onHover(perform: onHover)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("correction.bar")
+        .accessibilityValue(UndoBarProbe.shared.note)
         .padding(12)
+    }
+}
+
+/// What the bar last made of a click, for the UI tests to read when Undo
+/// did nothing. Empty outside UI tests.
+@MainActor @Observable
+private final class UndoBarProbe {
+    static let shared = UndoBarProbe()
+    static let isOn = ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
+    var note = ""
+
+    func record(_ text: @autoclosure () -> String) {
+        if Self.isOn { note = text() }
     }
 }
 
@@ -218,6 +232,7 @@ private final class UndoBarHostingView: NSHostingView<CorrectionUndoCapsule> {
         monitor = nil
         // Off the window (the bar has gone): no monitor left behind.
         guard window != nil else { return }
+        UndoBarProbe.shared.record("watching")
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
             // Local monitors run on the main thread.
             MainActor.assumeIsolated { self?.take(event) ?? false } ? nil : event
@@ -245,6 +260,11 @@ private final class UndoBarHostingView: NSHostingView<CorrectionUndoCapsule> {
     }
 
     private func isOnUndo(_ event: NSEvent) -> Bool {
+        UndoBarProbe.shared.record({
+            var target = undoFrame
+            if !isFlipped { target.origin.y = bounds.height - target.maxY }
+            return "\(event.type.rawValue) own=\(event.window === window) eventWindow=\(event.window.map { type(of: $0) }.map(String.init(describing:)) ?? "-") key=\(window?.isKeyWindow ?? false) sheet=\(window?.attachedSheet != nil) hidden=\(isHiddenOrHasHiddenAncestor) undo=\(undoFrame) inWindow=\(convert(target, to: nil)) at=\(event.locationInWindow)"
+        }())
         guard let window, event.window === window, window.attachedSheet == nil,
               !isHiddenOrHasHiddenAncestor, alphaValue > 0, !undoFrame.isEmpty else { return false }
         var target = undoFrame.insetBy(dx: -4, dy: -4)

@@ -192,20 +192,25 @@ final class MomentsCorrectionsUITests: XCTestCase {
         XCTAssertTrue(undo.waitForExistence(timeout: timeout), "The bar has no Undo button")
         let before = "undo \(undo.frame) hittable \(undo.isHittable), bar \(bar.frame), window \(app.windows.firstMatch.frame)"
         let focused = app.debugDescription.split(separator: "\n").filter { $0.contains("Keyboard Focused") && !$0.contains("Cell,") }
+        let windows = app.windows.allElementsBoundByIndex.map { "\($0.identifier)|\($0.title)|\($0.frame)" }
+            + app.sheets.allElementsBoundByIndex.map { "sheet \($0.frame)" }
+            + app.popovers.allElementsBoundByIndex.map { "popover \($0.frame)" }
+            + app.dialogs.allElementsBoundByIndex.map { "dialog \($0.frame)" }
         undo.click()
         let closed = bar.waitForNonExistence(timeout: timeout)
         var after = ""
         if !closed {
             capture(app, named: "\(prefix)-undo-still-open-evidence")
+            after = "probe after the click: \(bar.value as? String ?? "-"); "
             // What would have worked, to tell a lost first click from a dead button.
             undo.click()
-            after = bar.waitForNonExistence(timeout: 3) ? "a second click closed it" : "a second click did not close it"
+            after += bar.waitForNonExistence(timeout: 3) ? "a second click closed it" : "a second click did not close it"
             if bar.exists {
                 app.typeKey("z", modifierFlags: .command)
                 after += bar.waitForNonExistence(timeout: 3) ? "; Command-Z closed it" : "; Command-Z did not close it"
             }
         }
-        XCTAssertTrue(closed, "Undo did not close the bar (\(before), focused \(focused)); \(after): \(bar.debugDescription)")
+        XCTAssertTrue(closed, "Undo did not close the bar (\(before), focused \(focused), windows \(windows)); \(after): \(bar.debugDescription)")
     }
 
     private func launch(smallWindow: Bool = false, people: Bool = false) -> XCUIApplication {

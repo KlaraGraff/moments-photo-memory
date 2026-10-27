@@ -338,12 +338,12 @@ struct ContentView: View {
     }
 
     private func sidebarRow(
-        _ title: String,
+        _ title: LocalizedStringKey,
         icon: String,
         section: MomentsSection,
         identifier: String
     ) -> some View {
-        Label(LocalizedStringKey(title), systemImage: icon)
+        Label(title, systemImage: icon)
             .tag(section)
             .accessibilityIdentifier(identifier)
     }

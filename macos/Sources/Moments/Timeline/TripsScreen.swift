@@ -1218,7 +1218,7 @@ struct TripDaySection: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 if let number {
-                    Text("Day \(number)")
+                    Text(String(localized: "Day \(number)"))
                         .font(.system(size: 21, weight: .medium, design: .serif))
                         .foregroundStyle(Paper.ink)
                     if let date = day.date {
@@ -1505,10 +1505,10 @@ private struct TripDatesControl<Content: View>: View {
                 if plan.joining.isEmpty && plan.leaving.isEmpty {
                     Text("No photos change")
                 } else {
-                    Text("Will add \(plan.joining.count) · will take out \(plan.leaving.count)")
+                    Text(String(localized: "Will add \(plan.joining.count) · will take out \(plan.leaving.count)"))
                 }
                 if elsewhere > 0 {
-                    Text("\(elsewhere) in other trips stay there")
+                    Text(String(localized: "\(elsewhere) in other trips stay there"))
                         .foregroundStyle(Paper.muted)
                 }
             }

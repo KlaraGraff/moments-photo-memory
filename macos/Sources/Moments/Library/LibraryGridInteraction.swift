@@ -2,22 +2,12 @@ import AppKit
 import SwiftUI
 
 extension View {
-    /// Keyboard and background clicks for a Library-style photo grid: arrow
-    /// keys move the selection, Space or Return opens the photo, Esc clears
-    /// the selection, Command-A selects all and a click between photos
-    /// deselects everything.
+    /// Keyboard for a Library-style photo grid: arrow keys move the
+    /// selection, Space or Return opens the photo, Esc clears the selection
+    /// and Command-A selects all. Clicks and drags between photos are
+    /// `libraryMarqueeSelection`'s.
     func libraryGridInteraction(state: LibraryViewState, proxy: ScrollViewProxy) -> some View {
         modifier(LibraryGridInteraction(state: state, proxy: proxy))
-    }
-
-    /// A click on the grid's background, between photos, deselects all.
-    func deselectsOnBackgroundClick(_ selection: SelectionModel) -> some View {
-        background {
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { selection.clear() }
-                .accessibilityHidden(true)
-        }
     }
 
     /// Keeps `state.gridColumns` (for the up and down arrows) in step with
@@ -113,6 +103,30 @@ private struct LibraryGridInteraction: ViewModifier {
               state.orderedItemIDs.contains(focused) else { return .ignored }
         selection.openViewer(focused, in: state.viewerItemIDs)
         return .handled
+    }
+}
+
+/// The window subtitle: the page's own line, or "216 items selected" while
+/// photos are selected, like Photos. A modifier of its own, so the selection
+/// changing during a rubber-band drag updates the title bar without
+/// rebuilding the page under it.
+struct LibrarySelectionSubtitle: ViewModifier {
+    @Environment(SelectionModel.self) private var selection
+    let idle: String
+
+    func body(content: Content) -> some View {
+        let count = selection.selectedItemIDs.count
+        content
+            .navigationSubtitle(count > 0 ? String(localized: "\(count) items selected") : idle)
+            // Tests read the count here; people see it in the title bar.
+            .background(alignment: .topLeading) {
+                Text(String(count))
+                    .font(.system(size: 1))
+                    .foregroundStyle(.clear)
+                    .allowsHitTesting(false)
+                    .accessibilityValue(String(count))
+                    .accessibilityIdentifier("library.selectionCount")
+            }
     }
 }
 

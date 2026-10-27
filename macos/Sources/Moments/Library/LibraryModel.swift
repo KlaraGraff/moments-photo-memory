@@ -540,6 +540,8 @@ final class LibraryViewState {
     /// to the sidebar, so hiding, showing or dragging the sidebar scales the
     /// photos instead of changing how many fit in a row, like Photos.
     var windowWidth: CGFloat = 0
+    /// Rubber-band selection on the grid; its rectangle redraws on its own.
+    let marquee = LibraryMarquee()
 
     func draft(for item: MediaItem) -> String {
         memoryDrafts[item.id] ?? item.latestMemory?.text ?? ""

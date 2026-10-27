@@ -153,6 +153,16 @@ struct PhotoViewer: View {
             close()
             return .handled
         }
+        // Delete asks first, ⌘⌫ deletes at once; the next photo opens.
+        .onKeyPress(keys: [.delete, .deleteForward]) { press in
+            guard !isTyping, item?.deletedAt == nil else { return .ignored }
+            deleteOpenPhoto(confirm: !press.modifiers.contains(.command))
+            return .handled
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .momentsDeleteWithoutAsking)) { _ in
+            guard !isTyping, selection.pendingDeletion == nil, item?.deletedAt == nil else { return }
+            deleteOpenPhoto(confirm: false)
+        }
         .task(id: request.itemID) { await load(request.itemID) }
         // Taken apart, a shot taken out, or Undo: the strip and the photos
         // ready to slide in follow.
@@ -212,6 +222,12 @@ struct PhotoViewer: View {
                 .buttonStyle(.borderless)
                 .help(String(localized: "Favorite"))
                 .accessibilityLabel(String(localized: "Favorite"))
+                if item.deletedAt == nil, RecentlyDeleted.canDelete(item) {
+                    headerButton("trash", label: String(localized: "Delete from Moments"), identifier: "viewer.delete") {
+                        deleteOpenPhoto(confirm: true)
+                    }
+                    .help(String(localized: "Delete from Moments (⌫)"))
+                }
             }
             headerButton("xmark", label: String(localized: "Close"), identifier: "viewer.close") { close() }
                 .help(String(localized: "Close (Esc)"))
@@ -219,6 +235,11 @@ struct PhotoViewer: View {
         .padding(.leading, 18)
         .padding(.trailing, 10)
         .frame(height: 46)
+    }
+
+    /// Just the photo on screen, even in a stack: the strip shows its others.
+    private func deleteOpenPhoto(confirm: Bool) {
+        PhotoDeletion.request([live.itemID], confirm: confirm, selection: selection, context: modelContext, undoManager: undoManager)
     }
 
     private func headerButton(_ symbol: String, label: String, identifier: String, action: @escaping () -> Void) -> some View {
@@ -395,6 +416,8 @@ struct PhotoViewer: View {
     private func handle(_ event: NSEvent) -> Bool {
         guard selection.viewerRequest != nil else { return false }
         if event.type == .keyDown {
+            // Esc in "Delete from Moments?" cancels the alert only.
+            guard selection.pendingDeletion == nil else { return false }
             // 53 is Esc. Popovers (the date editor) and menus handle their own.
             guard event.keyCode == 53, let window = event.window, window.styleMask.contains(.titled),
                   !(window.firstResponder is NSText) else { return false }

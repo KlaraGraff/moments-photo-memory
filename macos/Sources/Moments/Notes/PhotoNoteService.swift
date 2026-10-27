@@ -57,7 +57,7 @@ final class PhotoNoteService {
         for organizer in makeOrganizers() {
             do {
                 let result = try await organizer.organize(request)
-                let nearby = try NoteApplier.nearbyMediaIDs(for: item, among: context.fetch(FetchDescriptor<MediaItem>()))
+                let nearby = try NoteApplier.nearbyMediaIDs(for: item, among: context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.deletedAt == nil })))
                 let suggestions = NoteSuggestionBuilder.suggestions(from: result, currentPlaceName: item.namedPlace, nearbyMediaIDs: nearby)
                 note.suggestions = suggestions
                 note.organizerLabel = organizer.label

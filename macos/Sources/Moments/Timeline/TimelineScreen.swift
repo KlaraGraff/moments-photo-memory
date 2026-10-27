@@ -7,7 +7,7 @@ import MomentsCore
 /// as a day inside a trip, plus a link to the trip it belongs to. Follows
 /// the Library filters, like the maps.
 struct TimelineScreen: View {
-    @Query private var items: [MediaItem]
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
     @Query private var trips: [Trip]
     @Query private var places: [Place]
     @Query(sort: \CollectionMemory.createdAt) private var memories: [CollectionMemory]

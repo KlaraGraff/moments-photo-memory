@@ -11,6 +11,7 @@ private enum MomentsSection: Hashable {
     case timeline
     case trips
     case group(String)
+    case recentlyDeleted
 }
 
 enum GroupEditorKind: String, Equatable, Identifiable {
@@ -29,7 +30,7 @@ struct ContentView: View {
     @Environment(SelectionModel.self) private var shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(ImportController.self) private var importController
-    @Query private var items: [MediaItem]
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
     /// "My groups" only; chapters live on the Chapters page, and stack
     /// records are not groups anyone made.
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" }, sort: \UserGroup.name)
@@ -39,6 +40,7 @@ struct ContentView: View {
     @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
     @Query private var mediaTags: [MediaTag]
     @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt != nil }) private var deletedItems: [MediaItem]
     @AppStorage(LibraryLaunchState.appStorageKey) private var firstLaunchCompleted = false
     @State private var groupEditorKind: GroupEditorKind?
     @State private var groupToEdit: UserGroup?
@@ -122,6 +124,29 @@ struct ContentView: View {
                             .textCase(.uppercase)
                             .foregroundStyle(MomentsPalette.muted)
                     }
+
+                    // Shown once something was deleted, like a Trash that
+                    // appears when it has something in it.
+                    if !deletedItems.isEmpty || selection == .recentlyDeleted {
+                        Section {
+                            Label {
+                                HStack(spacing: 2) {
+                                    Text(String(localized: "Recently Deleted"))
+                                        .lineLimit(1)
+                                    Spacer(minLength: 2)
+                                    if !deletedItems.isEmpty {
+                                        Text("\(deletedItems.count)")
+                                            .font(.caption2.monospacedDigit())
+                                            .foregroundStyle(MomentsPalette.muted)
+                                    }
+                                }
+                            } icon: {
+                                Image(systemName: "trash")
+                            }
+                            .tag(MomentsSection.recentlyDeleted)
+                            .accessibilityIdentifier("sidebar.recently-deleted")
+                        }
+                    }
                 }
                 .listStyle(.sidebar)
                 .scrollContentBackground(.hidden)
@@ -164,6 +189,8 @@ struct ContentView: View {
                     TripsScreen()
                 case .group(let groupID):
                     GroupDetailView(groupID: groupID, state: libraryState)
+                case .recentlyDeleted:
+                    RecentlyDeletedScreen()
                 }
             }
             // After a correction to dates, places or people: what changed, and
@@ -174,7 +201,7 @@ struct ContentView: View {
             }
             .toolbar {
                 // Each page's + adds that page's thing; People and Trips bring their own.
-                if selection != .people && selection != .trips {
+                if selection != .people && selection != .trips && selection != .recentlyDeleted {
                     ToolbarItem(placement: .primaryAction) {
                         ImportToolbarButton()
                     }
@@ -208,6 +235,12 @@ struct ContentView: View {
             }
         }
         .animation(reduceMotion ? nil : Motion.snap, value: shared.viewerRequest == nil)
+        // "3 moved to Recently Deleted · Undo", over the viewer too.
+        .overlay(alignment: .bottom) {
+            DeletionUndoBar()
+        }
+        .animation(reduceMotion ? nil : Motion.snap, value: shared.lastDeletion == nil)
+        .modifier(PhotoDeletionConfirmation())
         .sheet(isPresented: Binding(
             get: { shared.dateAdjustmentItemIDs != nil },
             set: { if !$0 { shared.dateAdjustmentItemIDs = nil } }
@@ -242,6 +275,9 @@ struct ContentView: View {
         }
         .onAppear {
             if !items.isEmpty { firstLaunchCompleted = true }
+            // Photos whose 30 days in Recently Deleted are up go for good.
+            RecentlyDeleted.purgeExpired(context: modelContext)
+            DeleteShortcutMonitor.install()
         }
         .onChange(of: groupCountsKey, initial: true) { _, _ in
             refreshGroupCounts()

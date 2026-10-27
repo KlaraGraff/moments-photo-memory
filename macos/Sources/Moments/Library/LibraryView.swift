@@ -22,9 +22,9 @@ struct LibraryView: View {
     // Keep the common Library query free of explicit screenshots in SwiftData.
     // The screenshot segment switches to the second descriptor without making
     // the normal 5k-item browsing path carry those models through filtering.
-    @Query(filter: #Predicate<MediaItem> { $0.isScreenshot == false }, sort: \MediaItem.captureDate)
+    @Query(filter: #Predicate<MediaItem> { $0.isScreenshot == false && $0.deletedAt == nil }, sort: \MediaItem.captureDate)
     private var regularItems: [MediaItem]
-    @Query(filter: #Predicate<MediaItem> { $0.isScreenshot == true }, sort: \MediaItem.captureDate)
+    @Query(filter: #Predicate<MediaItem> { $0.isScreenshot == true && $0.deletedAt == nil }, sort: \MediaItem.captureDate)
     private var screenshotItems: [MediaItem]
     @Query(sort: \Memory.updatedAt)
     private var memoryRecords: [Memory]
@@ -100,6 +100,16 @@ struct LibraryView: View {
 
     private var grouping: LibraryGrouping {
         LibraryGrouping(rawValue: groupingRaw) ?? .trip
+    }
+
+    /// A stacked cell stands for every photo in its burst, as in Photos.
+    private func deletionScope(_ ids: [String]) -> [String] {
+        var seen = Set<String>()
+        return ids.flatMap { id -> [String] in
+            if (cachedStackCounts[id] ?? 1) > 1, let stack = stacks.stack(containing: id) { return stack.memberIDs }
+            return [id]
+        }
+        .filter { seen.insert($0).inserted }
     }
 
     /// The Place and Trip menus' rows, rebuilt with the sections in regroup().
@@ -474,6 +484,7 @@ struct LibraryView: View {
                 anchor: .top
             )
             .libraryGridInteraction(state: state, proxy: proxy)
+            .environment(\.photoDeletionScope, deletionScope)
             .onChange(of: selection.focusedItemID) { _, _ in
                 revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
             }
@@ -937,7 +948,7 @@ private struct LibraryPhotoCell: View {
             }
         }
         .onHover { isHovering = $0 }
-        .modifier(LibraryPhotoMenu(item: item, stackCount: stackCount, group: group, allGroups: allGroups, groupItems: groupItems, open: open))
+        .modifier(LibraryPhotoMenu(item: item, state: state, stackCount: stackCount, group: group, allGroups: allGroups, groupItems: groupItems, open: open))
         .onDrag { NSItemProvider(object: item.id as NSString) }
     }
 
@@ -1052,7 +1063,9 @@ private struct LibraryPhotoMenu: ViewModifier {
     @Environment(PhotoStackModel.self) private var stacks
     @Environment(\.modelContext) private var modelContext
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.photoDeletionScope) private var deletionScope
     let item: MediaItem
+    let state: LibraryViewState
     let stackCount: Int
     let group: UserGroup?
     let allGroups: [UserGroup]
@@ -1105,6 +1118,15 @@ private struct LibraryPhotoMenu: ViewModifier {
                         }
                     }
                 }
+                Divider()
+                Button(String(localized: "Delete from Moments"), role: .destructive) {
+                    // The whole selection when this photo is in it, else just this one.
+                    let shown = selection.isSelected(item.id)
+                        ? state.orderedItemIDs.filter(selection.selectedItemIDs.contains)
+                        : [item.id]
+                    PhotoDeletion.request(deletionScope(shown.isEmpty ? [item.id] : shown), confirm: true, selection: selection, context: modelContext, undoManager: undoManager)
+                }
+                .disabled(!RecentlyDeleted.canDelete(item))
             }
     }
 }
@@ -1297,7 +1319,7 @@ struct ReviewSheet: View {
 }
 
 struct ReviewListView: View {
-    @Query private var items: [MediaItem]
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
     @Environment(\.modelContext) private var modelContext
     @Environment(SelectionModel.self) private var selection
     /// The last confirmation, so it can be taken back.
@@ -1407,7 +1429,7 @@ struct GroupDetailView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "stack" }) private var groups: [UserGroup]
-    @Query private var items: [MediaItem]
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
     @Query private var memberships: [UserGroupItem]
     @Query private var memoryRecords: [Memory]
     @Query private var mediaTags: [MediaTag]
@@ -1600,7 +1622,7 @@ struct GroupEditorSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query private var items: [MediaItem]
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
     @Query(sort: \Person.name) private var people: [Person]
     @Query private var faceObservations: [FaceObservation]
     @Query(sort: \Trip.id) private var trips: [Trip]

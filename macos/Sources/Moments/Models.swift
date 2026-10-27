@@ -1235,6 +1235,17 @@ public final class MediaItem {
     public var reviewOverridePlaceID: String?
     public var reviewOverrideDateUTC: Date?
     public var reviewMemoryDraft: String?
+    /// Recently Deleted: when and by whom this was removed from Moments. The
+    /// original file and the Apple Photos asset are never touched; after
+    /// ``RecentlyDeleted/retention`` the record itself is purged.
+    public var deletedAt: Date?
+    public var deletedBy: String?
+    /// Who added this photo; `nil` is this Mac's person (every photo imported
+    /// before sharing). Only the owner can delete it.
+    public var ownerAccountID: String?
+    /// The ``ImportSource`` ids this photo was found in, one per line. `nil`
+    /// for photos imported before import sources were recorded.
+    public var importSourceIDsRaw: String?
 
     @Relationship(inverse: \Place.items)
     public var place: Place?
@@ -4186,10 +4197,38 @@ public enum SchemaV6: VersionedSchema {
     ]
 }
 
-/// Current live schema: V6 plus the photo-note entities, which refer to media,
-/// places and trips by string IDs, so this stage is lightweight.
+/// V6 plus the photo-note entities, which refer to media, places and trips by
+/// string IDs, so that stage is lightweight. Frozen: its nested entities live
+/// in SchemaV7Frozen.swift.
 public enum SchemaV7: VersionedSchema {
     public static let versionIdentifier = Schema.Version(7, 0, 0)
+    public static let models: [any PersistentModel.Type] = [
+        SchemaV7.MediaItem.self,
+        SchemaV7.Memory.self,
+        SchemaV7.MemoryRevision.self,
+        SchemaV7.Place.self,
+        SchemaV7.PlaceOverride.self,
+        SchemaV7.Trip.self,
+        SchemaV7.Tag.self,
+        SchemaV7.MediaTag.self,
+        SchemaV7.Favorite.self,
+        SchemaV7.UserGroup.self,
+        SchemaV7.UserGroupItem.self,
+        SchemaV7.Person.self,
+        SchemaV7.FaceObservation.self,
+        SchemaV7.FaceScanRecord.self,
+        SchemaV7.PhotoNote.self,
+        SchemaV7.PlaceNote.self,
+        SchemaV7.CollectionMemory.self
+    ]
+}
+
+/// Current live schema: V7 plus Recently Deleted (`MediaItem.deletedAt`,
+/// `deletedBy`), who added a photo (`ownerAccountID`) and the import sources
+/// a photo came from (`importSourceIDsRaw`, `ImportSource`). Every new field
+/// is optional, so the stage is lightweight.
+public enum SchemaV8: VersionedSchema {
+    public static let versionIdentifier = Schema.Version(8, 0, 0)
     public static let models: [any PersistentModel.Type] = [
         MediaItem.self,
         Memory.self,
@@ -4207,12 +4246,13 @@ public enum SchemaV7: VersionedSchema {
         FaceScanRecord.self,
         PhotoNote.self,
         PlaceNote.self,
-        CollectionMemory.self
+        CollectionMemory.self,
+        ImportSource.self
     ]
 }
 
 public enum MomentsMigrationPlan: SchemaMigrationPlan {
-    public static let schemas: [any VersionedSchema.Type] = [SchemaV1.self, SchemaV2.self, SchemaV3.self, SchemaV4.self, SchemaV5.self, SchemaV6.self, SchemaV7.self]
+    public static let schemas: [any VersionedSchema.Type] = [SchemaV1.self, SchemaV2.self, SchemaV3.self, SchemaV4.self, SchemaV5.self, SchemaV6.self, SchemaV7.self, SchemaV8.self]
 
     /// Legacy v1 stores are handled by the launch-time safety gate below.
     /// Each post-v2 change is additive and therefore lightweight. V5 is a
@@ -4223,7 +4263,8 @@ public enum MomentsMigrationPlan: SchemaMigrationPlan {
         .lightweight(fromVersion: SchemaV3.self, toVersion: SchemaV4.self),
         .lightweight(fromVersion: SchemaV4.self, toVersion: SchemaV5.self),
         .lightweight(fromVersion: SchemaV5.self, toVersion: SchemaV6.self),
-        .lightweight(fromVersion: SchemaV6.self, toVersion: SchemaV7.self)
+        .lightweight(fromVersion: SchemaV6.self, toVersion: SchemaV7.self),
+        .lightweight(fromVersion: SchemaV7.self, toVersion: SchemaV8.self)
     ]
 }
 
@@ -4349,7 +4390,7 @@ public enum MomentsPersistence {
         if inMemory {
             let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
             return try ModelContainer(
-                for: Schema(versionedSchema: SchemaV7.self),
+                for: Schema(versionedSchema: SchemaV8.self),
                 migrationPlan: MomentsMigrationPlan.self,
                 configurations: configuration
             )
@@ -4373,12 +4414,12 @@ public enum MomentsPersistence {
 
         let configuration = ModelConfiguration(
             "Moments",
-            schema: Schema(versionedSchema: SchemaV7.self),
+            schema: Schema(versionedSchema: SchemaV8.self),
             url: storeURL,
             cloudKitDatabase: .none
         )
         return try ModelContainer(
-            for: Schema(versionedSchema: SchemaV7.self),
+            for: Schema(versionedSchema: SchemaV8.self),
             migrationPlan: MomentsMigrationPlan.self,
             configurations: configuration
         )
@@ -4492,6 +4533,25 @@ public enum MomentsPersistence {
         )
         return try ModelContainer(
             for: Schema(versionedSchema: SchemaV6.self),
+            configurations: configuration
+        )
+    }
+
+    /// Creates a frozen V7 store for the V7 -> V8 migration test without opening
+    /// the live schema. Production stores are opened through ``makeContainer``.
+    public static func makeV7Container(url: URL) throws -> ModelContainer {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let configuration = ModelConfiguration(
+            "Moments-v7",
+            schema: Schema(versionedSchema: SchemaV7.self),
+            url: url,
+            cloudKitDatabase: .none
+        )
+        return try ModelContainer(
+            for: Schema(versionedSchema: SchemaV7.self),
             configurations: configuration
         )
     }

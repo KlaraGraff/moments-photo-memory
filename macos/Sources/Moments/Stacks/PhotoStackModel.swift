@@ -104,7 +104,7 @@ final class PhotoStackModel {
         Task { [weak self] in
             let snapshot = await Task.detached(priority: .utility) { () -> Snapshot in
                 let context = ModelContext(container)
-                let items = (try? context.fetch(FetchDescriptor<MediaItem>())) ?? []
+                let items = (try? context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.deletedAt == nil }))) ?? []
                 let stackKind = UserGroup.Kind.stack.rawValue
                 let records = (try? context.fetch(FetchDescriptor<UserGroup>(predicate: #Predicate { $0.kindRaw == stackKind }))) ?? []
                 return Snapshot(

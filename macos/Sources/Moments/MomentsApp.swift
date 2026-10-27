@@ -96,6 +96,9 @@ struct MomentsApp: App {
                 if ProcessInfo.processInfo.arguments.contains("-MomentsUITestBurst") {
                     try? DemoSeeder.addSyntheticBurst(context: container.mainContext)
                 }
+                if ProcessInfo.processInfo.arguments.contains("-MomentsUITestImportSource") {
+                    try? DemoSeeder.addSyntheticImportSource(context: container.mainContext)
+                }
             }
             if isUITesting || testStoreURL != nil, let count = Self.uiTestStressCount {
                 try? DemoSeeder.generateSyntheticLibrary(count: count, context: container.mainContext)
@@ -193,9 +196,17 @@ struct MomentsApp: App {
         }
 
         Settings {
-            SettingsView()
-                .environment(peopleController)
-                .preferredColorScheme(.light)
+            Group {
+                if let modelContainer {
+                    SettingsView(hasStore: true)
+                        .modelContainer(modelContainer)
+                } else {
+                    SettingsView(hasStore: false)
+                }
+            }
+            .environment(peopleController)
+            .environment(photosImportController)
+            .preferredColorScheme(.light)
         }
         .windowResizability(.contentSize)
     }

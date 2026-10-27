@@ -40,6 +40,8 @@ extension SelectionModel {
     /// finds it once they have closed.
     func recordCorrection(_ correction: CorrectionUndo, context: ModelContext) {
         lastCorrection = correction
+        // One Undo bar at a time: the newest action's.
+        lastDeletion = nil
         let undoManager = NSApp.mainWindow?.undoManager
         correction.undoManager = undoManager
         undoManager?.registerUndo(withTarget: correction) { [weak self] correction in

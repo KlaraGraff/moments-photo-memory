@@ -197,4 +197,53 @@ final class SelectionModel {
     func isVisible(_ id: String) -> Bool {
         visibleItemIDs?.contains(id) ?? true
     }
+
+    // MARK: Deleting
+
+    /// Photos waiting for "Delete from Moments?" to be confirmed; the window shows the alert.
+    var pendingDeletion: PendingDeletion?
+    /// The last move to Recently Deleted, for the window's Undo bar.
+    var lastDeletion: DeletionNotice?
+
+    /// Takes deleted photos out of the selection and the viewer: the viewer
+    /// moves on to the next photo, or closes when none is left.
+    func forget(deleted ids: Set<String>) {
+        selectedItemIDs.subtract(ids)
+        if let focused = focusedItemID, ids.contains(focused) { focusedItemID = selectedItemIDs.sorted().first }
+        if let anchor = anchorItemID, ids.contains(anchor) { anchorItemID = nil }
+        guard let request = viewerRequest, request.itemIDs.contains(where: ids.contains) || ids.contains(request.itemID) else { return }
+        let remaining = request.itemIDs.filter { !ids.contains($0) }
+        guard !remaining.isEmpty else {
+            viewerRequest = nil
+            return
+        }
+        var next = request.itemID
+        if ids.contains(request.itemID) {
+            let index = request.itemIDs.firstIndex(of: request.itemID) ?? 0
+            next = request.itemIDs[index...].first { !ids.contains($0) }
+                ?? request.itemIDs[..<index].last { !ids.contains($0) }
+                ?? remaining[0]
+        }
+        viewerRequest = ViewerRequest(itemIDs: remaining, itemID: next)
+    }
 }
+
+/// Photos someone asked to delete, waiting for the confirmation.
+struct PendingDeletion: Equatable {
+    /// The photos this person may delete.
+    var itemIDs: [String]
+    /// Photos in the request that the partner added; they stay.
+    var othersCount: Int
+}
+
+/// "Moved to Recently Deleted · Undo" after a delete.
+struct DeletionNotice: Equatable {
+    let id = UUID()
+    let itemIDs: [String]
+    /// What ⌘Z's registration is filed under, so the bar's Undo can drop it.
+    let undoTarget: DeletionUndoTarget
+
+    static func == (lhs: DeletionNotice, rhs: DeletionNotice) -> Bool { lhs.id == rhs.id }
+}
+
+final class DeletionUndoTarget {}

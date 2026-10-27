@@ -9,7 +9,7 @@ struct LibraryFilterChips: View {
     var showsScope = false
 
     @Environment(SelectionModel.self) private var selection
-    @Query private var allItems: [MediaItem]
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var allItems: [MediaItem]
     @Query(sort: \Person.name) private var people: [Person]
     @Query(sort: \Trip.id) private var allTrips: [Trip]
     @Query(sort: \Place.id) private var allPlaces: [Place]
@@ -398,7 +398,7 @@ enum LibraryFilterKeys {
 /// it is open). Put it in the background of a screen that reads them.
 struct LibraryFilterPublisher: View {
     @Environment(SelectionModel.self) private var selection
-    @Query private var items: [MediaItem]
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
     @Query private var faceObservations: [FaceObservation]
 
     @AppStorage(LibraryFilterKeys.type) private var typeRaw = LibraryMediaTypeFilter.all.rawValue

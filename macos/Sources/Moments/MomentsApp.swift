@@ -23,6 +23,12 @@ struct MomentsApp: App {
         ProcessInfo.processInfo.arguments.contains("-MomentsUITestSmallWindow")
     }
 
+    /// -MomentsUITestStartSmall: opens at 900 × 600 but, unlike
+    /// -MomentsUITestSmallWindow, can be resized and zoomed afterwards.
+    private var isUITestStartSmall: Bool {
+        ProcessInfo.processInfo.arguments.contains("-MomentsUITestStartSmall")
+    }
+
     /// -MomentsUITestWindowWidth <points>: a fixed window width, e.g. maple's 1111.
     private var uiTestWindowWidth: CGFloat? {
         let arguments = ProcessInfo.processInfo.arguments
@@ -181,6 +187,11 @@ struct MomentsApp: App {
                     .onAppear {
                         // Simulates a Mac in Dark Mode; the window below must stay light.
                         if isUITestDarkMode { NSApp.appearance = NSAppearance(named: .darkAqua) }
+                        if isUITestStartSmall {
+                            DispatchQueue.main.async {
+                                NSApp.windows.first { $0.isVisible }?.setContentSize(NSSize(width: 900, height: 600))
+                            }
+                        }
                     }
                     #endif
             } else {

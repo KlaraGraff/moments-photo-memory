@@ -292,7 +292,7 @@ struct LibraryView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
+            ToolbarItem(placement: .primaryAction) { LibraryZoomControl(state: state) }
         }
         .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search places, trips, notes")))
         .navigationTitle(String(localized: "Library"))
@@ -348,8 +348,6 @@ struct LibraryView: View {
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.top, PaperMetrics.screenTopInset)
         .padding(.bottom, 14)
-        // Same paper as the title bar above it, so it reads as part of it.
-        .actsAsTitleBar()
     }
 
     /// The everyday choices as segments; Live Photos and Screenshots, picked
@@ -738,14 +736,12 @@ private struct LibrarySectionView: View {
     @Query private var placeNotes: [PlaceNote]
     @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
-    @AppStorage(LibraryThumbnailSize.storageKey) private var sizeLevel = LibraryThumbnailSize.defaultLevel
-
-    private var size: LibraryThumbnailSize { LibraryThumbnailSize(level: sizeLevel) }
-
-    /// Set from the window width and zoom level by the scroll content
-    /// (reportsLibraryGridColumns); read from there so a live window resize
-    /// only rebuilds sections when the count really changes.
+    /// Set by the scroll content (reportsLibraryGridColumns) from the chosen
+    /// photos per row; the window's size changes it only when it is too
+    /// narrow for that many.
     private var columnCount: Int { max(1, state.gridColumns) }
+
+    private var size: LibraryThumbnailSize { LibraryThumbnailSize(columns: columnCount) }
 
     @Environment(SelectionModel.self) private var selection
 
@@ -758,9 +754,9 @@ private struct LibrarySectionView: View {
     }
 
     /// The heading and the section's grid are children of the Library's lazy
-    /// stack. The grid has a fixed number of equal columns, taken from the
-    /// window width, so when the sidebar moves the photos grow and shrink
-    /// with it instead of jumping to another column count, like Photos.
+    /// stack. The grid has a fixed number of equal columns, set by − and +,
+    /// so when the window or the sidebar changes size the photos grow and
+    /// shrink instead of jumping to another column count, like Photos.
     /// (One HStack per row instead of a grid scrolled with several times
     /// more stalls on 2,000 photos.)
     var body: some View {
@@ -1575,7 +1571,7 @@ struct GroupDetailView: View {
                         + (group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
                 ))
                 .toolbar {
-                    ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
+                    ToolbarItem(placement: .primaryAction) { LibraryZoomControl(state: state) }
                     ToolbarItemGroup {
                         Button(String(localized: "Edit")) { showingEditor = true }
                         if group.kind == .smart {

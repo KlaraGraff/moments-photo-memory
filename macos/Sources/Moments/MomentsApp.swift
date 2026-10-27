@@ -23,6 +23,12 @@ struct MomentsApp: App {
         ProcessInfo.processInfo.arguments.contains("-MomentsUITestSmallWindow")
     }
 
+    /// -MomentsUITestStartSmall: opens at 900 × 600 but, unlike
+    /// -MomentsUITestSmallWindow, can be resized and zoomed afterwards.
+    private var isUITestStartSmall: Bool {
+        ProcessInfo.processInfo.arguments.contains("-MomentsUITestStartSmall")
+    }
+
     /// -MomentsUITestWindowWidth <points>: a fixed window width, e.g. maple's 1111.
     private var uiTestWindowWidth: CGFloat? {
         let arguments = ProcessInfo.processInfo.arguments
@@ -63,6 +69,15 @@ struct MomentsApp: App {
 
     init() {
         _ = AppLanguage.atLaunch
+        #if DEBUG
+        // Each UI test starts at the default photos per row (or its launch
+        // argument), whatever an earlier test chose with − and +.
+        if ProcessInfo.processInfo.arguments.contains("-MomentsUITesting") {
+            UserDefaults.standard.removeObject(forKey: LibraryThumbnailSize.storageKey)
+            UserDefaults.standard.removeObject(forKey: LibraryThumbnailSize.legacyLevelKey)
+        }
+        #endif
+        LibraryThumbnailSize.migrateLegacyLevel()
         #if DEBUG
         FlashProbe.startIfRequested()
         ScrollProbe.startIfRequested()
@@ -172,6 +187,11 @@ struct MomentsApp: App {
                     .onAppear {
                         // Simulates a Mac in Dark Mode; the window below must stay light.
                         if isUITestDarkMode { NSApp.appearance = NSAppearance(named: .darkAqua) }
+                        if isUITestStartSmall {
+                            DispatchQueue.main.async {
+                                NSApp.windows.first { $0.isVisible }?.setContentSize(NSSize(width: 900, height: 600))
+                            }
+                        }
                     }
                     #endif
             } else {

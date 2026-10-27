@@ -11,9 +11,10 @@ extension View {
         modifier(LibraryGridInteraction(state: state, proxy: proxy))
     }
 
-    /// Keeps `state.gridColumns` (for the up and down arrows) in step with
-    /// the window width and zoom level. On the scroll view's content, not a
-    /// section, so it holds while every heading is scrolled away.
+    /// Keeps `state.gridColumns` (for the grid and the up and down arrows)
+    /// in step with the chosen photos per row, capped by what the window has
+    /// room for. On the scroll view's content, not a section, so it holds
+    /// while every heading is scrolled away.
     func reportsLibraryGridColumns(to state: LibraryViewState) -> some View {
         modifier(LibraryGridColumnsReporter(state: state))
     }
@@ -21,11 +22,10 @@ extension View {
 
 private struct LibraryGridColumnsReporter: ViewModifier {
     let state: LibraryViewState
-    @AppStorage(LibraryThumbnailSize.storageKey) private var level = LibraryThumbnailSize.defaultLevel
+    @AppStorage(LibraryThumbnailSize.storageKey) private var chosen = LibraryThumbnailSize.defaultColumns
 
     func body(content: Content) -> some View {
-        let size = LibraryThumbnailSize(level: level)
-        let columns = LibraryGridNavigation.columns(windowWidth: state.windowWidth, minimum: size.minimumWidth, spacing: size.spacing)
+        let columns = LibraryThumbnailSize.shown(chosen: chosen, windowWidth: state.windowWidth).columns
         content.onChange(of: columns, initial: true) { _, columns in
             if state.gridColumns != columns { state.gridColumns = columns }
         }
@@ -151,28 +151,36 @@ struct LibrarySelectionSubtitle: ViewModifier {
     }
 }
 
-/// The toolbar's thumbnail size control: − slider +, with ⌘− and ⌘+ like Photos.
+/// The toolbar's thumbnail size control: − slider +, with ⌘− and ⌘+ like
+/// Photos. A wider window has more steps toward small photos.
 struct LibraryZoomControl: View {
     @Environment(SelectionModel.self) private var selection
-    @AppStorage(LibraryThumbnailSize.storageKey) private var level = LibraryThumbnailSize.defaultLevel
+    @AppStorage(LibraryThumbnailSize.storageKey) private var chosen = LibraryThumbnailSize.defaultColumns
+    let state: LibraryViewState
 
     /// While the large viewer is open, ⌘− and ⌘+ zoom the photo instead.
     private func shortcut(_ key: KeyEquivalent) -> KeyboardShortcut? {
         selection.viewerRequest == nil ? KeyboardShortcut(key, modifiers: .command) : nil
     }
 
-    private var maximum: Int { LibraryThumbnailSize.maximumLevel }
+    /// The window's steps, smallest photos first, as the slider runs.
+    private var steps: [Int] { LibraryThumbnailSize.steps(windowWidth: state.windowWidth).reversed() }
+
+    private var position: Int {
+        let shown = LibraryThumbnailSize.shown(chosen: chosen, windowWidth: state.windowWidth).columns
+        return steps.firstIndex(of: shown) ?? 0
+    }
 
     var body: some View {
         HStack(spacing: 6) {
             Button { zoom(-1) } label: { Image(systemName: "minus.magnifyingglass") }
                 .keyboardShortcut(shortcut("-"))
-                .disabled(level <= 0)
+                .disabled(position <= 0)
                 .help(String(localized: "Smaller thumbnails (⌘−)"))
                 .accessibilityIdentifier("library.zoom-out")
             Slider(
-                value: Binding(get: { Double(level) }, set: { level = Int($0.rounded()) }),
-                in: 0...Double(maximum),
+                value: Binding(get: { Double(position) }, set: { chosen = steps[min(max(Int($0.rounded()), 0), steps.count - 1)] }),
+                in: 0...Double(max(steps.count - 1, 1)),
                 step: 1
             )
             .frame(width: 90)
@@ -180,7 +188,7 @@ struct LibraryZoomControl: View {
             .accessibilityIdentifier("library.zoom")
             Button { zoom(1) } label: { Image(systemName: "plus.magnifyingglass") }
                 .keyboardShortcut(shortcut("="))
-                .disabled(level >= maximum)
+                .disabled(position >= steps.count - 1)
                 .help(String(localized: "Larger thumbnails (⌘+)"))
                 .accessibilityIdentifier("library.zoom-in")
         }
@@ -195,6 +203,8 @@ struct LibraryZoomControl: View {
     }
 
     private func zoom(_ step: Int) {
-        level = LibraryThumbnailSize(level: level + step).level
+        if let next = LibraryThumbnailSize.zoomed(chosen: chosen, by: step, windowWidth: state.windowWidth) {
+            chosen = next
+        }
     }
 }

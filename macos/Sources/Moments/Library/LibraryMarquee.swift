@@ -35,7 +35,7 @@ final class LibraryMarquee {
 
     private struct Frame {
         var rect: CGRect
-        var generation: Int
+        var layout: Int
     }
 
     private struct Press {
@@ -51,12 +51,19 @@ final class LibraryMarquee {
 
     /// Each photo's last frame, kept after it scrolls out of the lazy grid
     /// so a drag that scrolled past it still knows where it is.
+    ///
+    /// A photo reports its frame only when the frame changes. One the grid
+    /// built before and shows again where it was reports nothing, so a
+    /// frame stays good until the grid's layout changes (regrouped,
+    /// filtered, zoomed, resized), not just for one drag.
     private var frames: [String: Frame] = [:]
-    /// Photos the grid has built right now; their frames stay current.
-    private var live: Set<String> = []
-    /// Frames from before the current drag may be stale (the grid could
-    /// have been regrouped since); only this drag's count.
-    private var generation = 0
+    /// Photos the grid shows right now, counted per view (a rebuilt cell can
+    /// appear before the old one goes); their frames stay current.
+    private var live: [String: Int] = [:]
+    /// Counts layout changes; only frames from the current layout count.
+    private var layout = 0
+    /// A frame came in or counted again since the last hit test.
+    private var framesChanged = false
     private var press: Press?
     weak var anchorView: NSView?
     private weak var scrollView: NSScrollView?
@@ -71,15 +78,35 @@ final class LibraryMarquee {
     // MARK: Photo frames
 
     func report(_ id: String, frame: CGRect) {
-        frames[id] = Frame(rect: frame, generation: generation)
+        frames[id] = Frame(rect: frame, layout: layout)
+        framesChanged = true
     }
 
+    /// A photo shown again after a layout change that landed where it was
+    /// reports no frame, so its last one counts again; if it moved, `report`
+    /// follows with the new one.
     func appeared(_ id: String) {
-        live.insert(id)
+        live[id, default: 0] += 1
+        if frames[id]?.layout != layout {
+            frames[id]?.layout = layout
+            framesChanged = true
+        }
     }
 
     func disappeared(_ id: String) {
-        live.remove(id)
+        let count = (live[id] ?? 0) - 1
+        live[id] = count > 0 ? count : nil
+    }
+
+    /// The grid was regrouped, filtered, zoomed or resized: photos it does
+    /// not show may now be somewhere else, so their frames stop counting
+    /// until they report again. Shown ones report if they moved.
+    func layoutChanged() {
+        layout += 1
+        for id in live.keys {
+            frames[id]?.layout = layout
+        }
+        framesChanged = true
     }
 
     // MARK: Drag
@@ -144,11 +171,6 @@ final class LibraryMarquee {
     }
 
     private func startDragging() {
-        generation += 1
-        // Built photos keep their frames current, so they count right away.
-        for id in live {
-            frames[id]?.generation = generation
-        }
         #if DEBUG
         MarqueeProbe.dragStarted()
         #endif
@@ -166,7 +188,7 @@ final class LibraryMarquee {
         #if DEBUG
         // Photos inside the rectangle whose frames the drag did not count.
         let uncounted = rect.map { rect in
-            frames.filter { $0.value.generation != generation && Self.touches(rect, $0.value.rect) }.keys.sorted()
+            frames.filter { $0.value.layout != layout && Self.touches(rect, $0.value.rect) }.keys.sorted()
         } ?? []
         #endif
         stopTicking()
@@ -177,7 +199,7 @@ final class LibraryMarquee {
         MarqueeProbe.dragEnded(
             selected: selection?.selectedItemIDs.count ?? 0,
             scrolledTo: scrollView?.contentView.bounds.origin.y ?? 0,
-            uncounted: uncounted.map { "\($0)\(live.contains($0) ? " (on screen)" : "")" }
+            uncounted: uncounted.map { "\($0)\(live[$0] != nil ? " (on screen)" : "")" }
         )
         #endif
         guard let selection else { return }
@@ -240,11 +262,15 @@ final class LibraryMarquee {
             width: abs(point.x - current.start.x),
             height: abs(point.y - current.start.y)
         )
-        guard next != rect else { return }
-        rect = next
-        placeBand()
+        // A photo that reports while the pointer rests is tested too.
+        guard next != rect || framesChanged else { return }
+        framesChanged = false
+        if next != rect {
+            rect = next
+            placeBand()
+        }
         var hits: Set<String> = []
-        for (id, frame) in frames where frame.generation == generation && Self.touches(next, frame.rect) {
+        for (id, frame) in frames where frame.layout == layout && Self.touches(next, frame.rect) {
             hits.insert(id)
         }
         guard hits != current.hits else { return }
@@ -398,10 +424,15 @@ private struct LibraryMarqueeSelection: ViewModifier {
     let marquee: LibraryMarquee
     let state: LibraryViewState
     let selection: SelectionModel
+    @AppStorage(LibraryThumbnailSize.storageKey) private var zoom = LibraryThumbnailSize.defaultLevel
 
     func body(content: Content) -> some View {
         content
             .coordinateSpace(.named(LibraryMarquee.space))
+            // What moves photos the grid does not show right now.
+            .onChange(of: state.orderedItemIDs) { marquee.layoutChanged() }
+            .onChange(of: zoom) { marquee.layoutChanged() }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { _ in marquee.layoutChanged() }
             .background(alignment: .topLeading) {
                 Color.clear
                     .contentShape(Rectangle())

@@ -11,6 +11,18 @@ on:
       - 'scripts/make_synthetic_import_fixtures.swift'
       - '.github/workflows/ui-tests.yml'
   workflow_dispatch:
+    inputs:
+      only_testing:
+        description: 'Optional: run only these tests, e.g. MomentsUITests/MomentsUITests/testDoubleClickRenamesATripInPlace (space-separated)'
+        required: false
+        default: ''
+
+# A new push to a pull request cancels that pull request's older run, so
+# superseded runs never hold one of the few hosted Macs. Manual runs
+# (probes, benchmarks) are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   ui:
@@ -30,7 +42,12 @@ jobs:
           TEST_RUNNER_MOMENTS_FLASH_DIR: ${{ runner.temp }}/flash
           TEST_RUNNER_MOMENTS_SCROLL_DIR: ${{ runner.temp }}/scroll
           TEST_RUNNER_MOMENTS_RESIZE_DIR: ${{ runner.temp }}/resize
+          ONLY_TESTING: ${{ inputs.only_testing }}
         run: |
+          # A manual run can target a few tests for a quick check; pull
+          # requests always run the whole suite.
+          only=()
+          for t in $ONLY_TESTING; do only+=("-only-testing:$t"); done
           # Ad-hoc signing is enough for the test runner on the hosted Mac.
           xcodebuild \
             -project macos/Moments.xcodeproj \
@@ -39,6 +56,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -resultBundlePath "$RUNNER_TEMP/MomentsUITests.xcresult" \
             CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
+            "${only[@]}" \
             test
       - name: Print scroll reports
         if: always()

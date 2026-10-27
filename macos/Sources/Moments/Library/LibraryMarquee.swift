@@ -177,7 +177,7 @@ final class LibraryMarquee {
         MarqueeProbe.dragEnded(
             selected: selection?.selectedItemIDs.count ?? 0,
             scrolledTo: scrollView?.contentView.bounds.origin.y ?? 0,
-            uncounted: uncounted.map { "\($0)\(live[$0] != nil ? " (on screen)" : "")" }
+            uncounted: uncounted.map { "\($0)\(live.contains($0) ? " (on screen)" : "")" }
         )
         #endif
         guard let selection else { return }

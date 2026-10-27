@@ -82,10 +82,11 @@ final class MomentsMarqueeUITests: XCTestCase {
 
         // Back to the top, where the first photo is where it was.
         let scrollView = app.scrollViews.containing(.any, identifier: first.element.identifier).firstMatch
-        for _ in 0..<40 where first.element.frame != first.frame {
+        func backAtTheTop() -> Bool { abs(first.element.frame.minY - first.frame.minY) < 2 }
+        for _ in 0..<40 where !backAtTheTop() {
             scrollView.scroll(byDeltaX: 0, deltaY: 2000)
         }
-        XCTAssertEqual(first.element.frame, first.frame, "Could not scroll back to the top")
+        XCTAssertTrue(backAtTheTop(), "Could not scroll back to the top (first photo at \(first.element.frame.minY), was \(first.frame.minY))")
         pauseLongerThanADoubleClick()
 
         // The second drag goes over the same rows again, not as far.

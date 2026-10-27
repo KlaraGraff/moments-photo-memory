@@ -167,7 +167,7 @@ struct OrganizedPlace: Equatable, Sendable {
 
 struct OrganizedMedia: Equatable, Sendable {
     let metadata: ImportedMediaMetadata
-    /// nil for daily life at home, which belongs to no trip.
+    /// nil for daily life at a usual place (常驻地), which belongs to no trip.
     let tripID: String?
     let placeID: String?
     let suggestedPlaceID: String?
@@ -226,7 +226,7 @@ struct ImportOrganizer {
 
     /// `sourceFolderName` names trips whose photos carry no real capture date;
     /// it stays in the local store only. `library` holds the photos already
-    /// imported, which tell where home is.
+    /// imported, which tell where the usual places are.
     func organize(
         _ inputMetadata: [ImportedMediaMetadata],
         sourceFolderName: String? = nil,
@@ -240,7 +240,7 @@ struct ImportOrganizer {
         let ordered = metadata.sorted { lhs, rhs in
             lhs.captureDate == rhs.captureDate ? lhs.id < rhs.id : lhs.captureDate < rhs.captureDate
         }
-        let (tripGroups, homeGroup) = splitTrips(ordered, library: library, isFolder: sourceFolderName != nil)
+        let (tripGroups, usualPlaceGroup) = splitTrips(ordered, library: library, isFolder: sourceFolderName != nil)
         var allMedia: [OrganizedMedia] = []
         var trips: [OrganizedTrip] = []
         var places: [OrganizedPlace] = []
@@ -261,9 +261,9 @@ struct ImportOrganizer {
         }
 
         var undatedTripCount = 0
-        // Daily life at home goes through the same place and review steps as
+        // Daily life at the usual places goes through the same place and review steps as
         // one group, without a trip.
-        let groups = tripGroups.map { (items: $0, isTrip: true) } + (homeGroup.isEmpty ? [] : [(items: homeGroup, isTrip: false)])
+        let groups = tripGroups.map { (items: $0, isTrip: true) } + (usualPlaceGroup.isEmpty ? [] : [(items: usualPlaceGroup, isTrip: false)])
         for (index, (group, isTrip)) in groups.enumerated() {
             try Task.checkCancellation()
             let tripID = isTrip ? stableID(prefix: "trip", ids: group.map(\.id)) : nil
@@ -589,7 +589,7 @@ struct ImportOrganizer {
         }
     }
 
-    /// The library's located photos, which tell where home is.
+    /// The library's located photos, which tell where the usual places are.
     static func libraryStops(_ items: [MediaItem]) -> [PhotoStop] {
         items.compactMap { item in
             guard item.deletedAt == nil, let date = item.captureDate,
@@ -598,7 +598,7 @@ struct ImportOrganizer {
         }
     }
 
-    /// Trips are the stretches away from home (see `TripSegmenter`); the
+    /// Trips are the stretches away from the usual places (see `TripSegmenter`); the
     /// rest is daily life, in date order. Photos dated only by their file
     /// say nothing about when they were taken, so they keep their own trips,
     /// split where the file dates are far apart.
@@ -606,11 +606,11 @@ struct ImportOrganizer {
         _ ordered: [ImportedMediaMetadata],
         library: [PhotoStop],
         isFolder: Bool
-    ) -> (trips: [[ImportedMediaMetadata]], home: [ImportedMediaMetadata]) {
+    ) -> (trips: [[ImportedMediaMetadata]], atUsualPlace: [ImportedMediaMetadata]) {
         var segmenter = TripSegmenter()
         segmenter.maximumTimeGap = configuration.maximumTimeGap
         segmenter.maximumTripDistanceMeters = configuration.maximumTripDistanceMeters
-        segmenter.homeCoordinate = configuration.homeCoordinate
+        segmenter.fixedUsualPlace = configuration.homeCoordinate
         // A folder from a camera without GPS is more likely an outing than
         // a pile of screenshots.
         segmenter.locationlessDefaultsToAway = isFolder
@@ -631,7 +631,7 @@ struct ImportOrganizer {
         let trips = (result.trips.map { $0.compactMap { byID[$0] } } + undated)
             .filter { !$0.isEmpty }
             .sorted { ($0[0].captureDate, $0[0].id) < ($1[0].captureDate, $1[0].id) }
-        return (trips, dated.filter { result.homeIDs.contains($0.id) })
+        return (trips, dated.filter { result.atUsualPlaceIDs.contains($0.id) })
     }
 
     /// Shared with incremental import matching so refreshed assets follow the

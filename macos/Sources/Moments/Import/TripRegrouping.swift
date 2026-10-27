@@ -2,9 +2,9 @@ import Foundation
 import MomentsCore
 import SwiftData
 
-/// Regroups a library imported before trips meant time away from home
-/// (`TripSegmenter`): imports then put every photo in a trip, so daily life
-/// became hundreds of small chapters. Runs once per Mac.
+/// Regroups a library imported before trips meant time away from the usual
+/// places (`TripSegmenter`): imports then put every photo in a trip, so daily
+/// life became hundreds of small chapters. Runs once per Mac.
 ///
 /// Only photos still in a trip the import suggested and nobody touched are
 /// grouped again. A trip that was renamed, confirmed, edited, merged, split,
@@ -70,7 +70,7 @@ enum TripRegrouping {
         var segmenter = TripSegmenter()
         segmenter.maximumTimeGap = configuration.maximumTimeGap
         segmenter.maximumTripDistanceMeters = configuration.maximumTripDistanceMeters
-        segmenter.homeCoordinate = configuration.homeCoordinate
+        segmenter.fixedUsualPlace = configuration.homeCoordinate
         let stops = free.map { item in
             PhotoStop(id: item.id, date: item.effectiveCaptureDate ?? .distantPast, coordinate: coordinate(of: item))
         }
@@ -110,7 +110,7 @@ enum TripRegrouping {
             trip.updatedAt = .now
             outcome.trips += 1
         }
-        for id in result.homeIDs {
+        for id in result.atUsualPlaceIDs {
             guard let item = byID[id], item.trip != nil || item.tripID != nil else { continue }
             item.trip = nil
             item.tripID = nil

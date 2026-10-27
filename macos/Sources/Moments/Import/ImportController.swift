@@ -37,7 +37,10 @@ final class ImportController {
         #if DEBUG
         if UnitTestHostDelegate.isUnitTestHost { return }
         #endif
-        _ = try? TripRegrouping.runOnce(context: container.mainContext)
+        // Daily life left its trips, so its big days can become events.
+        if (try? TripRegrouping.runOnce(context: container.mainContext)) != nil {
+            EventSuggestions.suggest(in: container.mainContext)
+        }
     }
 
     func chooseFolder() {
@@ -76,6 +79,7 @@ final class ImportController {
                 }
                 self?.state = .finished
                 if ImportSettings.autoOrganize {
+                    if let context = self?.modelContainer?.mainContext { EventSuggestions.suggest(in: context) }
                     NotificationCenter.default.post(name: .momentsPeopleScanRequested, object: nil)
                 }
             } catch is CancellationError {

@@ -1,35 +1,36 @@
 import Foundation
 
-/// Finds trips in a photo library: the stretches spent away from home.
+/// Finds trips in a photo library: the stretches spent away from the
+/// places someone usually stays (常驻地).
 ///
-/// Home is not a setting. It is any place that holds a good share of the
-/// photo days of the surrounding months, so it follows a move to another
-/// /// city, and a place visited most weekends counts too. Photos taken within
-/// `awayRadiusMeters` of home are daily life and belong to no trip. Photos
-/// without a location take the side of the located photo closest in time
-/// (within `locationlessMatchWindow`). When no home stands
-/// out, as for a folder that holds a single trip, every photo counts as away
-/// and the time and distance gaps alone split the trips.
+/// A usual place is not a setting. It is any place that holds a good share
+/// of the photo days of the surrounding months, so there can be several (a
+/// work city and parents' town), and they follow a move to another city.
+/// Photos taken within `awayRadiusMeters` of a usual place are daily life and
+/// belong to no trip. Photos without a location take the side of the located
+/// photo closest in time (within `locationlessMatchWindow`). When no usual
+/// place stands out, as for a folder that holds a single trip, every photo
+/// counts as away and the time and distance gaps alone split the trips.
 public struct TripSegmenter: Sendable {
     public struct Result: Equatable, Sendable {
         /// Photo ids per trip, each in date order, trips in date order.
         public let trips: [[String]]
-        /// Photos that belong to no trip: taken at home, or in a stretch
+        /// Photos that belong to no trip: taken at a usual place, or in a stretch
         /// away too small to call a trip.
-        public let homeIDs: Set<String>
+        public let atUsualPlaceIDs: Set<String>
     }
 
     public var awayRadiusMeters: Double = 50_000
-    public var homeClusterRadiusMeters: Double = 25_000
-    /// Home is decided over this many days on either side of a photo.
-    public var homeWindowDays: Int = 180
+    public var usualPlaceClusterRadiusMeters: Double = 25_000
+    /// Usual places are decided over this many days on either side of a photo.
+    public var usualPlaceWindowDays: Int = 180
     /// A place needs this many photo days in the window, and this share of
-    /// them, to count as a home.
-    public var minimumHomeDays: Int = 10
-    public var minimumHomeShare: Double = 0.25
+    /// them, to count as a usual place.
+    public var minimumUsualPlaceDays: Int = 10
+    public var minimumUsualPlaceShare: Double = 0.25
     /// ... spread over this many 30-day stretches, so one long stay away is
-    /// never home.
-    public var minimumHomeMonths: Int = 3
+    /// never a usual place.
+    public var minimumUsualPlaceMonths: Int = 3
     /// Away photos further apart than this start a new trip when they are
     /// also more than `maximumTripDistanceMeters` apart.
     public var maximumTimeGap: TimeInterval = 36 * 60 * 60
@@ -41,25 +42,25 @@ public struct TripSegmenter: Sendable {
     /// away: right for a folder from a camera without GPS. In a phone
     /// library they are mostly screenshots and saved images, so daily life.
     public var locationlessDefaultsToAway = false
-    /// Where a home is known, a stretch away becomes a trip with this many
+    /// Where a usual place is known, a stretch away becomes a trip with this many
     /// photos, or when it spans more than one day.
     public var minimumTripItems: Int = 5
-    /// A home the person set; it replaces the detected one everywhere.
-    public var homeCoordinate: GeoPoint?
+    /// A place the person set; it replaces the detected ones everywhere.
+    public var fixedUsualPlace: GeoPoint?
 
     public init() {}
 
     /// `stops` are the photos to place. `context` adds photos already in the
-    /// library: they tell where home is, lend their side to nearby photos
+    /// library: they tell where the usual places are, lend their side to nearby photos
     /// without a location, and keep a few new photos next to a trip in it.
     public func segment(_ stops: [PhotoStop], context: [PhotoStop] = []) -> Result {
         let ordered = stops.sorted(by: Self.photoOrder)
-        guard !ordered.isEmpty else { return Result(trips: [], homeIDs: []) }
-        let home = HomeFinder(segmenter: self, stops: ordered + context)
+        guard !ordered.isEmpty else { return Result(trips: [], atUsualPlaceIDs: []) }
+        let usual = UsualPlaceFinder(segmenter: self, stops: ordered + context)
         func isAway(_ coordinate: GeoPoint, at date: Date) -> Bool {
-            home.homes(at: date).allSatisfy { coordinate.distance(to: $0) > awayRadiusMeters }
+            usual.places(at: date).allSatisfy { coordinate.distance(to: $0) > awayRadiusMeters }
         }
-        func homeKnown(at date: Date) -> Bool { !home.homes(at: date).isEmpty }
+        func usualPlaceKnown(at date: Date) -> Bool { !usual.places(at: date).isEmpty }
 
         let located = (ordered + context)
             .compactMap { stop in stop.coordinate.map { (date: stop.date, away: isAway($0, at: stop.date)) } }
@@ -78,7 +79,7 @@ public struct TripSegmenter: Sendable {
             if let nearest, abs(located[nearest].date.timeIntervalSince(stop.date)) <= locationlessMatchWindow {
                 return located[nearest].away
             }
-            return locationlessDefaultsToAway || !homeKnown(at: stop.date)
+            return locationlessDefaultsToAway || !usualPlaceKnown(at: stop.date)
         }
 
         var runs: [[PhotoStop]] = []
@@ -95,8 +96,8 @@ public struct TripSegmenter: Sendable {
                 let far = lastCoordinate.flatMap { last in
                     stop.coordinate.map { last.distance(to: $0) > maximumTripDistanceMeters }
                 } ?? false
-                // Without a home, a quiet day and a half ends a trip as before.
-                if gap > maximumQuietGap || (gap > maximumTimeGap && (far || !homeKnown(at: stop.date))) {
+                // Without a usual place, a quiet day and a half ends a trip as before.
+                if gap > maximumQuietGap || (gap > maximumTimeGap && (far || !usualPlaceKnown(at: stop.date))) {
                     runs.append(current)
                     current = []
                 }
@@ -107,20 +108,20 @@ public struct TripSegmenter: Sendable {
         if !current.isEmpty { runs.append(current) }
 
         var trips: [[String]] = []
-        var homeIDs = Set(ordered.indices.filter { !away[$0] }.map { ordered[$0].id })
+        var atUsualPlaceIDs = Set(ordered.indices.filter { !away[$0] }.map { ordered[$0].id })
         for run in runs {
             guard let first = run.first, let last = run.last else { continue }
-            // Without a home there is no daily life to fall back to, and a
+            // Without a usual place there is no daily life to fall back to, and a
             // few photos next to the library's photos away belong with them.
             let nextToLibraryAway = Self.lowerBound(last.date.addingTimeInterval(maximumTimeGap), in: libraryAway, inclusive: true)
                 > Self.lowerBound(first.date.addingTimeInterval(-maximumTimeGap), in: libraryAway)
-            if run.count >= minimumTripItems || spansSeveralDays(run) || !homeKnown(at: first.date) || nextToLibraryAway {
+            if run.count >= minimumTripItems || spansSeveralDays(run) || !usualPlaceKnown(at: first.date) || nextToLibraryAway {
                 trips.append(run.map(\.id))
             } else {
-                homeIDs.formUnion(run.map(\.id))
+                atUsualPlaceIDs.formUnion(run.map(\.id))
             }
         }
-        return Result(trips: trips, homeIDs: homeIDs)
+        return Result(trips: trips, atUsualPlaceIDs: atUsualPlaceIDs)
     }
 
     private static func photoOrder(_ lhs: PhotoStop, _ rhs: PhotoStop) -> Bool {
@@ -144,9 +145,9 @@ public struct TripSegmenter: Sendable {
     }
 }
 
-/// Homes per 30-day bucket: the clusters of daily locations that hold enough
-/// of the photo days within `homeWindowDays`.
-private final class HomeFinder {
+/// Usual places per 30-day bucket: the clusters of daily locations that hold enough
+/// of the photo days within `usualPlaceWindowDays`.
+private final class UsualPlaceFinder {
     private let fixed: GeoPoint?
     private let centres: [GeoPoint]
     private let daysByCluster: [[Int]]
@@ -155,7 +156,7 @@ private final class HomeFinder {
 
     init(segmenter: TripSegmenter, stops: [PhotoStop]) {
         self.segmenter = segmenter
-        fixed = segmenter.homeCoordinate
+        fixed = segmenter.fixedUsualPlace
         guard fixed == nil else { centres = []; daysByCluster = []; return }
         var pointsByDay: [Int: [GeoPoint]] = [:]
         for stop in stops {
@@ -166,7 +167,7 @@ private final class HomeFinder {
         var days: [[Int]] = []
         for day in pointsByDay.keys.sorted() {
             let point = Self.median(pointsByDay[day] ?? [])
-            if let cluster = centres.firstIndex(where: { $0.distance(to: point) <= segmenter.homeClusterRadiusMeters }) {
+            if let cluster = centres.firstIndex(where: { $0.distance(to: point) <= segmenter.usualPlaceClusterRadiusMeters }) {
                 days[cluster].append(day)
             } else {
                 centres.append(point)
@@ -177,23 +178,23 @@ private final class HomeFinder {
         daysByCluster = days
     }
 
-    func homes(at date: Date) -> [GeoPoint] {
+    func places(at date: Date) -> [GeoPoint] {
         if let fixed { return [fixed] }
         let bucket = Int((Double(Self.day(of: date)) / 30).rounded(.down))
         if let cached = cache[bucket] { return cached }
-        let found = home(bucket: bucket)
+        let found = places(bucket: bucket)
         cache[bucket] = found
         return found
     }
 
-    private func home(bucket: Int) -> [GeoPoint] {
+    private func places(bucket: Int) -> [GeoPoint] {
         let middle = bucket * 30 + 15
-        let window = (middle - segmenter.homeWindowDays)...(middle + segmenter.homeWindowDays)
+        let window = (middle - segmenter.usualPlaceWindowDays)...(middle + segmenter.usualPlaceWindowDays)
         let counts = daysByCluster.map { Self.count(of: window, in: $0) }
         let total = Double(counts.reduce(0, +))
         return counts.indices
-            .filter { counts[$0] >= segmenter.minimumHomeDays && Double(counts[$0]) >= segmenter.minimumHomeShare * total }
-            .filter { Self.months(of: window, in: daysByCluster[$0]) >= segmenter.minimumHomeMonths }
+            .filter { counts[$0] >= segmenter.minimumUsualPlaceDays && Double(counts[$0]) >= segmenter.minimumUsualPlaceShare * total }
+            .filter { Self.months(of: window, in: daysByCluster[$0]) >= segmenter.minimumUsualPlaceMonths }
             .map { centres[$0] }
     }
 

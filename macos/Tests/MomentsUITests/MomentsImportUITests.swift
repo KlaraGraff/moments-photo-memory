@@ -111,6 +111,7 @@ final class MomentsImportUITests: XCTestCase {
             .firstMatch
         XCTAssertTrue(clip.waitForExistence(timeout: timeout), "The imported video is not in the Library")
         clip.doubleClick()
+        XCTAssertTrue(element(in: app, identifier: "viewer").waitForExistence(timeout: timeout), "Double click did not open the video")
         XCTAssertTrue(element(in: app, identifier: "viewer.video").waitForExistence(timeout: timeout), "The viewer shows no player for the video")
         // Give the player time to load and start; the old crash came on first show.
         Thread.sleep(forTimeInterval: 2)

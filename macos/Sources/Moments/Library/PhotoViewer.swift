@@ -838,6 +838,9 @@ private struct VideoPlayerView: NSViewRepresentable {
         view.controlsStyle = .floating
         view.showsFullScreenToggleButton = false
         view.player = player
+        // A SwiftUI identifier on a representable does not reach the AppKit
+        // view, so tests find the player by its own.
+        view.setAccessibilityIdentifier("viewer.video")
         return view
     }
 

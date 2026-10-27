@@ -67,6 +67,7 @@ jobs:
           # A manual run can target a few tests for a quick check; pull
           # requests always run the whole suite.
           only=()
+          set -f  # test IDs are words, never file globs
           for t in $ONLY_TESTING; do only+=("-only-testing:$t"); done
           # Ad-hoc signing is enough for the test runner on the hosted Mac.
           xcodebuild \

@@ -53,4 +53,90 @@ final class MomentsResizeUITests: XCTestCase {
         XCTAssertFalse(changes.isEmpty, report)
         XCTAssertEqual(changes.reduce(0, +), 0, "The grid changed its column count while the sidebar moved:\n\(report)")
     }
+
+    /// Like Photos: zooming the window (Window ▸ Zoom, as a double click on
+    /// the top bar does) makes the photos larger or smaller but keeps how
+    /// many are in a row; only the toolbar's − and + change that. (The
+    /// hosted Mac's screen is 1,024 pt wide, so the window grows from 900 to
+    /// about that; the wider steps are covered by the unit tests.)
+    func testZoomingTheWindowKeepsPhotosPerRow() throws {
+        let app = launch(["-MomentsUITestStartSmall"])
+        let window = app.windows.firstMatch
+        let zoomOut = app.descendants(matching: .any).matching(identifier: "library.zoom-out").firstMatch
+        func zoomWindow() {
+            app.menuBars.menuBarItems["Window"].click()
+            app.menuBars.menuBarItems["Window"].menuItems["Zoom"].click()
+            Thread.sleep(forTimeInterval: 1.5)
+        }
+
+        let smallFrame = window.frame
+        let small = rows(in: app)
+        evidence(app, "photos-per-row-small-evidence")
+        XCTAssertEqual(small.perRow, 4, "Default photos per row at the small window \(smallFrame)")
+
+        zoomWindow()
+        let largeFrame = window.frame
+        let grown = largeFrame.width - smallFrame.width
+        XCTAssertGreaterThan(grown, 60, "The window did not zoom: \(smallFrame) → \(largeFrame)")
+        let large = rows(in: app)
+        evidence(app, "photos-per-row-large-evidence")
+        let sizes = "window \(smallFrame.width) → \(largeFrame.width), photo \(small.photoWidth) → \(large.photoWidth)"
+        XCTAssertEqual(large.perRow, 4, "Zooming the window changed how many photos are in a row (\(sizes))")
+        // Four photos share the extra width.
+        XCTAssertGreaterThan(large.photoWidth, small.photoWidth + grown / 8, "The photos did not grow with the window (\(sizes))")
+
+        zoomOut.click()
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertEqual(rows(in: app).perRow, 5, "− in the large window")
+        zoomWindow()
+        XCTAssertEqual(window.frame, smallFrame, "The window did not zoom back")
+        XCTAssertEqual(rows(in: app).perRow, 5, "Zooming back changed how many photos are in a row")
+    }
+
+    /// A count chosen in a wider window shows as the densest step a small
+    /// window has room for, 8; − is at its end there and + steps back.
+    func testASmallWindowCapsPhotosPerRow() {
+        let app = launch(["-MomentsUITestSmallWindow", "-moments.library.photosPerRow", "18"])
+        XCTAssertEqual(rows(in: app).perRow, 8, "A 900 pt window should show 8 photos per row")
+        evidence(app, "photos-per-row-small-capped-evidence")
+        let zoomOut = app.descendants(matching: .any).matching(identifier: "library.zoom-out").firstMatch
+        let zoomIn = app.descendants(matching: .any).matching(identifier: "library.zoom-in").firstMatch
+        XCTAssertFalse(zoomOut.isEnabled, "− should be at its end in the small window")
+        XCTAssertTrue(zoomIn.isEnabled)
+    }
+
+    private func launch(_ arguments: [String]) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-MomentsUITesting", "-MomentsUITestStressCount", "300", "-AppleLanguages", "(en)", "-AppleLocale", "en"
+        ] + arguments
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(photos(in: app).firstMatch.waitForExistence(timeout: launchTimeout))
+        Thread.sleep(forTimeInterval: 1.5)
+        return app
+    }
+
+    private func photos(in app: XCUIApplication) -> XCUIElementQuery {
+        app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'library.photo.'"))
+    }
+
+    /// The most photos side by side in one row on screen, and their width.
+    private func rows(in app: XCUIApplication) -> (perRow: Int, photoWidth: CGFloat) {
+        XCTAssertEqual(app.state, .runningForeground, "Moments lost focus")
+        let window = app.windows.firstMatch.frame
+        let frames = photos(in: app).allElementsBoundByIndex.map(\.frame)
+            .filter { !$0.isEmpty && window.contains(CGPoint(x: $0.midX, y: $0.midY)) }
+        let rows = Dictionary(grouping: frames) { Int($0.minY.rounded()) }
+        let fullest = rows.values.max { $0.count < $1.count } ?? []
+        return (fullest.count, fullest.first?.width ?? 0)
+    }
+
+    private func evidence(_ app: XCUIApplication, _ name: String) {
+        let shot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        shot.name = name
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
 }

@@ -219,11 +219,6 @@ struct ContentView: View {
         .frame(minWidth: 900, minHeight: 600)
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
             if libraryState.windowWidth != width { libraryState.windowWidth = width }
-            // Here as well as in the grid, so the Library opens with the right
-            // count after the window changed while another page was showing.
-            let size = LibraryThumbnailSize(level: UserDefaults.standard.object(forKey: LibraryThumbnailSize.storageKey) as? Int ?? LibraryThumbnailSize.defaultLevel)
-            let columns = LibraryGridNavigation.columns(windowWidth: width, minimum: size.minimumWidth, spacing: size.spacing)
-            if libraryState.gridColumns != columns { libraryState.gridColumns = columns }
         }
         // The large photo view is a card over the whole window, sidebar included.
         .overlay {

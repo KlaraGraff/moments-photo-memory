@@ -424,7 +424,7 @@ private struct LibraryMarqueeSelection: ViewModifier {
     let marquee: LibraryMarquee
     let state: LibraryViewState
     let selection: SelectionModel
-    @AppStorage(LibraryThumbnailSize.storageKey) private var zoom = LibraryThumbnailSize.defaultLevel
+    @AppStorage(LibraryThumbnailSize.storageKey) private var zoom = LibraryThumbnailSize.defaultColumns
 
     func body(content: Content) -> some View {
         content

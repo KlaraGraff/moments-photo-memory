@@ -537,10 +537,8 @@ final class LibraryViewState {
     /// for the viewer, which folds them itself.
     @ObservationIgnored var viewerItemIDs: [String] = []
     /// Columns in the Library grid: its rows and the up and down arrows.
-    var gridColumns = 4
-    /// The window's width. The grid's columns follow it, not the space next
-    /// to the sidebar, so hiding, showing or dragging the sidebar scales the
-    /// photos instead of changing how many fit in a row, like Photos.
+    var gridColumns = LibraryThumbnailSize.defaultColumns
+    /// The window's width, for how many photos per row it has room for.
     var windowWidth: CGFloat = 0
     /// Rubber-band selection on the grid; its rectangle redraws on its own.
     let marquee = LibraryMarquee()
@@ -602,42 +600,69 @@ enum LibraryGridNavigation {
             return previous[min(lastRowStart + i % columns, previous.count - 1)]
         }
     }
-
-    /// Columns an adaptive grid lays out in `width`.
-    static func columns(width: CGFloat, minimum: CGFloat, spacing: CGFloat) -> Int {
-        max(1, Int((width + spacing) / (minimum + spacing)))
-    }
-
-    /// Columns for a window `windowWidth` wide: as many as fit next to the
-    /// sidebar at its default width, whether or not it is showing.
-    static func columns(windowWidth: CGFloat, minimum: CGFloat, spacing: CGFloat) -> Int {
-        let window = max(windowWidth, minimumWindowWidth)
-        return columns(width: window - defaultSidebarWidth - 2 * gridInset, minimum: minimum, spacing: spacing)
-    }
-
-    static let minimumWindowWidth: CGFloat = 900
-    static let defaultSidebarWidth: CGFloat = 190
-    /// The grid's horizontal padding in the Library.
-    static let gridInset: CGFloat = 34
 }
 
-/// The Library's zoom levels, smallest first. The two smallest are a dense
-/// grid of photos only, like Photos; the larger ones are prints with their
-/// place, memory and note line.
+/// The Library's zoom: how many photos side by side, as in Photos. Resizing
+/// or zooming the window, or moving the sidebar, makes the photos larger or
+/// smaller but keeps the count; only − and + change it. A wider window has
+/// room for more of the dense steps; a narrower one caps the count at the
+/// densest step it fits, and widening it again brings the chosen count back.
+/// Up to five in a row are prints with their place, memory and note line;
+/// more are a dense grid of photos only, like Photos.
 struct LibraryThumbnailSize: Equatable {
-    static let storageKey = "moments.library.thumbnailSize"
-    static let minimumWidths: [CGFloat] = [92, 130, 175, 240]
-    static let defaultLevel = 2
-    static var maximumLevel: Int { minimumWidths.count - 1 }
+    /// The chosen photos per row; kept as chosen while the window changes.
+    static let storageKey = "moments.library.photosPerRow"
+    /// Before photos per row, a zoom level 0...3 for 8, 6, 4 and 3 in a row.
+    static let legacyLevelKey = "moments.library.thumbnailSize"
+    static let defaultColumns = 4
+    /// The − and + steps, largest photos first.
+    static let steps = [3, 4, 5, 6, 8, 10, 12, 15, 18, 22, 26, 30, 36]
+    /// The smallest photo in the dense grid: which steps a window has room for.
+    static let minimumPhotoWidth: CGFloat = 72
+    static let minimumWindowWidth: CGFloat = 900
+    static let defaultSidebarWidth: CGFloat = 190
 
-    let level: Int
+    let columns: Int
 
-    init(level: Int) {
-        self.level = min(max(level, 0), Self.maximumLevel)
+    init(columns: Int) {
+        self.columns = max(1, columns)
     }
 
-    var minimumWidth: CGFloat { Self.minimumWidths[level] }
-    var isCompact: Bool { level < 2 }
+    var isCompact: Bool { columns > 5 }
     var spacing: CGFloat { isCompact ? 6 : 24 }
     var rowSpacing: CGFloat { isCompact ? 6 : 28 }
+
+    /// The steps a window `windowWidth` wide has room for, next to the
+    /// sidebar at its default width whether or not it is showing: 3 to 8 at
+    /// the smallest window, more as it gets wider.
+    static func steps(windowWidth: CGFloat) -> [Int] {
+        let grid = max(windowWidth, minimumWindowWidth) - defaultSidebarWidth - 2 * PaperMetrics.screenInset
+        let room = Int((grid + 6) / (minimumPhotoWidth + 6))
+        return steps.filter { $0 <= max(room, steps[0]) }
+    }
+
+    /// What the grid shows for the chosen count in this window.
+    static func shown(chosen: Int, windowWidth: CGFloat) -> LibraryThumbnailSize {
+        let available = steps(windowWidth: windowWidth)
+        let nearest = available.min { abs($0 - chosen) < abs($1 - chosen) } ?? defaultColumns
+        return LibraryThumbnailSize(columns: nearest)
+    }
+
+    /// The chosen count after `step` presses of + (positive, larger photos)
+    /// or − (negative), from what the window shows now; nil at either end.
+    static func zoomed(chosen: Int, by step: Int, windowWidth: CGFloat) -> Int? {
+        let available = steps(windowWidth: windowWidth)
+        let shown = shown(chosen: chosen, windowWidth: windowWidth).columns
+        guard let index = available.firstIndex(of: shown), available.indices.contains(index - step) else { return nil }
+        return available[index - step]
+    }
+
+    /// Carries a zoom level from before photos per row over to its count, once.
+    static func migrateLegacyLevel(in defaults: UserDefaults = .standard) {
+        guard defaults.object(forKey: storageKey) == nil,
+              let level = defaults.object(forKey: legacyLevelKey) as? Int else { return }
+        let counts = [8, 6, 4, 3]
+        defaults.set(counts[min(max(level, 0), counts.count - 1)], forKey: storageKey)
+        defaults.removeObject(forKey: legacyLevelKey)
+    }
 }

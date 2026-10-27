@@ -17,7 +17,7 @@ final class MomentsMarqueeUITests: XCTestCase {
     /// The small window shows about one row of prints, so this one runs on
     /// the dense grid.
     func testDragBetweenPhotosSelectsLikePhotosInASmallWindow() {
-        exerciseMarquee(launch(smallWindow: true, zoomLevel: 0), prefix: "marquee-small")
+        exerciseMarquee(launch(smallWindow: true, photosPerRow: 8), prefix: "marquee-small")
     }
 
     /// Held at the bottom edge, the Library keeps scrolling and the
@@ -86,7 +86,9 @@ final class MomentsMarqueeUITests: XCTestCase {
         // Just inside the bottom edge, and past it, where it scrolls fastest.
         let edge = point(app, x: lastColumn, y: window.maxY - 6)
         let belowEdge = point(app, x: lastColumn, y: window.maxY + 60)
-        let scrollView = app.scrollViews.containing(.any, identifier: first.element.identifier).firstMatch
+        // Any photo, not the first one: the lazy grid lets that one go once
+        // a drag has scrolled far enough.
+        let scrollView = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo.")).firstMatch
         func backAtTheTop() -> Bool { abs(first.element.frame.minY - first.frame.minY) < 2 }
 
         let drags: [(name: String, to: XCUICoordinate, hold: TimeInterval)] = [
@@ -238,12 +240,12 @@ final class MomentsMarqueeUITests: XCTestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(NSEvent.doubleClickInterval + 0.3))
     }
 
-    /// `zoomLevel` comes in as a launch argument, so it neither depends on
+    /// `photosPerRow` comes in as a launch argument, so it neither depends on
     /// nor changes what other tests leave in the app's defaults.
-    private func launch(smallWindow: Bool = false, zoomLevel: Int = 2, extraArguments: [String] = []) -> XCUIApplication {
+    private func launch(smallWindow: Bool = false, photosPerRow: Int = 4, extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(en)", "-AppleLocale", "en",
-                               "-moments.library.thumbnailSize", String(zoomLevel)] + extraArguments
+                               "-moments.library.photosPerRow", String(photosPerRow)] + extraArguments
         if smallWindow { app.launchArguments += ["-MomentsUITestSmallWindow"] }
         app.launch()
         app.activate()

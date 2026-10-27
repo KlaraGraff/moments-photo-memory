@@ -694,7 +694,6 @@ struct PhotoPlaceLine: View {
     let placeNotes: [PlaceNote]
     @State private var showingDescription = false
     @State private var showingDateEditor = false
-    @State private var draftDate = Date.now
 
     private var description: String? {
         guard let name = item.namedPlace else { return nil }
@@ -729,9 +728,8 @@ struct PhotoPlaceLine: View {
                             .lineLimit(1)
                     }
                 }
-                if let time = item.effectiveCaptureDate?.formatted(date: .omitted, time: .shortened) {
+                if let time = item.effectiveCaptureDate.map({ PhotoDateEditor.timeText($0, in: item.captureTimeZone) }) {
                     Button {
-                        draftDate = item.effectiveCaptureDate ?? .now
                         showingDateEditor = true
                     } label: {
                         Text(time)
@@ -741,7 +739,7 @@ struct PhotoPlaceLine: View {
                     .help(String(localized: "Adjust date and time"))
                     .accessibilityIdentifier("library.time.\(item.id)")
                     .popover(isPresented: $showingDateEditor, arrowEdge: .bottom) {
-                        PhotoDateEditor(item: item, draftDate: $draftDate) { showingDateEditor = false }
+                        PhotoDateEditor(items: [item]) { showingDateEditor = false }
                     }
                 }
                 if let correctedFrom {

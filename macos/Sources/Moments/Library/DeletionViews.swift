@@ -31,6 +31,8 @@ enum PhotoDeletion {
         let target = DeletionUndoTarget()
         registerUndo(moved, target: target, selection: selection, context: context, undoManager: undoManager)
         selection.lastDeletion = DeletionNotice(itemIDs: moved, undoTarget: target)
+        // One Undo bar at a time: the newest action's.
+        selection.lastCorrection = nil
     }
 
     /// Undo puts them back; Redo deletes them again. The undo manager holds

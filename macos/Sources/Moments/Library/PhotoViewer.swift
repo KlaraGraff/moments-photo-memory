@@ -122,6 +122,8 @@ struct PhotoViewer: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Paper.shadow.opacity(0.08)))
             .shadow(color: Paper.shadow.opacity(0.22), radius: 24, y: 8)
+            // Undo for a person changed in the column, over the card.
+            .overlay(alignment: .bottom) { CorrectionUndoBar() }
             // Like a file preview in Claude: the card covers the window, sidebar
             // included, with a narrow margin.
             .padding(10)
@@ -615,9 +617,13 @@ struct PhotoViewer: View {
     private var current: some View {
         if let player {
             VideoPlayerView(player: player)
-                .accessibilityIdentifier("viewer.video")
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .padding(28)
+                // Neither a SwiftUI nor an AppKit identifier on the player view
+                // itself reaches the accessibility tree, so a SwiftUI container
+                // around it carries one.
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("viewer.video")
         } else if let image {
             let fitted = fittedSize
             Image(nsImage: image)

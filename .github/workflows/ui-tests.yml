@@ -2,12 +2,30 @@ name: macOS UI tests
 
 # UI tests drive the app on a hosted Mac, never on a developer's screen.
 # Synthetic data only: demo seed plus generated fixture photos.
+# The whole suite runs once a pull request is ready for review (drafts skip
+# it) and again on main after each merge, so changes that pass alone but
+# clash together still get caught.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'macos/Sources/**'
+      - 'macos/MomentsCore/**'
       - 'macos/Tests/MomentsUITests/**'
       - 'macos/project.yml'
+      - 'macos/Config/**'
+      - 'demo/sample-data.json'
+      - 'scripts/make_synthetic_import_fixtures.swift'
+      - '.github/workflows/ui-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'macos/Sources/**'
+      - 'macos/MomentsCore/**'
+      - 'macos/Tests/MomentsUITests/**'
+      - 'macos/project.yml'
+      - 'macos/Config/**'
+      - 'demo/sample-data.json'
       - 'scripts/make_synthetic_import_fixtures.swift'
       - '.github/workflows/ui-tests.yml'
   workflow_dispatch:
@@ -18,14 +36,16 @@ on:
         default: ''
 
 # A new push to a pull request cancels that pull request's older run, so
-# superseded runs never hold one of the few hosted Macs. Manual runs
-# (probes, benchmarks) are never cancelled.
+# superseded runs never hold one of the few hosted Macs; on main only the
+# newest commit is checked. Manual runs (probes, benchmarks) are never
+# cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   ui:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
@@ -47,6 +67,7 @@ jobs:
           # A manual run can target a few tests for a quick check; pull
           # requests always run the whole suite.
           only=()
+          set -f  # test IDs are words, never file globs
           for t in $ONLY_TESTING; do only+=("-only-testing:$t"); done
           # Ad-hoc signing is enough for the test runner on the hosted Mac.
           xcodebuild \
@@ -121,3 +142,20 @@ jobs:
           name: ui-screenshots
           path: ${{ runner.temp }}/ui-screenshots
           retention-days: 14
+      - name: Print test failures
+        # Last, so the failure messages stay in the end of the job log that
+        # reviewers can fetch, after the screenshots.
+        if: always()
+        run: |
+          result="$RUNNER_TEMP/MomentsUITests.xcresult"
+          [ -d "$result" ] || { echo "no result bundle"; exit 0; }
+          xcrun xcresulttool get test-results summary --path "$result" --compact > "$RUNNER_TEMP/summary.json" || exit 0
+          python3 - "$RUNNER_TEMP/summary.json" <<'PY'
+          import json, sys
+          summary = json.load(open(sys.argv[1]))
+          failures = summary.get("testFailures", [])
+          print(f"FAILURES-BEGIN {len(failures)}")
+          for failure in failures:
+              print(f"{failure.get('testIdentifierString') or failure.get('testName')}: {failure.get('failureText')}")
+          print("FAILURES-END")
+          PY

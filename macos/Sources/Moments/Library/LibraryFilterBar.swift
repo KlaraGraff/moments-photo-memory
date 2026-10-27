@@ -78,6 +78,10 @@ struct LibraryFilterChips: View {
         .onChange(of: people.map(\.id), initial: true) { _, ids in
             if !personFilterID.isEmpty && !ids.contains(personFilterID) { personFilterID = "" }
         }
+        .onAppear {
+            // A place filter saved by id before places were listed by name.
+            if let migrated = PlaceNames.optionID(forLegacy: placeFilterID, items: allItems) { placeFilterID = migrated }
+        }
     }
 
     private var places: [LibraryPlaceOption] { options.places }
@@ -100,6 +104,8 @@ struct LibraryFilterChips: View {
         for place in allPlaces {
             hasher.combine(place.id)
             hasher.combine(place.name)
+            // A rename of the place lists it under its new name.
+            hasher.combine(place.correctedName)
             // A spot is listed under the place that names it.
             hasher.combine(place.parent?.id)
         }
@@ -107,23 +113,17 @@ struct LibraryFilterChips: View {
     }
 
     private func buildOptions() -> Options {
-        var places: [String: LibraryPlaceOption] = [:]
         var tripNames: [String: String] = [:]
         for item in allItems {
             if let tripID = item.tripID, tripNames[tripID] == nil {
                 tripNames[tripID] = item.trip?.effectiveName ?? tripID
             }
-            // One row per name: unnamed spots are listed under the area or
-            // city that names them, and the filter matches all of them.
-            if let place = item.place, let named = PlaceDisplayName.namingPlace(of: place) {
-                places[named.id] = LibraryPlaceOption(id: named.id, name: named.displayName)
-            }
-            if let override = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
-                places["override:\(override)"] = LibraryPlaceOption(id: "override:\(override)", name: override)
-            }
         }
         return Options(
-            places: places.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending },
+            // One row per name: unnamed spots are listed under the area or
+            // city that names them, places with the same name are one row,
+            // and the filter matches all of them.
+            places: PlaceNames.options(for: allItems),
             trips: tripNames.keys.sorted(),
             tripNames: tripNames
         )
@@ -203,6 +203,14 @@ struct LibraryFilterChips: View {
                         placeFilterID = place.id
                     } label: {
                         filterMenuLabel(place.name, selected: place.id == placeFilterID)
+                    }
+                }
+                if !places.isEmpty {
+                    Divider()
+                    Button {
+                        selection.isShowingPlacesEditor = true
+                    } label: {
+                        Label(String(localized: "Rename or Merge Places…"), systemImage: "pencil")
                     }
                 }
             }

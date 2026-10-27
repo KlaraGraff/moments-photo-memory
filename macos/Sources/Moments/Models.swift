@@ -1666,9 +1666,10 @@ public final class Trip {
         self.items = items
     }
 
-    /// SwiftData does not persist to-many order, so trips are ordered by capture date.
+    /// SwiftData does not persist to-many order, so trips are ordered by
+    /// capture date, a corrected date taking the camera's place.
     public var orderedItems: [MediaItem] {
-        items.sorted { ($0.captureDate ?? .distantPast, $0.id) < ($1.captureDate ?? .distantPast, $1.id) }
+        items.sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) < ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
     }
 
     public var effectiveName: String {

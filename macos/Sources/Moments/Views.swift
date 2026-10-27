@@ -193,6 +193,12 @@ struct ContentView: View {
                     RecentlyDeletedScreen()
                 }
             }
+            // After a correction to dates, places or people: what changed, and
+            // Undo. In the detail column, not over the whole split view, where
+            // it is drawn but does not get clicks; the viewer shows its own.
+            .overlay(alignment: .bottom) {
+                if shared.viewerRequest == nil { CorrectionUndoBar() }
+            }
             .toolbar {
                 // Each page's + adds that page's thing; People and Trips bring their own.
                 if selection != .people && selection != .trips && selection != .recentlyDeleted {
@@ -235,6 +241,18 @@ struct ContentView: View {
         }
         .animation(reduceMotion ? nil : Motion.snap, value: shared.lastDeletion == nil)
         .modifier(PhotoDeletionConfirmation())
+        .sheet(isPresented: Binding(
+            get: { shared.dateAdjustmentItemIDs != nil },
+            set: { if !$0 { shared.dateAdjustmentItemIDs = nil } }
+        )) {
+            DateAdjustmentSheet(itemIDs: shared.dateAdjustmentItemIDs ?? [])
+        }
+        .sheet(isPresented: Binding(
+            get: { shared.isShowingPlacesEditor },
+            set: { shared.isShowingPlacesEditor = $0 }
+        )) {
+            PlacesEditorSheet()
+        }
         // One accent everywhere, sheets included: no system blue controls.
         .tint(MomentsPalette.accent)
         .onChange(of: selection) { _, _ in

@@ -1165,7 +1165,10 @@ struct PeopleScreen: View {
                             FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
                                 .contextMenu {
                                     Button(String(localized: "Make Key Photo")) { setKeyPhoto(face, for: person) }
+                                    Divider()
+                                    faceCorrectionMenu(face, current: person)
                                 }
+                                .accessibilityIdentifier("people.face.\(face.id)")
                                 .overlay(alignment: .topTrailing) {
                                     VStack(spacing: 2) {
                                         if !face.confirmed || face.assignmentSource != "user" {
@@ -1277,6 +1280,7 @@ struct PeopleScreen: View {
                                 ForEach(cluster.faces, id: \.id) { face in
                                     VStack(spacing: 4) {
                                         FaceCropView(data: face.cropData, cacheKey: face.id, size: 64)
+                                            .contextMenu { faceCorrectionMenu(face, current: nil) }
                                         HStack(spacing: 4) {
                                             Button { confirm(face) } label: {
                                                 Image(systemName: "checkmark").font(.body.weight(.semibold))
@@ -1342,6 +1346,31 @@ struct PeopleScreen: View {
     private func mergeSameNamedPeople() {
         guard PeopleStoreActions.mergeDuplicateNames(people: people, observations: observations, context: modelContext) > 0 else { return }
         try? modelContext.save()
+    }
+
+    /// "This isn't Anna, it's…": every other named person, so a wrong face
+    /// goes straight to the right one instead of out and back in.
+    @ViewBuilder
+    private func faceCorrectionMenu(_ face: FaceObservation, current: Person?) -> some View {
+        let others = namedPeople.filter { $0.id != current?.id }
+        if !others.isEmpty {
+            Section(current?.name.map { String(localized: "This isn’t \($0), it’s…") } ?? String(localized: "This is…")) {
+                ForEach(others, id: \.id) { person in
+                    Button(person.name ?? "") { reassign(face, to: person) }
+                }
+            }
+        }
+    }
+
+    private func reassign(_ face: FaceObservation, to person: Person) {
+        guard let snapshot = FaceCorrection.reassign(face, to: person, observations: observations) else { return }
+        try? modelContext.save()
+        lastFaceChange = nil
+        selection.recordCorrection(CorrectionUndo(
+            message: FaceCorrection.message(movedTo: person.name ?? ""),
+            actionName: String(localized: "Change Person"),
+            restore: { context in FaceCorrection.restore(snapshot, context: context) }
+        ), context: modelContext)
     }
 
     private func confirm(_ face: FaceObservation) {

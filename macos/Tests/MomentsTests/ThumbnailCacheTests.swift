@@ -71,6 +71,8 @@ final class ThumbnailCacheTests: XCTestCase {
         XCTAssertLessThan(pixel.red, 40)
         XCTAssertGreaterThan(pixel.blue, 200)
         XCTAssertEqual(photos.requests, ["ABC/L0/001"])
+        // Like Photos, a thumbnail never downloads the original from iCloud.
+        XCTAssertEqual(photos.networkAccess, [false])
     }
 
     func testUnreadablePhotoIsRetriedInsteadOfSavingTheStandIn() async throws {
@@ -184,6 +186,7 @@ private final class ThumbnailPhotosSource: PhotosAssetSource, @unchecked Sendabl
     var status: PhotosAuthorizationStatus = .authorized
     var data: Data?
     private(set) var requests: [String] = []
+    private(set) var networkAccess: [Bool] = []
 
     var authorizationStatus: PhotosAuthorizationStatus { status }
     func requestAuthorization() async -> PhotosAuthorizationStatus { status }
@@ -194,6 +197,7 @@ private final class ThumbnailPhotosSource: PhotosAssetSource, @unchecked Sendabl
 
     func thumbnailData(forLocalIdentifier localIdentifier: String, targetSize: CGSize, networkAccessAllowed: Bool) async throws -> Data? {
         requests.append(localIdentifier)
+        networkAccess.append(networkAccessAllowed)
         return data
     }
 

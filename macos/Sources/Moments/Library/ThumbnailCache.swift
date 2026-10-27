@@ -188,11 +188,13 @@ final class ThumbnailCache {
         // A cell that scrolled away before the work started needs nothing.
         guard !Task.isCancelled else { return nil }
         var made: CGImage?
+        // Thumbnails never download from iCloud: Photos keeps small copies
+        // on this Mac even when the originals are only in iCloud.
         if let identifier = source.photosLocalIdentifier, let photos,
            let data = try? await photos.thumbnailData(
             forLocalIdentifier: identifier,
             targetSize: CGSize(width: width, height: height),
-            networkAccessAllowed: true
+            networkAccessAllowed: false
            ) {
             made = decodedImage(data: data, maxPixelSize: max(width, height))
         }

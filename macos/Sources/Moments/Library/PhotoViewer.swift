@@ -751,7 +751,8 @@ struct PhotoViewer: View {
             let thumbnail = await ThumbnailCache.shared.image(for: found, width: 560, height: 420)
             guard !Task.isCancelled else { return await neighbours }
             if image == nil { image = thumbnail }
-            if let full = await PhotoViewerImageCache.shared.load(found), !Task.isCancelled {
+            // The photo on screen is the one thing downloaded from iCloud.
+            if let full = await PhotoViewerImageCache.shared.load(found, allowDownload: true), !Task.isCancelled {
                 image = full
             }
         }
@@ -795,7 +796,8 @@ struct PhotoViewer: View {
            (isNext ? nextImage : previousImage) == nil {
             set(thumbnail)
         }
-        if let full = await PhotoViewerImageCache.shared.load(neighbour) { set(full) }
+        // Neighbours are not downloaded: only a photo someone opens is.
+        if let full = await PhotoViewerImageCache.shared.load(neighbour, allowDownload: false) { set(full) }
     }
 
     private func startVideo(_ item: MediaItem) {
@@ -843,16 +845,29 @@ final class PhotoViewerImageCache {
         cache.object(forKey: id as NSString)
     }
 
-    func load(_ item: MediaItem) async -> NSImage? {
+    /// Without `allowDownload` a photo kept in iCloud comes from the smaller
+    /// copy on this Mac; that one is not kept, so opening the photo still
+    /// downloads it in full.
+    func load(_ item: MediaItem, allowDownload: Bool) async -> NSImage? {
         if let cached = image(for: item.id) { return cached }
         let descriptor = PeopleMediaDescriptor(item)
+        let pixelSize = max(item.width, item.height)
         let cgImage = await Task.detached(priority: .userInitiated) {
-            await PeopleImageLoader.load(descriptor)
+            await PeopleImageLoader.load(descriptor, allowDownload: allowDownload)
         }.value
         guard let cgImage else { return nil }
         let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-        cache.setObject(image, forKey: item.id as NSString)
+        if allowDownload || Self.isFullSize(width: cgImage.width, height: cgImage.height, photoPixels: pixelSize) {
+            cache.setObject(image, forKey: item.id as NSString)
+        }
         return image
+    }
+
+    /// As large as the viewer asks for (2,000 pixels), or the photo itself
+    /// when it is smaller; PhotoKit's sizes are not exact.
+    nonisolated static func isFullSize(width: Int, height: Int, photoPixels: Int) -> Bool {
+        let wanted = photoPixels > 0 ? min(2_000, photoPixels) : 2_000
+        return Double(max(width, height)) >= Double(wanted) * 0.9
     }
 }
 

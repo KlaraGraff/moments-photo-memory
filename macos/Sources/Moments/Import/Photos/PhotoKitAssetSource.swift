@@ -147,22 +147,9 @@ public final class PhotoKitAssetSource: NSObject, PhotosAssetSource, PHPhotoLibr
     ) async throws -> Data? {
         guard let asset = cachedAsset(for: localIdentifier)
             ?? PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject else { return nil }
-        return try await withCheckedThrowingContinuation { continuation in
-            let options = PHImageRequestOptions()
-            options.deliveryMode = .highQualityFormat
-            options.resizeMode = .fast
-            options.isNetworkAccessAllowed = networkAccessAllowed
-            let size = CGSize(width: max(1, targetSize.width), height: max(1, targetSize.height))
-            imageManager.requestImage(for: asset, targetSize: size, contentMode: .aspectFill, options: options) { image, info in
-                if let error = info?[PHImageErrorKey] as? Error {
-                    continuation.resume(throwing: error)
-                } else {
-                    let data = image?.tiffRepresentation.flatMap {
-                        NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:])
-                    }
-                    continuation.resume(returning: data)
-                }
-            }
+        let image = try await bestImage(for: asset, targetSize: targetSize, contentMode: .aspectFill, networkAccessAllowed: networkAccessAllowed)
+        return image?.tiffRepresentation.flatMap {
+            NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:])
         }
     }
 
@@ -172,27 +159,63 @@ public final class PhotoKitAssetSource: NSObject, PhotosAssetSource, PHPhotoLibr
         networkAccessAllowed: Bool
     ) async -> CGImage? {
         guard let asset = cachedAsset(for: localIdentifier)
-            ?? PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject else { return nil }
-        return await withCheckedContinuation { continuation in
+            ?? PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject,
+              let image = try? await bestImage(for: asset, targetSize: targetSize, contentMode: .aspectFit, networkAccessAllowed: networkAccessAllowed) else { return nil }
+        var proposedRect = CGRect(origin: .zero, size: image.size)
+        return image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil)
+    }
+
+    /// Like Photos, only a photo someone opens is downloaded from iCloud.
+    /// Without network access a photo whose full size is not on this Mac
+    /// (Optimize Mac Storage) comes from the smaller copy Photos keeps here.
+    private func bestImage(
+        for asset: PHAsset,
+        targetSize: CGSize,
+        contentMode: PHImageContentMode,
+        networkAccessAllowed: Bool
+    ) async throws -> NSImage? {
+        let size = CGSize(width: max(1, targetSize.width), height: max(1, targetSize.height))
+        let full = await request(asset, targetSize: size, contentMode: contentMode, deliveryMode: .highQualityFormat, networkAccessAllowed: networkAccessAllowed)
+        if let image = full.image { return image }
+        guard !networkAccessAllowed, full.isInCloud else {
+            if let error = full.error { throw error }
+            return nil
+        }
+        let local = await request(asset, targetSize: size, contentMode: contentMode, deliveryMode: .fastFormat, networkAccessAllowed: false)
+        if let error = local.error, local.image == nil { throw error }
+        return local.image
+    }
+
+    private struct ImageResult: @unchecked Sendable {
+        var image: NSImage?
+        var isInCloud = false
+        var error: Error?
+    }
+
+    private func request(
+        _ asset: PHAsset,
+        targetSize: CGSize,
+        contentMode: PHImageContentMode,
+        deliveryMode: PHImageRequestOptionsDeliveryMode,
+        networkAccessAllowed: Bool
+    ) async -> ImageResult {
+        await withCheckedContinuation { continuation in
             let options = PHImageRequestOptions()
-            // People scanning needs the final, non-degraded pixels. The
-            // callback can arrive more than once; the continuation below
-            // resumes only for the final result.
-            options.deliveryMode = .highQualityFormat
+            options.deliveryMode = deliveryMode
             options.resizeMode = .fast
             options.isNetworkAccessAllowed = networkAccessAllowed
             options.isSynchronous = false
-            let size = CGSize(width: max(1, targetSize.width), height: max(1, targetSize.height))
             let lock = NSLock()
             var resumed = false
-            imageManager.requestImage(for: asset, targetSize: size, contentMode: .aspectFit, options: options) { image, info in
+            imageManager.requestImage(for: asset, targetSize: targetSize, contentMode: contentMode, options: options) { image, info in
                 let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
                 let isCancelled = (info?[PHImageCancelledKey] as? Bool) == true
-                let hasError = info?[PHImageErrorKey] != nil
+                let error = info?[PHImageErrorKey] as? Error
                 let isInCloud = (info?[PHImageResultIsInCloudKey] as? Bool) == true
-                // Ignore preview callbacks and resume only for the final
-                // high-quality image (or a terminal error/cancellation).
-                guard !isDegraded || isCancelled || hasError || isInCloud else { return }
+                // High quality can call back with a preview first; wait for the
+                // final image (or a terminal error, cancellation or "in iCloud").
+                // The fast format calls back once, with whatever is here.
+                guard deliveryMode == .fastFormat || !isDegraded || isCancelled || error != nil || isInCloud else { return }
 
                 lock.lock()
                 guard !resumed else {
@@ -202,12 +225,8 @@ public final class PhotoKitAssetSource: NSObject, PhotosAssetSource, PHPhotoLibr
                 resumed = true
                 lock.unlock()
 
-                guard !isCancelled, !hasError, let image else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                var proposedRect = CGRect(origin: .zero, size: image.size)
-                continuation.resume(returning: image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil))
+                let usable = isCancelled || error != nil || (isInCloud && isDegraded && deliveryMode != .fastFormat) ? nil : image
+                continuation.resume(returning: ImageResult(image: usable, isInCloud: isInCloud, error: error))
             }
         }
     }

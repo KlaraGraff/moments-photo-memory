@@ -348,6 +348,8 @@ struct LibraryView: View {
         .padding(.horizontal, PaperMetrics.screenInset)
         .padding(.top, PaperMetrics.screenTopInset)
         .padding(.bottom, 14)
+        // Same paper as the title bar above it, so it reads as part of it.
+        .actsAsTitleBar()
     }
 
     /// The everyday choices as segments; Live Photos and Screenshots, picked

@@ -50,7 +50,13 @@ enum TitleBarDoubleClick {
 
     static func perform(in window: NSWindow) {
         let defaults = UserDefaults.standard
-        switch defaults.string(forKey: "AppleActionOnDoubleClick") {
+        var action = defaults.string(forKey: "AppleActionOnDoubleClick")
+        #if DEBUG
+        // UI tests turn AppKit's own action off and give the app one, to
+        // stand in for a Mac where AppKit's does nothing.
+        if let stand = defaults.string(forKey: "MomentsUITestTitleBarAction") { action = stand }
+        #endif
+        switch action {
         case "Minimize":
             window.performMiniaturize(nil)
         case "None":

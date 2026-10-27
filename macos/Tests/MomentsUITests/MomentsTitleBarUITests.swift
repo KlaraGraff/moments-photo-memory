@@ -17,9 +17,19 @@ final class MomentsTitleBarUITests: XCTestCase {
         if setting == "Minimize" || setting == "None" {
             throw XCTSkip("This Mac is set to \(setting ?? "") on a title bar double click")
         }
+        checkTopBar(extraArguments: [], expect: "left to AppKit")
+    }
+
+    /// As on maple's Mac, where AppKit's own title bar double click left the
+    /// window alone: the app does the action itself.
+    func testDoubleClickZoomsWhenAppKitDoesNothing() {
+        checkTopBar(extraArguments: ["-AppleActionOnDoubleClick", "None", "-MomentsUITestTitleBarAction", "Maximize"], expect: "performed")
+    }
+
+    private func checkTopBar(extraArguments: [String], expect: String) {
         let log = "/tmp/moments-titlebar-\(UUID().uuidString).log"
         let app = XCUIApplication()
-        app.launchArguments = ["-MomentsUITesting", "-MomentsUITestTitleBarLog", log, "-AppleLanguages", "(en)", "-AppleLocale", "en"]
+        app.launchArguments = ["-MomentsUITesting", "-MomentsUITestTitleBarLog", log, "-AppleLanguages", "(en)", "-AppleLocale", "en"] + extraArguments
         app.launch()
         app.activate()
         let window = app.windows.firstMatch
@@ -61,8 +71,9 @@ final class MomentsTitleBarUITests: XCTestCase {
         let report = (try? String(contentsOfFile: log, encoding: .utf8)) ?? "(no log)"
         print("TITLEBAR-LOG-BEGIN\n\(report)\nTITLEBAR-LOG-END")
         if report != "(no log)" {
-            // The app takes the double click itself rather than leaving it to AppKit.
-            XCTAssertTrue(report.contains("handled"), report)
+            XCTAssertTrue(report.contains(expect), report)
+            // Where AppKit acted, the app must not act as well.
+            if expect != "performed" { XCTAssertFalse(report.contains("performed"), report) }
         }
     }
 

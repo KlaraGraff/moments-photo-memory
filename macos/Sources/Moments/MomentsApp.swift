@@ -64,6 +64,15 @@ struct MomentsApp: App {
     init() {
         _ = AppLanguage.atLaunch
         #if DEBUG
+        // Each UI test starts at the default photos per row (or its launch
+        // argument), whatever an earlier test chose with − and +.
+        if ProcessInfo.processInfo.arguments.contains("-MomentsUITesting") {
+            UserDefaults.standard.removeObject(forKey: LibraryThumbnailSize.storageKey)
+            UserDefaults.standard.removeObject(forKey: LibraryThumbnailSize.legacyLevelKey)
+        }
+        #endif
+        LibraryThumbnailSize.migrateLegacyLevel()
+        #if DEBUG
         FlashProbe.startIfRequested()
         ScrollProbe.startIfRequested()
         ResizeProbe.startIfRequested()

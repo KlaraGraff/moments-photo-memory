@@ -75,7 +75,7 @@ final class MomentsStackUITests: XCTestCase {
     }
 
     func testStacksInASmallWindowAndTheDenseGrid() {
-        let app = launch(extra: ["-MomentsUITestSmallWindow", "-moments.library.thumbnailSize", "0"])
+        let app = launch(extra: ["-MomentsUITestSmallWindow", "-moments.library.photosPerRow", "8"])
         let shown = element(app, "library.stack.demo-burst-1").waitForExistence(timeout: timeout)
         capture(app, "stack-06-small-dense-grid-evidence")
         XCTAssertTrue(shown)

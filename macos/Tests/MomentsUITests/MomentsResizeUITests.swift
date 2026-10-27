@@ -56,7 +56,9 @@ final class MomentsResizeUITests: XCTestCase {
 
     /// Like Photos: zooming the window (a double click on its top bar) makes
     /// the photos larger or smaller but keeps how many are in a row; only the
-    /// toolbar's − and + change that, at any window size.
+    /// toolbar's − and + change that. A large window has room for more photos
+    /// per row than a small one; going back to the small window caps the
+    /// count, and the large window brings the chosen count back.
     func testZoomingTheWindowKeepsPhotosPerRow() throws {
         let setting = UserDefaults(suiteName: UserDefaults.globalDomain)?.string(forKey: "AppleActionOnDoubleClick")
         if setting == "Minimize" || setting == "None" {
@@ -64,8 +66,8 @@ final class MomentsResizeUITests: XCTestCase {
         }
         let app = XCUIApplication()
         app.launchArguments = [
-            "-MomentsUITesting", "-MomentsUITestSmallWindow", "-MomentsUITestStressCount", "120",
-            "-moments.library.thumbnailSize", "2", "-AppleLanguages", "(en)", "-AppleLocale", "en"
+            "-MomentsUITesting", "-MomentsUITestSmallWindow", "-MomentsUITestStressCount", "300",
+            "-AppleLanguages", "(en)", "-AppleLocale", "en"
         ]
         app.launch()
         app.activate()
@@ -78,7 +80,7 @@ final class MomentsResizeUITests: XCTestCase {
 
         let small = rows(in: app)
         evidence(app, "photos-per-row-small-evidence")
-        XCTAssertEqual(small.perRow, 4, "Default zoom at the small window")
+        XCTAssertEqual(small.perRow, 4, "Default photos per row at the small window")
 
         let smallFrame = window.frame
         titleBar.doubleClick()
@@ -89,19 +91,28 @@ final class MomentsResizeUITests: XCTestCase {
         XCTAssertEqual(large.perRow, 4, "Zooming the window changed how many photos are in a row")
         XCTAssertGreaterThan(large.photoWidth, small.photoWidth + 20, "The photos did not grow with the window")
 
-        // − adds photos to each row, in the large window and after going back.
-        XCTAssertTrue(zoomOut.isEnabled)
-        zoomOut.click()
+        // − all the way: the large window goes past the small one's 8.
+        var presses = 0
+        while zoomOut.isEnabled, presses < 20 {
+            zoomOut.click()
+            presses += 1
+            Thread.sleep(forTimeInterval: 0.5)
+        }
         Thread.sleep(forTimeInterval: 1)
-        XCTAssertEqual(rows(in: app).perRow, 6, "− at the large window")
+        let densest = rows(in: app).perRow
+        evidence(app, "photos-per-row-large-densest-evidence")
+        XCTAssertGreaterThan(densest, 8, "A large window should have room for more than 8 photos per row")
+
         titleBar.doubleClick()
         Thread.sleep(forTimeInterval: 1.5)
         XCTAssertEqual(window.frame, smallFrame, "The window did not zoom back")
-        XCTAssertEqual(rows(in: app).perRow, 6, "Zooming back changed how many photos are in a row")
-        zoomOut.click()
-        Thread.sleep(forTimeInterval: 1)
-        XCTAssertEqual(rows(in: app).perRow, 8, "The densest level at the small window")
-        evidence(app, "photos-per-row-small-densest-evidence")
+        XCTAssertEqual(rows(in: app).perRow, 8, "The small window caps photos per row at 8")
+        XCTAssertFalse(zoomOut.isEnabled, "− should be at its end in the small window")
+        evidence(app, "photos-per-row-small-capped-evidence")
+
+        titleBar.doubleClick()
+        Thread.sleep(forTimeInterval: 1.5)
+        XCTAssertEqual(rows(in: app).perRow, densest, "The large window did not bring the chosen count back")
     }
 
     private func photos(in app: XCUIApplication) -> XCUIElementQuery {

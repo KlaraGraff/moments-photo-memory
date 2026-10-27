@@ -99,21 +99,56 @@ final class LibraryGridInteractionTests: XCTestCase {
         XCTAssertEqual(LibraryGridNavigation.move(from: "a", .up, sections: sections, columns: 3), "a")
     }
 
-    /// Like Photos, each zoom level is a number of photos per row; larger
-    /// thumbnails mean fewer of them.
-    func testEachZoomLevelIsAColumnCount() {
-        let counts = (0...LibraryThumbnailSize.maximumLevel).map { LibraryThumbnailSize(level: $0).columns }
-        XCTAssertEqual(counts, [8, 6, 4, 3])
-        XCTAssertEqual(LibraryViewState().gridColumns, 4)
+    /// The smallest window has room for 3 to 8 photos per row; wider ones
+    /// for more, toward small photos.
+    func testStepsGrowWithTheWindow() {
+        XCTAssertEqual(LibraryThumbnailSize.steps(windowWidth: 900), [3, 4, 5, 6, 8])
+        XCTAssertEqual(LibraryThumbnailSize.steps(windowWidth: 600), [3, 4, 5, 6, 8])
+        XCTAssertEqual(LibraryThumbnailSize.steps(windowWidth: 1111).last, 10)
+        XCTAssertEqual(LibraryThumbnailSize.steps(windowWidth: 2560).last, 26)
+        XCTAssertEqual(LibraryViewState().gridColumns, LibraryThumbnailSize.defaultColumns)
     }
 
-    func testThumbnailSizeLevelsClampAndCompactAtTheSmallestTwo() {
-        XCTAssertEqual(LibraryThumbnailSize(level: -3).level, 0)
-        XCTAssertEqual(LibraryThumbnailSize(level: 99).level, LibraryThumbnailSize.maximumLevel)
-        XCTAssertTrue(LibraryThumbnailSize(level: 0).isCompact)
-        XCTAssertTrue(LibraryThumbnailSize(level: 1).isCompact)
-        XCTAssertFalse(LibraryThumbnailSize(level: LibraryThumbnailSize.defaultLevel).isCompact)
-        // The default keeps four prints in a row.
-        XCTAssertEqual(LibraryThumbnailSize(level: LibraryThumbnailSize.defaultLevel).columns, 4)
+    /// Resizing keeps the chosen count while the window has room for it, and
+    /// caps it at the densest step that fits when it does not.
+    func testTheWindowCapsTheChosenCountWithoutChangingIt() {
+        XCTAssertEqual(LibraryThumbnailSize.shown(chosen: 4, windowWidth: 900).columns, 4)
+        XCTAssertEqual(LibraryThumbnailSize.shown(chosen: 4, windowWidth: 2560).columns, 4)
+        XCTAssertEqual(LibraryThumbnailSize.shown(chosen: 18, windowWidth: 2560).columns, 18)
+        XCTAssertEqual(LibraryThumbnailSize.shown(chosen: 18, windowWidth: 900).columns, 8)
+        // A count that is not a step shows as the nearest one.
+        XCTAssertEqual(LibraryThumbnailSize.shown(chosen: 7, windowWidth: 2560).columns, 6)
+    }
+
+    func testPlusAndMinusStepFromWhatTheWindowShows() {
+        XCTAssertEqual(LibraryThumbnailSize.zoomed(chosen: 4, by: -1, windowWidth: 900), 5)
+        XCTAssertEqual(LibraryThumbnailSize.zoomed(chosen: 4, by: 1, windowWidth: 900), 3)
+        XCTAssertNil(LibraryThumbnailSize.zoomed(chosen: 3, by: 1, windowWidth: 900))
+        XCTAssertNil(LibraryThumbnailSize.zoomed(chosen: 8, by: -1, windowWidth: 900))
+        XCTAssertEqual(LibraryThumbnailSize.zoomed(chosen: 8, by: -1, windowWidth: 2560), 10)
+        // Capped at 8 in a small window: + goes to 6, − is at the end.
+        XCTAssertEqual(LibraryThumbnailSize.zoomed(chosen: 18, by: 1, windowWidth: 900), 6)
+        XCTAssertNil(LibraryThumbnailSize.zoomed(chosen: 18, by: -1, windowWidth: 900))
+    }
+
+    func testUpToFivePerRowArePrints() {
+        XCTAssertFalse(LibraryThumbnailSize(columns: LibraryThumbnailSize.defaultColumns).isCompact)
+        XCTAssertFalse(LibraryThumbnailSize(columns: 5).isCompact)
+        XCTAssertTrue(LibraryThumbnailSize(columns: 6).isCompact)
+    }
+
+    func testTheOldZoomLevelBecomesItsCount() throws {
+        let suite = "moments.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(0, forKey: LibraryThumbnailSize.legacyLevelKey)
+        LibraryThumbnailSize.migrateLegacyLevel(in: defaults)
+        XCTAssertEqual(defaults.integer(forKey: LibraryThumbnailSize.storageKey), 8)
+        XCTAssertNil(defaults.object(forKey: LibraryThumbnailSize.legacyLevelKey))
+        // Once only: a later choice stays.
+        defaults.set(12, forKey: LibraryThumbnailSize.storageKey)
+        defaults.set(2, forKey: LibraryThumbnailSize.legacyLevelKey)
+        LibraryThumbnailSize.migrateLegacyLevel(in: defaults)
+        XCTAssertEqual(defaults.integer(forKey: LibraryThumbnailSize.storageKey), 12)
     }
 }

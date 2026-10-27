@@ -217,6 +217,9 @@ struct ContentView: View {
             .toolbarBackground(.visible, for: .windowToolbar)
         }
         .frame(minWidth: 900, minHeight: 600)
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
+            if libraryState.windowWidth != width { libraryState.windowWidth = width }
+        }
         // The large photo view is a card over the whole window, sidebar included.
         .overlay {
             if let request = shared.viewerRequest {

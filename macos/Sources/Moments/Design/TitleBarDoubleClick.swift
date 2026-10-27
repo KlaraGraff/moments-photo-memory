@@ -4,49 +4,47 @@ import AppKit
 /// background) does what System Settings ▸ Desktop & Dock says ("Double-click
 /// a window's title bar to"), as in every Apple app.
 ///
-/// AppKit does this on its own, but on maple's Mac it did nothing over the
-/// page title while the same zoom, started by the app, worked. So the app
-/// takes the double click itself and leaves AppKit nothing to do twice.
+/// AppKit does this on its own (it does on the hosted test Mac), but on
+/// maple's Mac a double click on the page title left the window as it was,
+/// while the same zoom started by the app worked. So the app watches the
+/// double click, and when the window hasn't changed once it is over, does
+/// the action itself. It never acts twice.
 @MainActor
 enum TitleBarDoubleClick {
     private static var monitor: Any?
-    /// The window whose bar got the second click, until that click ends.
-    private static weak var pending: NSWindow?
+    /// The window whose bar got the second click, and its frame then.
+    private static var pending: (window: NSWindow, frame: NSRect)?
 
     static func install() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { event in
             // Local monitors run on the main thread.
-            MainActor.assumeIsolated { take(event) } ? nil : event
+            MainActor.assumeIsolated { watch(event) }
+            return event
         }
     }
 
-    /// True when the event is the second press on the bar, taken here so
-    /// AppKit does nothing with it. The window changes once that click is
-    /// over: changed during it, the release put the window back.
-    private static func take(_ event: NSEvent) -> Bool {
+    private static func watch(_ event: NSEvent) {
         switch event.type {
         case .leftMouseDown:
             pending = nil
             guard event.clickCount == 2, let window = event.window,
-                  isOnEmptyTopBar(event, in: window) else { return false }
-            pending = window
-            return true
+                  isOnEmptyTopBar(event, in: window) else { return }
+            pending = (window, window.frame)
         case .leftMouseUp:
-            guard let window = pending else { return false }
+            guard let press = pending else { return }
             pending = nil
-            DispatchQueue.main.async {
+            let window = press.window, frame = press.frame
+            // Long enough for AppKit's own zoom or fill to have started.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                let untouched = window.frame == frame && !window.isMiniaturized
+                if untouched { perform(in: window) }
                 #if DEBUG
-                let before = window.frame
-                #endif
-                perform(in: window)
-                #if DEBUG
-                TitleBarProbe.note("performed \(UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "default") \(before) -> \(window.frame)")
+                TitleBarProbe.note("\(untouched ? "performed" : "left to AppKit") \(frame) -> \(window.frame)")
                 #endif
             }
-            return false
         default:
-            return false
+            break
         }
     }
 

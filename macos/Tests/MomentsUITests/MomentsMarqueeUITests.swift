@@ -60,6 +60,79 @@ final class MomentsMarqueeUITests: XCTestCase {
         XCTAssertFalse(text.contains("missing"), text)
     }
 
+    /// Held at the bottom edge over a Library of small month sections, the
+    /// rectangle selects every photo it scrolls over: the rows just below
+    /// the window too, which the grid may have built before the drag, and
+    /// on a second drag over rows built by the first (seen in a screen
+    /// recording: the middle rows of a month stayed unselected inside the
+    /// rectangle). The drags are short, so those rows are still on screen
+    /// when they end.
+    func testEveryPhotoScrolledIntoTheRectangleIsSelected() {
+        // CI prints the app's report of each drag (-MomentsUITestMarqueeProbe).
+        let folder = ProcessInfo.processInfo.environment["MOMENTS_MARQUEE_DIR"].flatMap { $0.hasPrefix("/") ? $0 : nil }
+        if let folder { try? FileManager.default.removeItem(atPath: folder) }
+        // About 13 photos a month, grouped by month, as in the recording.
+        var arguments = [
+            "-MomentsUITestStressCount", "600", "-MomentsUITestStressSpacing", "200000",
+            "-moments.library.grouping", "month",
+        ]
+        if let folder { arguments += ["-MomentsUITestMarqueeProbe", folder] }
+        let app = launch(extraArguments: arguments)
+        let visible = visiblePhotos(app)
+        guard let first = visible.first else { return XCTFail("No photo on screen") }
+        let window = app.windows.firstMatch.frame
+        let lastColumn = visible.map(\.frame.midX).max() ?? first.frame.midX
+        let start = point(app, x: first.frame.minX - 12, y: first.frame.minY - 4)
+        // Just inside the bottom edge, and past it, where it scrolls fastest.
+        let edge = point(app, x: lastColumn, y: window.maxY - 6)
+        let belowEdge = point(app, x: lastColumn, y: window.maxY + 60)
+        let scrollView = app.scrollViews.containing(.any, identifier: first.element.identifier).firstMatch
+        func backAtTheTop() -> Bool { abs(first.element.frame.minY - first.frame.minY) < 2 }
+
+        let drags: [(name: String, to: XCUICoordinate, hold: TimeInterval)] = [
+            ("the first drag", edge, 0.5),
+            ("a drag over rows built before", edge, 0.5),
+            ("a fast drag past the edge", belowEdge, 0.3),
+            ("a longer fast drag past the edge", belowEdge, 0.8),
+        ]
+        for (index, drag) in drags.enumerated() {
+            if index > 0 {
+                app.typeKey(.escape, modifierFlags: [])
+                // Back to the top, where the first photo is where it was.
+                for _ in 0..<40 where !backAtTheTop() {
+                    scrollView.scroll(byDeltaX: 0, deltaY: 2000)
+                }
+                XCTAssertTrue(backAtTheTop(), "Could not scroll back to the top (first photo at \(first.element.frame.minY), was \(first.frame.minY))")
+                pauseLongerThanADoubleClick()
+            }
+            start.click(forDuration: 0.1, thenDragTo: drag.to, withVelocity: .default, thenHoldForDuration: drag.hold)
+            assertEveryPhotoOnScreenIsSelected(app, after: drag.name, moreThan: visible.count)
+            // Photos the drag scrolled past are off screen now; the app's
+            // report names any inside the rectangle that it did not select.
+            if let folder {
+                let report = URL(fileURLWithPath: folder).appending(path: "marquee-report-\(index + 1).txt")
+                let deadline = Date().addingTimeInterval(10)
+                while !FileManager.default.fileExists(atPath: report.path), Date() < deadline {
+                    Thread.sleep(forTimeInterval: 0.5)
+                }
+                let text = (try? String(contentsOf: report, encoding: .utf8)) ?? "missing marquee report"
+                XCTAssertTrue(text.contains("inside the rectangle but not counted: 0\n"), "After \(drag.name): \(text.prefix(600))")
+            }
+        }
+    }
+
+    /// After a drag from above the first photo to the bottom edge, across
+    /// every column, every photo on screen is inside the rectangle.
+    private func assertEveryPhotoOnScreenIsSelected(_ app: XCUIApplication, after drag: String, moreThan minimum: Int) {
+        let count = Int(selectionCount(app)) ?? 0
+        XCTAssertGreaterThan(count, minimum, "\(drag) did not scroll and select")
+        let onScreen = visiblePhotos(app, scanning: 600)
+        XCTAssertFalse(onScreen.isEmpty)
+        let missed = onScreen.filter { $0.element.value as? String != "Selected" }.map(\.element.identifier)
+        if !missed.isEmpty { capture(app, named: "marquee-missed-evidence") }
+        XCTAssertTrue(missed.isEmpty, "After \(drag), inside the rectangle but not selected (\(missed.count) of \(onScreen.count) on screen, \(count) selected): \(missed)")
+    }
+
     private func exerciseMarquee(_ app: XCUIApplication, prefix: String) {
         let visible = visiblePhotos(app)
         guard let first = visible.first else { return XCTFail("No photo on screen") }
@@ -126,13 +199,14 @@ final class MomentsMarqueeUITests: XCTestCase {
     }
 
     /// Photos fully inside the window, read before any drag so the test
-    /// does not query the app while it works.
-    private func visiblePhotos(_ app: XCUIApplication) -> [Photo] {
+    /// does not query the app while it works. The grid's built photos come
+    /// in order; `limit` is how many of them to look at.
+    private func visiblePhotos(_ app: XCUIApplication, scanning limit: Int = 40) -> [Photo] {
         let photos = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
         XCTAssertTrue(photos.element(boundBy: 1).waitForExistence(timeout: launchTimeout))
         let window = app.windows.firstMatch.frame
         var visible: [Photo] = []
-        for index in 0..<min(photos.count, 40) {
+        for index in 0..<min(photos.count, limit) {
             let element = photos.element(boundBy: index)
             let frame = element.frame
             if window.insetBy(dx: 0, dy: 8).contains(frame), element.isHittable {

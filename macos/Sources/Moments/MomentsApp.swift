@@ -51,6 +51,14 @@ struct MomentsApp: App {
               index + 1 < ProcessInfo.processInfo.arguments.count else { return nil }
         return Int(ProcessInfo.processInfo.arguments[index + 1])
     }
+
+    /// `-MomentsUITestStressSpacing <seconds>` spaces them out in time (two
+    /// minutes apart otherwise), so grouping by month gives many small sections.
+    private static var uiTestStressSpacing: TimeInterval {
+        guard let index = ProcessInfo.processInfo.arguments.firstIndex(of: "-MomentsUITestStressSpacing"),
+              index + 1 < ProcessInfo.processInfo.arguments.count else { return 120 }
+        return TimeInterval(ProcessInfo.processInfo.arguments[index + 1]) ?? 120
+    }
     #endif
 
     init() {
@@ -101,7 +109,7 @@ struct MomentsApp: App {
                 }
             }
             if isUITesting || testStoreURL != nil, let count = Self.uiTestStressCount {
-                try? DemoSeeder.generateSyntheticLibrary(count: count, context: container.mainContext)
+                try? DemoSeeder.generateSyntheticLibrary(count: count, spacing: Self.uiTestStressSpacing, context: container.mainContext)
             }
             #endif
             modelContainer = container

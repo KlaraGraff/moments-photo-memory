@@ -97,7 +97,7 @@ public enum DemoSeeder {
     /// Inserts a deterministic, local-only stress fixture for scrolling checks.
     /// The generator never reads files or Photos and keeps all coordinates near 0,0.
     @discardableResult
-    public static func generateSyntheticLibrary(count: Int = 5_000, context: ModelContext) throws -> Int {
+    public static func generateSyntheticLibrary(count: Int = 5_000, spacing: TimeInterval = 120, context: ModelContext) throws -> Int {
         guard count > 0 else { return 0 }
         let existingItems = try context.fetch(FetchDescriptor<MediaItem>())
         let existingIDs = Set(existingItems.map(\.id))
@@ -118,7 +118,7 @@ public enum DemoSeeder {
             let isPossibleScreenshot = index % 43 == 0
             let item = MediaItem(
                 id: id,
-                captureDate: baseDate.addingTimeInterval(Double(index) * 120),
+                captureDate: baseDate.addingTimeInterval(Double(index) * spacing),
                 latitude: Double(index % 20) / 1_000,
                 longitude: Double((index * 7) % 20) / 1_000,
                 kind: index % 19 == 0 ? .video : .photo,

@@ -94,6 +94,42 @@ final class TripRegroupingTests: XCTestCase {
         XCTAssertEqual(Set(try context.fetch(FetchDescriptor<Trip>()).map(\.id)), ["old", "renamed", "lock-trip"])
     }
 
+    func testPhotosTakenOutOfTripsAndEditedTripsStay() throws {
+        let context = try makeContext()
+        seedOldImport(in: context)
+        // A trip deleted by hand leaves its photos in no trip, unlocked.
+        for day in 70..<73 {
+            for index in 0..<6 {
+                photo("deleted-trip-\(day)-\(index)", day: day, hour: 9 + Double(index), latitude: 15.0, longitude: 25.0, trip: nil, in: context)
+            }
+        }
+        let widened = Trip(id: "widened", name: "Trip", updatedBy: MomentsAccount.localID, suggestionStatusRaw: "suggestion")
+        context.insert(widened)
+        photo("widened-home", day: 75, latitude: 10.0, longitude: 20.0, trip: widened, in: context)
+        try context.save()
+
+        _ = try TripRegrouping.regroup(context: context, locked: [], calendar: utc)
+
+        let items = try context.fetch(FetchDescriptor<MediaItem>())
+        XCTAssertTrue(items.filter { $0.id.hasPrefix("deleted-trip") }.allSatisfy { $0.tripID == nil })
+        XCTAssertEqual(items.first { $0.id == "widened-home" }?.tripID, "widened")
+    }
+
+    func testATripLeftWithOnlyDeletedPhotosGoesAway() throws {
+        let context = try makeContext()
+        seedOldImport(in: context)
+        let stray = Trip(id: "stray", name: "Trip", suggestionStatusRaw: "suggestion")
+        context.insert(stray)
+        photo("stray-home", day: 61, latitude: 10.0, longitude: 20.0, trip: stray, in: context)
+        photo("stray-deleted", day: 61, hour: 13, latitude: 10.0, longitude: 20.0, trip: stray, in: context).deletedAt = .now
+        try context.save()
+
+        _ = try TripRegrouping.regroup(context: context, locked: [], calendar: utc)
+
+        XCTAssertFalse(try context.fetch(FetchDescriptor<Trip>()).contains { $0.id == "stray" })
+        XCTAssertNil(try context.fetch(FetchDescriptor<MediaItem>()).first { $0.id == "stray-deleted" }?.tripID)
+    }
+
     func testRunsOncePerMac() throws {
         let suite = "TripRegroupingTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -101,9 +137,8 @@ final class TripRegroupingTests: XCTestCase {
         let context = try makeContext()
         seedOldImport(in: context)
         try context.save()
-        let container = try XCTUnwrap(self.container)
 
-        XCTAssertNotNil(try TripRegrouping.runOnce(container: container, defaults: defaults))
-        XCTAssertNil(try TripRegrouping.runOnce(container: container, defaults: defaults))
+        XCTAssertNotNil(try TripRegrouping.runOnce(context: context, defaults: defaults))
+        XCTAssertNil(try TripRegrouping.runOnce(context: context, defaults: defaults))
     }
 }

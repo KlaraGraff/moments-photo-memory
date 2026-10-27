@@ -48,15 +48,14 @@ enum TripNaming {
     }
 
     /// Names given while the trip's places were still unknown: the old date
-    /// names, "Trip August 2026" and "Trip 3", in any language the import ran
-    /// in. They get the places once the cities are named.
-    static func isPlacelessDefaultName(_ name: String, start: Date?, calendar: Calendar = .current) -> Bool {
+    /// names, "Trip August 2026", "旅程 2026年8月" and "Trip 3", in any
+    /// language the import ran in. They get the places once the cities are
+    /// named. Any month matches: the trip's dates may have moved since, and a
+    /// name someone typed lives in `overrideName`, never here.
+    static func isPlacelessDefaultName(_ name: String) -> Bool {
         if isOldDefaultName(name) { return true }
-        let words = ["Trip", "旅程", "Reise"]
-        if name.range(of: #"^(Trip|旅程|Reise) \d+$"#, options: .regularExpression) != nil { return true }
-        guard let start else { return false }
-        let months = ["en", "zh-Hans", "de"].map { month(start, locale: Locale(identifier: $0), calendar: calendar) }
-        return words.contains { word in months.contains { name == word + " " + $0 } }
+        let pattern = #"^(Trip|旅程|Reise) (\d+|\p{L}+\.? \d{4}|\d{4}年\d{1,2}月)$"#
+        return name.range(of: pattern, options: .regularExpression) != nil
     }
 
     private static func unique(_ values: [String]) -> [String] {
@@ -82,7 +81,7 @@ struct TripNameBackfill: Sendable {
         let context = ModelContext(container)
         let trips = try context.fetch(FetchDescriptor<Trip>()).filter {
             $0.overrideName == nil
-                && TripNaming.isPlacelessDefaultName($0.name, start: $0.startDate ?? $0.orderedItems.compactMap(\.captureDate).first)
+                && TripNaming.isPlacelessDefaultName($0.name)
         }
         var renamed = 0
         var lookups = 0

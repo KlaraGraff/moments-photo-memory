@@ -6,11 +6,14 @@ import SwiftData
 /// (`TripSegmenter`): imports then put every photo in a trip, so daily life
 /// became hundreds of small chapters. Runs once per Mac.
 ///
-/// Anything someone shaped by hand stays as it is: a trip that was renamed,
-/// confirmed, split off, or has a trip memory keeps its photos, and photos
-/// placed by hand (`TripAssignmentLocks`) never move. The other photos are
-/// grouped again; an old trip that keeps most of its photos keeps its id, so
-/// its cover choice stays, and empty old trips go away.
+/// Only photos still in a trip the import suggested and nobody touched are
+/// grouped again. A trip that was renamed, confirmed, edited, merged, split,
+/// given a cover or a trip memory keeps its photos; photos placed by hand
+/// (`TripAssignmentLocks`) never move; and a photo in no trip was taken out
+/// by hand (imports used to put every photo in one), so it stays out. An
+/// old trip that keeps most of its photos keeps its id, and empty old trips
+/// go away. It runs on the main context before importing can start, so it
+/// never races an import or an edit.
 enum TripRegrouping {
     static let versionKey = "moments.trip.groupingVersion"
     static let currentVersion = 2
@@ -22,11 +25,12 @@ enum TripRegrouping {
     }
 
     /// Regroups once; later calls do nothing.
+    @MainActor
     @discardableResult
-    static func runOnce(container: ModelContainer, defaults: UserDefaults = TripAssignmentLocks.store) throws -> Outcome? {
+    static func runOnce(context: ModelContext, defaults: UserDefaults = TripAssignmentLocks.store) throws -> Outcome? {
         guard defaults.integer(forKey: versionKey) < currentVersion else { return nil }
-        let context = ModelContext(container)
-        let outcome = try regroup(context: context, locked: TripAssignmentLocks.lockedIDs(defaults: defaults))
+        let covered = Set(TripCoverChoice.decode(defaults.string(forKey: TripCoverChoice.defaultsKey) ?? "").keys)
+        let outcome = try regroup(context: context, locked: TripAssignmentLocks.lockedIDs(defaults: defaults), covered: covered)
         defaults.set(currentVersion, forKey: versionKey)
         return outcome
     }
@@ -34,6 +38,7 @@ enum TripRegrouping {
     static func regroup(
         context: ModelContext,
         locked: Set<String>,
+        covered: Set<String> = [],
         configuration: ImportConfiguration = ImportConfiguration(),
         calendar: Calendar = .current
     ) throws -> Outcome {
@@ -43,17 +48,21 @@ enum TripRegrouping {
         let remembered = Set(try context.fetch(FetchDescriptor<CollectionMemory>(
             predicate: #Predicate { $0.scopeRaw == tripScope }
         )).map(\.scopeKey))
+        // Every hand edit sets `updatedBy`; imports never do.
         let kept = Set(trips.filter { trip in
-            trip.overrideName != nil || !trip.isSuggestion || remembered.contains(trip.id)
+            trip.overrideName != nil || !trip.isSuggestion || trip.updatedBy != nil
+                || trip.mergeOverrideID != nil || trip.splitOverrideDayKeys != nil
+                || remembered.contains(trip.id) || covered.contains(trip.id)
                 || trip.items.contains { locked.contains($0.id) }
         }.map(\.id))
 
+        let tripIDs = Set(trips.map(\.id))
         let undated = ImportCaptureDateSource.fileDateFallback.rawValue
         let free = items.filter { item in
             guard !locked.contains(item.id), item.effectiveCaptureDate != nil,
                   item.captureDateSourceRaw != undated else { return false }
-            guard let tripID = item.trip?.id ?? item.tripID else { return true }
-            return !kept.contains(tripID)
+            guard let tripID = item.trip?.id ?? item.tripID else { return false }
+            return !kept.contains(tripID) && tripIDs.contains(tripID)
         }
         guard !free.isEmpty else { return Outcome() }
         let freeIDs = Set(free.map(\.id))
@@ -110,9 +119,21 @@ enum TripRegrouping {
         }
         // Saved before the deletes, so they cannot take photos along.
         try context.save()
-        for trip in replaceable.values where !reused.contains(trip.id) && trip.items.isEmpty {
-            context.delete(trip)
-            outcome.removed += 1
+        for trip in replaceable.values where !reused.contains(trip.id) {
+            // What is left is in Recently Deleted or dated by file only.
+            let left = trip.items
+            if left.allSatisfy({ $0.deletedAt != nil }) {
+                for item in left {
+                    item.trip = nil
+                    item.tripID = nil
+                }
+                context.delete(trip)
+                outcome.removed += 1
+            } else {
+                let dates = left.filter { $0.deletedAt == nil }.compactMap(\.effectiveCaptureDate)
+                trip.startDate = dates.min()
+                trip.endDate = dates.max()
+            }
         }
         try context.save()
         return outcome

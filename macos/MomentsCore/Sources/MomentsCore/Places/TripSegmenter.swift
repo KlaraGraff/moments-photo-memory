@@ -4,9 +4,10 @@ import Foundation
 ///
 /// Home is not a setting. It is any place that holds a good share of the
 /// photo days of the surrounding months, so it follows a move to another
-/// city, and a place visited most weekends counts too. Photos taken within `awayRadiusMeters` of home are daily life and belong
-/// to no trip. Photos without a location take the side of the located photo
-/// closest in time (within `locationlessMatchWindow`). When no home stands
+/// /// city, and a place visited most weekends counts too. Photos taken within
+/// `awayRadiusMeters` of home are daily life and belong to no trip. Photos
+/// without a location take the side of the located photo closest in time
+/// (within `locationlessMatchWindow`). When no home stands
 /// out, as for a folder that holds a single trip, every photo counts as away
 /// and the time and distance gaps alone split the trips.
 public struct TripSegmenter: Sendable {
@@ -26,6 +27,9 @@ public struct TripSegmenter: Sendable {
     /// them, to count as a home.
     public var minimumHomeDays: Int = 10
     public var minimumHomeShare: Double = 0.25
+    /// ... spread over this many 30-day stretches, so one long stay away is
+    /// never home.
+    public var minimumHomeMonths: Int = 3
     /// Away photos further apart than this start a new trip when they are
     /// also more than `maximumTripDistanceMeters` apart.
     public var maximumTimeGap: TimeInterval = 36 * 60 * 60
@@ -33,6 +37,10 @@ public struct TripSegmenter: Sendable {
     /// Away photos further apart than this always start a new trip.
     public var maximumQuietGap: TimeInterval = 4 * 24 * 60 * 60
     public var locationlessMatchWindow: TimeInterval = 12 * 60 * 60
+    /// Photos without a location and no located photo nearby count as
+    /// away: right for a folder from a camera without GPS. In a phone
+    /// library they are mostly screenshots and saved images, so daily life.
+    public var locationlessDefaultsToAway = false
     /// Where a home is known, a stretch away becomes a trip with this many
     /// photos, or when it spans more than one day.
     public var minimumTripItems: Int = 5
@@ -42,44 +50,42 @@ public struct TripSegmenter: Sendable {
     public init() {}
 
     /// `stops` are the photos to place. `context` adds photos already in the
-    /// library, used only to find home, so a small import still knows it.
+    /// library: they tell where home is, lend their side to nearby photos
+    /// without a location, and keep a few new photos next to a trip in it.
     public func segment(_ stops: [PhotoStop], context: [PhotoStop] = []) -> Result {
-        let ordered = stops.sorted { $0.date == $1.date ? $0.id < $1.id : $0.date < $1.date }
+        let ordered = stops.sorted(by: Self.photoOrder)
         guard !ordered.isEmpty else { return Result(trips: [], homeIDs: []) }
         let home = HomeFinder(segmenter: self, stops: ordered + context)
-
-        // nil: no location, decided from neighbours below.
-        let located: [Bool?] = ordered.map { stop in
-            guard let coordinate = stop.coordinate else { return nil }
-            let homes = home.homes(at: stop.date)
-            return homes.allSatisfy { coordinate.distance(to: $0) > awayRadiusMeters }
+        func isAway(_ coordinate: GeoPoint, at date: Date) -> Bool {
+            home.homes(at: date).allSatisfy { coordinate.distance(to: $0) > awayRadiusMeters }
         }
-        let locatedIndexes = located.indices.filter { located[$0] != nil }
-        var isAway = [Bool](repeating: false, count: ordered.count)
-        var cursor = 0
-        for index in ordered.indices {
-            if let away = located[index] {
-                isAway[index] = away
-                continue
+        func homeKnown(at date: Date) -> Bool { !home.homes(at: date).isEmpty }
+
+        let located = (ordered + context)
+            .compactMap { stop in stop.coordinate.map { (date: stop.date, away: isAway($0, at: stop.date)) } }
+            .sorted { $0.date < $1.date }
+        let locatedDates = located.map(\.date)
+        let libraryAway = context
+            .compactMap { stop in stop.coordinate.flatMap { isAway($0, at: stop.date) ? stop.date : nil } }
+            .sorted()
+
+        let away: [Bool] = ordered.map { stop in
+            if let coordinate = stop.coordinate { return isAway(coordinate, at: stop.date) }
+            let index = Self.lowerBound(stop.date, in: locatedDates)
+            let nearest = [index - 1, index]
+                .filter { located.indices.contains($0) }
+                .min { abs(located[$0].date.timeIntervalSince(stop.date)) < abs(located[$1].date.timeIntervalSince(stop.date)) }
+            if let nearest, abs(located[nearest].date.timeIntervalSince(stop.date)) <= locationlessMatchWindow {
+                return located[nearest].away
             }
-            while cursor < locatedIndexes.count, locatedIndexes[cursor] < index { cursor += 1 }
-            let neighbours = [cursor - 1, cursor].filter { locatedIndexes.indices.contains($0) }.map { locatedIndexes[$0] }
-            let nearest = neighbours.min {
-                abs(ordered[$0].date.timeIntervalSince(ordered[index].date))
-                    < abs(ordered[$1].date.timeIntervalSince(ordered[index].date))
-            }
-            if let nearest, abs(ordered[nearest].date.timeIntervalSince(ordered[index].date)) <= locationlessMatchWindow {
-                isAway[index] = located[nearest] ?? false
-            } else {
-                isAway[index] = home.homes(at: ordered[index].date).isEmpty
-            }
+            return locationlessDefaultsToAway || !homeKnown(at: stop.date)
         }
 
         var runs: [[PhotoStop]] = []
         var current: [PhotoStop] = []
         var lastCoordinate: GeoPoint?
         for (index, stop) in ordered.enumerated() {
-            guard isAway[index] else {
+            guard away[index] else {
                 if !current.isEmpty { runs.append(current); current = [] }
                 lastCoordinate = nil
                 continue
@@ -89,7 +95,8 @@ public struct TripSegmenter: Sendable {
                 let far = lastCoordinate.flatMap { last in
                     stop.coordinate.map { last.distance(to: $0) > maximumTripDistanceMeters }
                 } ?? false
-                if gap > maximumQuietGap || (gap > maximumTimeGap && far) {
+                // Without a home, a quiet day and a half ends a trip as before.
+                if gap > maximumQuietGap || (gap > maximumTimeGap && (far || !homeKnown(at: stop.date))) {
                     runs.append(current)
                     current = []
                 }
@@ -100,17 +107,35 @@ public struct TripSegmenter: Sendable {
         if !current.isEmpty { runs.append(current) }
 
         var trips: [[String]] = []
-        var homeIDs = Set(ordered.indices.filter { !isAway[$0] }.map { ordered[$0].id })
+        var homeIDs = Set(ordered.indices.filter { !away[$0] }.map { ordered[$0].id })
         for run in runs {
-            // Without a home there is no daily life to fall back to.
-            let homeKnown = run.first.map { !home.homes(at: $0.date).isEmpty } ?? false
-            if run.count >= minimumTripItems || spansSeveralDays(run) || !homeKnown {
+            guard let first = run.first, let last = run.last else { continue }
+            // Without a home there is no daily life to fall back to, and a
+            // few photos next to the library's photos away belong with them.
+            let nextToLibraryAway = Self.lowerBound(last.date.addingTimeInterval(maximumTimeGap), in: libraryAway, inclusive: true)
+                > Self.lowerBound(first.date.addingTimeInterval(-maximumTimeGap), in: libraryAway)
+            if run.count >= minimumTripItems || spansSeveralDays(run) || !homeKnown(at: first.date) || nextToLibraryAway {
                 trips.append(run.map(\.id))
             } else {
                 homeIDs.formUnion(run.map(\.id))
             }
         }
         return Result(trips: trips, homeIDs: homeIDs)
+    }
+
+    private static func photoOrder(_ lhs: PhotoStop, _ rhs: PhotoStop) -> Bool {
+        lhs.date == rhs.date ? lhs.id < rhs.id : lhs.date < rhs.date
+    }
+
+    /// The first index whose date is not before `date` (after it, when
+    /// `inclusive`).
+    private static func lowerBound(_ date: Date, in sorted: [Date], inclusive: Bool = false) -> Int {
+        var low = 0, high = sorted.count
+        while low < high {
+            let mid = (low + high) / 2
+            if sorted[mid] < date || (inclusive && sorted[mid] == date) { low = mid + 1 } else { high = mid }
+        }
+        return low
     }
 
     private func spansSeveralDays(_ run: [PhotoStop]) -> Bool {
@@ -168,11 +193,18 @@ private final class HomeFinder {
         let total = Double(counts.reduce(0, +))
         return counts.indices
             .filter { counts[$0] >= segmenter.minimumHomeDays && Double(counts[$0]) >= segmenter.minimumHomeShare * total }
+            .filter { Self.months(of: window, in: daysByCluster[$0]) >= segmenter.minimumHomeMonths }
             .map { centres[$0] }
     }
 
     private static func count(of window: ClosedRange<Int>, in sorted: [Int]) -> Int {
         lowerBound(window.upperBound + 1, in: sorted) - lowerBound(window.lowerBound, in: sorted)
+    }
+
+    /// How many 30-day stretches the days in `window` touch.
+    private static func months(of window: ClosedRange<Int>, in sorted: [Int]) -> Int {
+        let slice = sorted[lowerBound(window.lowerBound, in: sorted)..<lowerBound(window.upperBound + 1, in: sorted)]
+        return Set(slice.map { Int((Double($0) / 30).rounded(.down)) }).count
     }
 
     private static func lowerBound(_ value: Int, in sorted: [Int]) -> Int {

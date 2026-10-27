@@ -93,13 +93,44 @@ final class TripSegmenterTests: XCTestCase {
         XCTAssertEqual(result.trips, [photos.map(\.id)])
     }
 
+    func testALongStayAwayIsNeverHome() {
+        let stay = days(0..<14, at: tokyo, prefix: "tokyo")
+        let result = TripSegmenter().segment(stay)
+
+        XCTAssertEqual(result.trips, [stay.map(\.id)])
+    }
+
+    func testAFolderWithoutLocationsIsATripEvenWhenHomeIsKnown() {
+        let library = homeDays(0..<60, skipping: 40..<43)
+        let camera = (40..<43).flatMap { day in
+            (0..<6).map { PhotoStop(id: "camera-\(day)-\($0)", date: date(day: day, hour: 9 + Double($0))) }
+        }
+        var segmenter = TripSegmenter()
+        segmenter.locationlessDefaultsToAway = true
+
+        XCTAssertEqual(segmenter.segment(camera, context: library).trips, [camera.map(\.id)])
+        XCTAssertTrue(TripSegmenter().segment(camera, context: library).trips.isEmpty, "screenshots in a phone library")
+    }
+
+    func testAFewNewPhotosNextToATripInTheLibraryStayATrip() {
+        let library = homeDays(0..<60, skipping: 30..<34) + days(30..<33, at: paris, prefix: "paris")
+        let fresh = [
+            PhotoStop(id: "fresh-1", date: date(day: 33, hour: 10), coordinate: paris),
+            PhotoStop(id: "fresh-2", date: date(day: 33, hour: 11), coordinate: paris)
+        ]
+        let result = TripSegmenter().segment(fresh, context: library)
+
+        XCTAssertEqual(result.trips, [["fresh-1", "fresh-2"]])
+    }
+
     func testHomeFollowsAMove() {
         let munich = GeoPoint(latitude: 48.14, longitude: 11.58)
         let before = homeDays(0..<200)
         let after = days(200..<400, at: munich, prefix: "munich", perDay: 2)
         let result = TripSegmenter().segment(before + after)
 
-        XCTAssertTrue(result.trips.allSatisfy { $0.count < 40 }, "\(result.trips.map(\.count))")
+        XCTAssertFalse(result.homeIDs.isEmpty)
+        XCTAssertTrue(result.trips.isEmpty, "\(result.trips.map(\.count))")
     }
 
     func testLibraryPhotosTellASmallImportWhereHomeIs() {

@@ -26,7 +26,18 @@ final class ImportController {
 
     func configure(container: ModelContainer) {
         modelContainer = container
+        regroupOldTrips(in: container)
         PlaceNameBackfillScheduler.shared.start(container: container)
+    }
+
+    /// Once, before any import or backfill can start (see `TripRegrouping`).
+    /// UI tests keep their seeded trips; unit tests call it directly.
+    private func regroupOldTrips(in container: ModelContainer) {
+        guard !ProcessInfo.processInfo.arguments.contains("-MomentsUITesting") else { return }
+        #if DEBUG
+        if UnitTestHostDelegate.isUnitTestHost { return }
+        #endif
+        _ = try? TripRegrouping.runOnce(context: container.mainContext)
     }
 
     func chooseFolder() {

@@ -240,7 +240,7 @@ struct ImportOrganizer {
         let ordered = metadata.sorted { lhs, rhs in
             lhs.captureDate == rhs.captureDate ? lhs.id < rhs.id : lhs.captureDate < rhs.captureDate
         }
-        let (tripGroups, homeGroup) = splitTrips(ordered, library: library)
+        let (tripGroups, homeGroup) = splitTrips(ordered, library: library, isFolder: sourceFolderName != nil)
         var allMedia: [OrganizedMedia] = []
         var trips: [OrganizedTrip] = []
         var places: [OrganizedPlace] = []
@@ -252,9 +252,9 @@ struct ImportOrganizer {
         let nearDuplicateIDs = nearDuplicateIDs(in: ordered)
         let orderedIndex = Dictionary(ordered.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         var outsideDateIDs = Set<String>()
-        for index in tripGroups.indices.dropFirst() {
-            guard let previous = tripGroups[index - 1].last,
-                  let current = tripGroups[index].first else { continue }
+        for group in tripGroups {
+            guard let current = group.first, let index = orderedIndex[current.id], index > 0 else { continue }
+            let previous = ordered[index - 1]
             if current.captureDate.timeIntervalSince(previous.captureDate) > configuration.captureDateConflictThreshold {
                 outsideDateIDs.insert(current.id)
             }
@@ -268,6 +268,8 @@ struct ImportOrganizer {
             try Task.checkCancellation()
             let tripID = isTrip ? stableID(prefix: "trip", ids: group.map(\.id)) : nil
             let isUndated = isTrip && group.allSatisfy { $0.captureDateSource == .fileDateFallback }
+            let locatedInGroup = group.filter { $0.latitude != nil && $0.longitude != nil }
+            let zonedInGroup = group.filter { $0.timeZoneIdentifier != nil }
             var tripName: String
             if isUndated {
                 // Several undated groups from one folder get numbered names.
@@ -386,11 +388,11 @@ struct ImportOrganizer {
                 }
                 reasons = Array(Set(reasons)).sorted { $0.rawValue < $1.rawValue }
                 let city = cityByStop[item.id].flatMap { cityNames[$0.id] }
-                let suggested = nearestPlaceSuggestion(for: item, in: group, spotByStop: spotByStop)
+                let suggested = nearestPlaceSuggestion(for: item, located: locatedInGroup, spotByStop: spotByStop)
                 let suggestedName = suggested.flatMap { placeByID[$0]?.name }
                 let timeZoneIdentifier = item.timeZoneIdentifier
                     ?? city?.timeZoneIdentifier
-                    ?? nearestTimeZoneIdentifier(for: item, in: group)
+                    ?? Self.nearest(to: item, in: zonedInGroup)?.timeZoneIdentifier
                     ?? TimeZone.autoupdatingCurrent.identifier
                 let dayKey = localDayKey(for: item, timeZoneIdentifier: timeZoneIdentifier)
                 let placeID = item.latitude.flatMap { latitude in
@@ -597,22 +599,39 @@ struct ImportOrganizer {
     }
 
     /// Trips are the stretches away from home (see `TripSegmenter`); the
-    /// rest is daily life, in date order.
+    /// rest is daily life, in date order. Photos dated only by their file
+    /// say nothing about when they were taken, so they keep their own trips,
+    /// split where the file dates are far apart.
     private func splitTrips(
         _ ordered: [ImportedMediaMetadata],
-        library: [PhotoStop]
+        library: [PhotoStop],
+        isFolder: Bool
     ) -> (trips: [[ImportedMediaMetadata]], home: [ImportedMediaMetadata]) {
         var segmenter = TripSegmenter()
         segmenter.maximumTimeGap = configuration.maximumTimeGap
         segmenter.maximumTripDistanceMeters = configuration.maximumTripDistanceMeters
         segmenter.homeCoordinate = configuration.homeCoordinate
-        let stops = ordered.map { PhotoStop(id: $0.id, date: $0.captureDate, coordinate: coordinate(for: $0)) }
+        // A folder from a camera without GPS is more likely an outing than
+        // a pile of screenshots.
+        segmenter.locationlessDefaultsToAway = isFolder
+        let dated = ordered.filter { $0.captureDateSource != .fileDateFallback }
+        let stops = dated.map { PhotoStop(id: $0.id, date: $0.captureDate, coordinate: coordinate(for: $0)) }
         let result = segmenter.segment(stops, context: library)
-        let byID = Dictionary(ordered.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return (
-            result.trips.map { $0.compactMap { byID[$0] } },
-            ordered.filter { result.homeIDs.contains($0.id) }
-        )
+        let byID = Dictionary(dated.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+        var undated: [[ImportedMediaMetadata]] = []
+        for item in ordered where item.captureDateSource == .fileDateFallback {
+            if let previous = undated.last?.last,
+               item.captureDate.timeIntervalSince(previous.captureDate) <= configuration.maximumTimeGap {
+                undated[undated.count - 1].append(item)
+            } else {
+                undated.append([item])
+            }
+        }
+        let trips = (result.trips.map { $0.compactMap { byID[$0] } } + undated)
+            .filter { !$0.isEmpty }
+            .sorted { ($0[0].captureDate, $0[0].id) < ($1[0].captureDate, $1[0].id) }
+        return (trips, dated.filter { result.homeIDs.contains($0.id) })
     }
 
     /// Shared with incremental import matching so refreshed assets follow the
@@ -706,21 +725,26 @@ struct ImportOrganizer {
 
     private func nearestPlaceSuggestion(
         for item: ImportedMediaMetadata,
-        in group: [ImportedMediaMetadata],
+        located: [ImportedMediaMetadata],
         spotByStop: [String: PlaceCluster]
     ) -> String? {
         guard item.latitude == nil || item.longitude == nil else { return nil }
-        return group
-            .filter { $0.latitude != nil && $0.longitude != nil }
-            .min { abs($0.captureDate.timeIntervalSince(item.captureDate)) < abs($1.captureDate.timeIntervalSince(item.captureDate)) }
-            .flatMap { spotByStop[$0.id]?.id }
+        return Self.nearest(to: item, in: located).flatMap { spotByStop[$0.id]?.id }
     }
 
-    private func nearestTimeZoneIdentifier(for item: ImportedMediaMetadata, in group: [ImportedMediaMetadata]) -> String? {
-        group
-            .filter { $0.timeZoneIdentifier != nil }
-            .min { abs($0.captureDate.timeIntervalSince(item.captureDate)) < abs($1.captureDate.timeIntervalSince(item.captureDate)) }?
-            .timeZoneIdentifier
+    /// The photo closest in time to `item` (the earlier one on a tie), by
+    /// binary search in `sorted` (by capture date). Daily life is one group
+    /// of thousands of photos, so a scan per photo would be quadratic.
+    static func nearest(to item: ImportedMediaMetadata, in sorted: [ImportedMediaMetadata]) -> ImportedMediaMetadata? {
+        var low = 0, high = sorted.count
+        while low < high {
+            let mid = (low + high) / 2
+            if sorted[mid].captureDate < item.captureDate { low = mid + 1 } else { high = mid }
+        }
+        let candidates = [low - 1, low].filter { sorted.indices.contains($0) }
+        return candidates
+            .min { abs(sorted[$0].captureDate.timeIntervalSince(item.captureDate)) < abs(sorted[$1].captureDate.timeIntervalSince(item.captureDate)) }
+            .map { sorted[$0] }
     }
 
     /// Folders are usually named after the trip; generic container folders

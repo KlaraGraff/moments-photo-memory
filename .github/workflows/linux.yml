@@ -1,0 +1,44 @@
+name: Linux
+
+# The fast check on every push, drafts included: logic tests in the
+# MomentsCore package and the repository checks, in a few minutes on Linux.
+# The Mac build and UI suite (macos.yml, ui-tests.yml) run once a pull
+# request is ready for review.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push cancels the older run of the same pull request (or of main).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: MomentsCore tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container: swift:6.1-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test MomentsCore package
+        run: swift test --package-path macos/MomentsCore
+
+  repo:
+    name: Repository checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prototype build and Node checks
+        run: |
+          python3 -m unittest discover -s tests
+          for f in tests/check-*.mjs; do node "$f" || exit 1; done
+      - name: Privacy check
+        run: python3 scripts/check_privacy.py
+      - name: Whitespace check
+        if: github.event_name == 'pull_request'
+        run: git diff --check "origin/${{ github.base_ref }}...HEAD"

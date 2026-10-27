@@ -1,4 +1,3 @@
-import CoreLocation
 import Foundation
 
 /// The minimum information needed to build places and routes from a photo.

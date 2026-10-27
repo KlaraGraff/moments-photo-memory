@@ -1,35 +1,65 @@
 name: macOS
 
+# The native build, XCTest suite and translation check on a hosted Mac. Runs
+# once a pull request is ready for review (drafts get only the Linux checks)
+# and again on main after each merge. Package logic tests and repository
+# checks run on Linux (linux.yml); the UI suite is ui-tests.yml.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
 
 # A new push to a pull request cancels that pull request's older run, so
-# superseded runs never hold one of the few hosted Macs. Manual runs
-# (probes, benchmarks) are never cancelled.
+# superseded runs never hold one of the few hosted Macs; on main only the
+# newest commit is checked. Manual runs (probes, benchmarks) are never
+# cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   native:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: macos-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project
+        id: project
         run: xcodegen generate --spec macos/project.yml
       - name: Build and test native app
         run: xcodebuild -project macos/Moments.xcodeproj -scheme Moments -destination 'platform=macOS' -derivedDataPath macos/.derivedData CODE_SIGNING_ALLOWED=NO build test
       - name: Compile native UI smoke tests
-        run: xcodebuild -project macos/Moments.xcodeproj -scheme MomentsUITests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build-for-testing
-      - name: Test MomentsCore package
+        run: xcodebuild -project macos/Moments.xcodeproj -scheme MomentsUITests -destination 'platform=macOS' -derivedDataPath macos/.derivedData CODE_SIGNING_ALLOWED=NO build-for-testing
+      - name: Test MomentsCore package on macOS
         run: swift test --package-path macos/MomentsCore
-      - name: Run repository checks
+      - name: Apple Photos bridge and host checks
         run: |
-          python3 -m unittest discover -s tests
-          for f in tests/check-*.mjs; do node "$f" || exit 1; done
           python3 tests/check-apple-host.py
           python3 tests/check-apple-bridge.py
-          python3 scripts/check_privacy.py
-          git diff --check
+      # Every string the app shows needs German and Chinese (Simplified).
+      # Xcode extracts the strings from the Swift sources; the check fails on
+      # any string without a de or zh-Hans translation and lists it in the
+      # log. Runs even when a test above failed, so both show in one run.
+      - name: Export localizations
+        id: export
+        if: ${{ !cancelled() && steps.project.outcome == 'success' }}
+        run: |
+          xcodebuild -exportLocalizations \
+            -project macos/Moments.xcodeproj \
+            -localizationPath "$RUNNER_TEMP/loc" \
+            -exportLanguage de -exportLanguage zh-Hans \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Check translations
+        if: ${{ !cancelled() && steps.export.outcome == 'success' }}
+        run: python3 scripts/check_localization.py "$RUNNER_TEMP/loc"

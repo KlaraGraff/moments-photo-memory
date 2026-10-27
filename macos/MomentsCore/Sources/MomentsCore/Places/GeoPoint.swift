@@ -1,4 +1,6 @@
+#if canImport(CoreLocation)
 import CoreLocation
+#endif
 import Foundation
 
 /// A small, Sendable value type for a geographic coordinate.
@@ -9,14 +11,6 @@ public struct GeoPoint: Equatable, Hashable, Sendable {
     public init(latitude: Double, longitude: Double) {
         self.latitude = Self.clampedLatitude(latitude)
         self.longitude = Self.wrappedLongitude(longitude)
-    }
-
-    public init(_ coordinate: CLLocationCoordinate2D) {
-        self.init(latitude: coordinate.latitude, longitude: coordinate.longitude)
-    }
-
-    public var coordinate: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
     /// Great-circle distance in metres. The longitude delta is wrapped, so
@@ -80,3 +74,17 @@ public struct GeoPoint: Equatable, Hashable, Sendable {
         return wrapped
     }
 }
+
+#if canImport(CoreLocation)
+// Bridges to MapKit and CoreLocation in the app. Kept out of Linux builds,
+// where the package's logic tests run without Apple frameworks.
+extension GeoPoint {
+    public init(_ coordinate: CLLocationCoordinate2D) {
+        self.init(latitude: coordinate.latitude, longitude: coordinate.longitude)
+    }
+
+    public var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+}
+#endif

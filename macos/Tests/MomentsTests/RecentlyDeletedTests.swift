@@ -207,12 +207,12 @@ final class RecentlyDeletedTests: XCTestCase {
         let other = ImportSource(kind: .folder, name: "Other", locationKey: "/synthetic/other")
         context.insert(trip)
         context.insert(other)
-        let onlyTrip = MediaItem(id: "only-trip", title: "A", source: .file)
+        let onlyTrip = MediaItem(id: "only-trip", source: .file, title: "A")
         onlyTrip.addImportSource(trip.id)
-        let both = MediaItem(id: "both", title: "B", source: .file)
+        let both = MediaItem(id: "both", source: .file, title: "B")
         both.addImportSource(trip.id)
         both.addImportSource(other.id)
-        let elsewhere = MediaItem(id: "elsewhere", title: "C", source: .file)
+        let elsewhere = MediaItem(id: "elsewhere", source: .file, title: "C")
         elsewhere.addImportSource(other.id)
         for item in [onlyTrip, both, elsewhere] { context.insert(item) }
         try context.save()
@@ -234,9 +234,9 @@ final class RecentlyDeletedTests: XCTestCase {
     func testRemovingApplePhotosMovesOnlyItsPhotos() throws {
         let context = try MomentsPersistence.makeContainer(inMemory: true).mainContext
         let photos = ImportSources.photosSource(context: context)
-        let fromPhotos = MediaItem(id: "photos", title: "P", source: .photos)
-        let fromFolder = MediaItem(id: "folder", title: "F", source: .file)
-        let partners = MediaItem(id: "partner-photos", title: "Q", source: .photos)
+        let fromPhotos = MediaItem(id: "photos", source: .photos, title: "P")
+        let fromFolder = MediaItem(id: "folder", source: .file, title: "F")
+        let partners = MediaItem(id: "partner-photos", source: .photos, title: "Q")
         partners.ownerAccountID = "partner"
         for item in [fromPhotos, fromFolder, partners] { context.insert(item) }
         try context.save()

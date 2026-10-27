@@ -90,6 +90,9 @@ struct MomentsApp: App {
                 if ProcessInfo.processInfo.arguments.contains("-MomentsUITestReviewItems") {
                     try? DemoSeeder.flagUndatedDemoItemsForReview(context: container.mainContext)
                 }
+                if ProcessInfo.processInfo.arguments.contains("-MomentsUITestPeople") {
+                    try? DemoSeeder.seedPeopleForUITests(context: container.mainContext)
+                }
                 if ProcessInfo.processInfo.arguments.contains("-MomentsUITestBurst") {
                     try? DemoSeeder.addSyntheticBurst(context: container.mainContext)
                 }

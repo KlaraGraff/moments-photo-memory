@@ -42,4 +42,14 @@ final class TripNamingTests: XCTestCase {
         XCTAssertFalse(TripNaming.isOldDefaultName("Honeymoon 2026-08-20"))
         XCTAssertFalse(TripNaming.isOldDefaultName("Trip 2"))
     }
+
+    func testNamesWithoutPlacesAreRecognisedInEveryLanguage() {
+        XCTAssertTrue(TripNaming.isPlacelessDefaultName("Trip August 2026", start: start, calendar: utc))
+        XCTAssertTrue(TripNaming.isPlacelessDefaultName("旅程 2026年8月", start: start, calendar: utc))
+        XCTAssertTrue(TripNaming.isPlacelessDefaultName("Reise August 2026", start: start, calendar: utc))
+        XCTAssertTrue(TripNaming.isPlacelessDefaultName("Trip 2026-08-20", start: nil, calendar: utc))
+        XCTAssertTrue(TripNaming.isPlacelessDefaultName("Trip 3", start: nil, calendar: utc))
+        XCTAssertFalse(TripNaming.isPlacelessDefaultName("Lisbon August 2026", start: start, calendar: utc))
+        XCTAssertFalse(TripNaming.isPlacelessDefaultName("Trip July 2026", start: start, calendar: utc))
+    }
 }

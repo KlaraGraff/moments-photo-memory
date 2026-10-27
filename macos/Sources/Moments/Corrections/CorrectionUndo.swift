@@ -117,7 +117,7 @@ private struct CorrectionUndoCapsule: View {
                 .foregroundStyle(Paper.accent)
                 .fontWeight(.semibold)
                 .background(GeometryReader { proxy in
-                    Color.clear.preference(key: UndoFrameKey.self, value: proxy.frame(in: .global))
+                    Color.clear.preference(key: UndoFrameKey.self, value: proxy.frame(in: .named(UndoFrameKey.space)))
                 })
                 .accessibilityIdentifier("correction.undo")
         }
@@ -134,6 +134,8 @@ private struct CorrectionUndoCapsule: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("correction.bar")
         .padding(12)
+        // The hosting view's own space: .global is the window's.
+        .coordinateSpace(name: UndoFrameKey.space)
     }
 }
 
@@ -155,6 +157,7 @@ private final class UndoBarProbe {
 }
 
 private struct UndoFrameKey: PreferenceKey {
+    static let space = "correction.bar"
     static let defaultValue = CGRect.zero
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
 }

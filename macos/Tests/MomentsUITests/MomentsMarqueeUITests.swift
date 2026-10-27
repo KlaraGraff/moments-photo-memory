@@ -83,25 +83,31 @@ final class MomentsMarqueeUITests: XCTestCase {
         let window = app.windows.firstMatch.frame
         let lastColumn = visible.map(\.frame.midX).max() ?? first.frame.midX
         let start = point(app, x: first.frame.minX - 12, y: first.frame.minY - 4)
+        // Just inside the bottom edge, and past it, where it scrolls fastest.
         let edge = point(app, x: lastColumn, y: window.maxY - 6)
-
-        start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 0.5)
-        capture(app, named: "marquee-scrolled-over-1-evidence")
-        assertEveryPhotoOnScreenIsSelected(app, after: "the first drag", moreThan: visible.count)
-        app.typeKey(.escape, modifierFlags: [])
-
-        // Back to the top, where the first photo is where it was.
+        let belowEdge = point(app, x: lastColumn, y: window.maxY + 60)
         let scrollView = app.scrollViews.containing(.any, identifier: first.element.identifier).firstMatch
         func backAtTheTop() -> Bool { abs(first.element.frame.minY - first.frame.minY) < 2 }
-        for _ in 0..<40 where !backAtTheTop() {
-            scrollView.scroll(byDeltaX: 0, deltaY: 2000)
-        }
-        XCTAssertTrue(backAtTheTop(), "Could not scroll back to the top (first photo at \(first.element.frame.minY), was \(first.frame.minY))")
-        pauseLongerThanADoubleClick()
 
-        start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 0.5)
-        capture(app, named: "marquee-scrolled-over-2-evidence")
-        assertEveryPhotoOnScreenIsSelected(app, after: "the second drag", moreThan: visible.count)
+        let drags: [(name: String, to: XCUICoordinate, hold: TimeInterval)] = [
+            ("the first drag", edge, 0.5),
+            ("a drag over rows built before", edge, 0.5),
+            ("a fast drag past the edge", belowEdge, 0.3),
+            ("a longer fast drag past the edge", belowEdge, 0.8),
+        ]
+        for (index, drag) in drags.enumerated() {
+            if index > 0 {
+                app.typeKey(.escape, modifierFlags: [])
+                // Back to the top, where the first photo is where it was.
+                for _ in 0..<40 where !backAtTheTop() {
+                    scrollView.scroll(byDeltaX: 0, deltaY: 2000)
+                }
+                XCTAssertTrue(backAtTheTop(), "Could not scroll back to the top (first photo at \(first.element.frame.minY), was \(first.frame.minY))")
+                pauseLongerThanADoubleClick()
+            }
+            start.click(forDuration: 0.1, thenDragTo: drag.to, withVelocity: .default, thenHoldForDuration: drag.hold)
+            assertEveryPhotoOnScreenIsSelected(app, after: drag.name, moreThan: visible.count)
+        }
     }
 
     /// After a drag from above the first photo to the bottom edge, across
@@ -112,6 +118,7 @@ final class MomentsMarqueeUITests: XCTestCase {
         let onScreen = visiblePhotos(app, scanning: 600)
         XCTAssertFalse(onScreen.isEmpty)
         let missed = onScreen.filter { $0.element.value as? String != "Selected" }.map(\.element.identifier)
+        if !missed.isEmpty { capture(app, named: "marquee-missed-evidence") }
         XCTAssertTrue(missed.isEmpty, "After \(drag), inside the rectangle but not selected (\(missed.count) of \(onScreen.count) on screen, \(count) selected): \(missed)")
     }
 

@@ -46,7 +46,7 @@ concurrency:
 jobs:
   ui:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: macos-26
+    runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4

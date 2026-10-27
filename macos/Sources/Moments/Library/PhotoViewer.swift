@@ -122,6 +122,8 @@ struct PhotoViewer: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Paper.shadow.opacity(0.08)))
             .shadow(color: Paper.shadow.opacity(0.22), radius: 24, y: 8)
+            // Undo for a person changed in the column, over the card.
+            .overlay(alignment: .bottom) { CorrectionUndoBar() }
             // Like a file preview in Claude: the card covers the window, sidebar
             // included, with a narrow margin.
             .padding(10)

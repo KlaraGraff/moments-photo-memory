@@ -54,8 +54,8 @@ struct PlacesViewModel {
             visibleItemIDs?.contains(item.id) ?? true
         }
         return filtered.sorted { lhs, rhs in
-            let leftDate = lhs.captureDate ?? .distantPast
-            let rightDate = rhs.captureDate ?? .distantPast
+            let leftDate = lhs.effectiveCaptureDate ?? .distantPast
+            let rightDate = rhs.effectiveCaptureDate ?? .distantPast
             if leftDate != rightDate { return leftDate < rightDate }
             return lhs.id < rhs.id
         }
@@ -65,7 +65,7 @@ struct PlacesViewModel {
         filteredItems(items, visibleItemIDs: visibleItemIDs).map { item in
             PhotoStop(
                 id: item.id,
-                date: item.captureDate ?? .distantPast,
+                date: item.effectiveCaptureDate ?? .distantPast,
                 coordinate: coordinate(for: item)
             )
         }
@@ -80,7 +80,7 @@ struct PlacesViewModel {
         let level = level(for: latitudeDelta)
         let clusters = clusterer.clusters(for: stops, level: level)
         // Undated photos are still clustered, but have no place in the route order.
-        let datedIDs = Set(items.lazy.filter { $0.captureDate != nil }.map(\.id))
+        let datedIDs = Set(items.lazy.filter { $0.effectiveCaptureDate != nil }.map(\.id))
         let routeStops = stops.filter { datedIDs.contains($0.id) }
         let routeSegments: [RouteSegment]
         switch level {

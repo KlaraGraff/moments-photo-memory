@@ -110,23 +110,17 @@ struct LibraryView: View {
     private var trips: [String] { cachedFilterOptions.trips }
 
     private static func filterOptions(for items: [MediaItem]) -> LibraryFilterOptions {
-        var options: [String: LibraryPlaceOption] = [:]
         var tripNames: [String: String] = [:]
         for item in items {
-            // One row per name: unnamed spots are listed under the area or
-            // city that names them, and the filter matches all of them.
-            if let place = item.place, let named = PlaceDisplayName.namingPlace(of: place) {
-                options[named.id] = LibraryPlaceOption(id: named.id, name: named.displayName)
-            }
-            if let override = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
-                options["override:\(override)"] = LibraryPlaceOption(id: "override:\(override)", name: override)
-            }
             if let tripID = item.tripID, tripNames[tripID] == nil {
                 tripNames[tripID] = item.trip?.effectiveName ?? tripID
             }
         }
         return LibraryFilterOptions(
-            places: options.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending },
+            // One row per name: unnamed spots are listed under the area or
+            // city that names them, places with the same name are one row,
+            // and the filter matches all of them.
+            places: PlaceNames.options(for: items),
             trips: tripNames.keys.sorted(),
             tripNames: tripNames
         )
@@ -997,6 +991,11 @@ private struct LibraryPhotoCell: View {
                 item.setFavorite(!item.isFavorite, context: modelContext)
                 try? modelContext.save()
             }
+            Button(selection.isSelected(item.id) && selection.selectedItemIDs.count > 1
+                   ? String(localized: "Adjust Date and Time of \(selection.selectedItemIDs.count) Photos…")
+                   : String(localized: "Adjust Date and Time…")) {
+                selection.adjustDateAndTime(for: item.id)
+            }
             Divider()
             if item.latitude != nil {
                 Button(String(localized: "Show on Map")) { selection.showOnMap(item.id) }
@@ -1789,17 +1788,7 @@ struct GroupEditorSheet: View {
     }
 
     private var placeOptions: [(String, String)] {
-        var options: [String: String] = [:]
-        for item in items {
-            if let place = item.place, let named = PlaceDisplayName.namingPlace(of: place) {
-                options[named.id] = named.displayName
-            }
-            if let override = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
-                options["override:\(override)"] = override
-            }
-        }
-        return options.map { ($0.key, $0.value) }
-            .sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
+        PlaceNames.options(for: items).map { ($0.id, $0.name) }
     }
 
     private var tripOptions: [(String, String)] {

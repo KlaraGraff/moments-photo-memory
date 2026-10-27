@@ -19,6 +19,7 @@ final class MomentsDeletionUITests: XCTestCase {
         var issue = issue
         if let app {
             let line = issue.sourceCodeContext.location?.lineNumber ?? 0
+            print("DELETE-FAILURE line \(line): \(issue.compactDescription)")
             let attachment = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
             attachment.name = "delete-failure-line-\(line)-evidence"
             attachment.lifetime = .keepAlways

@@ -67,6 +67,34 @@ enum PhotoDeletion {
     }
 }
 
+extension Notification.Name {
+    /// ⌘⌫ (or ⌘⌦) outside a text field: delete without asking.
+    static let momentsDeleteWithoutAsking = Notification.Name("Moments.DeleteWithoutAsking")
+}
+
+/// SwiftUI treats ⌘-keys as menu shortcuts and never hands ⌘⌫ to
+/// `onKeyPress`, so it is caught here and passed on to the grid or viewer.
+/// A text field keeps ⌘⌫ (delete to the start of the line), an open alert
+/// keeps its keys, and Settings has no photos to delete.
+@MainActor
+enum DeleteShortcutMonitor {
+    private static var monitor: Any?
+
+    static func install() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // 51 is ⌫, 117 is ⌦.
+            guard event.keyCode == 51 || event.keyCode == 117,
+                  event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                  let window = event.window, window.isKeyWindow, window.attachedSheet == nil,
+                  !(window.firstResponder is NSText),
+                  !(window.identifier?.rawValue.contains("Settings") ?? false) else { return event }
+            NotificationCenter.default.post(name: .momentsDeleteWithoutAsking, object: nil)
+            return nil
+        }
+    }
+}
+
 private struct PhotoDeletionScopeKey: EnvironmentKey {
     static let defaultValue: @MainActor ([String]) -> [String] = { $0 }
 }

@@ -157,6 +157,10 @@ struct PhotoViewer: View {
             deleteOpenPhoto(confirm: !press.modifiers.contains(.command))
             return .handled
         }
+        .onReceive(NotificationCenter.default.publisher(for: .momentsDeleteWithoutAsking)) { _ in
+            guard !isTyping, selection.pendingDeletion == nil, item?.deletedAt == nil else { return }
+            deleteOpenPhoto(confirm: false)
+        }
         .task(id: request.itemID) { await load(request.itemID) }
         // Taken apart, a shot taken out, or Undo: the strip and the photos
         // ready to slide in follow.

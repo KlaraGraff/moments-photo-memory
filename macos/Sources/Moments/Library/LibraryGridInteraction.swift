@@ -72,6 +72,9 @@ private struct LibraryGridInteraction: ViewModifier {
             }
             // Edit ▸ Delete.
             .onDeleteCommand { _ = deleteSelection(confirm: true) }
+            .onReceive(NotificationCenter.default.publisher(for: .momentsDeleteWithoutAsking)) { _ in
+                _ = deleteSelection(confirm: false)
+            }
             .onCommand(#selector(NSResponder.selectAll(_:))) {
                 selection.select(state.orderedItemIDs, focus: selection.focusedItemID)
             }
@@ -118,7 +121,8 @@ private struct LibraryGridInteraction: ViewModifier {
     }
 
     private func deleteSelection(confirm: Bool) -> KeyPress.Result {
-        guard selection.viewerRequest == nil, !Self.isEditingText, !selection.selectedItemIDs.isEmpty else { return .ignored }
+        guard selection.viewerRequest == nil, selection.pendingDeletion == nil, !Self.isEditingText,
+              !selection.selectedItemIDs.isEmpty else { return .ignored }
         let shown = state.orderedItemIDs.filter(selection.selectedItemIDs.contains)
         PhotoDeletion.request(deletionScope(shown), confirm: confirm, selection: selection, context: modelContext, undoManager: undoManager)
         return .handled

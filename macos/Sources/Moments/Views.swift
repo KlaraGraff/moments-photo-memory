@@ -259,6 +259,7 @@ struct ContentView: View {
             if !items.isEmpty { firstLaunchCompleted = true }
             // Photos whose 30 days in Recently Deleted are up go for good.
             RecentlyDeleted.purgeExpired(context: modelContext)
+            DeleteShortcutMonitor.install()
         }
         .onChange(of: groupCountsKey, initial: true) { _, _ in
             refreshGroupCounts()

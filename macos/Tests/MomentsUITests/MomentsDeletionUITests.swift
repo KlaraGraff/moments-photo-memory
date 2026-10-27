@@ -73,6 +73,7 @@ final class MomentsDeletionUITests: XCTestCase {
     func testViewerTrashMovesOnAndDeleteAllInASmallWindow() {
         let app = launch(language: "en", extra: ["-MomentsUITestSmallWindow"])
         let photo = firstPhoto(app)
+        let id = String(photo.identifier.dropFirst("library.photo.".count))
         photo.doubleClick()
         let viewer = element(app, "viewer")
         XCTAssertTrue(viewer.waitForExistence(timeout: timeout))
@@ -110,7 +111,7 @@ final class MomentsDeletionUITests: XCTestCase {
         XCTAssertTrue(purge.exists, "Delete All did not ask")
         capture(app, "delete-06-delete-for-good-confirm-evidence")
         purge.click()
-        XCTAssertTrue(element(app, "recently-deleted.photo.\(String(photo.identifier.dropFirst("library.photo.".count)))").waitForNonExistence(timeout: timeout))
+        XCTAssertTrue(element(app, "recently-deleted.photo.\(id)").waitForNonExistence(timeout: timeout))
         capture(app, "delete-07-recently-deleted-empty-evidence")
     }
 
@@ -120,7 +121,8 @@ final class MomentsDeletionUITests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         let remove = element(app, "settings.imports.remove.Synthetic folder")
         XCTAssertTrue(remove.waitForExistence(timeout: timeout), "Settings › Imports does not list the folder")
-        let settings = app.windows.containing(.any, identifier: "settings.imports.remove.Synthetic folder").firstMatch
+        // By the window's own name: the button goes with the folder.
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
         capture(settings, "delete-08-settings-imports-evidence")
         remove.click()
         let confirm = alertButton(app, "settings.imports.remove.confirm", title: "移除")

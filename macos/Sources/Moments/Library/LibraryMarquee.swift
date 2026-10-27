@@ -229,7 +229,7 @@ final class LibraryMarquee {
         let elapsed = lastTick == 0 ? link.duration : min(max(now - lastTick, 0), 0.1)
         lastTick = now
         #if DEBUG
-        MarqueeProbe.frame(at: now)
+        MarqueeProbe.frame(at: now, scrolledTo: scrollView.contentView.bounds.origin.y)
         #endif
         if let pointer = pointerInDocument() {
             let clip = scrollView.contentView
@@ -246,6 +246,9 @@ final class LibraryMarquee {
                 if y != clip.bounds.origin.y {
                     clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
                     scrollView.reflectScrolledClipView(clip)
+                    #if DEBUG
+                    MarqueeProbe.autoscrolled(to: clip.bounds.origin.y)
+                    #endif
                 }
             }
         }
@@ -507,19 +510,37 @@ enum MarqueeProbe {
     private static var intervals: [CFTimeInterval] = []
     private static var selectionChanges = 0
     private static var reports = 0
+    /// Where the last autoscroll step left the view, and how often the view
+    /// was somewhere else by the next frame (something scrolled it back).
+    private static var autoscrolledTo: CGFloat?
+    private static var snapBacks = 0
+    private static var worstSnapBack: CGFloat = 0
 
     static func dragStarted() {
         guard folder != nil else { return }
         lastFrame = 0
         intervals = []
         selectionChanges = 0
+        autoscrolledTo = nil
+        snapBacks = 0
+        worstSnapBack = 0
         MainThreadSampler.start()
     }
 
-    static func frame(at time: CFTimeInterval) {
+    static func frame(at time: CFTimeInterval, scrolledTo offset: CGFloat) {
         guard folder != nil else { return }
+        if let expected = autoscrolledTo, offset < expected - 1 {
+            snapBacks += 1
+            worstSnapBack = max(worstSnapBack, expected - offset)
+        }
+        autoscrolledTo = nil
         if lastFrame > 0 { intervals.append(time - lastFrame) }
         lastFrame = time
+    }
+
+    static func autoscrolled(to offset: CGFloat) {
+        guard folder != nil else { return }
+        autoscrolledTo = offset
     }
 
     static func selectionChanged() {
@@ -545,6 +566,7 @@ enum MarqueeProbe {
             percentile(0.5), percentile(0.95), (sorted.last ?? 0) * 1000, intervals.filter { $0 > 0.1 }.count
         )
         text += String(format: "  selected %d photos, %d selection changes, scrolled to %.0f pt\n", selected, selectionChanges, offset)
+        text += String(format: "  scrolled back by something else: %d times, worst %.0f pt\n", snapBacks, worstSnapBack)
         text += "  inside the rectangle but not counted: \(uncounted.count)\(uncounted.isEmpty ? "" : " " + uncounted.joined(separator: ", "))\n"
         text += MainThreadSampler.stopAndReport()
         try? text.write(to: folder.appending(path: "marquee-report-\(reports).txt"), atomically: true, encoding: .utf8)

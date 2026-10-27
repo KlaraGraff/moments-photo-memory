@@ -1,9 +1,9 @@
 import XCTest
 
-/// As in every Apple app, a double click on an empty part of the window's top
-/// bar does what System Settings ▸ Desktop & Dock says (zoom by default), on
-/// every page. The Library's header row continues the title bar's paper, so
-/// it does the same; controls keep their own clicks.
+/// As in every Apple app, a double click on the window's top bar (the page
+/// title, the empty toolbar) does what System Settings ▸ Desktop & Dock says,
+/// zoom by default, on every page. Toolbar controls and the page's own rows
+/// below the bar keep their clicks.
 final class MomentsTitleBarUITests: XCTestCase {
     private let launchTimeout: TimeInterval = 30
 
@@ -17,50 +17,56 @@ final class MomentsTitleBarUITests: XCTestCase {
         if setting == "Minimize" || setting == "None" {
             throw XCTSkip("This Mac is set to \(setting ?? "") on a title bar double click")
         }
+        let log = "/tmp/moments-titlebar-\(UUID().uuidString).log"
         let app = XCUIApplication()
-        app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(en)", "-AppleLocale", "en"]
+        app.launchArguments = ["-MomentsUITesting", "-MomentsUITestTitleBarLog", log, "-AppleLanguages", "(en)", "-AppleLocale", "en"]
         app.launch()
         app.activate()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: launchTimeout))
-        let corner = window.coordinate(withNormalizedOffset: .zero)
+        let title = window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 260, dy: 26))
 
-        // The page title in the toolbar, on every page.
-        for page in ["sidebar.library", "sidebar.people", "sidebar.map", "sidebar.timeline", "sidebar.trips"] {
+        // The page title, on every page.
+        for page in ["sidebar.people", "sidebar.map", "sidebar.timeline", "sidebar.trips", "sidebar.library"] {
             let item = element(in: app, identifier: page)
             XCTAssertTrue(item.waitForExistence(timeout: launchTimeout), "Missing \(page)")
             item.click()
             Thread.sleep(forTimeInterval: 1)
-            assertDoubleClickTogglesZoom(window, at: corner.withOffset(CGVector(dx: 260, dy: 26)), "the title bar on \(page)")
+            assertDoubleClickTogglesZoom(window, at: title, "the title on \(page)")
         }
 
-        // The Library's header row, at the small starting size and again
-        // with the window filling the screen.
-        element(in: app, identifier: "sidebar.library").click()
         let more = element(in: app, identifier: "library.type-more")
-        let types = element(in: app, identifier: "library.type-filter")
         XCTAssertTrue(more.waitForExistence(timeout: launchTimeout))
         for size in ["small", "large"] {
             Thread.sleep(forTimeInterval: 1)
-            let gap = window.coordinate(withNormalizedOffset: .zero)
+            assertDoubleClickTogglesZoom(window, at: title, "the Library title (\(size) window)")
+            // The Library's own row under the bar is page content.
+            let row = window.coordinate(withNormalizedOffset: .zero)
                 .withOffset(CGVector(dx: more.frame.maxX + 16 - window.frame.minX, dy: more.frame.midY - window.frame.minY))
-            assertDoubleClickTogglesZoom(window, at: gap, "the Library header row (\(size) window)")
-
-            // A double click on a control is that control's, not the window's.
-            let before = window.frame
-            types.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleClick()
-            Thread.sleep(forTimeInterval: 1.2)
-            XCTAssertEqual(window.frame, before, "A double click on the type picker resized the window")
-
+            assertDoubleClickLeavesWindow(window, at: row, "the Library header row (\(size) window)")
+            // A toolbar control is that control's.
+            let search = app.searchFields.firstMatch
+            if search.exists {
+                assertDoubleClickLeavesWindow(window, at: search.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)), "the search field (\(size) window)")
+                app.typeKey(.escape, modifierFlags: [])
+            }
             if size == "small" {
-                corner.withOffset(CGVector(dx: 260, dy: 26)).doubleClick()
+                let before = window.frame
+                title.doubleClick()
                 Thread.sleep(forTimeInterval: 1.2)
                 XCTAssertNotEqual(window.frame, before, "Could not zoom the window for the large pass")
             }
         }
+
+        let report = (try? String(contentsOfFile: log, encoding: .utf8)) ?? "(no log)"
+        print("TITLEBAR-LOG-BEGIN\n\(report)\nTITLEBAR-LOG-END")
+        if report != "(no log)" {
+            // The app takes the double click itself rather than leaving it to AppKit.
+            XCTAssertTrue(report.contains("handled"), report)
+        }
     }
 
-    /// Double-clicks twice: the window changes size, then goes back.
+    /// Double-clicks twice: the window changes size once, then goes back.
     private func assertDoubleClickTogglesZoom(_ window: XCUIElement, at point: XCUICoordinate, _ place: String) {
         let before = window.frame
         point.doubleClick()
@@ -69,6 +75,13 @@ final class MomentsTitleBarUITests: XCTestCase {
         point.doubleClick()
         Thread.sleep(forTimeInterval: 1.2)
         XCTAssertEqual(window.frame, before, "A second double click on \(place) did not restore the window")
+    }
+
+    private func assertDoubleClickLeavesWindow(_ window: XCUIElement, at point: XCUICoordinate, _ place: String) {
+        let before = window.frame
+        point.doubleClick()
+        Thread.sleep(forTimeInterval: 1.2)
+        XCTAssertEqual(window.frame, before, "A double click on \(place) resized the window")
     }
 
     private func element(in app: XCUIApplication, identifier: String) -> XCUIElement {

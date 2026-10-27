@@ -24,6 +24,9 @@ enum TitleBarDoubleClick {
         guard event.clickCount == 2, let window = event.window,
               isOnEmptyTopBar(event, in: window) else { return false }
         perform(in: window)
+        #if DEBUG
+        TitleBarProbe.note("performed \(UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "default") from \(window.frame)")
+        #endif
         return true
     }
 
@@ -71,9 +74,13 @@ enum TitleBarDoubleClick {
 /// app took it (-MomentsUITestTitleBarLog <file>).
 enum TitleBarProbe {
     static func record(handled: Bool, chain: [String]) {
+        note("\(handled ? "handled" : "skipped") \(chain.prefix(6).joined(separator: " < "))")
+    }
+
+    static func note(_ text: String) {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "-MomentsUITestTitleBarLog"), index + 1 < arguments.count else { return }
-        let line = "\(handled ? "handled" : "skipped") \(chain.prefix(6).joined(separator: " < "))\n"
+        let line = text + "\n"
         let url = URL(fileURLWithPath: arguments[index + 1])
         if let handle = try? FileHandle(forWritingTo: url) {
             handle.seekToEndOfFile()

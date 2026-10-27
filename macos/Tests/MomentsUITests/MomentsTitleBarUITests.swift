@@ -9,7 +9,7 @@ final class MomentsTitleBarUITests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        continueAfterFailure = false
+        continueAfterFailure = true
     }
 
     func testDoubleClickOnTheTopBarZoomsTheWindow() throws {

@@ -81,7 +81,7 @@ final class MomentsTitleBarUITests: XCTestCase {
             }
             let corner = window.coordinate(withNormalizedOffset: .zero)
             var row = ""
-            var x = 150.0
+            var x = 210.0
             while x < frame.width - 4 {
                 // Back to the starting frame first, using the spot known to work.
                 var tries = 0
@@ -103,6 +103,7 @@ final class MomentsTitleBarUITests: XCTestCase {
                 break
             }
             lines.append("  hits\(row)")
+            print("HITMAP-PAGE\n\(lines.filter { !$0.hasPrefix("EVIDENCE") }.joined(separator: "\n"))\nHITMAP-PAGE-END")
             if let data = window.screenshot().image.tiffRepresentation,
                let jpeg = NSBitmapImageRep(data: data)?.representation(using: .jpeg, properties: [.compressionFactor: 0.6]) {
                 lines.append("EVIDENCE-BEGIN \(page)\n\(jpeg.base64EncodedString())\nEVIDENCE-END")

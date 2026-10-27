@@ -60,6 +60,41 @@ final class MomentsMarqueeUITests: XCTestCase {
         XCTAssertFalse(text.contains("missing"), text)
     }
 
+    /// Held at the bottom edge in a small window over a short Library of
+    /// month sections, the grid keeps scrolling while a section heading
+    /// passes the top edge. Seen in a screen recording: from the moment the
+    /// first heading reached the top, the grid scrolled a little and jumped
+    /// back, about ten times a second, and never got further. The app
+    /// reports each time something else moved the grid back.
+    func testHoldingAtTheBottomEdgeScrollsPastSectionHeadings() {
+        let folder = ProcessInfo.processInfo.environment["MOMENTS_MARQUEE_DIR"].flatMap { $0.hasPrefix("/") ? $0 : nil }
+        if let folder { try? FileManager.default.removeItem(atPath: folder) }
+        var arguments = [
+            "-MomentsUITestStressCount", "26", "-MomentsUITestStressSpacing", "200000",
+            "-moments.library.grouping", "month",
+        ]
+        if let folder { arguments += ["-MomentsUITestMarqueeProbe", folder] }
+        let app = launch(smallWindow: true, extraArguments: arguments)
+        let visible = visiblePhotos(app)
+        guard let first = visible.first else { return XCTFail("No photo on screen") }
+        let window = app.windows.firstMatch.frame
+        let lastColumn = visible.map(\.frame.midX).max() ?? first.frame.midX
+        let start = point(app, x: first.frame.minX - 12, y: first.frame.minY - 4)
+        let edge = point(app, x: lastColumn, y: window.maxY - 8)
+        start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 2.5)
+
+        let count = Int(selectionCount(app)) ?? 0
+        XCTAssertGreaterThan(count, visible.count, "Holding at the edge did not keep scrolling and selecting (\(count) selected)")
+        guard let folder else { return }
+        let report = URL(fileURLWithPath: folder).appending(path: "marquee-report-1.txt")
+        let deadline = Date().addingTimeInterval(10)
+        while !FileManager.default.fileExists(atPath: report.path), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        let text = (try? String(contentsOf: report, encoding: .utf8)) ?? "missing marquee report"
+        XCTAssertTrue(text.contains("scrolled back by something else: 0 times"), String(text.prefix(600)))
+    }
+
     /// Held at the bottom edge over a Library of small month sections, the
     /// rectangle selects every photo it scrolls over: the rows just below
     /// the window too, which the grid may have built before the drag, and

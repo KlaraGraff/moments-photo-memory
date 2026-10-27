@@ -479,8 +479,15 @@ struct LibraryView: View {
             .scrollPosition(
                 // Written only when the top section really changes: the scroll
                 // view reports it on every layout, and each write would
-                // rebuild the whole Library while the sidebar moves.
-                id: Binding(get: { state.topSectionScrollID }, set: { if state.topSectionScrollID != $0 { state.topSectionScrollID = $0 } }),
+                // rebuild the whole Library while the sidebar moves. Not
+                // while a rubber band scrolls the grid: each write put the
+                // grid back at the heading it had just passed. And never
+                // nil (a section's photos at the top), which did the same;
+                // the last heading is where the Library opens again.
+                id: Binding(get: { state.topSectionScrollID }, set: { id in
+                    guard let id, !state.marquee.isDragging, state.topSectionScrollID != id else { return }
+                    state.topSectionScrollID = id
+                }),
                 anchor: .top
             )
             .libraryGridInteraction(state: state, proxy: proxy)

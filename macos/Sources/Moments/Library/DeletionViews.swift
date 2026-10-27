@@ -29,19 +29,23 @@ enum PhotoDeletion {
         guard !moved.isEmpty else { return }
         selection.forget(deleted: Set(moved))
         let target = DeletionUndoTarget()
-        registerUndo(moved, target: target, context: context, undoManager: undoManager)
+        registerUndo(moved, target: target, selection: selection, context: context, undoManager: undoManager)
         selection.lastDeletion = DeletionNotice(itemIDs: moved, undoTarget: target)
     }
 
-    /// Undo puts them back; Redo deletes them again.
-    private static func registerUndo(_ ids: [String], target: DeletionUndoTarget, context: ModelContext, undoManager: UndoManager?) {
-        undoManager?.registerUndo(withTarget: target) { target in
+    /// Undo puts them back; Redo deletes them again. The undo manager holds
+    /// its targets weakly, so the handlers keep `target` alive themselves.
+    private static func registerUndo(_ ids: [String], target: DeletionUndoTarget, selection: SelectionModel, context: ModelContext, undoManager: UndoManager?) {
+        undoManager?.registerUndo(withTarget: target) { [target] _ in
             MainActor.assumeIsolated {
                 RecentlyDeleted.recover(fetch(ids, context: context), context: context)
-                undoManager?.registerUndo(withTarget: target) { target in
+                // Undone: the bar has nothing left to offer.
+                if selection.lastDeletion?.undoTarget === target { selection.lastDeletion = nil }
+                undoManager?.registerUndo(withTarget: target) { [target] _ in
                     MainActor.assumeIsolated {
-                        _ = RecentlyDeleted.moveToTrash(fetch(ids, context: context), context: context)
-                        registerUndo(ids, target: target, context: context, undoManager: undoManager)
+                        let moved = RecentlyDeleted.moveToTrash(fetch(ids, context: context), context: context)
+                        selection.forget(deleted: Set(moved))
+                        registerUndo(ids, target: target, selection: selection, context: context, undoManager: undoManager)
                     }
                 }
                 undoManager?.setActionName(String(localized: "Delete"))

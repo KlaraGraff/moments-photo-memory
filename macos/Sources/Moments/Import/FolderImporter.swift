@@ -129,6 +129,7 @@ struct FolderImporter {
         // Importing a folder again brings back its photos that were in
         // Recently Deleted: choosing the folder says "I want these".
         var recovered: [MediaItem] = []
+        var recoveredSourceCount = 0
         for item in organizedMetadata where existingHashes.contains(item.contentHash) || existingIDs.contains(item.id) {
             guard let existingItem = existingByHash[item.contentHash] ?? existing.first(where: { $0.id == item.id }) else { continue }
             let oldReferences = sourceReferencesFromJSON(existingItem.sourceReferencesRaw)
@@ -137,9 +138,12 @@ struct FolderImporter {
                 existingItem.sourceReferencesRaw = sourceReferencesJSON(merged)
             }
             existingItem.addImportSource(source.id)
-            if existingItem.deletedAt != nil, RecentlyDeleted.canDelete(existingItem) { recovered.append(existingItem) }
+            if existingItem.deletedAt != nil, RecentlyDeleted.canDelete(existingItem), !recovered.contains(where: { $0 === existingItem }) {
+                recovered.append(existingItem)
+                // This run's files for it, not ones found in other folders.
+                recoveredSourceCount += item.sourceReferences.count
+            }
         }
-        let recoveredSourceCount = recovered.reduce(into: 0) { $0 += max(1, sourceReferencesFromJSON($1.sourceReferencesRaw).count) }
         for item in recovered {
             item.deletedAt = nil
             item.deletedBy = nil

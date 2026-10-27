@@ -116,8 +116,9 @@ enum ImportSources {
     static func backfill(accountID: String = MomentsAccount.localID, context: ModelContext) {
         let fileSource = MediaSource.file.rawValue
         let photosSourceRaw = MediaSource.photos.rawValue
+        // Not photos in Recently Deleted: removing their source just unlinked them.
         let items = (try? context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate {
-            $0.sourceRaw == fileSource && $0.importSourceIDsRaw == nil
+            $0.sourceRaw == fileSource && $0.importSourceIDsRaw == nil && $0.deletedAt == nil
         }))) ?? []
         let mine = items.filter { RecentlyDeleted.canDelete($0, accountID: accountID) }
         var changed = false
@@ -131,7 +132,7 @@ enum ImportSources {
             let folderKind = ImportSource.Kind.folder.rawValue
             let known = (try? context.fetch(FetchDescriptor<ImportSource>(predicate: #Predicate { $0.kindRaw == folderKind && $0.ownerAccountID == accountID }))) ?? []
             var sourceByRoot = Dictionary(known.compactMap { source in source.locationKey.map { ($0, source) } }, uniquingKeysWith: { first, _ in first })
-            var unknownSource: ImportSource?
+            var unknownSource = known.first { $0.locationKey == nil }
             for item in mine {
                 let source: ImportSource
                 if let folder = folderByItem[item.id], let root = roots.first(where: { contains($0, folder) }) {
@@ -155,7 +156,8 @@ enum ImportSources {
             }
             changed = true
         }
-        let hasPhotos = ((try? context.fetchCount(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.sourceRaw == photosSourceRaw }))) ?? 0) > 0
+        let photosItems = (try? context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.sourceRaw == photosSourceRaw && $0.deletedAt == nil }))) ?? []
+        let hasPhotos = photosItems.contains { RecentlyDeleted.canDelete($0, accountID: accountID) }
         let photosKind = ImportSource.Kind.photos.rawValue
         let hasPhotosSource = ((try? context.fetchCount(FetchDescriptor<ImportSource>(predicate: #Predicate { $0.kindRaw == photosKind && $0.ownerAccountID == accountID }))) ?? 0) > 0
         if hasPhotos && !hasPhotosSource {

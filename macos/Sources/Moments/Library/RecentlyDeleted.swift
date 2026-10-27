@@ -87,13 +87,26 @@ enum RecentlyDeleted {
     private static func purge(_ candidates: [MediaItem], context: ModelContext) -> Int {
         let items = candidates.filter { $0.deletedAt != nil }
         guard !items.isEmpty else { return 0 }
-        let ids = items.map(\.id)
-        let idSet = Set(ids)
-        // String-keyed records first, fetched before anything is deleted.
-        let notes = (try? context.fetch(FetchDescriptor<PhotoNote>(predicate: #Predicate { ids.contains($0.mediaID) }))) ?? []
-        let memberships = (try? context.fetch(FetchDescriptor<UserGroupItem>(predicate: #Predicate { ids.contains($0.mediaID) }))) ?? []
-        let faces = (try? context.fetch(FetchDescriptor<FaceObservation>(predicate: #Predicate { ids.contains($0.mediaID) }))) ?? []
-        let scans = (try? context.fetch(FetchDescriptor<FaceScanRecord>(predicate: #Predicate { ids.contains($0.id) }))) ?? []
+        let idSet = Set(items.map(\.id))
+        // String-keyed records first, all fetched before anything is deleted,
+        // in chunks so a large purge stays a small query. If any fetch
+        // fails, nothing is purged: no photo goes while its faces or notes
+        // would stay behind.
+        var notes: [PhotoNote] = []
+        var memberships: [UserGroupItem] = []
+        var faces: [FaceObservation] = []
+        var scans: [FaceScanRecord] = []
+        do {
+            for start in stride(from: 0, to: items.count, by: 500) {
+                let ids = items[start..<min(start + 500, items.count)].map(\.id)
+                notes += try context.fetch(FetchDescriptor<PhotoNote>(predicate: #Predicate { ids.contains($0.mediaID) }))
+                memberships += try context.fetch(FetchDescriptor<UserGroupItem>(predicate: #Predicate { ids.contains($0.mediaID) }))
+                faces += try context.fetch(FetchDescriptor<FaceObservation>(predicate: #Predicate { ids.contains($0.mediaID) }))
+                scans += try context.fetch(FetchDescriptor<FaceScanRecord>(predicate: #Predicate { ids.contains($0.id) }))
+            }
+        } catch {
+            return 0
+        }
         for record in notes { context.delete(record) }
         for record in memberships { context.delete(record) }
         for record in faces { context.delete(record) }

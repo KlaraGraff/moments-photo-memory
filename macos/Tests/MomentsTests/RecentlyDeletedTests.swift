@@ -138,10 +138,28 @@ final class RecentlyDeletedTests: XCTestCase {
         XCTAssertTrue(selection.selectedItemIDs.isEmpty)
         XCTAssertEqual(selection.lastDeletion?.itemIDs, ["photo"])
 
+        // ⌘Z still works after the bar has hidden itself.
+        selection.lastDeletion = nil
         undoManager.undo()
         XCTAssertNil(item.deletedAt)
+        selection.openViewer("photo", in: ["photo"])
         undoManager.redo()
         XCTAssertNotNil(item.deletedAt)
+        XCTAssertNil(selection.viewerRequest, "Redo left the viewer on the deleted photo")
+        undoManager.undo()
+        XCTAssertNil(item.deletedAt)
+
+        // A new delete; ⌘Z clears its bar.
+        undoManager.beginUndoGrouping()
+        PhotoDeletion.request(["photo"], confirm: false, selection: selection, context: context, undoManager: undoManager)
+        undoManager.endUndoGrouping()
+        XCTAssertNotNil(selection.lastDeletion)
+        undoManager.undo()
+        XCTAssertNil(selection.lastDeletion, "The bar still offers Undo after ⌘Z")
+        undoManager.removeAllActions()
+        undoManager.beginUndoGrouping()
+        PhotoDeletion.request(["photo"], confirm: false, selection: selection, context: context, undoManager: undoManager)
+        undoManager.endUndoGrouping()
 
         // The bar's Undo leaves nothing for ⌘Z.
         let notice = try XCTUnwrap(selection.lastDeletion)
@@ -208,6 +226,9 @@ final class RecentlyDeletedTests: XCTestCase {
         XCTAssertEqual(both.importSourceIDs, [other.id])
         XCTAssertNil(elsewhere.deletedAt)
         XCTAssertEqual(try context.fetch(FetchDescriptor<ImportSource>()).map(\.id), [other.id])
+        // Settings runs the backfill again: the removed folder stays removed.
+        ImportSources.backfill(context: context)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ImportSource>()).map(\.id), [other.id])
     }
 
     func testRemovingApplePhotosMovesOnlyItsPhotos() throws {
@@ -224,6 +245,10 @@ final class RecentlyDeletedTests: XCTestCase {
         XCTAssertNotNil(fromPhotos.deletedAt)
         XCTAssertNil(fromFolder.deletedAt)
         XCTAssertNil(partners.deletedAt)
+        // Only the partner's Apple Photos photos are left, so no source of mine comes back.
+        ImportSources.backfill(context: context)
+        let photosKind = ImportSource.Kind.photos.rawValue
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<ImportSource>(predicate: #Predicate { $0.kindRaw == photosKind })), 0)
     }
 
     func testOutermostFoldersFoldSubfoldersIntoTheirParent() {

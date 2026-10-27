@@ -176,7 +176,7 @@ public struct PhotosImporter {
         let fresh = mapped
 
         let duplicateDetector = PhotosImportDuplicateDetector()
-        let duplicateLocalIDs = duplicateDetector.matchingPhotoIdentifiers(fresh, against: existing)
+        let duplicateLocalIDs = duplicateDetector.matchingPhotoIdentifiers(fresh, against: existing.filter { $0.deletedAt == nil })
         let metadata = fresh.map(\.metadata)
         let organizer = ImportOrganizer(
             configuration: configuration,

@@ -8,7 +8,6 @@ import SwiftData
 ///
 /// Each person deletes only the photos they added (`ownerAccountID`); a
 /// partner's photos are left as they are.
-@MainActor
 enum RecentlyDeleted {
     static let retentionDays = 30
     static let retention: TimeInterval = TimeInterval(retentionDays) * 86_400
@@ -66,6 +65,7 @@ enum RecentlyDeleted {
     }
 
     /// Purges the photos whose 30 days are up. Returns how many went.
+    @MainActor
     @discardableResult
     static func purgeExpired(now: Date = .now, context: ModelContext) -> Int {
         let expired = trashedItems(context: context).filter { isExpired($0, now: now) }
@@ -77,11 +77,13 @@ enum RecentlyDeleted {
     /// hangs off them: memories, notes, tags, favorites, faces and their
     /// places in groups and chapters. Photos still in the library and a
     /// partner's photos are never purged here. Cannot be undone.
+    @MainActor
     @discardableResult
     static func deletePermanently(_ items: [MediaItem], accountID: String = MomentsAccount.localID, context: ModelContext) -> Int {
         purge(items.filter { canDelete($0, accountID: accountID) }, context: context)
     }
 
+    @MainActor
     private static func purge(_ candidates: [MediaItem], context: ModelContext) -> Int {
         let items = candidates.filter { $0.deletedAt != nil }
         guard !items.isEmpty else { return 0 }

@@ -78,7 +78,8 @@ enum ImportSources {
     /// The source for a folder being imported: the one recorded for the same
     /// folder before, or a new one.
     static func folderSource(for folder: URL, accountID: String = MomentsAccount.localID, now: Date = .now, context: ModelContext) -> ImportSource {
-        let key = locationKey(for: folder)
+        // Optional, to compare with the optional column inside the predicate.
+        let key: String? = locationKey(for: folder)
         let folderKind = ImportSource.Kind.folder.rawValue
         let existing = (try? context.fetch(FetchDescriptor<ImportSource>(predicate: #Predicate {
             $0.kindRaw == folderKind && $0.locationKey == key && $0.ownerAccountID == accountID

@@ -10,31 +10,44 @@ import AppKit
 @MainActor
 enum TitleBarDoubleClick {
     private static var monitor: Any?
+    /// The window whose bar got the second click, until that click ends.
+    private static weak var pending: NSWindow?
 
     static func install() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { event in
             // Local monitors run on the main thread.
             MainActor.assumeIsolated { take(event) } ? nil : event
         }
     }
 
-    /// True when the event was a double click on the bar and is handled here.
+    /// True when the event is the second press on the bar, taken here so
+    /// AppKit does nothing with it. The window changes once that click is
+    /// over: changed during it, the release put the window back.
     private static func take(_ event: NSEvent) -> Bool {
-        guard event.clickCount == 2, let window = event.window,
-              isOnEmptyTopBar(event, in: window) else { return false }
-        // After this click is done with: zooming from inside the title bar's
-        // own click handling left the window as it was.
-        DispatchQueue.main.async {
-            #if DEBUG
-            let before = window.frame
-            #endif
-            perform(in: window)
-            #if DEBUG
-            TitleBarProbe.note("performed \(UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "default") \(before) -> \(window.frame)")
-            #endif
+        switch event.type {
+        case .leftMouseDown:
+            pending = nil
+            guard event.clickCount == 2, let window = event.window,
+                  isOnEmptyTopBar(event, in: window) else { return false }
+            pending = window
+            return true
+        case .leftMouseUp:
+            guard let window = pending else { return false }
+            pending = nil
+            DispatchQueue.main.async {
+                #if DEBUG
+                let before = window.frame
+                #endif
+                perform(in: window)
+                #if DEBUG
+                TitleBarProbe.note("performed \(UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "default") \(before) -> \(window.frame)")
+                #endif
+            }
+            return false
+        default:
+            return false
         }
-        return true
     }
 
     static func perform(in window: NSWindow) {

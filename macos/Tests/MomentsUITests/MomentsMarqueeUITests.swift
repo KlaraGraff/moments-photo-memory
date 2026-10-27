@@ -107,6 +107,17 @@ final class MomentsMarqueeUITests: XCTestCase {
             }
             start.click(forDuration: 0.1, thenDragTo: drag.to, withVelocity: .default, thenHoldForDuration: drag.hold)
             assertEveryPhotoOnScreenIsSelected(app, after: drag.name, moreThan: visible.count)
+            // Photos the drag scrolled past are off screen now; the app's
+            // report names any inside the rectangle that it did not select.
+            if let folder {
+                let report = URL(fileURLWithPath: folder).appending(path: "marquee-report-\(index + 1).txt")
+                let deadline = Date().addingTimeInterval(10)
+                while !FileManager.default.fileExists(atPath: report.path), Date() < deadline {
+                    Thread.sleep(forTimeInterval: 0.5)
+                }
+                let text = (try? String(contentsOf: report, encoding: .utf8)) ?? "missing marquee report"
+                XCTAssertTrue(text.contains("inside the rectangle but not counted: 0\n"), "After \(drag.name): \(text.prefix(600))")
+            }
         }
     }
 

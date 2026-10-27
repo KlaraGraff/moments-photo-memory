@@ -86,7 +86,9 @@ final class MomentsMarqueeUITests: XCTestCase {
         // Just inside the bottom edge, and past it, where it scrolls fastest.
         let edge = point(app, x: lastColumn, y: window.maxY - 6)
         let belowEdge = point(app, x: lastColumn, y: window.maxY + 60)
-        let scrollView = app.scrollViews.containing(.any, identifier: first.element.identifier).firstMatch
+        // Any photo, not the first one: the lazy grid lets that one go once
+        // a drag has scrolled far enough.
+        let scrollView = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo.")).firstMatch
         func backAtTheTop() -> Bool { abs(first.element.frame.minY - first.frame.minY) < 2 }
 
         let drags: [(name: String, to: XCUICoordinate, hold: TimeInterval)] = [

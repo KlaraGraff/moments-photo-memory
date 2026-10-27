@@ -137,7 +137,11 @@ final class PlaceNameBackfillScheduler {
         generation += 1
         let current = generation
         let backfill = makeBackfill()
+        let regroups = !ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
         task = Task.detached(priority: .utility) { [weak self] in
+            // A library imported when every photo went into a trip is
+            // regrouped first, once (UI tests keep their seeded trips).
+            if regroups { _ = try? TripRegrouping.runOnce(container: container) }
             _ = try? await backfill.run(container: container)
             // Then trips still named by date only get their places in the name.
             if !Task.isCancelled {

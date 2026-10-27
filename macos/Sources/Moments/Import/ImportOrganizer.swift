@@ -167,7 +167,8 @@ struct OrganizedPlace: Equatable, Sendable {
 
 struct OrganizedMedia: Equatable, Sendable {
     let metadata: ImportedMediaMetadata
-    let tripID: String
+    /// nil for daily life at home, which belongs to no trip.
+    let tripID: String?
     let placeID: String?
     let suggestedPlaceID: String?
     let suggestedPlaceName: String?
@@ -224,8 +225,13 @@ struct ImportOrganizer {
     }
 
     /// `sourceFolderName` names trips whose photos carry no real capture date;
-    /// it stays in the local store only.
-    func organize(_ inputMetadata: [ImportedMediaMetadata], sourceFolderName: String? = nil) async throws -> OrganizedImportPlan {
+    /// it stays in the local store only. `library` holds the photos already
+    /// imported, which tell where home is.
+    func organize(
+        _ inputMetadata: [ImportedMediaMetadata],
+        sourceFolderName: String? = nil,
+        library: [PhotoStop] = []
+    ) async throws -> OrganizedImportPlan {
         let metadata = try await resolveCaptureDates(inputMetadata)
         guard !metadata.isEmpty else {
             return OrganizedImportPlan(media: [], trips: [], places: [], collectionCount: 0, routeCount: 0, flags: [], conflicts: [])
@@ -234,7 +240,7 @@ struct ImportOrganizer {
         let ordered = metadata.sorted { lhs, rhs in
             lhs.captureDate == rhs.captureDate ? lhs.id < rhs.id : lhs.captureDate < rhs.captureDate
         }
-        let tripGroups = splitTrips(ordered)
+        let (tripGroups, homeGroup) = splitTrips(ordered, library: library)
         var allMedia: [OrganizedMedia] = []
         var trips: [OrganizedTrip] = []
         var places: [OrganizedPlace] = []
@@ -246,7 +252,7 @@ struct ImportOrganizer {
         let nearDuplicateIDs = nearDuplicateIDs(in: ordered)
         let orderedIndex = Dictionary(ordered.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         var outsideDateIDs = Set<String>()
-        for index in 1..<tripGroups.count {
+        for index in tripGroups.indices.dropFirst() {
             guard let previous = tripGroups[index - 1].last,
                   let current = tripGroups[index].first else { continue }
             if current.captureDate.timeIntervalSince(previous.captureDate) > configuration.captureDateConflictThreshold {
@@ -255,10 +261,13 @@ struct ImportOrganizer {
         }
 
         var undatedTripCount = 0
-        for (index, group) in tripGroups.enumerated() {
+        // Daily life at home goes through the same place and review steps as
+        // one group, without a trip.
+        let groups = tripGroups.map { (items: $0, isTrip: true) } + (homeGroup.isEmpty ? [] : [(items: homeGroup, isTrip: false)])
+        for (index, (group, isTrip)) in groups.enumerated() {
             try Task.checkCancellation()
-            let tripID = stableID(prefix: "trip", ids: group.map(\.id))
-            let isUndated = group.allSatisfy { $0.captureDateSource == .fileDateFallback }
+            let tripID = isTrip ? stableID(prefix: "trip", ids: group.map(\.id)) : nil
+            let isUndated = isTrip && group.allSatisfy { $0.captureDateSource == .fileDateFallback }
             var tripName: String
             if isUndated {
                 // Several undated groups from one folder get numbered names.
@@ -278,7 +287,7 @@ struct ImportOrganizer {
             let cityClusters = clusterer.clusters(for: stops, level: .city)
             let cityLookup = try await cityNames(for: cityClusters)
             let cityNames = cityLookup.values
-            if !isUndated {
+            if isTrip, !isUndated {
                 // "Morocco August 2026" or "Shanghai · Chongqing · Wulong April 2026":
                 // cities in the order they were first visited.
                 var orderedCities: [ImportGeocodeResult] = []
@@ -357,7 +366,7 @@ struct ImportOrganizer {
                     detailParts.append(String(localized: "The file name suggests a received/shared copy; check its date and place."))
                 }
                 if isGPSJump(item: item, in: ordered, index: orderedIndex) { reasons.append(.gpsJump) }
-                if outsideDateIDs.contains(item.id) || isCaptureDateOutsideTrip(item: item, at: groupIndex, in: group) {
+                if isTrip, outsideDateIDs.contains(item.id) || isCaptureDateOutsideTrip(item: item, at: groupIndex, in: group) {
                     reasons.append(.captureDateOutsideTrip)
                 }
                 if nearDuplicateIDs.contains(item.id) { reasons.append(.nearDuplicate) }
@@ -412,6 +421,7 @@ struct ImportOrganizer {
                     ))
                 }
             }
+            guard let tripID else { continue }
             trips.append(OrganizedTrip(
                 id: tripID,
                 name: tripName,
@@ -577,25 +587,32 @@ struct ImportOrganizer {
         }
     }
 
-    private func splitTrips(_ ordered: [ImportedMediaMetadata]) -> [[ImportedMediaMetadata]] {
-        var groups: [[ImportedMediaMetadata]] = []
-        var current: [ImportedMediaMetadata] = []
-        for item in ordered {
-            if let previous = current.last,
-               shouldSplit(previous: previous, current: item) {
-                groups.append(current)
-                current = []
-            }
-            current.append(item)
+    /// The library's located photos, which tell where home is.
+    static func libraryStops(_ items: [MediaItem]) -> [PhotoStop] {
+        items.compactMap { item in
+            guard item.deletedAt == nil, let date = item.captureDate,
+                  let latitude = item.latitude, let longitude = item.longitude else { return nil }
+            return PhotoStop(id: item.id, date: date, coordinate: GeoPoint(latitude: latitude, longitude: longitude))
         }
-        if !current.isEmpty { groups.append(current) }
-        return groups
     }
 
-    private func shouldSplit(previous: ImportedMediaMetadata, current: ImportedMediaMetadata) -> Bool {
-        if current.captureDate.timeIntervalSince(previous.captureDate) > configuration.maximumTimeGap { return true }
-        guard let lhs = coordinate(for: previous), let rhs = coordinate(for: current) else { return false }
-        return Self.tripCoordinatesCanJoin(lhs, rhs, configuration: configuration) == false
+    /// Trips are the stretches away from home (see `TripSegmenter`); the
+    /// rest is daily life, in date order.
+    private func splitTrips(
+        _ ordered: [ImportedMediaMetadata],
+        library: [PhotoStop]
+    ) -> (trips: [[ImportedMediaMetadata]], home: [ImportedMediaMetadata]) {
+        var segmenter = TripSegmenter()
+        segmenter.maximumTimeGap = configuration.maximumTimeGap
+        segmenter.maximumTripDistanceMeters = configuration.maximumTripDistanceMeters
+        segmenter.homeCoordinate = configuration.homeCoordinate
+        let stops = ordered.map { PhotoStop(id: $0.id, date: $0.captureDate, coordinate: coordinate(for: $0)) }
+        let result = segmenter.segment(stops, context: library)
+        let byID = Dictionary(ordered.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return (
+            result.trips.map { $0.compactMap { byID[$0] } },
+            ordered.filter { result.homeIDs.contains($0.id) }
+        )
     }
 
     /// Shared with incremental import matching so refreshed assets follow the

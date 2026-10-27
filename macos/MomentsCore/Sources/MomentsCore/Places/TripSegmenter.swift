@@ -33,8 +33,8 @@ public struct TripSegmenter: Sendable {
     /// Away photos further apart than this always start a new trip.
     public var maximumQuietGap: TimeInterval = 4 * 24 * 60 * 60
     public var locationlessMatchWindow: TimeInterval = 12 * 60 * 60
-    /// A stretch away becomes a trip with this many photos, or when it
-    /// spans more than one day.
+    /// Where a home is known, a stretch away becomes a trip with this many
+    /// photos, or when it spans more than one day.
     public var minimumTripItems: Int = 5
     /// A home the person set; it replaces the detected one everywhere.
     public var homeCoordinate: GeoPoint?
@@ -102,7 +102,9 @@ public struct TripSegmenter: Sendable {
         var trips: [[String]] = []
         var homeIDs = Set(ordered.indices.filter { !isAway[$0] }.map { ordered[$0].id })
         for run in runs {
-            if run.count >= minimumTripItems || spansSeveralDays(run) {
+            // Without a home there is no daily life to fall back to.
+            let homeKnown = run.first.map { !home.homes(at: $0.date).isEmpty } ?? false
+            if run.count >= minimumTripItems || spansSeveralDays(run) || !homeKnown {
                 trips.append(run.map(\.id))
             } else {
                 homeIDs.formUnion(run.map(\.id))

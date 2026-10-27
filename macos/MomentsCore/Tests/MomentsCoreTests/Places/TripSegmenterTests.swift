@@ -86,6 +86,13 @@ final class TripSegmenterTests: XCTestCase {
         XCTAssertTrue(result.homeIDs.isEmpty)
     }
 
+    func testWithoutAHomeAFewPhotosAreStillATrip() {
+        let photos = days(0..<1, at: paris, prefix: "paris", perDay: 2)
+        let result = TripSegmenter().segment(photos)
+
+        XCTAssertEqual(result.trips, [photos.map(\.id)])
+    }
+
     func testHomeFollowsAMove() {
         let munich = GeoPoint(latitude: 48.14, longitude: 11.58)
         let before = homeDays(0..<200)

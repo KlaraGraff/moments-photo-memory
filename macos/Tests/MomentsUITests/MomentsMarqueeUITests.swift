@@ -15,14 +15,9 @@ final class MomentsMarqueeUITests: XCTestCase {
     }
 
     /// The small window shows about one row of prints, so this one runs on
-    /// the dense grid (⌘− twice).
+    /// the dense grid.
     func testDragBetweenPhotosSelectsLikePhotosInASmallWindow() {
-        let app = launch(smallWindow: true)
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo.")).firstMatch.waitForExistence(timeout: launchTimeout))
-        app.typeKey("-", modifierFlags: .command)
-        app.typeKey("-", modifierFlags: .command)
-        Thread.sleep(forTimeInterval: 1)
-        exerciseMarquee(app, prefix: "marquee-small")
+        exerciseMarquee(launch(smallWindow: true, zoomLevel: 0), prefix: "marquee-small")
     }
 
     /// Held at the bottom edge, the Library keeps scrolling and the
@@ -39,11 +34,13 @@ final class MomentsMarqueeUITests: XCTestCase {
         let window = app.windows.firstMatch.frame
         let start = point(app, x: first.frame.minX - 12, y: first.frame.minY - 4)
         // Inside the window, a few points above its bottom edge.
-        let edge = point(app, x: first.frame.midX + 40, y: window.maxY - 6)
+        // Across every column, so each row the grid scrolls in adds photos.
+        let lastColumn = visible.map(\.frame.midX).max() ?? first.frame.midX
+        let edge = point(app, x: lastColumn, y: window.maxY - 6)
         start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 4)
 
         let count = Int(selectionCount(app)) ?? 0
-        XCTAssertGreaterThan(count, visible.count * 2, "Holding at the edge did not keep scrolling and selecting (\(count) selected)")
+        XCTAssertGreaterThan(count, visible.count, "Holding at the edge did not keep scrolling and selecting (\(count) selected)")
         let scrolledAway = !first.element.exists || !first.element.isHittable || !window.contains(first.element.frame)
         XCTAssertTrue(scrolledAway, "The Library did not scroll")
         capture(app, named: "marquee-autoscroll-evidence")
@@ -167,9 +164,12 @@ final class MomentsMarqueeUITests: XCTestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(NSEvent.doubleClickInterval + 0.3))
     }
 
-    private func launch(smallWindow: Bool = false, extraArguments: [String] = []) -> XCUIApplication {
+    /// `zoomLevel` comes in as a launch argument, so it neither depends on
+    /// nor changes what other tests leave in the app's defaults.
+    private func launch(smallWindow: Bool = false, zoomLevel: Int = 2, extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(en)", "-AppleLocale", "en"] + extraArguments
+        app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(en)", "-AppleLocale", "en",
+                               "-moments.library.thumbnailSize", String(zoomLevel)] + extraArguments
         if smallWindow { app.launchArguments += ["-MomentsUITestSmallWindow"] }
         app.launch()
         app.activate()

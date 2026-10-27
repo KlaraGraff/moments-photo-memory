@@ -13,10 +13,10 @@ import SwiftUI
 /// Photos report their frames in the grid content's coordinates
 /// (`LibraryMarquee.space`). The scrolling and the pointer are read from the
 /// grid's NSScrollView once per display frame, so a pointer that stands still
-/// at the edge still scrolls. Only the rectangle and the selected photos'
-/// frames redraw while dragging; nothing in the grid is laid out again.
+/// at the edge still scrolls. The rectangle is a plain AppKit layer over the
+/// scroll view, so drawing it never touches SwiftUI; only the selection
+/// marks of photos the rectangle reaches or leaves redraw.
 @MainActor
-@Observable
 final class LibraryMarquee {
     static let space = "library.marquee"
 
@@ -30,7 +30,8 @@ final class LibraryMarquee {
     }
 
     /// The rectangle being dragged, in content coordinates.
-    private(set) var rect: CGRect?
+    private var rect: CGRect?
+    private var band: BandView?
 
     private struct Frame {
         var rect: CGRect
@@ -50,20 +51,20 @@ final class LibraryMarquee {
 
     /// Each photo's last frame, kept after it scrolls out of the lazy grid
     /// so a drag that scrolled past it still knows where it is.
-    @ObservationIgnored private var frames: [String: Frame] = [:]
+    private var frames: [String: Frame] = [:]
     /// Photos the grid has built right now; their frames stay current.
-    @ObservationIgnored private var live: Set<String> = []
+    private var live: Set<String> = []
     /// Frames from before the current drag may be stale (the grid could
     /// have been regrouped since); only this drag's count.
-    @ObservationIgnored private var generation = 0
-    @ObservationIgnored private var press: Press?
-    @ObservationIgnored weak var anchorView: NSView?
-    @ObservationIgnored private weak var scrollView: NSScrollView?
-    @ObservationIgnored private var displayLink: CADisplayLink?
-    @ObservationIgnored private var linkTarget: LinkTarget?
-    @ObservationIgnored private var lastTick: CFTimeInterval = 0
-    @ObservationIgnored private weak var selection: SelectionModel?
-    @ObservationIgnored private var order: () -> [String] = { [] }
+    private var generation = 0
+    private var press: Press?
+    weak var anchorView: NSView?
+    private weak var scrollView: NSScrollView?
+    private var displayLink: CADisplayLink?
+    private var linkTarget: LinkTarget?
+    private var lastTick: CFTimeInterval = 0
+    private weak var selection: SelectionModel?
+    private var order: () -> [String] = { [] }
 
     init() {}
 
@@ -120,6 +121,7 @@ final class LibraryMarquee {
     /// the other.
     private func begin(at start: CGPoint, location: CGPoint, selection: SelectionModel, order: @escaping () -> [String]) {
         stopTicking()
+        removeBand()
         rect = nil
         self.selection = selection
         self.order = order
@@ -162,6 +164,7 @@ final class LibraryMarquee {
     private func finish() {
         guard let current = press else { return }
         stopTicking()
+        removeBand()
         press = nil
         rect = nil
         #if DEBUG
@@ -190,7 +193,8 @@ final class LibraryMarquee {
         }
         guard let scrollView, let document = scrollView.documentView else { return }
         let now = link.timestamp
-        let elapsed = lastTick == 0 ? link.duration : min(max(now - lastTick, 0), 0.05)
+        // Real elapsed time keeps the speed steady when a frame is late.
+        let elapsed = lastTick == 0 ? link.duration : min(max(now - lastTick, 0), 0.1)
         lastTick = now
         #if DEBUG
         MarqueeProbe.frame(at: now)
@@ -214,6 +218,8 @@ final class LibraryMarquee {
             }
         }
         if let point = pointerInContent() { update(to: point) }
+        // The rectangle sits still in the content while the view scrolls.
+        placeBand()
     }
 
     private func update(to point: CGPoint) {
@@ -226,6 +232,7 @@ final class LibraryMarquee {
         )
         guard next != rect else { return }
         rect = next
+        placeBand()
         var hits: Set<String> = []
         for (id, frame) in frames where frame.generation == generation && Self.touches(next, frame.rect) {
             hits.insert(id)
@@ -241,6 +248,45 @@ final class LibraryMarquee {
             MarqueeProbe.selectionChanged()
             #endif
         }
+    }
+
+    // MARK: Rectangle
+
+    /// Draws `rect` over the scroll view, clipped to what is visible.
+    private func placeBand() {
+        guard let rect, let offset = press?.offset, let scrollView, let document = scrollView.documentView else { return }
+        let inDocument = rect.offsetBy(dx: -offset.dx, dy: -offset.dy)
+        let visible = scrollView.convert(inDocument, from: document).intersection(scrollView.contentView.frame)
+        if band == nil {
+            let view = BandView()
+            scrollView.addSubview(view, positioned: .above, relativeTo: scrollView.contentView)
+            band = view
+        }
+        band?.isHidden = visible.isNull || visible.isEmpty
+        if !visible.isNull, band?.frame != visible { band?.frame = visible }
+    }
+
+    private func removeBand() {
+        band?.removeFromSuperview()
+        band = nil
+    }
+
+    /// The rubber band: a translucent fill with a thin edge, like Photos.
+    private final class BandView: NSView {
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            layer?.backgroundColor = NSColor(LibraryPalette.ink).withAlphaComponent(0.08).cgColor
+            layer?.borderColor = NSColor(LibraryPalette.ink).withAlphaComponent(0.32).cgColor
+            layer?.borderWidth = 1
+            // Frame changes follow the pointer, never animate.
+            layer?.actions = ["position": NSNull(), "bounds": NSNull(), "hidden": NSNull()]
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override var isFlipped: Bool { true }
     }
 
     // MARK: Pointer
@@ -346,9 +392,6 @@ private struct LibraryMarqueeSelection: ViewModifier {
     func body(content: Content) -> some View {
         content
             .coordinateSpace(.named(LibraryMarquee.space))
-            .overlay(alignment: .topLeading) {
-                LibraryMarqueeRectangle(marquee: marquee)
-            }
             .background(alignment: .topLeading) {
                 Color.clear
                     .contentShape(Rectangle())
@@ -383,23 +426,6 @@ private struct LibraryMarqueeTarget: ViewModifier {
             }
             .onAppear { marquee.appeared(id) }
             .onDisappear { marquee.disappeared(id) }
-    }
-}
-
-/// The rectangle itself; the only view that redraws as it grows.
-private struct LibraryMarqueeRectangle: View {
-    let marquee: LibraryMarquee
-
-    var body: some View {
-        if let rect = marquee.rect {
-            Rectangle()
-                .fill(LibraryPalette.ink.opacity(0.08))
-                .overlay { Rectangle().strokeBorder(LibraryPalette.ink.opacity(0.32), lineWidth: 1) }
-                .frame(width: max(rect.width, 1), height: max(rect.height, 1))
-                .offset(x: rect.minX, y: rect.minY)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
     }
 }
 

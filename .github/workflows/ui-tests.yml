@@ -62,6 +62,7 @@ jobs:
           TEST_RUNNER_MOMENTS_FLASH_DIR: ${{ runner.temp }}/flash
           TEST_RUNNER_MOMENTS_SCROLL_DIR: ${{ runner.temp }}/scroll
           TEST_RUNNER_MOMENTS_RESIZE_DIR: ${{ runner.temp }}/resize
+          TEST_RUNNER_MOMENTS_MARQUEE_DIR: ${{ runner.temp }}/marquee
           ONLY_TESTING: ${{ inputs.only_testing }}
         run: |
           # A manual run can target a few tests for a quick check; pull
@@ -83,6 +84,9 @@ jobs:
         if: always()
         run: |
           cat "$RUNNER_TEMP"/scroll/scroll-report-*.txt 2>/dev/null || echo "no scroll report"
+      - name: Print marquee report
+        if: always()
+        run: cat "$RUNNER_TEMP"/marquee/marquee-report-*.txt 2>/dev/null || echo "no marquee report"
       - name: Print resize report
         if: always()
         run: cat "$RUNNER_TEMP"/resize/resize-report.txt 2>/dev/null || echo "no resize report"

@@ -296,7 +296,7 @@ struct LibraryView: View {
         }
         .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search places, trips, notes")))
         .navigationTitle(String(localized: "Library"))
-        .navigationSubtitle(String(localized: "\(cachedVisibleCount) photos"))
+        .modifier(LibrarySelectionSubtitle(idle: String(localized: "\(cachedVisibleCount) photos")))
     }
 
     /// "12 photos to confirm" under the filters; opens the review list.
@@ -470,7 +470,7 @@ struct LibraryView: View {
                 .scrollTargetLayout()
                 .padding(.horizontal, 34)
                 .padding(.vertical, 24)
-                .deselectsOnBackgroundClick(selection)
+                .libraryMarqueeSelection(state: state, selection: selection)
             }
             .scrollIndicators(.visible)
             // The scroll view opens at the section that was at the top when
@@ -853,12 +853,12 @@ private struct LibrarySectionView: View {
     }
 }
 
+/// One photo in the grid. Its body never reads the selection: the parts
+/// that show it (frame, marks, menu, accessibility) are small views and
+/// modifiers of their own, so a rubber-band drag that selects a row redraws
+/// those, not every photo on screen.
 private struct LibraryPhotoCell: View {
     @Environment(SelectionModel.self) private var selection
-    @Environment(PhotoStackModel.self) private var stacks
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.undoManager) private var undoManager
-    @Environment(\.photoDeletionScope) private var deletionScope
     let item: MediaItem
     let state: LibraryViewState
     let allGroups: [UserGroup]
@@ -895,12 +895,7 @@ private struct LibraryPhotoCell: View {
                         ThumbnailView(item: item, width: 280, height: 280)
                             .aspectRatio(1, contentMode: .fit)
                             .stackedPaper(stackCount, isCompact: true, cornerRadius: 10)
-                            .overlay {
-                                if selection.isSelected(item.id) {
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .strokeBorder(LibraryPalette.accent, lineWidth: 3)
-                                }
-                            }
+                            .overlay { LibraryPhotoSelectionFrame(itemID: item.id, cornerRadius: 10) }
                     } else {
                         ThumbnailView(item: item, width: 560, height: 420)
                             .aspectRatio(1.33, contentMode: .fit)
@@ -915,18 +910,14 @@ private struct LibraryPhotoCell: View {
                             )
                             .stackedPaper(stackCount, isCompact: false)
                             // Selected photos get an accent frame, like Photos.
-                            .overlay {
-                                if selection.isSelected(item.id) {
-                                    Rectangle().strokeBorder(LibraryPalette.accent, lineWidth: 3)
-                                }
-                            }
+                            .overlay { LibraryPhotoSelectionFrame(itemID: item.id, cornerRadius: 0) }
                     }
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("library.photo.\(item.id)")
-                .accessibilityValue(selection.isSelected(item.id) ? String(localized: "Selected") : String(localized: "Not selected"))
-                .accessibilityAddTraits(selection.isSelected(item.id) ? .isSelected : [])
+                .modifier(LibraryPhotoSelectionAccessibility(itemID: item.id))
                 .id(LibraryScrollTarget.item(item.id))
+                .libraryMarqueeTarget(item.id, marquee: state.marquee)
                 .onAppear {
                     if state.pendingRevealItemID == item.id { state.appearedRevealItemID = item.id }
                 }
@@ -938,39 +929,7 @@ private struct LibraryPhotoCell: View {
                         .allowsHitTesting(false)
                 }
 
-                HStack(spacing: 6) {
-                    Button {
-                        selection.click(item.id, command: true)
-                    } label: {
-                        Image(systemName: selection.isSelected(item.id) ? "checkmark.circle.fill" : "circle")
-                            .font(isCompact ? .body : .title3)
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(.white, Paper.shadow.opacity(0.45))
-                            .shadow(color: Paper.shadow.opacity(0.35), radius: 2)
-                            .symbolEffect(.bounce, value: selection.isSelected(item.id))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(String(localized: "Select"))
-
-                    Spacer()
-
-                    Button {
-                        item.setFavorite(!item.isFavorite, context: modelContext)
-                        try? modelContext.save()
-                    } label: {
-                        Image(systemName: item.isFavorite ? "star.fill" : "star")
-                            .font(isCompact ? .body : .title3)
-                            .foregroundStyle(item.isFavorite ? .yellow : .white)
-                            .shadow(color: Paper.shadow.opacity(0.35), radius: 2)
-                            // Confirmations get one small, friendly bounce.
-                            .symbolEffect(.bounce, value: item.isFavorite)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(String(localized: "Favorite"))
-                }
-                .padding(isCompact ? 6 : 11)
-                // In the dense grid the marks show on hover, or when they mean something.
-                .opacity(!isCompact || isHovering || selection.isSelected(item.id) || item.isFavorite ? 1 : 0)
+                LibraryPhotoMarks(item: item, isCompact: isCompact, isHovering: isHovering)
             }
 
             if !isCompact {
@@ -989,60 +948,7 @@ private struct LibraryPhotoCell: View {
             }
         }
         .onHover { isHovering = $0 }
-        .contextMenu {
-            Button(String(localized: "Open")) { open() }
-            if stackCount > 1, let stack = stacks.stack(containing: item.id) {
-                Button(String(localized: "Unstack")) {
-                    stacks.unstack(stack, context: modelContext, undoManager: undoManager)
-                }
-            }
-            Button(selection.isSelected(item.id) ? String(localized: "Deselect") : String(localized: "Select")) {
-                selection.toggle(item.id)
-            }
-            Button(item.isFavorite ? String(localized: "Unfavorite") : String(localized: "Favorite")) {
-                item.setFavorite(!item.isFavorite, context: modelContext)
-                try? modelContext.save()
-            }
-            Button(selection.isSelected(item.id) && selection.selectedItemIDs.count > 1
-                   ? String(localized: "Adjust Date and Time of \(selection.selectedItemIDs.count) Photos…")
-                   : String(localized: "Adjust Date and Time…")) {
-                selection.adjustDateAndTime(for: item.id)
-            }
-            Divider()
-            if item.latitude != nil {
-                Button(String(localized: "Show on Map")) { selection.showOnMap(item.id) }
-            }
-            if let tripID = item.tripID {
-                Button(String(localized: "Show Trip")) { selection.showTrip(tripID) }
-            }
-            if let group {
-                Button(String(localized: "Remove from this group")) {
-                    UserGroupRuleEngine.remove(item, from: group, memberships: groupItems, context: modelContext)
-                    try? modelContext.save()
-                }
-            }
-            if !allGroups.isEmpty {
-                Menu(String(localized: "Add to group")) {
-                    ForEach(allGroups, id: \.id) { target in
-                        Button {
-                            UserGroupRuleEngine.add(item, to: target, memberships: groupItems, context: modelContext)
-                            try? modelContext.save()
-                        } label: {
-                            Label(target.name, systemImage: target.kind == .smart ? "sparkles" : "folder")
-                        }
-                    }
-                }
-            }
-            Divider()
-            Button(String(localized: "Delete from Moments"), role: .destructive) {
-                // The whole selection when this photo is in it, else just this one.
-                let shown = selection.isSelected(item.id)
-                    ? state.orderedItemIDs.filter(selection.selectedItemIDs.contains)
-                    : [item.id]
-                PhotoDeletion.request(deletionScope(shown.isEmpty ? [item.id] : shown), confirm: true, selection: selection, context: modelContext, undoManager: undoManager)
-            }
-            .disabled(!RecentlyDeleted.canDelete(item))
-        }
+        .modifier(LibraryPhotoMenu(item: item, state: state, stackCount: stackCount, group: group, allGroups: allGroups, groupItems: groupItems, open: open))
         .onDrag { NSItemProvider(object: item.id as NSString) }
     }
 
@@ -1078,6 +984,150 @@ private struct LibraryPhotoCell: View {
         selection.select(item.id)
         selection.anchorItemID = item.id
         selection.openViewer(item.id, in: state.viewerItemIDs)
+    }
+}
+
+/// The select circle and the star over a photo.
+private struct LibraryPhotoMarks: View {
+    @Environment(SelectionModel.self) private var selection
+    @Environment(\.modelContext) private var modelContext
+    let item: MediaItem
+    let isCompact: Bool
+    let isHovering: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button {
+                selection.click(item.id, command: true)
+            } label: {
+                Image(systemName: selection.isSelected(item.id) ? "checkmark.circle.fill" : "circle")
+                    .font(isCompact ? .body : .title3)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, Paper.shadow.opacity(0.45))
+                    .shadow(color: Paper.shadow.opacity(0.35), radius: 2)
+                    .symbolEffect(.bounce, value: selection.isSelected(item.id))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(String(localized: "Select"))
+
+            Spacer()
+
+            Button {
+                item.setFavorite(!item.isFavorite, context: modelContext)
+                try? modelContext.save()
+            } label: {
+                Image(systemName: item.isFavorite ? "star.fill" : "star")
+                    .font(isCompact ? .body : .title3)
+                    .foregroundStyle(item.isFavorite ? .yellow : .white)
+                    .shadow(color: Paper.shadow.opacity(0.35), radius: 2)
+                    // Confirmations get one small, friendly bounce.
+                    .symbolEffect(.bounce, value: item.isFavorite)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(String(localized: "Favorite"))
+        }
+        .padding(isCompact ? 6 : 11)
+        // In the dense grid the marks show on hover, or when they mean something.
+        .opacity(!isCompact || isHovering || selection.isSelected(item.id) || item.isFavorite ? 1 : 0)
+    }
+}
+
+/// The accent frame around a selected photo, like Photos.
+private struct LibraryPhotoSelectionFrame: View {
+    @Environment(SelectionModel.self) private var selection
+    let itemID: String
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        if selection.isSelected(itemID) {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(LibraryPalette.accent, lineWidth: 3)
+        }
+    }
+}
+
+private struct LibraryPhotoSelectionAccessibility: ViewModifier {
+    @Environment(SelectionModel.self) private var selection
+    let itemID: String
+
+    func body(content: Content) -> some View {
+        content
+            .accessibilityValue(selection.isSelected(itemID) ? String(localized: "Selected") : String(localized: "Not selected"))
+            .accessibilityAddTraits(selection.isSelected(itemID) ? .isSelected : [])
+    }
+}
+
+/// A photo's context menu.
+private struct LibraryPhotoMenu: ViewModifier {
+    @Environment(SelectionModel.self) private var selection
+    @Environment(PhotoStackModel.self) private var stacks
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.undoManager) private var undoManager
+    @Environment(\.photoDeletionScope) private var deletionScope
+    let item: MediaItem
+    let state: LibraryViewState
+    let stackCount: Int
+    let group: UserGroup?
+    let allGroups: [UserGroup]
+    let groupItems: [UserGroupItem]
+    let open: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .contextMenu {
+                Button(String(localized: "Open")) { open() }
+                if stackCount > 1, let stack = stacks.stack(containing: item.id) {
+                    Button(String(localized: "Unstack")) {
+                        stacks.unstack(stack, context: modelContext, undoManager: undoManager)
+                    }
+                }
+                Button(selection.isSelected(item.id) ? String(localized: "Deselect") : String(localized: "Select")) {
+                    selection.toggle(item.id)
+                }
+                Button(item.isFavorite ? String(localized: "Unfavorite") : String(localized: "Favorite")) {
+                    item.setFavorite(!item.isFavorite, context: modelContext)
+                    try? modelContext.save()
+                }
+                Button(selection.isSelected(item.id) && selection.selectedItemIDs.count > 1
+                       ? String(localized: "Adjust Date and Time of \(selection.selectedItemIDs.count) Photos…")
+                       : String(localized: "Adjust Date and Time…")) {
+                    selection.adjustDateAndTime(for: item.id)
+                }
+                Divider()
+                if item.latitude != nil {
+                    Button(String(localized: "Show on Map")) { selection.showOnMap(item.id) }
+                }
+                if let tripID = item.tripID {
+                    Button(String(localized: "Show Trip")) { selection.showTrip(tripID) }
+                }
+                if let group {
+                    Button(String(localized: "Remove from this group")) {
+                        UserGroupRuleEngine.remove(item, from: group, memberships: groupItems, context: modelContext)
+                        try? modelContext.save()
+                    }
+                }
+                if !allGroups.isEmpty {
+                    Menu(String(localized: "Add to group")) {
+                        ForEach(allGroups, id: \.id) { target in
+                            Button {
+                                UserGroupRuleEngine.add(item, to: target, memberships: groupItems, context: modelContext)
+                                try? modelContext.save()
+                            } label: {
+                                Label(target.name, systemImage: target.kind == .smart ? "sparkles" : "folder")
+                            }
+                        }
+                    }
+                }
+                Divider()
+                Button(String(localized: "Delete from Moments"), role: .destructive) {
+                    // The whole selection when this photo is in it, else just this one.
+                    let shown = selection.isSelected(item.id)
+                        ? state.orderedItemIDs.filter(selection.selectedItemIDs.contains)
+                        : [item.id]
+                    PhotoDeletion.request(deletionScope(shown.isEmpty ? [item.id] : shown), confirm: true, selection: selection, context: modelContext, undoManager: undoManager)
+                }
+                .disabled(!RecentlyDeleted.canDelete(item))
+            }
     }
 }
 
@@ -1510,7 +1560,7 @@ struct GroupDetailView: View {
                                 .reportsLibraryGridColumns(to: state)
                                 .padding(.horizontal, PaperMetrics.screenInset)
                                 .padding(.vertical, 24)
-                                .deselectsOnBackgroundClick(selection)
+                                .libraryMarqueeSelection(state: state, selection: selection)
                             }
                             .libraryGridInteraction(state: state, proxy: proxy)
                         }
@@ -1518,10 +1568,10 @@ struct GroupDetailView: View {
                 }
                 .background(LibraryPalette.content)
                 .navigationTitle(group.name)
-                .navigationSubtitle(
-                    String(localized: "\(visibleItems.count) photos") + " · "
+                .modifier(LibrarySelectionSubtitle(
+                    idle: String(localized: "\(visibleItems.count) photos") + " · "
                         + (group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
-                )
+                ))
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) { LibraryZoomControl() }
                     ToolbarItemGroup {

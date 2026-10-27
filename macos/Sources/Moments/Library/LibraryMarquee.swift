@@ -75,6 +75,9 @@ final class LibraryMarquee {
 
     init() {}
 
+    /// A rubber band is being dragged (not just pressed).
+    var isDragging: Bool { press?.isDragging == true }
+
     // MARK: Photo frames
 
     func report(_ id: String, frame: CGRect) {

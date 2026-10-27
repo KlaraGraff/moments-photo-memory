@@ -133,21 +133,24 @@ private struct CorrectionUndoCapsule: View {
         .onHover(perform: onHover)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("correction.bar")
-        .accessibilityValue(UndoBarProbe.shared.note)
         .padding(12)
     }
 }
 
-/// What the bar last made of a click, for the UI tests to read when Undo
-/// did nothing. Empty outside UI tests.
-@MainActor @Observable
+/// What the bar made of the last clicks, on a pasteboard of its own for
+/// the UI tests to read when Undo did nothing. Only in UI tests.
+@MainActor
 private final class UndoBarProbe {
     static let shared = UndoBarProbe()
     static let isOn = ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
-    var note = ""
+    private var notes: [String] = []
 
     func record(_ text: @autoclosure () -> String) {
-        if Self.isOn { note = text() }
+        guard Self.isOn else { return }
+        notes = Array((notes + [text()]).suffix(8))
+        let board = NSPasteboard(name: NSPasteboard.Name("moments.uitest.undo-bar"))
+        board.clearContents()
+        board.setString(notes.joined(separator: " | "), forType: .string)
     }
 }
 
@@ -232,7 +235,7 @@ private final class UndoBarHostingView: NSHostingView<CorrectionUndoCapsule> {
         monitor = nil
         // Off the window (the bar has gone): no monitor left behind.
         guard window != nil else { return }
-        UndoBarProbe.shared.record("watching")
+        UndoBarProbe.shared.record("watching \(type(of: window!))")
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
             // Local monitors run on the main thread.
             MainActor.assumeIsolated { self?.take(event) ?? false } ? nil : event

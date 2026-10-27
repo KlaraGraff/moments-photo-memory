@@ -201,7 +201,7 @@ final class MomentsCorrectionsUITests: XCTestCase {
         var after = ""
         if !closed {
             capture(app, named: "\(prefix)-undo-still-open-evidence")
-            after = "probe after the click: \(bar.value as? String ?? "-"); "
+            after = "bar saw: \(NSPasteboard(name: NSPasteboard.Name("moments.uitest.undo-bar")).string(forType: .string) ?? "-"); "
             // What would have worked, to tell a lost first click from a dead button.
             undo.click()
             after += bar.waitForNonExistence(timeout: 3) ? "a second click closed it" : "a second click did not close it"

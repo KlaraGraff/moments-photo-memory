@@ -49,7 +49,9 @@ final class RecentlyDeletedTests: XCTestCase {
     // MARK: Moving, recovering, purging
 
     func testOnlyOwnPhotosMoveAndComeBack() throws {
-        let context = try MomentsPersistence.makeContainer(inMemory: true).mainContext
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        defer { withExtendedLifetime(container) {} }
         let mine = MediaItem(id: "mine", title: "Mine")
         let partners = MediaItem(id: "partners", title: "Partner's")
         partners.ownerAccountID = "partner"
@@ -78,7 +80,9 @@ final class RecentlyDeletedTests: XCTestCase {
     }
 
     func testPurgeRemovesExpiredPhotosAndWhatHangsOffThem() throws {
-        let context = try MomentsPersistence.makeContainer(inMemory: true).mainContext
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        defer { withExtendedLifetime(container) {} }
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let old = MediaItem(id: "old", title: "Old")
         let recent = MediaItem(id: "recent", title: "Recent")
@@ -122,7 +126,9 @@ final class RecentlyDeletedTests: XCTestCase {
     // MARK: Undo and the viewer
 
     func testDeletingUndoesAndRedoes() throws {
-        let context = try MomentsPersistence.makeContainer(inMemory: true).mainContext
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        defer { withExtendedLifetime(container) {} }
         let item = MediaItem(id: "photo", title: "Photo")
         context.insert(item)
         try context.save()
@@ -170,7 +176,9 @@ final class RecentlyDeletedTests: XCTestCase {
     }
 
     func testDeleteAsksFirstAndLeavesPartnersPhotos() throws {
-        let context = try MomentsPersistence.makeContainer(inMemory: true).mainContext
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        defer { withExtendedLifetime(container) {} }
         let mine = MediaItem(id: "mine", title: "Mine")
         let partners = MediaItem(id: "partners", title: "Partner's")
         partners.ownerAccountID = "partner"
@@ -202,7 +210,9 @@ final class RecentlyDeletedTests: XCTestCase {
     // MARK: Import sources
 
     func testRemovingAFolderKeepsPhotosAnotherFolderHolds() throws {
-        let context = try MomentsPersistence.makeContainer(inMemory: true).mainContext
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        defer { withExtendedLifetime(container) {} }
         let trip = ImportSource(kind: .folder, name: "Trip", locationKey: "/synthetic/trip")
         let other = ImportSource(kind: .folder, name: "Other", locationKey: "/synthetic/other")
         context.insert(trip)
@@ -232,7 +242,9 @@ final class RecentlyDeletedTests: XCTestCase {
     }
 
     func testRemovingApplePhotosMovesOnlyItsPhotos() throws {
-        let context = try MomentsPersistence.makeContainer(inMemory: true).mainContext
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        defer { withExtendedLifetime(container) {} }
         let photos = ImportSources.photosSource(context: context)
         let fromPhotos = MediaItem(id: "photos", source: .photos, title: "P")
         let fromFolder = MediaItem(id: "folder", source: .file, title: "F")
@@ -269,6 +281,7 @@ final class RecentlyDeletedTests: XCTestCase {
         let first = try await importer.importFolder(folder, container: container)
         XCTAssertEqual(first.importedCount, 2)
         let context = container.mainContext
+        defer { withExtendedLifetime(container) {} }
         let sources = try context.fetch(FetchDescriptor<ImportSource>())
         XCTAssertEqual(sources.count, 1)
         let source = try XCTUnwrap(sources.first)

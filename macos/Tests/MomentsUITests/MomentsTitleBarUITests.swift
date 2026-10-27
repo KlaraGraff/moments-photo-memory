@@ -66,7 +66,7 @@ final class MomentsTitleBarUITests: XCTestCase {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: launchTimeout))
         var lines: [String] = []
-        for page in ["sidebar.library", "sidebar.people"] {
+        for page in ["sidebar.library", "sidebar.map", "sidebar.people"] {
             let item = app.descendants(matching: .any).matching(identifier: page).firstMatch
             XCTAssertTrue(item.waitForExistence(timeout: launchTimeout))
             item.click()
@@ -79,19 +79,28 @@ final class MomentsTitleBarUITests: XCTestCase {
             for title in app.staticTexts.allElementsBoundByIndex.prefix(80) where title.frame.minY - frame.minY < 52 {
                 lines.append("  text \(title.label) frame=\(title.frame.offsetBy(dx: -frame.minX, dy: -frame.minY))")
             }
-            var x = 200.0
+            let corner = window.coordinate(withNormalizedOffset: .zero)
             var row = ""
-            while x < frame.width - 10 {
-                let point = CGVector(dx: x, dy: 26)
-                window.coordinate(withNormalizedOffset: .zero).withOffset(point).doubleClick()
-                Thread.sleep(forTimeInterval: 1.2)
-                let zoomed = window.frame != frame
-                row += " \(Int(x)):\(zoomed ? "Z" : "-")"
-                if zoomed {
-                    window.coordinate(withNormalizedOffset: .zero).withOffset(point).doubleClick()
+            var x = 150.0
+            while x < frame.width - 4 {
+                // Back to the starting frame first, using the spot known to work.
+                var tries = 0
+                while window.frame != frame, tries < 3 {
+                    corner.withOffset(CGVector(dx: 110, dy: 16)).doubleClick()
                     Thread.sleep(forTimeInterval: 1.2)
+                    tries += 1
                 }
-                x += 40
+                if window.frame != frame { row += " \(Int(x)):?"; x += 20; continue }
+                corner.withOffset(CGVector(dx: x, dy: 26)).doubleClick()
+                Thread.sleep(forTimeInterval: 1.2)
+                row += " \(Int(x)):\(window.frame != frame ? "Z" : "-")"
+                x += 20
+            }
+            while window.frame != frame {
+                corner.withOffset(CGVector(dx: 110, dy: 16)).doubleClick()
+                Thread.sleep(forTimeInterval: 1.2)
+                if window.frame == frame { break }
+                break
             }
             lines.append("  hits\(row)")
             if let data = window.screenshot().image.tiffRepresentation,

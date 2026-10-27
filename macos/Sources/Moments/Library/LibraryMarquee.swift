@@ -163,12 +163,22 @@ final class LibraryMarquee {
 
     private func finish() {
         guard let current = press else { return }
+        #if DEBUG
+        // Photos inside the rectangle whose frames the drag did not count.
+        let uncounted = rect.map { rect in
+            frames.filter { $0.value.generation != generation && Self.touches(rect, $0.value.rect) }.keys.sorted()
+        } ?? []
+        #endif
         stopTicking()
         removeBand()
         press = nil
         rect = nil
         #if DEBUG
-        MarqueeProbe.dragEnded(selected: selection?.selectedItemIDs.count ?? 0, scrolledTo: scrollView?.contentView.bounds.origin.y ?? 0)
+        MarqueeProbe.dragEnded(
+            selected: selection?.selectedItemIDs.count ?? 0,
+            scrolledTo: scrollView?.contentView.bounds.origin.y ?? 0,
+            uncounted: uncounted.map { "\($0)\(live[$0] != nil ? " (on screen)" : "")" }
+        )
         #endif
         guard let selection else { return }
         // The first photo the rectangle touched anchors a later Shift-click
@@ -486,7 +496,7 @@ enum MarqueeProbe {
         selectionChanges += 1
     }
 
-    static func dragEnded(selected: Int, scrolledTo offset: CGFloat) {
+    static func dragEnded(selected: Int, scrolledTo offset: CGFloat, uncounted: [String]) {
         guard let folder else { return }
         reports += 1
         let frame = 1.0 / 60.0
@@ -504,6 +514,7 @@ enum MarqueeProbe {
             percentile(0.5), percentile(0.95), (sorted.last ?? 0) * 1000, intervals.filter { $0 > 0.1 }.count
         )
         text += String(format: "  selected %d photos, %d selection changes, scrolled to %.0f pt\n", selected, selectionChanges, offset)
+        text += "  inside the rectangle but not counted: \(uncounted.count)\(uncounted.isEmpty ? "" : " " + uncounted.joined(separator: ", "))\n"
         text += MainThreadSampler.stopAndReport()
         try? text.write(to: folder.appending(path: "marquee-report-\(reports).txt"), atomically: true, encoding: .utf8)
     }

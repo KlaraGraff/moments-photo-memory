@@ -61,15 +61,23 @@ final class MomentsMarqueeUITests: XCTestCase {
     }
 
     /// Held at the bottom edge over a Library of small month sections, the
-    /// rectangle selects every photo it scrolls over, also on a second drag
-    /// over rows the grid built before (seen in a screen recording: the
-    /// middle rows of a month stayed unselected inside the rectangle).
+    /// rectangle selects every photo it scrolls over: the rows just below
+    /// the window too, which the grid may have built before the drag, and
+    /// on a second drag over rows built by the first (seen in a screen
+    /// recording: the middle rows of a month stayed unselected inside the
+    /// rectangle). The drags are short, so those rows are still on screen
+    /// when they end.
     func testEveryPhotoScrolledIntoTheRectangleIsSelected() {
+        // CI prints the app's report of each drag (-MomentsUITestMarqueeProbe).
+        let folder = ProcessInfo.processInfo.environment["MOMENTS_MARQUEE_DIR"].flatMap { $0.hasPrefix("/") ? $0 : nil }
+        if let folder { try? FileManager.default.removeItem(atPath: folder) }
         // About 13 photos a month, grouped by month, as in the recording.
-        let app = launch(extraArguments: [
+        var arguments = [
             "-MomentsUITestStressCount", "600", "-MomentsUITestStressSpacing", "200000",
             "-moments.library.grouping", "month",
-        ])
+        ]
+        if let folder { arguments += ["-MomentsUITestMarqueeProbe", folder] }
+        let app = launch(extraArguments: arguments)
         let visible = visiblePhotos(app)
         guard let first = visible.first else { return XCTFail("No photo on screen") }
         let window = app.windows.firstMatch.frame
@@ -77,8 +85,8 @@ final class MomentsMarqueeUITests: XCTestCase {
         let start = point(app, x: first.frame.minX - 12, y: first.frame.minY - 4)
         let edge = point(app, x: lastColumn, y: window.maxY - 6)
 
-        // The first drag scrolls the grid down past several months.
-        start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 2.5)
+        start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 0.5)
+        capture(app, named: "marquee-scrolled-over-1-evidence")
         assertEveryPhotoOnScreenIsSelected(app, after: "the first drag", moreThan: visible.count)
         app.typeKey(.escape, modifierFlags: [])
 
@@ -91,9 +99,8 @@ final class MomentsMarqueeUITests: XCTestCase {
         XCTAssertTrue(backAtTheTop(), "Could not scroll back to the top (first photo at \(first.element.frame.minY), was \(first.frame.minY))")
         pauseLongerThanADoubleClick()
 
-        // The second drag goes over the same rows again, not as far.
-        start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 1.5)
-        capture(app, named: "marquee-scrolled-over-evidence")
+        start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 0.5)
+        capture(app, named: "marquee-scrolled-over-2-evidence")
         assertEveryPhotoOnScreenIsSelected(app, after: "the second drag", moreThan: visible.count)
     }
 

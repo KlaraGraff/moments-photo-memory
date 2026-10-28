@@ -14,7 +14,7 @@ The app is a **native SwiftUI rewrite** in `macos/` (macOS 14+, SwiftData, MapKi
 - Keep PRs small, one concern each. When two PRs touch the same file, whoever merges second merges `main` into their branch and resolves the conflict.
 - Split a PR that mixes fixes with a product decision, so the fixes can merge while the decision waits.
 - Open the PR as a **draft** while iterating: drafts get only the fast Linux checks. Mark it ready for review once the Linux checks are green and you have run your own checks; that starts the Mac checks the change needs, once per push (see CI below).
-- After opening a PR, subscribe to its activity and end the turn. CI results, reviews and merge conflicts wake the thread; never sleep or poll. Use a scheduled check-in only for something time-based, spacing them further apart each time, and stop after a few with no change and say what the work is waiting on.
+- After opening a PR, keep the coordinator responsible for checking its activity. Check CI after a reasonable delay (5, then 10, then 20 minutes) rather than polling rapidly; do not claim a check passed when it is skipped. Use the GitHub CLI or the connected GitHub tools; there is no Claude-only subscription step.
 - Tell the owner about a PR at most twice: when it is up, and when it needs them.
 
 ## Merging
@@ -89,3 +89,23 @@ On a Mac, also `python3 tests/check-apple-host.py` and `python3 tests/check-appl
 - Tagging and publishing need the repository owner's explicit go-ahead for each step.
 - Version: bug-fix releases bump the third number, features the second, a change in what the app fundamentally is the first.
 - Release notes are written for the app's two users (the owner and their partner) in plain language, Chinese first. Leave out problems introduced and fixed within the same cycle. State signing and notarization from the actual build, never copied from the previous release.
+
+## Codex coordination
+
+The main thread is the coordinator. It owns product decisions, task boundaries, integration, final verification, and the user report. Start a child task only when the work is genuinely independent; short work stays in the coordinator. Every package brief names its goal, inputs, output, allowed files, and acceptance test. A package that can edit uses an isolated branch or worktree and may not edit another package's files. Research and review packages are read-only. Child reports must include facts and evidence, changes, tests and results, and remaining risks. Child tasks never run `git add`, `git commit`, `git push`, merge, release, or external messaging.
+
+The repository's reusable role briefs live in `.codex/agents/`. `GOALS.md` records acceptance criteria; `PLANS.md` is the current board and decision log. Keep them factual and free of personal data.
+
+## User-visible decisions
+
+The owner decides whether to add or remove features, visible UI behavior or wording, defaults, and what data leaves the device. Technical fixes, tests, refactors, CI, and workflow repairs may proceed after evidence and passing checks. When a requested change is ambiguous, make the safest reversible technical progress and ask one focused product question only when the answer changes the product.
+
+## Owner preferences
+
+- Reply in concise Chinese and lead with the outcome.
+- Preserve originals and unrelated work; start file organization read-only.
+- Use synthetic data for tests and keep real photos, EXIF, GPS, paths, Apple Photos records, credentials, and memories outside git, CI, PRs, and artifacts.
+- Keep the native app in `macos/`; `src/` is reference-only and `dist/` is generated.
+- New screens or large UI changes need a single-file static sample covering empty, loading, expanded, and dangerous-confirmation states before implementation. Follow `docs/ui-quality-principles.md` and check roughly 900x600 and a large window.
+- Every user-visible string has English, German, and Simplified Chinese.
+- Release tags, publishing, and any external write require explicit owner approval.

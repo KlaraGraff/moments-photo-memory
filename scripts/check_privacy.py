@@ -10,7 +10,7 @@ import subprocess
 ROOT=Path(__file__).resolve().parents[1]
 IGNORED={'.git','dist','private-data','local-data','exports','backups','research','qa',
          '__pycache__','node_modules','.venv','.derivedData','DerivedData','build','.build'}
-EXACT={'.gitignore','README.md','AGENTS.md','demo/sample-data.json','docs/design-notes.html','docs/ui-quality-principles.md',
+EXACT={'.gitignore','README.md','AGENTS.md','GOALS.md','PLANS.md','demo/sample-data.json','docs/design-notes.html','docs/ui-quality-principles.md',
        'scripts/apple_photos_bridge.swift','scripts/apple_photos_host.swift',
        'scripts/run-ui-smoke.sh','scripts/run-ui-import-check.sh','scripts/make_synthetic_import_fixtures.swift',
        'vendor/leaflet/leaflet.js','vendor/leaflet/leaflet.css','vendor/leaflet/LICENSE',
@@ -47,6 +47,8 @@ def allowed(name):
     if path.parts and path.parts[0] == 'macos' and path.suffix in {'.swift', '.yml', '.xcstrings'}:
         return True
     if path.parts[:2] == ('.github', 'workflows') and path.suffix in {'.yml', '.yaml'}:
+        return True
+    if path.parts[:2] == ('.codex', 'agents') and len(path.parts) == 3 and path.suffix == '.md':
         return True
     return (len(path.parts)==2 and path.parts[0] in {'src','scripts','tests'}
        and path.suffix in {'.html','.css','.js','.mjs','.py'})

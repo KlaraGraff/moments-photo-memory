@@ -58,6 +58,9 @@ struct MapScreen: View {
     /// Above this camera altitude the map is a globe: city pins, countries and
     /// the whole trip's route. Below it, places and local routes.
     static let worldDistanceMetres = 3_000_000.0
+    /// At very large scale the first globe frame uses projection-backed region
+    /// counts. Detailed clustering and routes are rebuilt after zooming in.
+    private static let coarseWorldThreshold = 10_000
 
     private var isWorldView: Bool { cameraDistance >= Self.worldDistanceMetres }
 
@@ -136,7 +139,13 @@ struct MapScreen: View {
             let delta = latitudeDelta
             let projection = projectionStore.projection
             let built = await Task.detached(priority: .utility) {
-                let snapshot = viewModel.snapshot(stops: stops, latitudeDelta: delta)
+                let snapshot: PlacesViewModel.Snapshot
+                if stops.count >= Self.coarseWorldThreshold,
+                   delta >= viewModel.thresholds.city {
+                    snapshot = Self.coarseWorldSnapshot(stops)
+                } else {
+                    snapshot = viewModel.snapshot(stops: stops, latitudeDelta: delta)
+                }
                 let clusters = Self.worldClusters(from: snapshot.clusters, aggregate: snapshot.level == .city)
                 let names = Self.clusterDisplayNames(for: clusters, projection: projection)
                 return (snapshot: snapshot, names: names)
@@ -772,6 +781,38 @@ struct MapScreen: View {
             if $0.firstDate != $1.firstDate { return $0.firstDate < $1.firstDate }
             return $0.id < $1.id
         }
+    }
+
+    private nonisolated static func coarseWorldSnapshot(_ stops: [PhotoStop]) -> PlacesViewModel.Snapshot {
+        let grid = 5.0
+        var buckets: [String: [PhotoStop]] = [:]
+        for stop in stops {
+            guard let point = stop.coordinate else { continue }
+            let key = "\(Int(floor(point.latitude / grid))),\(Int(floor(point.longitude / grid)))"
+            buckets[key, default: []].append(stop)
+        }
+        let clusters = buckets.map { key, members in
+            PlaceCluster(
+                id: "coarse-world:\(key)",
+                level: .city,
+                stopIDs: members.map(\.id),
+                center: GeoPoint.centre(of: members.compactMap(\.coordinate)),
+                firstDate: members.map(\.date).min() ?? .distantPast
+            )
+        }.sorted {
+            if $0.firstDate != $1.firstDate { return $0.firstDate < $1.firstDate }
+            return $0.id < $1.id
+        }
+        return PlacesViewModel.Snapshot(
+            level: .city,
+            stops: stops,
+            clusters: clusters,
+            routeSegments: [],
+            coordinateByID: Dictionary(uniqueKeysWithValues: stops.compactMap { stop in
+                guard let coordinate = stop.coordinate else { return nil }
+                return (stop.id, coordinate)
+            })
+        )
     }
 
     private func nearestPlaceName(for cluster: PlaceCluster) -> String? {

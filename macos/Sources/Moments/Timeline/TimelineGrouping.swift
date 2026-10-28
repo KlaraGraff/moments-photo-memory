@@ -50,6 +50,10 @@ struct TimelineBuilder {
 
     private func makeTrip(definition: TimelineSourceTrip, items: [TimelineItemSnapshot]) -> TimelineTrip {
         let orderedItems = items.sorted(by: itemOrder)
+        let placeHints = Dictionary(
+            orderedItems.map { ($0.id, $0.placeHint) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let stops = orderedItems.compactMap(\.photoStop)
         let spotClusters = clusterer.clusters(for: stops, level: .spot)
         let cityClusters = clusterer.clusters(for: stops, level: .city)
@@ -62,8 +66,8 @@ struct TimelineBuilder {
             let spot = item.photoStop.flatMap { spotByItemID[$0.id] }
             let placeKey = spot?.id ?? fallbackPlaceKey(for: item)
             let city = item.photoStop.flatMap { cityByItemID[$0.id] }
-            let cityName = city.flatMap { clusterName($0, items: orderedItems) }
-            let placeName = spot.flatMap { clusterName($0, items: orderedItems) }
+            let cityName = city.flatMap { clusterName($0, placeHints: placeHints) }
+            let placeName = spot.flatMap { clusterName($0, placeHints: placeHints) }
 
             if let index = dayGroups[dayKey]?.firstIndex(where: { $0.key == placeKey }) {
                 dayGroups[dayKey]?[index].items.append(item)
@@ -102,8 +106,8 @@ struct TimelineBuilder {
         let travelByPlaceID = routes.reduce(into: [String: [TimelineTravel]]()) { result, segment in
             guard let targetID = segment.toStopID,
                   let target = places.first(where: { $0.itemIDs.contains(targetID) }) else { return }
-            let fromName = clusterName(segment.from, items: orderedItems)
-            let toName = clusterName(segment.to, items: orderedItems)
+            let fromName = clusterName(segment.from, placeHints: placeHints)
+            let toName = clusterName(segment.to, placeHints: placeHints)
             let travel = TimelineTravel(
                 id: "\(definition.id)|travel|\(segment.id)|\(target.id)",
                 date: orderedItems.first(where: { $0.id == targetID })?.date,
@@ -175,10 +179,10 @@ struct TimelineBuilder {
         }
     }
 
-    private func clusterName(_ cluster: PlaceCluster, items: [TimelineItemSnapshot]) -> String? {
+    private func clusterName(_ cluster: PlaceCluster, placeHints: [String: String?]) -> String? {
         if let name = cluster.name, !name.isEmpty { return name }
         return cluster.stopIDs
-            .compactMap { stopID in items.first(where: { $0.id == stopID })?.placeHint }
+            .compactMap { placeHints[$0] ?? nil }
             .first(where: { !$0.isEmpty })
     }
 

@@ -319,26 +319,30 @@ struct MapScreen: View {
     /// information; zooming in restores the photo pin above.
     private func worldPhotoPin(_ cluster: PlaceCluster) -> some View {
         let photoCount = stacks.foldedCount(cluster.stopIDs)
-        return ZStack(alignment: .topTrailing) {
-            Image(systemName: "mappin.circle.fill")
-                .font(.title2)
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(Paper.accent, Color.white)
-                .shadow(color: Paper.shadow.opacity(0.28), radius: 3, y: 1)
-            if photoCount > 1 {
-                Text(photoCount, format: .number)
-                    .font(.caption2.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 4)
-                    .frame(minWidth: 16, minHeight: 16)
-                    .background(Paper.accent, in: Capsule())
-                    .overlay(Capsule().stroke(.white, lineWidth: 1))
-                    .offset(x: 8, y: -6)
+        return Button {
+            pinClicked(cluster)
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "mappin.circle.fill")
+                    .font(.title2)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(Paper.accent, Color.white)
+                    .shadow(color: Paper.shadow.opacity(0.28), radius: 3, y: 1)
+                if photoCount > 1 {
+                    Text(photoCount, format: .number)
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .frame(minWidth: 16, minHeight: 16)
+                        .background(Paper.accent, in: Capsule())
+                        .overlay(Capsule().stroke(.white, lineWidth: 1))
+                        .offset(x: 8, y: -6)
+                }
             }
+            .frame(width: 28, height: 28)
         }
-        .frame(width: 28, height: 28)
+        .buttonStyle(.plain)
         .contentShape(Rectangle())
-        .onTapGesture { pinClicked(cluster) }
         .help(clusterDisplayName(cluster))
         .accessibilityLabel(clusterDisplayName(cluster))
         .accessibilityValue(Text(String(localized: "\(photoCount) photos")))

@@ -68,24 +68,28 @@ struct MapScreen: View {
 
     private var snapshotKey: Int {
         var hasher = Hasher()
-        for item in items {
-            hasher.combine(item.id)
-            hasher.combine(item.effectiveCaptureDate)
-            hasher.combine(item.latitude)
-            hasher.combine(item.longitude)
-        }
-        hasher.combine(selection.visibleItemIDs)
+        hasher.combine(projectionStore.projection.mapStops.count)
+        hasher.combine(currentWorldSignature)
+        for id in selection.visibleItemIDs?.sorted() ?? [] { hasher.combine(id) }
         hasher.combine(viewModel.level(for: latitudeDelta))
         return hasher.finalize()
     }
 
-    private var worldInput: FootprintsInput {
-        if !projectionStore.projection.mapStops.isEmpty {
-            let visible = selection.visibleItemIDs
-            let stops = projectionStore.projection.mapStops.filter { visible?.contains($0.id) ?? true }
-            return FootprintsInput(stops: stops)
+    private var currentWorldSignature: Int {
+        var hasher = Hasher()
+        for stop in projectionStore.projection.mapStops {
+            hasher.combine(stop.id)
+            hasher.combine(stop.date)
+            hasher.combine(stop.coordinate?.latitude)
+            hasher.combine(stop.coordinate?.longitude)
         }
-        return FootprintsCalculator.input(from: items, visibleItemIDs: selection.visibleItemIDs)
+        return hasher.finalize()
+    }
+
+    private var worldInput: FootprintsInput {
+        let visible = selection.visibleItemIDs
+        let stops = projectionStore.projection.mapStops.filter { visible?.contains($0.id) ?? true }
+        return FootprintsInput(stops: stops)
     }
 
     private var selectedCluster: PlaceCluster? {
@@ -126,11 +130,10 @@ struct MapScreen: View {
         .navigationTitle("Map")
         .task(id: snapshotKey) {
             itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            let nextSnapshot = viewModel.snapshot(
-                items: items,
-                visibleItemIDs: selection.visibleItemIDs,
-                latitudeDelta: latitudeDelta
-            )
+            let stops = currentWorldInput.stops
+            let nextSnapshot = await Task.detached(priority: .utility) {
+                viewModel.snapshot(stops: stops, latitudeDelta: latitudeDelta)
+            }.value
             cachedClusterDisplayNames = clusterDisplayNames(for: nextSnapshot.clusters)
             cachedSnapshot = nextSnapshot
             // "Show on Map" from another screen: fly there once the pins exist.
@@ -824,7 +827,10 @@ struct MapScreen: View {
 
     @MainActor
     private func refreshWorld(for input: FootprintsInput) async {
-        let snapshot = FootprintsCalculator.snapshot(for: input)
+        let snapshot = await Task.detached(priority: .utility) {
+            FootprintsCalculator.snapshot(for: input)
+        }.value
+        guard !Task.isCancelled else { return }
         let previousTarget = world.snapshot.cameraTarget
         world = MapWorldState(
             snapshot: snapshot,

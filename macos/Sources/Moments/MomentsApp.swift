@@ -15,6 +15,7 @@ struct MomentsApp: App {
     @State private var peopleController = PeopleScanController()
     @State private var photoStacks = PhotoStackModel()
     @State private var stackAnalyzer = PhotoStackAnalyzer()
+    @State private var projectionStore = LibraryProjectionStore()
     @State private var photosImportController = PhotosImportController(importer: PhotosImporter(source: PhotoKitAssetSource()))
     @State private var showingPhotosImport = false
 
@@ -157,6 +158,7 @@ struct MomentsApp: App {
                     .environment(noteService)
                     .environment(peopleController)
                     .environment(photoStacks)
+                    .environment(projectionStore)
                     .modelContainer(modelContainer)
                     .onAppear {
                         importController.configure(container: modelContainer)
@@ -165,6 +167,7 @@ struct MomentsApp: App {
                         stackAnalyzer.configure(container: modelContainer)
                         stackAnalyzer.analyzeIfNeeded()
                         photoStacks.refresh(container: modelContainer)
+                        projectionStore.refresh(container: modelContainer)
                         #if DEBUG
                         PageProbe.attach(container: modelContainer, selection: selection, people: peopleController, stacks: stackAnalyzer)
                         StressLibrary.startIfRequested(container: modelContainer)
@@ -180,6 +183,7 @@ struct MomentsApp: App {
                         peopleController.scanIfNeeded()
                         stackAnalyzer.analyzeIfNeeded()
                         photoStacks.refresh(container: modelContainer)
+                        projectionStore.refresh(container: modelContainer)
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
                         showingPhotosImport = true

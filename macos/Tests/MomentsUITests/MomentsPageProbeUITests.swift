@@ -33,7 +33,9 @@ final class MomentsPageProbeUITests: XCTestCase {
         // keeping the bound below the workflow's 60-minute job limit even for
         // the 20,000-item manual run.
         let phaseBudget = 600 + 13 * 45
-        let deadline = Date().addingTimeInterval(TimeInterval(phaseBudget + 60 + count / 20))
+        // Leave room for XCTest launch/teardown and the hosted Mac's scheduler
+        // without changing any phase's measured timeout.
+        let deadline = Date().addingTimeInterval(TimeInterval(phaseBudget + 180 + count / 20))
         while !FileManager.default.fileExists(atPath: done.path), Date() < deadline {
             Thread.sleep(forTimeInterval: 2)
         }

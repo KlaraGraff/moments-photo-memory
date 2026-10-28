@@ -138,8 +138,9 @@ struct MapScreen: View {
         .task(id: snapshotKey) {
             itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             let stops = currentWorldInput.stops
+            let delta = latitudeDelta
             let nextSnapshot = await Task.detached(priority: .utility) {
-                viewModel.snapshot(stops: stops, latitudeDelta: latitudeDelta)
+                viewModel.snapshot(stops: stops, latitudeDelta: delta)
             }.value
             cachedClusterDisplayNames = clusterDisplayNames(
                 for: worldClusters(from: nextSnapshot.clusters, aggregate: nextSnapshot.level == .city)

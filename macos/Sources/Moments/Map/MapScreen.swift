@@ -70,7 +70,7 @@ struct MapScreen: View {
     /// dozen views instead of thousands; zooming in recomputes the detailed
     /// city/area/spot clusters.
     private var displayedClusters: [PlaceCluster] {
-        worldClusters(from: snapshot.clusters, aggregate: isWorldView || snapshot.level == .city)
+        Self.worldClusters(from: snapshot.clusters, aggregate: isWorldView || snapshot.level == .city)
     }
 
     private var snapshotKey: Int {
@@ -139,13 +139,15 @@ struct MapScreen: View {
             itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             let stops = currentWorldInput.stops
             let delta = latitudeDelta
-            let nextSnapshot = await Task.detached(priority: .utility) {
-                viewModel.snapshot(stops: stops, latitudeDelta: delta)
+            let projection = projectionStore.projection
+            let built = await Task.detached(priority: .utility) {
+                let snapshot = viewModel.snapshot(stops: stops, latitudeDelta: delta)
+                let clusters = Self.worldClusters(from: snapshot.clusters, aggregate: snapshot.level == .city)
+                let names = Self.clusterDisplayNames(for: clusters, projection: projection)
+                return (snapshot: snapshot, names: names)
             }.value
-            cachedClusterDisplayNames = clusterDisplayNames(
-                for: worldClusters(from: nextSnapshot.clusters, aggregate: nextSnapshot.level == .city)
-            )
-            cachedSnapshot = nextSnapshot
+            cachedClusterDisplayNames = built.names
+            cachedSnapshot = built.snapshot
             // "Show on Map" from another screen: fly there once the pins exist.
             if let requested = selection.mapFocusRequest {
                 selection.mapFocusRequest = nil
@@ -165,11 +167,7 @@ struct MapScreen: View {
             focus(on: requested)
         }
         .onChange(of: selection.selectedItemIDs) { _, selectedItemIDs in
-            guard let selectedClusterID,
-                  let cluster = snapshot.clusters.first(where: { $0.id == selectedClusterID }) else { return }
-            if selectedItemIDs.isDisjoint(with: cluster.stopIDs) {
-                self.selectedClusterID = nil
-            }
+            clearSelectedClusterIfNeeded(selectedItemIDs, in: snapshot)
         }
         .onChange(of: selection.visibleItemIDs) { _, _ in
             selectedClusterID = nil
@@ -734,24 +732,29 @@ struct MapScreen: View {
         return nearestPlaceName(for: cluster) ?? String(localized: "Unknown place")
     }
 
-    private func clusterDisplayNames(for clusters: [PlaceCluster]) -> [String: String] {
+    private nonisolated static func clusterDisplayNames(
+        for clusters: [PlaceCluster],
+        projection: LibraryProjection
+    ) -> [String: String] {
         var names: [String: String] = [:]
         names.reserveCapacity(clusters.count)
         for cluster in clusters {
             if let name = cluster.name, !name.isEmpty {
                 names[cluster.id] = name
             } else if let stopID = cluster.stopIDs.first,
-                      let name = projectionStore.projection.photoByID[stopID]?.placeName,
+                      let name = projection.photoByID[stopID]?.placeName,
                       !name.isEmpty {
                 names[cluster.id] = name
             } else {
-                names[cluster.id] = nearestPlaceName(for: cluster) ?? String(localized: "Unknown place")
+                names[cluster.id] = cluster.center.flatMap {
+                    projection.placeIndex.nearestName(to: $0, within: 1_500)
+                } ?? String(localized: "Unknown place")
             }
         }
         return names
     }
 
-    private func worldClusters(from clusters: [PlaceCluster], aggregate: Bool) -> [PlaceCluster] {
+    private nonisolated static func worldClusters(from clusters: [PlaceCluster], aggregate: Bool) -> [PlaceCluster] {
         guard aggregate else { return clusters }
         let grid = 5.0
         var buckets: [String: (clusters: [PlaceCluster], points: [GeoPoint])] = [:]
@@ -802,6 +805,14 @@ struct MapScreen: View {
         guard selectedCluster != nil, !selectedItems.isEmpty else { return }
         selectedClusterID = nil
         selection.clear()
+    }
+
+    private func clearSelectedClusterIfNeeded(_ selectedItemIDs: Set<String>, in snapshot: PlacesViewModel.Snapshot) {
+        guard let selectedClusterID else { return }
+        guard let cluster = snapshot.clusters.first(where: { $0.id == selectedClusterID }) else { return }
+        if selectedItemIDs.isDisjoint(with: cluster.stopIDs) {
+            self.selectedClusterID = nil
+        }
     }
 
     /// A photo in the strip opens in the large viewer, paging through the strip.

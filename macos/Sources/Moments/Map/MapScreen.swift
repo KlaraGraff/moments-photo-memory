@@ -45,6 +45,9 @@ struct MapScreen: View {
     /// Clustering and routes are rebuilt only when items, the Library filter
     /// or the zoom level change, not on every render or selection change.
     @State private var cachedSnapshot: PlacesViewModel.Snapshot?
+    /// Nearest-place lookup is O(clusters × places); cache it before MapKit
+    /// asks for annotation labels during every graph update.
+    @State private var cachedClusterDisplayNames: [String: String] = [:]
     @State private var itemsByID: [String: MediaItem] = [:]
     @State private var world = MapWorldState()
     /// Created once per screen; it reads its cache file from disk.
@@ -117,11 +120,13 @@ struct MapScreen: View {
         .navigationTitle("Map")
         .task(id: snapshotKey) {
             itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            cachedSnapshot = viewModel.snapshot(
+            let nextSnapshot = viewModel.snapshot(
                 items: items,
                 visibleItemIDs: selection.visibleItemIDs,
                 latitudeDelta: latitudeDelta
             )
+            cachedClusterDisplayNames = clusterDisplayNames(for: nextSnapshot.clusters)
+            cachedSnapshot = nextSnapshot
             // "Show on Map" from another screen: fly there once the pins exist.
             if let requested = selection.mapFocusRequest {
                 selection.mapFocusRequest = nil
@@ -657,6 +662,28 @@ struct MapScreen: View {
         if let name = cluster.name, !name.isEmpty {
             return name
         }
+        if let cached = cachedClusterDisplayNames[cluster.id] {
+            return cached
+        }
+        // Preserve a correct label during the first render before the task
+        // has filled the cache. Normal map rendering takes the cached path.
+        return nearestPlaceName(for: cluster) ?? String(localized: "Unknown place")
+    }
+
+    private func clusterDisplayNames(for clusters: [PlaceCluster]) -> [String: String] {
+        var names: [String: String] = [:]
+        names.reserveCapacity(clusters.count)
+        for cluster in clusters {
+            if let name = cluster.name, !name.isEmpty {
+                names[cluster.id] = name
+            } else {
+                names[cluster.id] = nearestPlaceName(for: cluster) ?? String(localized: "Unknown place")
+            }
+        }
+        return names
+    }
+
+    private func nearestPlaceName(for cluster: PlaceCluster) -> String? {
         if let center = cluster.center {
             let nearest = places
                 .compactMap { place -> (Place, Double)? in
@@ -668,7 +695,7 @@ struct MapScreen: View {
                 return name
             }
         }
-        return String(localized: "Unknown place")
+        return nil
     }
 
     /// On the globe a pin flies down to its city; closer in it opens the

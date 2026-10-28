@@ -53,7 +53,9 @@ final class ChapterAIController {
     func configure(container: ModelContainer) {
         guard self.container == nil else { return }
         self.container = container
-        if ProcessInfo.processInfo.arguments.contains("-MomentsUITesting") { return }
+        // Tests and runs on a copied library never start a paid run by themselves.
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-MomentsUITesting") || arguments.contains("-MomentsUITestStoreDirectory") { return }
         #if DEBUG
         if UnitTestHostDelegate.isUnitTestHost { return }
         #endif

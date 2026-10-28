@@ -154,7 +154,7 @@ enum TripEdits {
         let now: Date
         let calendar: Calendar
         private(set) var undo: Undo
-        private let defaults: UserDefaults
+        let defaults: UserDefaults
 
         init(context: ModelContext, now: Date = .now, calendar: Calendar = .current, defaults: UserDefaults = TripAssignmentLocks.store, continuing undo: Undo = Undo()) {
             self.context = context
@@ -724,6 +724,7 @@ extension TripEdits {
     @MainActor
     static func delete(_ trip: Trip, session: Session) {
         session.record(trip)
+        ChapterAIRegistry.dismiss(trip, calendar: session.calendar, defaults: session.defaults)
         for item in trip.items { session.move(item, to: nil) }
         session.save()
         session.context.delete(trip)

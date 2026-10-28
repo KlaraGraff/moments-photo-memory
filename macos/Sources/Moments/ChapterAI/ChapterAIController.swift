@@ -86,6 +86,13 @@ final class ChapterAIController {
 
     func undoLastRun() {
         guard let lastRun, let container else { return }
+        let applier = ChapterAIApplier(context: container.mainContext, defaults: defaults)
+        if (try? applier.changedSince(lastRun)) != false {
+            // Undo would throw away what someone changed since.
+            self.lastRun = nil
+            state = .failed(String(localized: "Chapters were changed since, so this can no longer be undone."))
+            return
+        }
         ChapterAIApplier.undo(lastRun, context: container.mainContext, defaults: defaults)
         self.lastRun = nil
         state = .idle
@@ -119,7 +126,11 @@ final class ChapterAIController {
     }
 
     private func finish(_ outcome: ChapterAIOrganizer.Outcome, startedAt: Date) {
-        defaults.set(startedAt, forKey: Self.lastRunKey)
+        // Only a run that looked at every day counts: otherwise the next
+        // one looks again (descriptions are kept, so that costs little).
+        if outcome.windows > 0, outcome.failedWindows == 0 {
+            defaults.set(startedAt, forKey: Self.lastRunKey)
+        }
         lastRun = outcome.written
         ChapterAIReport.write(outcome, startedAt: startedAt, to: ChapterAIFiles.directory?.appending(path: "last-run.md"))
         let written = outcome.written?.outcome

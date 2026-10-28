@@ -174,6 +174,69 @@ final class ChapterAIApplierTests: XCTestCase {
         XCTAssertTrue(try chapters(context).isEmpty)
         XCTAssertEqual(try context.fetch(FetchDescriptor<Trip>()).map(\.name), ["Lisbon"])
     }
+
+    func testDaysTheModelCouldNotLookAtStayAsTheyWere() throws {
+        let context = try seed()
+        try applier(context).apply([trip, party])
+
+        let written = try applier(context, now: .now.addingTimeInterval(60)).apply([], frozen: ["2026-08-01"..."2026-08-16"])
+
+        XCTAssertEqual(written.outcome.removed, 0)
+        XCTAssertEqual(written.outcome.left, 0)
+        XCTAssertEqual(try chapters(context).map(\.name), ["Birthday"])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Trip>()).first?.items.count, 12)
+    }
+
+    func testChaptersBroughtBackByUndoAreMomentsOwnAgain() throws {
+        let context = try seed()
+        try applier(context).apply([party])
+        let other = ChapterProposal(start: "2026-08-15", end: "2026-08-16", type: .event, title: "Weekend")
+        let written = try applier(context, now: .now.addingTimeInterval(60)).apply([other])
+
+        ChapterAIApplier.undo(written, context: context, defaults: defaults, now: .now.addingTimeInterval(120))
+
+        XCTAssertEqual(try chapters(context).map(\.name), ["Birthday"])
+        XCTAssertEqual(try applier(context).state().machineGroups.count, 1)
+    }
+
+    func testUndoIsRefusedOnceSomeoneChangedWhatTheRunMade() throws {
+        let context = try seed()
+        let written = try applier(context).apply([trip])
+        XCTAssertFalse(try applier(context).changedSince(written))
+
+        let made = try XCTUnwrap(context.fetch(FetchDescriptor<Trip>()).first)
+        made.overrideName = "Lisboa"
+        try context.save()
+
+        XCTAssertTrue(try applier(context).changedSince(written))
+    }
+
+    func testATripDeletedByHandIsNotMadeAgain() throws {
+        let context = try seed()
+        try applier(context).apply([trip])
+        let made = try XCTUnwrap(context.fetch(FetchDescriptor<Trip>()).first)
+        TripEdits.delete(made, session: TripEdits.Session(context: context, calendar: utc, defaults: defaults))
+
+        let written = try applier(context, now: .now.addingTimeInterval(60)).apply([trip])
+
+        XCTAssertEqual(written.outcome.trips, 0)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Trip>()).isEmpty)
+    }
+
+    func testAnEventTheRulesSuggestedAndSomeoneDeletedStaysGone() throws {
+        let context = try seed()
+        defaults.set(["2026-08-15"], forKey: EventSuggestions.suggestedDaysKey)
+
+        let written = try applier(context).apply([party])
+
+        XCTAssertEqual(written.outcome.chapters, 0)
+    }
+
+    func testOnlyDaysNoOtherWindowCoversStayFrozen() {
+        let frozen = ChapterAIOrganizer.uncovered("2026-08-01"..."2026-08-20", by: ["2026-07-20"..."2026-08-05", "2026-08-16"..."2026-09-01"])
+        XCTAssertEqual(frozen, ["2026-08-06"..."2026-08-15"])
+        XCTAssertEqual(ChapterAIOrganizer.uncovered("2026-08-01"..."2026-08-03", by: ["2026-07-01"..."2026-09-01"]), [])
+    }
 }
 
 final class ClaudeChapterClientTests: XCTestCase {

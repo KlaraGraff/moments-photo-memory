@@ -17,13 +17,9 @@ enum ChapterAISettings {
         defaults.string(forKey: visionKey).flatMap(ChapterAIVision.init(rawValue:)) ?? .allPhotos
     }
 
-    /// The Claude model picked in Settings › AI Model, or Haiku when the
-    /// cloud model there is not Anthropic's.
-    static func model(_ settings: AISettings = .load()) -> String {
-        let chosen = settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard settings.provider == .claude, chosen.hasPrefix("claude-") else { return ClaudeModel.haiku.rawValue }
-        return chosen
-    }
+    /// Haiku: every photo is looked at, so the cheapest model that sees
+    /// well. The notes model in Settings › AI Model does not apply here.
+    static func model() -> String { ClaudeModel.haiku.rawValue }
 
     static func apiKey() -> String? { AIKeychain.key(for: .claude) }
 

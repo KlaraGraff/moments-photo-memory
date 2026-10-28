@@ -14864,6 +14864,28 @@
           }
         }
       }
+    },
+    "Chapters were changed since, so this can no longer be undone." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Kapitel wurden seitdem geändert, deshalb lässt sich das nicht mehr widerrufen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chapters were changed since, so this can no longer be undone."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "篇章之后被改动过，这次整理已无法撤销。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

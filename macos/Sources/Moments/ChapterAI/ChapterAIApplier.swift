@@ -29,6 +29,21 @@ struct ChapterAIRegistry: Codable, Equatable {
     func save(_ defaults: UserDefaults) {
         defaults.set(try? JSONEncoder().encode(self), forKey: Self.defaultsKey)
     }
+
+    /// Someone deleted a trip: no run makes one on those days again.
+    static func dismiss(_ trip: Trip, calendar: Calendar, defaults: UserDefaults) {
+        guard let start = trip.startDate, let end = trip.endDate, start <= end else { return }
+        var registry = load(defaults)
+        let entry = Entry(
+            start: TripEdits.dayKey(start, calendar: calendar),
+            end: TripEdits.dayKey(end, calendar: calendar),
+            isTrip: true,
+            stamp: trip.updatedAt.timeIntervalSince1970
+        )
+        registry.made[trip.id] = nil
+        if !registry.dismissed.contains(entry) { registry.dismissed.append(entry) }
+        registry.save(defaults)
+    }
 }
 
 /// Writes the model's chapters: trips as `Trip`s, other kinds as chapter
@@ -56,6 +71,9 @@ struct ChapterAIApplier {
         var undo: TripEdits.Undo
         /// Put back on undo.
         var registryBefore: ChapterAIRegistry
+        /// What this run made, to tell whether someone changed it since.
+        var registryAfter: ChapterAIRegistry
+        var madeAt: Date
     }
 
     /// Which chapters this run may redo, and which it must leave alone.
@@ -95,6 +113,12 @@ struct ChapterAIApplier {
             registry.dismissed.append(entry)
         }
         for id in kept { registry.made[id] = nil }
+        // A deleted trip that came back with Undo is not deleted any more.
+        let tripDays = Set(trips.compactMap { trip -> String? in
+            guard let start = trip.startDate, let end = trip.endDate else { return nil }
+            return TripEdits.dayKey(start, calendar: calendar) + "…" + TripEdits.dayKey(end, calendar: calendar)
+        })
+        registry.dismissed.removeAll { $0.isTrip && tripDays.contains($0.start + "…" + $0.end) }
         return State(
             registry: registry,
             replaceableTrips: Dictionary(trips.filter { !kept.contains($0.id) }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }),
@@ -117,6 +141,13 @@ struct ChapterAIApplier {
             taken.append(.init(start: range.lowerBound, end: range.upperBound, isTrip: false))
         }
         taken += state.registry.dismissed.map { .init(start: $0.start, end: $0.end, isTrip: $0.isTrip) }
+        // Events the rules suggested before this registry existed, and
+        // someone deleted since.
+        let groupDays = (state.keptGroups + Array(state.machineGroups.values)).compactMap(dayRange(of:))
+        let suggested = defaults.stringArray(forKey: EventSuggestions.suggestedDaysKey) ?? []
+        for day in suggested where !groupDays.contains(where: { $0.contains(day) }) {
+            taken.append(.init(start: day, end: day, isTrip: false))
+        }
         return taken
     }
 
@@ -126,12 +157,36 @@ struct ChapterAIApplier {
         return TripEdits.dayKey(start, calendar: calendar)...TripEdits.dayKey(end, calendar: calendar)
     }
 
-    func apply(_ proposals: [ChapterProposal], scope: ClosedRange<String>? = nil) throws -> Written {
+    /// `scope`: only these days change; nil for the whole library.
+    /// `frozen`: days the model could not look at this time, left as they are.
+    func apply(_ proposals: [ChapterProposal], scope: ClosedRange<String>? = nil, frozen: [ClosedRange<String>] = []) throws -> Written {
         let before = ChapterAIRegistry.load(defaults)
         let state = try state()
-        var registry = state.registry
         let session = TripEdits.Session(context: context, now: now, calendar: calendar, defaults: defaults)
+        do {
+            return try apply(proposals, scope: scope, frozen: frozen, state: state, session: session, before: before)
+        } catch {
+            // Nothing half written: what was saved goes back.
+            TripEdits.undo(session.undo, context: context, defaults: defaults, now: now)
+            before.save(defaults)
+            throw error
+        }
+    }
+
+    private func apply(
+        _ proposals: [ChapterProposal],
+        scope: ClosedRange<String>?,
+        frozen: [ClosedRange<String>],
+        state: State,
+        session: TripEdits.Session,
+        before: ChapterAIRegistry
+    ) throws -> Written {
+        var registry = state.registry
         var outcome = Outcome()
+        func isFrozen(_ day: String) -> Bool { frozen.contains { $0.contains(day) } }
+        let proposals = proposals.filter { proposal in
+            !frozen.contains { $0.overlaps(proposal.start...proposal.end) }
+        }
 
         let undated = ImportCaptureDateSource.fileDateFallback.rawValue
         let items = try context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.deletedAt == nil }))
@@ -141,12 +196,13 @@ struct ChapterAIApplier {
             guard item.captureDateSourceRaw != undated, ChapterAIApplier.isMine(item),
                   let key = PhotoNoteDay.key(for: item) else { return nil }
             let tripID = item.trip?.id ?? item.tripID
+            let frozenDay = isFrozen(key)
             return ChapterAssignment.Item(
                 id: item.id,
                 dayKey: key,
                 isScreenshot: item.isScreenshot,
-                isFree: !state.locked.contains(item.id) && !(tripID.map { keptTripIDs.contains($0) } ?? false),
-                isInMachineTrip: tripID.map { state.replaceableTrips[$0] != nil } ?? false
+                isFree: !frozenDay && !state.locked.contains(item.id) && !(tripID.map { keptTripIDs.contains($0) } ?? false),
+                isInMachineTrip: !frozenDay && (tripID.map { state.replaceableTrips[$0] != nil } ?? false)
             )
         }
         let result = ChapterAssignment.assign(items: assignable, proposals: proposals, taken: taken(state), scope: scope)
@@ -154,7 +210,10 @@ struct ChapterAIApplier {
 
         // Chapters Moments made before, in the days looked at again.
         for group in state.machineGroups.values {
-            if let scope, let range = dayRange(of: group), !range.overlaps(scope) { continue }
+            if let range = dayRange(of: group) {
+                if let scope, !range.overlaps(scope) { continue }
+                if frozen.contains(where: { $0.overlaps(range) }) { continue }
+            }
             TripEdits.delete(group, session: session)
             registry.made[group.id] = nil
             outcome.removed += 1
@@ -184,6 +243,7 @@ struct ChapterAIApplier {
         }
 
         var reused = Set<String>()
+        var created = Set<String>()
         for chapter in result.trips {
             let members = chapter.itemIDs.compactMap { byID[$0] }
             // The old trip holding most of these photos carries on.
@@ -201,11 +261,9 @@ struct ChapterAIApplier {
                 trip = Trip(id: TripRegrouping.stableID(chapter.itemIDs), name: chapter.proposal.title, suggestionStatusRaw: "suggestion")
                 context.insert(trip)
                 session.created(trip)
+                created.insert(trip.id)
             }
-            let dates = members.compactMap(\.effectiveCaptureDate)
             trip.name = chapter.proposal.title
-            trip.startDate = dates.min()
-            trip.endDate = dates.max()
             trip.updatedAt = now
             for item in members where item.trip?.id != trip.id { session.place(item, in: trip) }
             registry.made[trip.id] = .init(start: chapter.proposal.start, end: chapter.proposal.end, isTrip: true, stamp: now.timeIntervalSince1970)
@@ -219,6 +277,12 @@ struct ChapterAIApplier {
         // Saved before the deletes, so they cannot take photos along.
         try context.save()
 
+        let trips = try context.fetch(FetchDescriptor<Trip>())
+        for trip in trips where reused.contains(trip.id) || created.contains(trip.id) {
+            let dates = trip.items.filter { $0.deletedAt == nil }.compactMap(\.effectiveCaptureDate)
+            trip.startDate = dates.min()
+            trip.endDate = dates.max()
+        }
         for trip in state.replaceableTrips.values where !reused.contains(trip.id) {
             let left = trip.items.filter { $0.deletedAt == nil }
             session.record(trip)
@@ -235,13 +299,28 @@ struct ChapterAIApplier {
         }
         try context.save()
         registry.save(defaults)
-        return Written(outcome: outcome, undo: session.undo, registryBefore: before)
+        return Written(outcome: outcome, undo: session.undo, registryBefore: before, registryAfter: registry, madeAt: now)
+    }
+
+    /// Someone renamed, edited, kept or deleted a chapter this run made, so
+    /// undoing it would throw their change away.
+    func changedSince(_ written: Written) throws -> Bool {
+        let current = try state().registry.made
+        return written.registryAfter.made.contains { id, entry in
+            abs(entry.stamp - written.madeAt.timeIntervalSince1970) < 1 && current[id] == nil
+        }
     }
 
     /// Puts back what one run wrote.
-    static func undo(_ written: Written, context: ModelContext, defaults: UserDefaults = TripAssignmentLocks.store) {
-        TripEdits.undo(written.undo, context: context, defaults: defaults)
-        written.registryBefore.save(defaults)
+    static func undo(_ written: Written, context: ModelContext, defaults: UserDefaults = TripAssignmentLocks.store, now: Date = .now) {
+        TripEdits.undo(written.undo, context: context, defaults: defaults, now: now)
+        // Chapters brought back are Moments' own again, under their new stamp.
+        var registry = written.registryBefore
+        let groups = Set(((try? context.fetch(FetchDescriptor<UserGroup>())) ?? []).map(\.id))
+        for (id, entry) in registry.made where groups.contains(id) {
+            registry.made[id] = .init(start: entry.start, end: entry.end, isTrip: entry.isTrip, stamp: now.timeIntervalSince1970)
+        }
+        registry.save(defaults)
     }
 
     /// The person's own photos; a partner's shared photos are never sent.

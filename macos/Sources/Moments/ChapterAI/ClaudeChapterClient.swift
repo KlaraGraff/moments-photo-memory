@@ -72,7 +72,8 @@ struct ClaudeChapterClient: Sendable {
             } catch let error as NoteOrganizerError {
                 guard attempt < retryDelays.count, Self.isWorthRetrying(error) else { throw error }
             }
-            try await Task.sleep(for: retryDelays[attempt])
+            // Spread out, so parallel requests do not all come back at once.
+            try await Task.sleep(for: retryDelays[attempt] * Double.random(in: 0.75...1.25))
             attempt += 1
         }
     }

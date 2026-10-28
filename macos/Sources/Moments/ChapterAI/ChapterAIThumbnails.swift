@@ -28,10 +28,18 @@ enum ChapterAIThumbnails {
         if image == nil, let bookmark = source.bookmark, let resolved = try? OriginalMediaBookmark.resolve(bookmark) {
             let scoped = resolved.url.startAccessingSecurityScopedResource()
             defer { if scoped { resolved.url.stopAccessingSecurityScopedResource() } }
+            // A file iCloud Drive keeps only in the cloud would be downloaded.
+            guard isLocal(resolved.url) else { return nil }
             image = source.isVideo ? await videoFrame(resolved.url) : fileImage(resolved.url)
         }
         guard let image, let fitted = fit(image) else { return nil }
         return encode(fitted)
+    }
+
+    static func isLocal(_ url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]),
+              values.isUbiquitousItem == true else { return true }
+        return values.ubiquitousItemDownloadingStatus == .current
     }
 
     private static func fileImage(_ url: URL) -> CGImage? {

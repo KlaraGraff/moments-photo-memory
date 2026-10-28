@@ -35,6 +35,9 @@ final class ChapterAIOrganizer {
         var chapterUsage = ModelUsage()
         var windows = 0
         var failedWindows = 0
+        var failedIndices: Set<Int> = []
+        /// Days of the windows that failed, left as they were.
+        var frozen: [ClosedRange<String>] = []
         var proposals: [ChapterProposal] = []
         var written: ChapterAIApplier.Written?
 
@@ -97,12 +100,24 @@ final class ChapterAIOrganizer {
         outcome.windows = windows.count
         let answers = try await organize(windows, outcome: &outcome)
         var proposals = ChapterPlan.merge(answers)
-        if let scope { proposals = proposals.filter { $0.end >= scope.lowerBound && $0.start <= scope.upperBound } }
+        // Days a failed window covers and no other window does.
+        let covered = zip(windows, answers.indices).filter { !outcome.failedIndices.contains($0.1) }.map { $0.0.firstDay...$0.0.lastDay }
+        outcome.frozen = outcome.failedIndices.sorted().map { windows[$0].firstDay...windows[$0].lastDay }.flatMap { range in
+            Self.uncovered(range, by: covered)
+        }
+        var applied = scope
+        if let scope {
+            proposals = proposals.filter { $0.end >= scope.lowerBound && $0.start <= scope.upperBound }
+            // A trip running past the new days is redone whole.
+            applied = proposals.reduce(scope) { range, proposal in
+                min(range.lowerBound, proposal.start)...max(range.upperBound, proposal.end)
+            }
+        }
         outcome.proposals = proposals
 
-        guard writes, outcome.failedWindows == 0 || !proposals.isEmpty else { return outcome }
+        guard writes, outcome.windows > 0, outcome.failedWindows < outcome.windows else { return outcome }
         onProgress(Progress(phase: .writing, done: 0, total: 1))
-        outcome.written = try applier.apply(proposals, scope: scope)
+        outcome.written = try applier.apply(proposals, scope: applied, frozen: outcome.frozen)
         onProgress(Progress(phase: .writing, done: 1, total: 1))
         return outcome
     }
@@ -242,16 +257,67 @@ final class ChapterAIOrganizer {
 
     // MARK: - Organizing
 
+    /// The parts of `range` no range in `others` covers.
+    static func uncovered(_ range: ClosedRange<String>, by others: [ClosedRange<String>]) -> [ClosedRange<String>] {
+        guard let first = DayKey.ordinal(range.lowerBound), let last = DayKey.ordinal(range.upperBound) else { return [range] }
+        let spans = others.compactMap { other -> ClosedRange<Int>? in
+            guard let start = DayKey.ordinal(other.lowerBound), let end = DayKey.ordinal(other.upperBound), start <= end else { return nil }
+            return start...end
+        }
+        var result: [ClosedRange<String>] = []
+        var runStart: Int?
+        for day in first...(last + 1) {
+            let open = day <= last && !spans.contains { $0.contains(day) }
+            if open, runStart == nil { runStart = day }
+            if !open, let start = runStart {
+                result.append(DayKey.key(ordinal: start)...DayKey.key(ordinal: day - 1))
+                runStart = nil
+            }
+        }
+        return result
+    }
+
     private func organize(_ windows: [ChapterDigest.Window], outcome: inout Outcome) async throws -> [[ChapterProposal]] {
         let instructions = ChapterPrompts.chapterInstructions(language: language)
         let schema = ChapterPrompts.chapterSchema
         let client = client
+        let messages = windows.map(ChapterPrompts.chapterMessage)
         var answers: [[ChapterProposal]] = Array(repeating: [], count: windows.count)
         var done = 0
         onProgress(Progress(phase: .organizing, done: 0, total: windows.count))
         try await withThrowingTaskGroup(of: (Int, Result<ClaudeChapterClient.Reply, Error>).self) { group in
-            for (index, window) in windows.enumerated() {
-                let message = ChapterPrompts.chapterMessage(window)
+            var next = 0
+            func record(_ finished: (Int, Result<ClaudeChapterClient.Reply, Error>)) throws {
+                let (index, result) = finished
+                done += 1
+                switch result {
+                case let .success(reply):
+                    outcome.chapterUsage += reply.usage
+                    onExchange?("organize \(index + 1)", messages[index], reply.text)
+                    if let proposals = try? ChapterPlan.parse(reply.text, firstDay: windows[index].firstDay, lastDay: windows[index].lastDay) {
+                        answers[index] = proposals
+                    } else {
+                        outcome.failedWindows += 1
+                        outcome.failedIndices.insert(index)
+                    }
+                case let .failure(error):
+                    if case NoteOrganizerError.http(let status, _) = error, status == 401 || status == 403 {
+                        throw error
+                    }
+                    outcome.failedWindows += 1
+                    outcome.failedIndices.insert(index)
+                    onExchange?("organize \(index + 1) failed", messages[index], error.localizedDescription)
+                }
+                onProgress(Progress(phase: .organizing, done: done, total: windows.count))
+            }
+            // At most a few at a time, so a large library is not throttled.
+            while next < windows.count {
+                if next >= parallelRequests, let finished = try await group.next() {
+                    try record(finished)
+                }
+                let index = next
+                let message = messages[index]
+                next += 1
                 group.addTask {
                     do {
                         let reply = try await client.send(
@@ -268,27 +334,8 @@ final class ChapterAIOrganizer {
                     }
                 }
             }
-            while let next = try await group.next() {
-                let (index, result) = next
-                done += 1
-                switch result {
-                case let .success(reply):
-                    outcome.chapterUsage += reply.usage
-                    onExchange?("organize \(index + 1)", ChapterPrompts.chapterMessage(windows[index]), reply.text)
-                    if let proposals = try? ChapterPlan.parse(reply.text, firstDay: windows[index].firstDay, lastDay: windows[index].lastDay) {
-                        answers[index] = proposals
-                    } else {
-                        outcome.failedWindows += 1
-                    }
-                case let .failure(error):
-                    if case NoteOrganizerError.http(let status, _) = error, status == 401 || status == 403 {
-                        group.cancelAll()
-                        throw error
-                    }
-                    outcome.failedWindows += 1
-                    onExchange?("organize \(index + 1) failed", ChapterPrompts.chapterMessage(windows[index]), error.localizedDescription)
-                }
-                onProgress(Progress(phase: .organizing, done: done, total: windows.count))
+            while let finished = try await group.next() {
+                try record(finished)
             }
         }
         return answers
@@ -345,13 +392,14 @@ final class ChapterAIOrganizer {
             let tripVotes = Dictionary(day.compactMap { ruleTrip[$0.item.id] }.map { ($0, 1) }, uniquingKeysWith: +)
             var places: [String] = []
             var people: [String] = []
-            var notes: [String] = dayNotes[key]?.map(\.text) ?? []
+            var notes: [String] = dayNotes[key]?.filter { $0.authorAccountID == MomentsAccount.localID }.map(\.text) ?? []
             var captionTexts: [String] = []
             var documents = 0
             for entry in day {
                 for name in placeNames(of: entry.item) where !places.contains(name) { places.append(name) }
                 for name in faces[entry.item.id] ?? [] where !people.contains(name) { people.append(name) }
-                notes += entry.item.memories.map(\.text)
+                // A partner's words stay off the network, like their photos.
+                notes += entry.item.memories.filter { ($0.authorAccountID ?? MomentsAccount.localID) == MomentsAccount.localID }.map(\.text)
                 if entry.item.isScreenshot {
                     documents += 1
                 } else if let caption = captions.caption(for: entry.item.id) {

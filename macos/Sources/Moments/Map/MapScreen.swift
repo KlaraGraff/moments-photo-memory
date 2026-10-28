@@ -71,7 +71,7 @@ struct MapScreen: View {
     /// dozen views instead of thousands; zooming in recomputes the detailed
     /// city/area/spot clusters.
     private var displayedClusters: [PlaceCluster] {
-        worldClusters(from: snapshot.clusters, aggregate: isWorldView)
+        worldClusters(from: snapshot.clusters, aggregate: isWorldView || snapshot.level == .city)
     }
 
     private var snapshotKey: Int {
@@ -143,7 +143,7 @@ struct MapScreen: View {
                 viewModel.snapshot(stops: stops, latitudeDelta: latitudeDelta)
             }.value
             cachedClusterDisplayNames = clusterDisplayNames(
-                for: worldClusters(from: nextSnapshot.clusters, aggregate: isWorldView)
+                for: worldClusters(from: nextSnapshot.clusters, aggregate: nextSnapshot.level == .city)
             )
             cachedSnapshot = nextSnapshot
             // "Show on Map" from another screen: fly there once the pins exist.
@@ -721,6 +721,11 @@ struct MapScreen: View {
         if let name = cluster.name, !name.isEmpty {
             return name
         }
+        if let stopID = cluster.stopIDs.first,
+           let name = projectionStore.projection.photoByID[stopID]?.placeName,
+           !name.isEmpty {
+            return name
+        }
         if let cached = cachedClusterDisplayNames[cluster.id] {
             return cached
         }
@@ -734,6 +739,10 @@ struct MapScreen: View {
         names.reserveCapacity(clusters.count)
         for cluster in clusters {
             if let name = cluster.name, !name.isEmpty {
+                names[cluster.id] = name
+            } else if let stopID = cluster.stopIDs.first,
+                      let name = projectionStore.projection.photoByID[stopID]?.placeName,
+                      !name.isEmpty {
                 names[cluster.id] = name
             } else {
                 names[cluster.id] = nearestPlaceName(for: cluster) ?? String(localized: "Unknown place")

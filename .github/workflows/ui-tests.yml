@@ -34,6 +34,10 @@ on:
         description: 'Optional: run only these tests, e.g. MomentsUITests/MomentsUITests/testDoubleClickRenamesATripInPlace (space-separated)'
         required: false
         default: ''
+      page_stress_count:
+        description: 'Photos in the synthetic library MomentsPageProbeUITests imports'
+        required: false
+        default: '5000'
 
 # A new push to a pull request cancels that pull request's older run, so
 # superseded runs never hold one of the few hosted Macs; on main only the
@@ -47,7 +51,7 @@ jobs:
   ui:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
@@ -63,6 +67,8 @@ jobs:
           TEST_RUNNER_MOMENTS_SCROLL_DIR: ${{ runner.temp }}/scroll
           TEST_RUNNER_MOMENTS_RESIZE_DIR: ${{ runner.temp }}/resize
           TEST_RUNNER_MOMENTS_MARQUEE_DIR: ${{ runner.temp }}/marquee
+          TEST_RUNNER_MOMENTS_PAGE_DIR: ${{ runner.temp }}/pages
+          TEST_RUNNER_MOMENTS_PAGE_STRESS_COUNT: ${{ inputs.page_stress_count || '5000' }}
           ONLY_TESTING: ${{ inputs.only_testing }}
         run: |
           # A manual run can target a few tests for a quick check; pull
@@ -84,6 +90,9 @@ jobs:
         if: always()
         run: |
           cat "$RUNNER_TEMP"/scroll/scroll-report-*.txt 2>/dev/null || echo "no scroll report"
+      - name: Print page report
+        if: always()
+        run: cat "$RUNNER_TEMP"/pages/page-report.txt 2>/dev/null || echo "no page report"
       - name: Print marquee report
         if: always()
         run: cat "$RUNNER_TEMP"/marquee/marquee-report-*.txt 2>/dev/null || echo "no marquee report"

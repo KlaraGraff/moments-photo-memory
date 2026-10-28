@@ -262,6 +262,7 @@ struct ContentView: View {
             }
             switch destination {
             case .library: selection = .library
+            case .people: selection = .people
             case .map: selection = .map
             case .timeline: selection = .timeline
             case .trips: selection = .trips

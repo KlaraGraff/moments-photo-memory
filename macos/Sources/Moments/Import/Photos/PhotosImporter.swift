@@ -186,7 +186,7 @@ public struct PhotosImporter {
                 progress(ImportProgress(phase: .organizing, completed: done, total: budget, message: String(localized: "Looking up places")))
             }
         )
-        let plan = try await organizer.organize(metadata)
+        let plan = try await organizer.organize(metadata, library: ImportOrganizer.libraryStops(existing))
         await geocodeCache.persist()
         progress(ImportProgress(phase: .organizing, completed: metadata.count, total: metadata.count, message: String(localized: "Organizing Apple Photos")))
 
@@ -371,7 +371,7 @@ public struct PhotosImporter {
                     existing.importReviewReasonsRaw = existingReasons.union(incomingReasons).sorted().joined(separator: ",")
                 }
                 // A photo taken out of a trip by hand stays out.
-                if existing.trip == nil, !TripAssignmentLocks.isLocked(existing.id), let trip = tripModels[organized.tripID] {
+                if existing.trip == nil, !TripAssignmentLocks.isLocked(existing.id), let trip = organized.tripID.flatMap({ tripModels[$0] }) {
                     existing.trip = trip
                     existing.tripID = trip.id
                 }
@@ -403,7 +403,7 @@ public struct PhotosImporter {
                 source: .photos,
                 title: organized.metadata.fileName,
                 tripID: organized.tripID,
-                trip: tripModels[organized.tripID],
+                trip: organized.tripID.flatMap { tripModels[$0] },
                 originalBookmarkData: nil,
                 originalFileName: nil,
                 originalContentHash: nil,

@@ -47,6 +47,17 @@ enum TripNaming {
         name.range(of: #"^(Trip|旅程|Reise) \d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil
     }
 
+    /// Names given while the trip's places were still unknown: the old date
+    /// names, "Trip August 2026", "旅程 2026年8月" and "Trip 3", in any
+    /// language the import ran in. They get the places once the cities are
+    /// named. Any month matches: the trip's dates may have moved since, and a
+    /// name someone typed lives in `overrideName`, never here.
+    static func isPlacelessDefaultName(_ name: String) -> Bool {
+        if isOldDefaultName(name) { return true }
+        let pattern = #"^(Trip|旅程|Reise) (\d+|\p{L}+\.? \d{4}|\d{4}年\d{1,2}月)$"#
+        return name.range(of: pattern, options: .regularExpression) != nil
+    }
+
     private static func unique(_ values: [String]) -> [String] {
         var seen = Set<String>()
         return values
@@ -55,7 +66,7 @@ enum TripNaming {
     }
 }
 
-/// Renames trips that still carry an old date-only default name to the
+/// Renames trips that still carry a default name without places to the
 /// place-and-date name, once the cities are named. A trip with more than
 /// three cities needs its country: one lookup for its first and one for its
 /// last city, through the shared cache and spaced like the place backfill.
@@ -69,7 +80,8 @@ struct TripNameBackfill: Sendable {
     func run(container: ModelContainer) async throws -> Int {
         let context = ModelContext(container)
         let trips = try context.fetch(FetchDescriptor<Trip>()).filter {
-            $0.overrideName == nil && TripNaming.isOldDefaultName($0.name)
+            $0.overrideName == nil
+                && TripNaming.isPlacelessDefaultName($0.name)
         }
         var renamed = 0
         var lookups = 0

@@ -115,8 +115,9 @@ struct TripsScreen: View {
         )
     }
 
-    /// Every chapter, newest first, like a photo album shelf; photos in no
-    /// trip last. Chapters other than trips show even before they have photos.
+    /// Every chapter, newest first, like a photo album shelf. Chapters other
+    /// than trips show even before they have photos. Photos in no trip are
+    /// daily life, which lives in the Library and Timeline, not here.
     private var allChapters: [TimelineTrip] {
         // A trip someone made by hand keeps its card even before photos join.
         // Imports mark their trips as suggested or confirmed; hand-made ones carry no status.
@@ -124,8 +125,7 @@ struct TripsScreen: View {
         let real = document.trips.filter { !$0.isUnsorted && ($0.itemCount > 0 || planned.contains($0.id)) } + Array(chapterDocs.values)
         let dated = real.filter { $0.startDate != nil }.sorted { ($0.startDate ?? .distantPast, $0.id) > ($1.startDate ?? .distantPast, $1.id) }
         let undated = real.filter { $0.startDate == nil }
-        let unsorted = document.trips.filter { $0.isUnsorted && $0.itemCount > 0 }
-        return dated + undated + unsorted
+        return dated + undated
     }
 
     /// The shelf with the chosen kind only; photos in no trip go with Trips.

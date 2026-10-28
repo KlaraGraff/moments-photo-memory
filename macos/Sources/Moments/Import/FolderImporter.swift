@@ -159,7 +159,11 @@ struct FolderImporter {
         }
 
         progress(ImportProgress(phase: .organizing, completed: 0, total: fresh.count, message: String(localized: "Organizing trips and places")))
-        let plan = try await organizer.organize(fresh, sourceFolderName: folderURL.lastPathComponent)
+        let plan = try await organizer.organize(
+            fresh,
+            sourceFolderName: folderURL.lastPathComponent,
+            library: ImportOrganizer.libraryStops(existing)
+        )
         await geocodeCache.persist()
         try Task.checkCancellation()
 
@@ -207,7 +211,7 @@ struct FolderImporter {
                 source: .file,
                 title: metadata.fileName,
                 tripID: organized.tripID,
-                trip: tripModels[organized.tripID],
+                trip: organized.tripID.flatMap { tripModels[$0] },
                 originalBookmarkData: metadata.bookmarkData,
                 originalFileName: metadata.fileName,
                 originalContentHash: metadata.contentHash,

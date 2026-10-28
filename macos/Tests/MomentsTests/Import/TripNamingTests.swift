@@ -42,4 +42,26 @@ final class TripNamingTests: XCTestCase {
         XCTAssertFalse(TripNaming.isOldDefaultName("Honeymoon 2026-08-20"))
         XCTAssertFalse(TripNaming.isOldDefaultName("Trip 2"))
     }
+
+    func testNamesWithoutPlacesAreRecognisedInEveryLanguage() {
+        XCTAssertTrue(TripNaming.isPlacelessDefaultName("Trip August 2026"))
+        XCTAssertTrue(TripNaming.isPlacelessDefaultName("旅程 2026年8月"))
+        XCTAssertTrue(TripNaming.isPlacelessDefaultName("Reise März 2026"))
+        XCTAssertTrue(TripNaming.isPlacelessDefaultName("Trip 2026-08-20"))
+        XCTAssertTrue(TripNaming.isPlacelessDefaultName("Trip 3"))
+        XCTAssertTrue(TripNaming.isPlacelessDefaultName("Trip July 2026"), "the dates may have moved since")
+        XCTAssertFalse(TripNaming.isPlacelessDefaultName("Lisbon August 2026"))
+        XCTAssertFalse(TripNaming.isPlacelessDefaultName("Trip to Lisbon 2026"))
+    }
+
+    func testTheMonthPartIsWhatTheNameFunctionWrites() {
+        for identifier in ["en_US", "de_DE", "zh_Hans_CN"] {
+            let name = TripNaming.name(cities: [], countries: [], start: start, index: 1, locale: Locale(identifier: identifier), calendar: utc)
+            let month = TripNaming.month(start, locale: Locale(identifier: identifier), calendar: utc)
+            for word in ["Trip", "旅程", "Reise"] {
+                XCTAssertTrue(TripNaming.isPlacelessDefaultName(word + " " + month), "\(identifier): \(month)")
+            }
+            XCTAssertTrue(name.hasSuffix(month))
+        }
+    }
 }

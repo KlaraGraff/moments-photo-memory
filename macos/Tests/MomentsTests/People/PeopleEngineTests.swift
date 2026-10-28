@@ -144,11 +144,31 @@ final class PeopleEngineTests: XCTestCase {
         XCTAssertTrue(try container.mainContext.fetch(FetchDescriptor<FaceObservation>()).isEmpty)
     }
 
+    /// Like Photos, only a photo someone opens is downloaded from iCloud:
+    /// scanning asks PhotoKit for what is on this Mac, the viewer may download.
+    func testOnlyAnOpenedPhotoMayDownloadFromICloud() async {
+        let photos = NetworkRecordingPhotosSource()
+        let descriptor = PeopleMediaDescriptor(id: "synthetic-icloud", bookmarkData: nil, photosLocalIdentifier: "SYNTH/L0/001")
+        _ = await PeopleImageLoader.load(descriptor, allowDownload: false, photoSource: photos)
+        _ = await PeopleImageLoader.load(descriptor, allowDownload: true, photoSource: photos)
+        XCTAssertEqual(photos.networkAccess, [false, true])
+    }
+
+    func testViewerKeepsOnlyFullSizeLocalCopies() {
+        // A 4,032-pixel photo: PhotoKit returns about 2,000 when it is here.
+        XCTAssertTrue(PhotoViewerImageCache.isFullSize(width: 2_000, height: 1_500, photoPixels: 4_032))
+        XCTAssertTrue(PhotoViewerImageCache.isFullSize(width: 1_900, height: 1_425, photoPixels: 4_032))
+        // The small copy Optimize Mac Storage keeps is not the photo.
+        XCTAssertFalse(PhotoViewerImageCache.isFullSize(width: 512, height: 384, photoPixels: 4_032))
+        // A small photo is full size at its own size.
+        XCTAssertTrue(PhotoViewerImageCache.isFullSize(width: 800, height: 600, photoPixels: 800))
+    }
+
     func testUnavailableMediaIsLeftUnscanned() async throws {
         let container = try MomentsPersistence.makeContainer(inMemory: true)
         let store = PeopleScanStore(modelContainer: container)
         let unavailable = PeopleMediaDescriptor(id: "synthetic-unavailable", bookmarkData: nil, photosLocalIdentifier: nil)
-        let loaded = await PeopleImageLoader.load(unavailable)
+        let loaded = await PeopleImageLoader.load(unavailable, allowDownload: false)
         XCTAssertNil(loaded)
         try await store.save(
             results: [PeopleScanResult(mediaID: "synthetic-available", faces: [])],
@@ -382,4 +402,29 @@ private struct SyntheticRandom {
         state = state &* 6364136223846793005 &+ 1442695040888963407
         return Float(state >> 40) / Float(1 << 24)
     }
+}
+
+private final class NetworkRecordingPhotosSource: PhotosAssetSource, @unchecked Sendable {
+    private(set) var networkAccess: [Bool] = []
+
+    var authorizationStatus: PhotosAuthorizationStatus { .authorized }
+    func requestAuthorization() async -> PhotosAuthorizationStatus { .authorized }
+    func fetchAssets(selection: PhotosImportSelection) async throws -> [PhotosAssetDescriptor] { [] }
+    func observeChanges(_ handler: @escaping @Sendable (PhotosChangeEvent) -> Void) -> any PhotosChangeObservation {
+        NetworkRecordingObservation()
+    }
+
+    func thumbnailData(forLocalIdentifier localIdentifier: String, targetSize: CGSize, networkAccessAllowed: Bool) async throws -> Data? {
+        networkAccess.append(networkAccessAllowed)
+        return nil
+    }
+
+    func thumbnailImage(forLocalIdentifier localIdentifier: String, targetSize: CGSize, networkAccessAllowed: Bool) async -> CGImage? {
+        networkAccess.append(networkAccessAllowed)
+        return nil
+    }
+}
+
+private final class NetworkRecordingObservation: PhotosChangeObservation {
+    func invalidate() {}
 }

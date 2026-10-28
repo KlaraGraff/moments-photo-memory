@@ -219,7 +219,7 @@ final class PeopleScanController {
                 var batchScannedIDs: [String] = []
                 for (offset, descriptor) in descriptors[batch..<end].enumerated() {
                     try Task.checkCancellation()
-                    if let image = await PeopleImageLoader.load(descriptor) {
+                    if let image = await PeopleImageLoader.load(descriptor, allowDownload: false) {
                         try Task.checkCancellation()
                         let batchBase = completed + offset
                         let skippedBeforeImage = skippedUnavailable
@@ -784,10 +784,16 @@ actor PeopleScanStore {
 }
 
 enum PeopleImageLoader {
-    static func load(_ descriptor: PeopleMediaDescriptor) async -> CGImage? {
-        let photoSource = PhotoKitAssetSource()
+    /// A photo about 2,000 pixels across. `allowDownload` is only for a
+    /// photo someone opened; scanning and every other look at a photo use
+    /// what is on this Mac, a smaller copy when the original is in iCloud.
+    static func load(
+        _ descriptor: PeopleMediaDescriptor,
+        allowDownload: Bool,
+        photoSource: any PhotosAssetSource = PhotoKitAssetSource()
+    ) async -> CGImage? {
         if let localIdentifier = descriptor.photosLocalIdentifier,
-           let image = await photoSource.thumbnailImage(forLocalIdentifier: localIdentifier, targetSize: CGSize(width: 2_000, height: 2_000), networkAccessAllowed: true) {
+           let image = await photoSource.thumbnailImage(forLocalIdentifier: localIdentifier, targetSize: CGSize(width: 2_000, height: 2_000), networkAccessAllowed: allowDownload) {
             return image
         }
         guard let bookmark = descriptor.bookmarkData,
@@ -1583,7 +1589,7 @@ private struct FaceInPhotoView: View {
             var fetch = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == wantedID })
             fetch.fetchLimit = 1
             let descriptor = (try? modelContext.fetch(fetch))?.first.map(PeopleMediaDescriptor.init)
-            guard let descriptor, let photo = await PeopleImageLoader.load(descriptor) else {
+            guard let descriptor, let photo = await PeopleImageLoader.load(descriptor, allowDownload: false) else {
                 loadFailed = true
                 return
             }

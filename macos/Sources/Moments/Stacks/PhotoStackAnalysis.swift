@@ -250,12 +250,13 @@ final class PhotoStackAnalyzer {
     }
 
     /// A copy about 1,000 pixels across: enough for faces and sharpness.
+    /// Only what is on this Mac: analysis never downloads from iCloud.
     nonisolated static func loadImage(_ photo: PendingPhoto) async -> CGImage? {
         if let localIdentifier = photo.photosLocalIdentifier,
            let image = await PhotoKitAssetSource().thumbnailImage(
             forLocalIdentifier: localIdentifier,
             targetSize: CGSize(width: 1_024, height: 1_024),
-            networkAccessAllowed: true
+            networkAccessAllowed: false
            ) {
             return image
         }

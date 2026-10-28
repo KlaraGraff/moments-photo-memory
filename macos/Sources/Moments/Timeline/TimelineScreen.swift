@@ -179,15 +179,7 @@ struct TimelineScreen: View {
         }
         guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
         let coordinate = GeoPoint(latitude: latitude, longitude: longitude)
-        let nearest = places.compactMap { place -> (name: String, distance: Double)? in
-            guard let placeLatitude = place.latitude, let placeLongitude = place.longitude,
-                  let name = PlaceDisplayName.resolvedName(of: place) else { return nil }
-            let distance = coordinate.distance(to: GeoPoint(latitude: placeLatitude, longitude: placeLongitude))
-            return (name, distance)
-        }
-        .min { $0.distance < $1.distance }
-        guard let nearest, nearest.distance <= 100_000 else { return nil }
-        return nearest.name
+        return projectionStore.projection.placeIndex.nearestName(to: coordinate, within: 100_000)
     }
 }
 

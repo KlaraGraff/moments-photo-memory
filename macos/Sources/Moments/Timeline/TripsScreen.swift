@@ -23,6 +23,7 @@ struct TripsScreen: View {
     @Query private var places: [Place]
     @Query(sort: \CollectionMemory.createdAt) private var memories: [CollectionMemory]
     @Environment(SelectionModel.self) private var selection
+    @Environment(LibraryProjectionStore.self) private var projectionStore
     @Environment(\.modelContext) private var modelContext
     @Environment(\.undoManager) private var undoManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -226,8 +227,9 @@ struct TripsScreen: View {
             )
         }
         .task(id: inputKey) {
+            let projection = projectionStore.projection
             let snapshots = items.map { item in
-                TimelineItemSnapshot(item: item, placeHint: nearestPlaceName(for: item))
+                TimelineItemSnapshot(item: item, placeHint: projection.photoByID[item.id]?.placeName ?? nearestPlaceName(for: item))
             }
             document = buildDocument(snapshots)
             chapterDocs = buildChapters(snapshots: Dictionary(snapshots.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }))

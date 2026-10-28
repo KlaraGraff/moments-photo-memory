@@ -15,6 +15,7 @@ struct MapScreen: View {
     @Query private var places: [Place]
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks
+    @Environment(LibraryProjectionStore.self) private var projectionStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var cameraPosition = MapCameraPosition.camera(
@@ -79,7 +80,12 @@ struct MapScreen: View {
     }
 
     private var worldInput: FootprintsInput {
-        FootprintsCalculator.input(from: items, visibleItemIDs: selection.visibleItemIDs)
+        if !projectionStore.projection.mapStops.isEmpty {
+            let visible = selection.visibleItemIDs
+            let stops = projectionStore.projection.mapStops.filter { visible?.contains($0.id) ?? true }
+            return FootprintsInput(stops: stops)
+        }
+        return FootprintsCalculator.input(from: items, visibleItemIDs: selection.visibleItemIDs)
     }
 
     private var selectedCluster: PlaceCluster? {

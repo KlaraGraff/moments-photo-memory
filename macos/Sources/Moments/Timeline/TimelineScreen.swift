@@ -14,6 +14,7 @@ struct TimelineScreen: View {
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw == "stack" }) private var stackRecords: [UserGroup]
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks
+    @Environment(LibraryProjectionStore.self) private var projectionStore
     /// Rebuilt only when the inputs change, not on every selection change or render.
     @State private var months: [TimelineMonth] = []
     @State private var itemByID: [String: MediaItem] = [:]
@@ -128,8 +129,9 @@ struct TimelineScreen: View {
     }
 
     private func rebuild() {
+        let projection = projectionStore.projection
         let snapshots = visibleItems.map { item in
-            TimelineItemSnapshot(item: item, placeHint: nearestPlaceName(for: item))
+            TimelineItemSnapshot(item: item, placeHint: projection.photoByID[item.id]?.placeName ?? nearestPlaceName(for: item))
         }
         // No trips given: every photo lands in one stream, grouped by day and place.
         let document = TimelineBuilder(calendar: Calendar.autoupdatingCurrent).build(items: snapshots, trips: [])

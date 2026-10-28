@@ -12,7 +12,6 @@ import MomentsCore
 /// routes between them. Pins are the photos themselves, like Apple Photos.
 struct MapScreen: View {
     @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }, sort: \MediaItem.captureDate) private var items: [MediaItem]
-    @Query private var places: [Place]
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks
     @Environment(LibraryProjectionStore.self) private var projectionStore
@@ -777,18 +776,11 @@ struct MapScreen: View {
     }
 
     private func nearestPlaceName(for cluster: PlaceCluster) -> String? {
-        if let center = cluster.center {
-            let nearest = places
-                .compactMap { place -> (Place, Double)? in
-                    guard let latitude = place.latitude, let longitude = place.longitude else { return nil }
-                    return (place, center.distance(to: GeoPoint(latitude: latitude, longitude: longitude)))
-                }
-                .min { $0.1 < $1.1 }
-            if let nearest, nearest.1 <= 1_500, let name = PlaceDisplayName.resolvedName(of: nearest.0) {
-                return name
-            }
-        }
-        return nil
+        guard let center = cluster.center else { return nil }
+        // The projection already owns a coarse spatial index. Scanning every
+        // SwiftData Place for every cluster made Map's first render quadratic
+        // at library scale and kept the page probe from reaching later pages.
+        return projectionStore.projection.placeIndex.nearestName(to: center, within: 1_500)
     }
 
     /// On the globe a pin flies down to its city; closer in it opens the

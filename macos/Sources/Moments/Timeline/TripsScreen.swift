@@ -454,6 +454,9 @@ struct TripsScreen: View {
     }
 
     private func nearestPlaceName(for item: MediaItem) -> String? {
+        if let name = item.effectivePlaceName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return name
+        }
         guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
         let coordinate = GeoPoint(latitude: latitude, longitude: longitude)
         let nearest = places.compactMap { place -> (name: String, distance: Double)? in

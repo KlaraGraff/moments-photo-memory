@@ -82,6 +82,10 @@ struct ChapterInfo: Codable, Equatable {
     var symbol: String?
     var startDate: Date?
     var endDate: Date?
+    /// One sentence about what happened, written by the model.
+    var summary: String? = nil
+    /// "ai" for a chapter the model made.
+    var madeBy: String? = nil
 
     private struct Envelope: Codable {
         var chapter: ChapterInfo

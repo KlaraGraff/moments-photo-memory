@@ -14482,6 +14482,388 @@
           }
         }
       }
+    },
+    "The model's answer was cut off." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Antwort des Modells wurde abgeschnitten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model's answer was cut off."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型的回答被截断了。"
+          }
+        }
+      }
+    },
+    "There are no dated photos to organize." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Es gibt keine datierten Fotos zum Ordnen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There are no dated photos to organize."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有带日期的照片可以整理。"
+          }
+        }
+      }
+    },
+    "The model could not organize Chapters this time. Nothing was changed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Modell konnte die Kapitel diesmal nicht ordnen. Nichts wurde geändert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model could not organize Chapters this time. Nothing was changed."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这次模型没能整理篇章，什么都没有改动。"
+          }
+        }
+      }
+    },
+    "Looking at photos · %lld of %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotos werden angesehen · %lld von %lld"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Looking at photos · %lld of %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在看照片 · %lld / %lld"
+          }
+        }
+      }
+    },
+    "Getting ready…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wird vorbereitet …"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Getting ready…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在准备…"
+          }
+        }
+      }
+    },
+    "Finding chapters · %lld of %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kapitel werden gesucht · %lld von %lld"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finding chapters · %lld of %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在分篇 · %lld / %lld"
+          }
+        }
+      }
+    },
+    "Writing chapters…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kapitel werden geschrieben …"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Writing chapters…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在写入篇章…"
+          }
+        }
+      }
+    },
+    "Organize with AI" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit KI ordnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Organize with AI"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用 AI 整理"
+          }
+        }
+      }
+    },
+    "Organize Chapters with AI" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kapitel mit KI ordnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Organize Chapters with AI"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用 AI 整理篇章"
+          }
+        }
+      }
+    },
+    "What the model looks at" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Was das Modell ansieht"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What the model looks at"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型看什么"
+          }
+        }
+      }
+    },
+    "Every photo" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jedes Foto"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Every photo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每张照片"
+          }
+        }
+      }
+    },
+    "A few photos a day" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein paar Fotos pro Tag"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A few photos a day"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每天抽几张"
+          }
+        }
+      }
+    },
+    "No photos, text only" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keine Fotos, nur Text"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No photos, text only"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不看照片，只看文字"
+          }
+        }
+      }
+    },
+    "Uses your Anthropic key. Small copies of your photos without location data, place names, people's names and your notes are sent to Anthropic. Photos kept only in iCloud are skipped. Each photo is looked at once: about US$0.25 for 5,000 photos with Haiku." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verwendet deinen Anthropic-Schlüssel. An Anthropic gesendet werden kleine Kopien deiner Fotos ohne Ortsdaten, Ortsnamen, Namen von Personen und deine Notizen. Fotos, die nur in iCloud liegen, werden übersprungen. Jedes Foto wird einmal angesehen: etwa 0,25 US-Dollar für 5.000 Fotos mit Haiku."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uses your Anthropic key. Small copies of your photos without location data, place names, people's names and your notes are sent to Anthropic. Photos kept only in iCloud are skipped. Each photo is looked at once: about US$0.25 for 5,000 photos with Haiku."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用你的 Anthropic key。会发给 Anthropic 的有：去掉位置信息的照片小图、地点名、人名和你的笔记。只存在 iCloud 里的照片会跳过。每张照片只看一次：用 Haiku 整理 5,000 张大约 0.25 美元。"
+          }
+        }
+      }
+    },
+    "For notes, only the words you wrote, the photo's date and its place name are sent. Never the photo itself or GPS coordinates." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bei Notizen werden nur dein Text, das Datum des Fotos und der Ortsname gesendet. Nie das Foto selbst oder GPS-Koordinaten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "For notes, only the words you wrote, the photo's date and its place name are sent. Never the photo itself or GPS coordinates."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整理笔记时，发给云端的只有：你写的这段话、照片的日期和地点名。不发照片本身，也不发 GPS 坐标。"
+          }
+        }
+      }
+    },
+    "AI organized %lld chapters" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "KI hat %lld Kapitel geordnet"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "KI hat %lld Kapitel geordnet"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "AI organized %lld chapter"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "AI organized %lld chapters"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "AI 整理了 %lld 篇"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

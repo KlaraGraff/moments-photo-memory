@@ -200,6 +200,15 @@ enum TripEdits {
             }
         }
 
+        /// Moves a photo the way Moments' own organizing does: kept for
+        /// undo, but not marked as changed by hand, so a later run may move it again.
+        func place(_ item: MediaItem, in trip: Trip?) {
+            if undo.items[item.id] == nil { undo.items[item.id] = .some(item.trip?.id ?? item.tripID) }
+            item.trip = trip
+            item.tripID = trip?.id
+            item.updatedAt = now
+        }
+
         func rekey(_ memory: CollectionMemory, to key: String) {
             if undo.memoryKeys[memory.id] == nil { undo.memoryKeys[memory.id] = memory.scopeKey }
             memory.scopeKey = key

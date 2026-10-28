@@ -46,5 +46,21 @@ final class MomentsPageProbeUITests: XCTestCase {
         add(note)
         print("PAGE-REPORT-BEGIN\n\(text)\nPAGE-REPORT-END")
         XCTAssertTrue(FileManager.default.fileExists(atPath: done.path), "The page probe did not finish:\n\(text)")
+        // A timeout is measurement evidence while the responsiveness target
+        // is still a product decision; it must remain visible in the report
+        // rather than turning this baseline run into an unclassified failure.
+        let phases = [
+            "first import", "after import (faces, bursts, place names)",
+            "People", "Map", "Timeline", "Chapters", "Library",
+            "viewer open", "viewer close", "Chapters again",
+            "chapter with most photos", "back to chapters", "Timeline again",
+            "Library again"
+        ]
+        for phase in phases {
+            XCTAssertTrue(text.contains("page report (\(phase)):"), "Missing \(phase) report")
+        }
+        XCTAssertEqual(text.components(separatedBy: "longest stall").count - 1, phases.count, "Every phase must report a stall")
+        XCTAssertEqual(text.components(separatedBy: "main thread samples:").count - 1, phases.count, "Every phase must report a stack sample")
+        XCTAssertEqual(text.components(separatedBy: "memory ").count - 1, phases.count, "Every phase must report memory")
     }
 }

@@ -185,6 +185,13 @@ struct MomentsApp: App {
                         photoStacks.refresh(container: modelContainer)
                         projectionStore.refresh(container: modelContainer)
                     }
+                    // Every SwiftData save can change dates, coordinates,
+                    // place names, notes or deletion state. Coalesce bursts
+                    // of saves so the shared read model catches up without
+                    // rebuilding once per edited field or import batch.
+                    .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { _ in
+                        projectionStore.scheduleRefresh(container: modelContainer)
+                    }
                     .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
                         showingPhotosImport = true
                     }

@@ -15,7 +15,7 @@
 
 1. 在 MomentsCore 增加纯值类型 LibraryPhotoDescriptor、LibraryPlaceDescriptor、LibraryProjection 和 LibraryProjectionBuilder。Builder 接受已脱离 SwiftData 的 DTO，产出按 ID、日期、地点和坐标建立的索引、Timeline 日/月、Map 聚类输入和筛选字段。
 2. 在 App 层增加 LibraryProjectionStore（actor）。它从独立 ModelContext 分批读取 SwiftData，复制成 DTO，在后台调用 Core Builder；构建期间继续使用上一份快照，完成后主 actor 一次替换。取消旧 generation，避免连续导入堆积重建任务。
-3. 让 Library、Timeline、Map、Chapters 读取同一个 projection。页面只做轻量可见性筛选和 UI 状态更新；地点名、nearest place、日期分组、Map route/cluster 只在 Builder 中做一次。
+3. 让 Timeline、Map、Chapters 读取同一个 projection。页面只做轻量可见性筛选和 UI 状态更新；地点名、nearest place、日期分组、Map route/cluster 只在 Builder 中做一次。Library 仍需单独迁移：当前实现继续使用 SwiftData 查询，不能把本阶段描述成全屏完成。
 4. 把 People、burst、place-name 等后台任务的完成通知合并为一次 projection invalidation，避免每个关系保存都触发整棵 SwiftUI 图重算。
 5. 保留现有 SwiftData 模型、迁移和 UI 外观，先不做 schema 迁移；projection 是可丢弃的内存派生数据，启动或变更后可从事实源重建。
 

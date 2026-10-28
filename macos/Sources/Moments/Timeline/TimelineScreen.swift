@@ -28,6 +28,7 @@ struct TimelineScreen: View {
 
     private var inputKey: Int {
         var hasher = Hasher()
+        hasher.combine(projectionStore.revision)
         for item in visibleItems {
             hasher.combine(item.id)
             hasher.combine(item.effectiveCaptureDate)

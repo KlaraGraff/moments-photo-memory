@@ -11,11 +11,28 @@ import MomentsCore
 final class LibraryProjectionStore {
     private(set) var projection = LibraryProjection.empty
     private(set) var isBuilding = false
+    /// Changes whenever a complete snapshot becomes visible to the screens.
+    /// Views include this value in their build keys so a publish also rebuilds
+    /// pages that read the snapshot only inside an async task.
+    private(set) var revision = 0
 
     private var generation = 0
     private var task: Task<Void, Never>?
+    private var scheduledRefresh: Task<Void, Never>?
+
+    /// Coalesce the many saves made by an import or an editor into one rebuild.
+    func scheduleRefresh(container: ModelContainer) {
+        scheduledRefresh?.cancel()
+        scheduledRefresh = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let self else { return }
+            self.refresh(container: container)
+        }
+    }
 
     func refresh(container: ModelContainer) {
+        scheduledRefresh?.cancel()
+        scheduledRefresh = nil
         generation += 1
         let token = generation
         task?.cancel()
@@ -30,6 +47,7 @@ final class LibraryProjectionStore {
             }.value
             guard !Task.isCancelled, self.generation == token else { return }
             self.projection = next
+            self.revision &+= 1
             self.isBuilding = false
             self.task = nil
         }
@@ -51,7 +69,12 @@ final class LibraryProjectionStore {
         ))) ?? []
         let places = (try? context.fetch(FetchDescriptor<Place>())) ?? []
         let placeDescriptors = places.map {
-            LibraryPlaceDescriptor(id: $0.id, name: $0.name, latitude: $0.latitude, longitude: $0.longitude)
+            LibraryPlaceDescriptor(
+                id: $0.id,
+                name: PlaceDisplayName.resolvedName(of: $0),
+                latitude: $0.latitude,
+                longitude: $0.longitude
+            )
         }
         let photos = items.map { item in
             let dayKey = item.localDayKey
@@ -65,10 +88,10 @@ final class LibraryProjectionStore {
                 captureDate: item.effectiveCaptureDate,
                 dayKey: dayKey,
                 monthKey: dayKey.map { String($0.prefix(7)) },
-                latitude: item.latitude,
-                longitude: item.longitude,
+                latitude: item.effectiveCoordinate?.latitude,
+                longitude: item.effectiveCoordinate?.longitude,
                 placeID: item.place?.id,
-                placeName: item.effectivePlaceName,
+                placeName: item.displayPlaceName,
                 tripID: item.tripID,
                 kind: kind,
                 isScreenshot: item.isScreenshot,

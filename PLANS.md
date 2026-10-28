@@ -31,6 +31,8 @@ Updated by the coordinator. This is the recovery point for a new thread.
 - Verified open PRs and their latest checks with GitHub: #101 open/green, #102 draft/Linux green/macOS and UI skipped for the draft; the manual #102 UI probe failed after the People phase.
 - Added this board, `GOALS.md`, and the Codex agent role files.
 - Added the projection design and initial implementation on PR #103; local app build and tests pass.
+- Hosted 5,000-item probe run `40750890590` completed all 14 phases. Timeline, Chapters, and repeat navigation timed out, so this is diagnostic baseline evidence rather than a responsiveness pass.
+- Projection invalidation now coalesces SwiftData saves, publishes a revision for Timeline/Chapters/Map rebuilds, and resolves display names before publishing.
 
 ## Decision log
 

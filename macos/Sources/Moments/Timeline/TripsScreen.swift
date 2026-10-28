@@ -45,6 +45,7 @@ struct TripsScreen: View {
 
     private var inputKey: Int {
         var hasher = Hasher()
+        hasher.combine(projectionStore.revision)
         for item in items {
             hasher.combine(item.id)
             hasher.combine(item.effectiveCaptureDate)

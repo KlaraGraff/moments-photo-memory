@@ -75,21 +75,17 @@ struct MapScreen: View {
 
     private var snapshotKey: Int {
         var hasher = Hasher()
+        hasher.combine(projectionStore.revision)
         hasher.combine(projectionStore.projection.mapStops.count)
-        hasher.combine(currentWorldSignature)
         for id in selection.visibleItemIDs?.sorted() ?? [] { hasher.combine(id) }
         hasher.combine(viewModel.level(for: latitudeDelta))
         return hasher.finalize()
     }
 
-    private var currentWorldSignature: Int {
+    private var worldInputKey: Int {
         var hasher = Hasher()
-        for stop in projectionStore.projection.mapStops {
-            hasher.combine(stop.id)
-            hasher.combine(stop.date)
-            hasher.combine(stop.coordinate?.latitude)
-            hasher.combine(stop.coordinate?.longitude)
-        }
+        hasher.combine(projectionStore.revision)
+        for id in selection.visibleItemIDs?.sorted() ?? [] { hasher.combine(id) }
         return hasher.finalize()
     }
 
@@ -154,7 +150,7 @@ struct MapScreen: View {
                 focus(on: requested)
             }
         }
-        .task(id: currentWorldInput.signature) {
+        .task(id: worldInputKey) {
             await refreshWorld(for: currentWorldInput)
         }
         .onChange(of: selection.focusedItemID) { _, focusedItemID in

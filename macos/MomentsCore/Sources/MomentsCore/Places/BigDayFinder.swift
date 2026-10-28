@@ -31,8 +31,8 @@ public struct BigDayFinder: Sendable {
     public func bigDays(_ photos: [Photo]) -> [[String]] {
         let byDay = Dictionary(grouping: photos, by: \.dayKey)
         let days: [(key: String, ordinal: Int, moments: Int)] = byDay.compactMap { key, photos in
-            guard let ordinal = Self.ordinal(of: key) else { return nil }
-            return (key, ordinal, moments(in: photos.map(\.date)))
+            guard let ordinal = DayKey.ordinal(key) else { return nil }
+            return (key, ordinal, Self.moments(in: photos.map(\.date), gap: momentGap))
         }.sorted { $0.ordinal < $1.ordinal }
 
         var big: [(key: String, ordinal: Int)] = []
@@ -60,24 +60,15 @@ public struct BigDayFinder: Sendable {
         return runs
     }
 
-    private func moments(in dates: [Date]) -> Int {
+    /// Photos more than `gap` apart are separate moments; a burst is one.
+    public static func moments(in dates: [Date], gap: TimeInterval = 60) -> Int {
         let sorted = dates.sorted()
         guard var last = sorted.first else { return 0 }
         var count = 1
-        for date in sorted.dropFirst() where date.timeIntervalSince(last) > momentGap {
+        for date in sorted.dropFirst() where date.timeIntervalSince(last) > gap {
             count += 1
             last = date
         }
         return count
-    }
-
-    /// Days since 1970-01-01 for a `yyyy-MM-dd` key.
-    private static func ordinal(of key: String) -> Int? {
-        let parts = key.split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3 else { return nil }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        guard let date = calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2])) else { return nil }
-        return Int((date.timeIntervalSince1970 / 86_400).rounded())
     }
 }

@@ -63,6 +63,9 @@ enum ChapterAIEval {
         let before = (try? context.fetchCount(FetchDescriptor<Trip>())) ?? 0
         let chaptersBefore = (try? context.fetchCount(FetchDescriptor<UserGroup>(predicate: #Predicate { $0.kindRaw == "chapter" }))) ?? 0
         let photoCount = (try? context.fetchCount(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.deletedAt == nil }))) ?? 0
+        let screenshots = (try? context.fetchCount(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.deletedAt == nil && $0.isScreenshot }))) ?? 0
+        let undated = ImportCaptureDateSource.fileDateFallback.rawValue
+        let withoutDate = (try? context.fetchCount(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.deletedAt == nil && $0.captureDateSourceRaw == undated }))) ?? 0
         note("Start: \(photoCount) photos, \(before) trips and \(chaptersBefore) other chapters before; model \(model), vision \(vision.rawValue)\(dryRun ? ", dry run" : "").")
 
         let organizer = ChapterAIOrganizer(context: context, client: ClaudeChapterClient(apiKey: key, model: model))
@@ -93,7 +96,7 @@ enum ChapterAIEval {
             let chaptersAfter = (try? context.fetchCount(FetchDescriptor<UserGroup>(predicate: #Predicate { $0.kindRaw == "chapter" }))) ?? 0
             ChapterAIReport.write(outcome, startedAt: startedAt, extra: [
                 "Model: \(model); looked at: \(vision.rawValue)\(dryRun ? "; dry run, nothing written" : "")",
-                "Photos in the copy: \(photoCount)",
+                "Photos in the copy: \(photoCount); screenshots (not looked at): \(screenshots); without a capture date (left out): \(withoutDate)",
                 "Before: \(before) trips, \(chaptersBefore) other chapters. After: \(after) trips, \(chaptersAfter) other chapters.",
                 "Took \(seconds / 60) min \(seconds % 60) s."
             ], to: folder.appending(path: "report.md"))

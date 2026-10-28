@@ -81,7 +81,7 @@ public enum ChapterPlan {
                 end: end,
                 type: kind,
                 title: title,
-                summary: clean(chapter.summary ?? "", limit: 200),
+                summary: clean(chapter.summary ?? "", limit: 300),
                 confidence: chapter.confidence ?? "medium"
             )
             guard proposal.days <= maximumDays[kind, default: 400] else { return nil }
@@ -130,7 +130,12 @@ public enum ChapterPlan {
 
     private static func clean(_ text: String, limit: Int) -> String {
         let single = text.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        return single.count > limit ? String(single.prefix(limit)) : single
+        guard single.count > limit else { return single }
+        // Cut at the last word or sentence end that fits, never mid-word.
+        let head = single.prefix(limit)
+        let breaks: Set<Character> = [" ", "，", "。", ",", ".", ";", "；"]
+        let cut = head.lastIndex { breaks.contains($0) }.map { head[..<$0] } ?? head
+        return cut.trimmingCharacters(in: .whitespaces.union(.punctuationCharacters)) + "…"
     }
 
     /// The outermost `{…}` in a reply, in case words came around it.

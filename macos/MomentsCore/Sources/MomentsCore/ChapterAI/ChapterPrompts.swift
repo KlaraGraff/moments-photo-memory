@@ -95,7 +95,7 @@ public enum ChapterPrompts {
 
         Ordinary daily life is not a chapter: most days belong to no chapter. Leave a day out when unsure. Never invent what the lines do not show. The rule hints can be wrong; trust the descriptions, places and notes over them. Days marked "fixed" are already in a chapter the person made, so do not make another chapter of the same kind over them.
 
-        title: short and specific, like an album title, in \(language): where and what, at most about 12 Chinese characters or 6 words, with no dates or years. summary: one sentence in \(language) about what happened, taken from the lines only. confidence: how sure you are that this is a chapter with these dates. Dates are yyyy-MM-dd and both ends are included.
+        title: short and specific, like an album title, in \(language): where and what, at most about 12 Chinese characters or 6 words, with no dates or years. summary: one short sentence (at most about 25 words or 50 Chinese characters) in \(language) about what happened, taken from the lines only. confidence: how sure you are that this is a chapter with these dates. Dates are yyyy-MM-dd and both ends are included.
         """
     }
 

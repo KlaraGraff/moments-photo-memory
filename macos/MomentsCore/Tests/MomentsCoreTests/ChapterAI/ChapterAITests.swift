@@ -100,7 +100,15 @@ final class ChapterPlanTests: XCTestCase {
         XCTAssertThrowsError(try ChapterPlan.parse("no json", firstDay: "2026-03-01", lastDay: "2026-03-31"))
     }
 
-    func testATripCutByTwoWindowsBecomesOne() {
+    func testALongSummaryIsCutBetweenWords() throws {
+        let summary = String(repeating: "walking the old town ", count: 20)
+        let text = #"{"chapters":[{"start":"2026-03-06","end":"2026-03-08","type":"trip","title":"Fès","summary":"\#(summary)","confidence":"high"}]}"#
+        let cut = try XCTUnwrap(ChapterPlan.parse(text, firstDay: "2026-03-01", lastDay: "2026-03-31").first).summary
+        XCTAssertLessThanOrEqual(cut.count, 301)
+        XCTAssertTrue(cut.hasSuffix("town…") || cut.hasSuffix("walking…") || cut.hasSuffix("the…") || cut.hasSuffix("old…"), cut)
+    }
+
+        func testATripCutByTwoWindowsBecomesOne() {
         let first = [ChapterProposal(start: "2026-03-20", end: "2026-03-31", type: .trip, title: "Japan")]
         let second = [
             ChapterProposal(start: "2026-03-20", end: "2026-04-04", type: .trip, title: "Japan in spring"),

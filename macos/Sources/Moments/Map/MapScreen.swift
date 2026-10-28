@@ -215,11 +215,7 @@ struct MapScreen: View {
             ForEach(snapshot.clusters) { cluster in
                 if let center = cluster.center {
                     Annotation(coordinate: center.coordinate, anchor: .bottom) {
-                        if isWorldView {
-                            worldPhotoPin(cluster)
-                        } else {
-                            photoPin(cluster)
-                        }
+                        photoPin(cluster)
                     } label: {
                         Text(clusterDisplayName(cluster))
                     }
@@ -304,42 +300,6 @@ struct MapScreen: View {
             .shadow(color: Paper.shadow.opacity(0.28), radius: 4, y: 2)
             .scaleEffect(isSelected ? 1.08 : 1)
             .animation(Motion.animation(Motion.snap, reduceMotion: reduceMotion), value: isSelected)
-        }
-        .buttonStyle(.plain)
-        .contentShape(Rectangle())
-        .help(clusterDisplayName(cluster))
-        .accessibilityLabel(clusterDisplayName(cluster))
-        .accessibilityValue(Text(String(localized: "\(photoCount) photos")))
-        .accessibilityIdentifier("map.marker.\(cluster.stopIDs.first ?? cluster.id)")
-    }
-
-    /// The globe can contain thousands of city clusters. A thumbnail task for
-    /// every marker makes the first frame compete with MapKit's own annotation
-    /// layout. At this scale the marker's location and count carry the useful
-    /// information; zooming in restores the photo pin above.
-    private func worldPhotoPin(_ cluster: PlaceCluster) -> some View {
-        let photoCount = stacks.foldedCount(cluster.stopIDs)
-        return Button {
-            pinClicked(cluster)
-        } label: {
-            ZStack(alignment: .topTrailing) {
-                Image(systemName: "mappin.circle.fill")
-                    .font(.title2)
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(Paper.accent, Color.white)
-                    .shadow(color: Paper.shadow.opacity(0.28), radius: 3, y: 1)
-                if photoCount > 1 {
-                    Text(photoCount, format: .number)
-                        .font(.caption2.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 4)
-                        .frame(minWidth: 16, minHeight: 16)
-                        .background(Paper.accent, in: Capsule())
-                        .overlay(Capsule().stroke(.white, lineWidth: 1))
-                        .offset(x: 8, y: -6)
-                }
-            }
-            .frame(width: 28, height: 28)
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())

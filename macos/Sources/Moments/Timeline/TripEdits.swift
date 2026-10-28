@@ -154,7 +154,7 @@ enum TripEdits {
         let now: Date
         let calendar: Calendar
         private(set) var undo: Undo
-        private let defaults: UserDefaults
+        let defaults: UserDefaults
 
         init(context: ModelContext, now: Date = .now, calendar: Calendar = .current, defaults: UserDefaults = TripAssignmentLocks.store, continuing undo: Undo = Undo()) {
             self.context = context
@@ -198,6 +198,15 @@ enum TripEdits {
                 TripAssignmentLocks.lock(item.id, defaults: defaults)
                 undo.newLocks.insert(item.id)
             }
+        }
+
+        /// Moves a photo the way Moments' own organizing does: kept for
+        /// undo, but not marked as changed by hand, so a later run may move it again.
+        func place(_ item: MediaItem, in trip: Trip?) {
+            if undo.items[item.id] == nil { undo.items[item.id] = .some(item.trip?.id ?? item.tripID) }
+            item.trip = trip
+            item.tripID = trip?.id
+            item.updatedAt = now
         }
 
         func rekey(_ memory: CollectionMemory, to key: String) {
@@ -715,6 +724,7 @@ extension TripEdits {
     @MainActor
     static func delete(_ trip: Trip, session: Session) {
         session.record(trip)
+        ChapterAIRegistry.dismiss(trip, calendar: session.calendar, defaults: session.defaults)
         for item in trip.items { session.move(item, to: nil) }
         session.save()
         session.context.delete(trip)

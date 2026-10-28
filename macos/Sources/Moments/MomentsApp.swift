@@ -16,6 +16,7 @@ struct MomentsApp: App {
     @State private var photoStacks = PhotoStackModel()
     @State private var stackAnalyzer = PhotoStackAnalyzer()
     @State private var photosImportController = PhotosImportController(importer: PhotosImporter(source: PhotoKitAssetSource()))
+    @State private var chapterAI = ChapterAIController()
     @State private var showingPhotosImport = false
 
     #if DEBUG
@@ -129,6 +130,9 @@ struct MomentsApp: App {
             #endif
             modelContainer = container
             storeError = nil
+            #if DEBUG
+            if ChapterAIEval.isRequested { ChapterAIEval.start(container: container) }
+            #endif
         } catch let error as MomentsStoreError {
             modelContainer = nil
             storeError = error
@@ -155,6 +159,7 @@ struct MomentsApp: App {
                     .environment(noteService)
                     .environment(peopleController)
                     .environment(photoStacks)
+                    .environment(chapterAI)
                     .modelContainer(modelContainer)
                     .onAppear {
                         importController.configure(container: modelContainer)
@@ -163,6 +168,7 @@ struct MomentsApp: App {
                         stackAnalyzer.configure(container: modelContainer)
                         stackAnalyzer.analyzeIfNeeded()
                         photoStacks.refresh(container: modelContainer)
+                        chapterAI.configure(container: modelContainer)
                     }
                     // Map and Chapters only read the stacks, so new results
                     // are folded in here, whichever screen is showing.
@@ -174,6 +180,9 @@ struct MomentsApp: App {
                         peopleController.scanIfNeeded()
                         stackAnalyzer.analyzeIfNeeded()
                         photoStacks.refresh(container: modelContainer)
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: .momentsChapterAIRequested)) { _ in
+                        chapterAI.organizeNewPhotos()
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
                         showingPhotosImport = true
@@ -204,8 +213,8 @@ struct MomentsApp: App {
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if UnitTestHostDelegate.isUnitTestHost {
-                // Unit tests only need the process; render nothing and keep the window hidden.
+            if UnitTestHostDelegate.isUnitTestHost || ChapterAIEval.isRequested {
+                // Unit tests and test runs only need the process; render nothing and keep the window hidden.
                 UnitTestHostWindowHider()
             } else {
                 appContent

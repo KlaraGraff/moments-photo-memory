@@ -15,7 +15,7 @@ final class UnitTestHostDelegate: NSObject, NSApplicationDelegate {
     }()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
-        guard Self.isUnitTestHost else { return }
+        guard Self.isUnitTestHost || ProcessInfo.processInfo.arguments.contains("-MomentsChapterAIRun") else { return }
         NSApp.setActivationPolicy(.prohibited)
     }
 
@@ -28,7 +28,7 @@ final class UnitTestHostDelegate: NSObject, NSApplicationDelegate {
             ensureUITestWindow()
             return
         }
-        guard Self.isUnitTestHost else { return }
+        guard Self.isUnitTestHost || ProcessInfo.processInfo.arguments.contains("-MomentsChapterAIRun") else { return }
         NSApp.windows.forEach { $0.orderOut(nil) }
     }
 

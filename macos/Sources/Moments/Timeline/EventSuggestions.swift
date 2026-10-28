@@ -35,6 +35,7 @@ enum EventSuggestions {
             return dayKey(start, calendar: calendar)...dayKey(end, calendar: calendar)
         }
         let byDay = Dictionary(grouping: daily.filter { $0.localDayKey != nil }, by: { $0.localDayKey ?? "" })
+        var registry = ChapterAIRegistry.load(defaults)
         var created = 0
         for run in runs {
             guard let first = run.first, let last = run.last,
@@ -50,11 +51,14 @@ enum EventSuggestions {
                 context.insert(UserGroupItem(groupID: group.id, mediaID: item.id, addedAt: now))
             }
             suggested.formUnion(run)
+            // Moments made it: the model may redo it later.
+            registry.made[group.id] = .init(start: first, end: last, isTrip: false, stamp: now.timeIntervalSince1970)
             created += 1
         }
         guard created > 0 else { return 0 }
         try? context.save()
         defaults.set(Array(suggested).sorted(), forKey: suggestedDaysKey)
+        registry.save(defaults)
         return created
     }
 

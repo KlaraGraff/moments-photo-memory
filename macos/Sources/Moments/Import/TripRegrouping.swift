@@ -44,17 +44,7 @@ enum TripRegrouping {
     ) throws -> Outcome {
         let items = try context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.deletedAt == nil }))
         let trips = try context.fetch(FetchDescriptor<Trip>())
-        let tripScope = NoteMemoryScope.trip.rawValue
-        let remembered = Set(try context.fetch(FetchDescriptor<CollectionMemory>(
-            predicate: #Predicate { $0.scopeRaw == tripScope }
-        )).map(\.scopeKey))
-        // Every hand edit sets `updatedBy`; imports never do.
-        let kept = Set(trips.filter { trip in
-            trip.overrideName != nil || !trip.isSuggestion || trip.updatedBy != nil
-                || trip.mergeOverrideID != nil || trip.splitOverrideDayKeys != nil
-                || remembered.contains(trip.id) || covered.contains(trip.id)
-                || trip.items.contains { locked.contains($0.id) }
-        }.map(\.id))
+        let kept = try keptTripIDs(trips, context: context, locked: locked, covered: covered)
 
         let tripIDs = Set(trips.map(\.id))
         let undated = ImportCaptureDateSource.fileDateFallback.rawValue
@@ -139,6 +129,22 @@ enum TripRegrouping {
         return outcome
     }
 
+    /// Trips someone shaped by hand: renamed, confirmed, edited, merged,
+    /// split, given a cover or a trip memory, or holding a photo placed by
+    /// hand. Every hand edit sets `updatedBy`; imports never do.
+    static func keptTripIDs(_ trips: [Trip], context: ModelContext, locked: Set<String>, covered: Set<String>) throws -> Set<String> {
+        let tripScope = NoteMemoryScope.trip.rawValue
+        let remembered = Set(try context.fetch(FetchDescriptor<CollectionMemory>(
+            predicate: #Predicate { $0.scopeRaw == tripScope }
+        )).map(\.scopeKey))
+        return Set(trips.filter { trip in
+            trip.overrideName != nil || !trip.isSuggestion || trip.updatedBy != nil
+                || trip.mergeOverrideID != nil || trip.splitOverrideDayKeys != nil
+                || remembered.contains(trip.id) || covered.contains(trip.id)
+                || trip.items.contains { locked.contains($0.id) }
+        }.map(\.id))
+    }
+
     /// Place and month for up to three named cities. A longer trip, or one
     /// whose cities are not named yet, gets the month alone, which
     /// `TripNameBackfill` turns into place and month later.
@@ -153,7 +159,7 @@ enum TripRegrouping {
         return GeoPoint(latitude: latitude, longitude: longitude)
     }
 
-    private static func stableID(_ ids: [String]) -> String {
+    static func stableID(_ ids: [String]) -> String {
         var hash: UInt64 = 14_695_981_039_346_656_037
         for byte in ("trip\u{0}" + ids.sorted().joined(separator: "\u{0}")).utf8 {
             hash ^= UInt64(byte)

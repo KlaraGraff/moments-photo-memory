@@ -31,7 +31,7 @@ on:
   workflow_dispatch:
     inputs:
       only_testing:
-        description: 'Optional: run only these tests, e.g. MomentsUITests/MomentsUITests/testDoubleClickRenamesATripInPlace (space-separated)'
+        description: 'Optional: run only these tests, e.g. MomentsUITests/MomentsUITests/testDoubleClickRenamesATripInPlace or MomentsUITests/MomentsPageProbeUITests/testFirstImportAndPagesWithALargeLibrary (space-separated)'
         required: false
         default: ''
       page_stress_count:

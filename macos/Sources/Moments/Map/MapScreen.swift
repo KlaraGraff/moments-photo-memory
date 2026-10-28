@@ -66,6 +66,14 @@ struct MapScreen: View {
         cachedSnapshot ?? PlacesViewModel.Snapshot(level: .city, stops: [], clusters: [], routeSegments: [], coordinateByID: [:])
     }
 
+    /// A whole-world map cannot usefully show every city pin. Aggregate the
+    /// city clusters into coarse regional count pins so MapKit lays out a few
+    /// dozen views instead of thousands; zooming in recomputes the detailed
+    /// city/area/spot clusters.
+    private var displayedClusters: [PlaceCluster] {
+        worldClusters(from: snapshot.clusters, aggregate: isWorldView)
+    }
+
     private var snapshotKey: Int {
         var hasher = Hasher()
         hasher.combine(projectionStore.projection.mapStops.count)
@@ -134,7 +142,9 @@ struct MapScreen: View {
             let nextSnapshot = await Task.detached(priority: .utility) {
                 viewModel.snapshot(stops: stops, latitudeDelta: latitudeDelta)
             }.value
-            cachedClusterDisplayNames = clusterDisplayNames(for: nextSnapshot.clusters)
+            cachedClusterDisplayNames = clusterDisplayNames(
+                for: worldClusters(from: nextSnapshot.clusters, aggregate: isWorldView)
+            )
             cachedSnapshot = nextSnapshot
             // "Show on Map" from another screen: fly there once the pins exist.
             if let requested = selection.mapFocusRequest {
@@ -226,7 +236,7 @@ struct MapScreen: View {
                 }
             }
 
-            ForEach(snapshot.clusters) { cluster in
+            ForEach(displayedClusters) { cluster in
                 if let center = cluster.center {
                     Annotation(coordinate: center.coordinate, anchor: .bottom) {
                         if isWorldView {
@@ -730,6 +740,31 @@ struct MapScreen: View {
             }
         }
         return names
+    }
+
+    private func worldClusters(from clusters: [PlaceCluster], aggregate: Bool) -> [PlaceCluster] {
+        guard aggregate else { return clusters }
+        let grid = 5.0
+        var buckets: [String: (clusters: [PlaceCluster], points: [GeoPoint])] = [:]
+        for cluster in clusters {
+            guard let center = cluster.center else { continue }
+            let key = "\(Int(floor(center.latitude / grid))),\(Int(floor(center.longitude / grid)))"
+            buckets[key, default: ([], [])].clusters.append(cluster)
+            buckets[key, default: ([], [])].points.append(center)
+        }
+        return buckets.map { key, bucket in
+            PlaceCluster(
+                id: "world:\(key)",
+                level: .city,
+                stopIDs: bucket.clusters.flatMap(\.stopIDs),
+                center: GeoPoint.centre(of: bucket.points),
+                firstDate: bucket.clusters.map(\.firstDate).min() ?? .distantPast
+            )
+        }
+        .sorted {
+            if $0.firstDate != $1.firstDate { return $0.firstDate < $1.firstDate }
+            return $0.id < $1.id
+        }
     }
 
     private func nearestPlaceName(for cluster: PlaceCluster) -> String? {

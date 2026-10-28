@@ -45,6 +45,23 @@ final class PlacesViewModelTests: XCTestCase {
         XCTAssertFalse(local.routeSegments.isEmpty)
     }
 
+    func testSnapshotFromDetachedStopsKeepsTheSameMapModel() {
+        let items = [
+            item("a", hours: 0, latitude: 0, longitude: 0),
+            item("b", hours: 1, latitude: 0, longitude: 0.005),
+            item("c", hours: 30, latitude: 0.3, longitude: 0.3)
+        ]
+        let viewModel = PlacesViewModel()
+        let fromItems = viewModel.snapshot(items: items, visibleItemIDs: nil, latitudeDelta: 4)
+        let fromStops = viewModel.snapshot(stops: viewModel.photoStops(from: items, visibleItemIDs: nil), latitudeDelta: 4)
+
+        XCTAssertEqual(fromStops.level, fromItems.level)
+        XCTAssertEqual(fromStops.stops, fromItems.stops)
+        XCTAssertEqual(fromStops.clusters, fromItems.clusters)
+        XCTAssertEqual(fromStops.routeSegments, fromItems.routeSegments)
+        XCTAssertEqual(fromStops.coordinateByID, fromItems.coordinateByID)
+    }
+
     func testClusterSelectionMapsToSharedItemSelectionAndBack() {
         let items = [
             item("first", hours: 0, latitude: 0, longitude: 0),

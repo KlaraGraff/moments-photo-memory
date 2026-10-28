@@ -82,6 +82,8 @@ struct MomentsApp: App {
         FlashProbe.startIfRequested()
         ScrollProbe.startIfRequested()
         ResizeProbe.startIfRequested()
+        PageProbe.startIfRequested()
+        StressLibrary.prepareIfRequested()
         #endif
         do {
             #if DEBUG
@@ -163,6 +165,10 @@ struct MomentsApp: App {
                         stackAnalyzer.configure(container: modelContainer)
                         stackAnalyzer.analyzeIfNeeded()
                         photoStacks.refresh(container: modelContainer)
+                        #if DEBUG
+                        PageProbe.attach(container: modelContainer, selection: selection, people: peopleController, stacks: stackAnalyzer)
+                        StressLibrary.startIfRequested(container: modelContainer)
+                        #endif
                     }
                     // Map and Chapters only read the stacks, so new results
                     // are folded in here, whichever screen is showing.

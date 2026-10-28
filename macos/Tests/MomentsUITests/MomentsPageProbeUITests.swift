@@ -28,7 +28,12 @@ final class MomentsPageProbeUITests: XCTestCase {
 
         // The app measures itself: this test must not query it meanwhile.
         let done = folderURL.appending(path: "page-report-done")
-        let deadline = Date().addingTimeInterval(TimeInterval(600 + count / 20))
+        // PageProbe has one 600 s post-import phase and thirteen bounded page
+        // phases. Give the probe enough time to record every phase, while
+        // keeping the bound below the workflow's 60-minute job limit even for
+        // the 20,000-item manual run.
+        let phaseBudget = 600 + 13 * 45
+        let deadline = Date().addingTimeInterval(TimeInterval(phaseBudget + 60 + count / 20))
         while !FileManager.default.fileExists(atPath: done.path), Date() < deadline {
             Thread.sleep(forTimeInterval: 2)
         }

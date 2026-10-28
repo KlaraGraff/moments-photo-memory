@@ -121,7 +121,12 @@ enum PageProbe {
     /// `quiet` seconds (and `until` holds) or `timeout` passes.
     private static func measure(
         _ name: String,
-        timeout: TimeInterval = 120,
+        // A page can keep producing low-value SwiftUI graph updates while it
+        // is usable (People is the current example). Keep a bounded phase so
+        // one noisy page cannot prevent the rest of the report from running.
+        // A timeout is still recorded in the report as evidence of that
+        // page's responsiveness problem.
+        timeout: TimeInterval = 45,
         quiet: TimeInterval = 1.5,
         sampleInterval: UInt32 = 2_000,
         _ action: () -> Void,

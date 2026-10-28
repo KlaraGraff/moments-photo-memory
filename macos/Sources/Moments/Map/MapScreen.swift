@@ -11,10 +11,10 @@ import MomentsCore
 /// is a globe with the visited countries; zoomed in it shows places and the
 /// routes between them. Pins are the photos themselves, like Apple Photos.
 struct MapScreen: View {
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }, sort: \MediaItem.captureDate) private var items: [MediaItem]
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks
     @Environment(LibraryProjectionStore.self) private var projectionStore
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var cameraPosition = MapCameraPosition.camera(
@@ -132,7 +132,6 @@ struct MapScreen: View {
         .compactLibraryFilters()
         .navigationTitle("Map")
         .task(id: snapshotKey) {
-            itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             let stops = currentWorldInput.stops
             let delta = latitudeDelta
             let projection = projectionStore.projection
@@ -649,7 +648,7 @@ struct MapScreen: View {
     /// every photo that does. Each says so, and the second offers a way back.
     private var emptyState: some View {
         Group {
-            if items.contains(where: { !$0.isScreenshot && $0.latitude != nil && $0.longitude != nil }) {
+            if !projectionStore.projection.mapStops.isEmpty {
                 ContentUnavailableView {
                     Label("No photos match these filters", systemImage: "line.3.horizontal.decrease.circle")
                 } description: {
@@ -792,8 +791,24 @@ struct MapScreen: View {
             flyTo(center, latitudeDelta: viewModel.thresholds.city * 0.9)
             return
         }
+        loadItems(for: cluster.stopIDs)
         selectedClusterID = cluster.id
         selection.select(viewModel.selectionIDs(for: cluster), focus: cluster.stopIDs.first)
+    }
+
+    /// The map's first frame only needs immutable projection data. Materialize
+    /// SwiftData models after a person opens a place so thumbnails and viewer
+    /// actions remain available without fetching the whole library up front.
+    private func loadItems(for ids: [String]) {
+        let wanted = Set(ids)
+        guard !wanted.isEmpty else { return }
+        Task { @MainActor in
+            let fetched = (try? modelContext.fetch(FetchDescriptor<MediaItem>())) ?? []
+            guard !Task.isCancelled else { return }
+            for item in fetched where wanted.contains(item.id) {
+                itemsByID[item.id] = item
+            }
+        }
     }
 
     private func closePanel() {

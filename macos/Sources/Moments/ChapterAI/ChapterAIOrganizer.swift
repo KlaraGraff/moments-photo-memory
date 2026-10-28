@@ -282,6 +282,8 @@ final class ChapterAIOrganizer {
         let schema = ChapterPrompts.chapterSchema
         let client = client
         let messages = windows.map(ChapterPrompts.chapterMessage)
+        let onExchange = onExchange
+        let onProgress = onProgress
         var answers: [[ChapterProposal]] = Array(repeating: [], count: windows.count)
         var done = 0
         onProgress(Progress(phase: .organizing, done: 0, total: windows.count))

@@ -465,10 +465,16 @@ enum PeopleStoreActions {
     /// Two person names are the same when they match after trimming, ignoring
     /// case and full-width/half-width forms (so "Ａｌｉｃｅ" equals "alice").
     static func namesMatch(_ lhs: String?, _ rhs: String?) -> Bool {
-        let left = (lhs ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let right = (rhs ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let left = normalizedNameKey(lhs)
+        let right = normalizedNameKey(rhs)
         guard !left.isEmpty, !right.isEmpty else { return false }
-        return left.compare(right, options: [.caseInsensitive, .widthInsensitive]) == .orderedSame
+        return left == right
+    }
+
+    private static func normalizedNameKey(_ name: String?) -> String {
+        (name ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .widthInsensitive], locale: nil)
     }
 
     static func keepSeparateIDs(_ defaults: UserDefaults = .standard) -> Set<String> {
@@ -545,14 +551,15 @@ enum PeopleStoreActions {
         let candidates = people
             .filter { !$0.hidden && !separate.contains($0.id) && $0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
             .sorted(by: isOlder)
-        var keepers: [Person] = []
+        var keepersByName: [String: Person] = [:]
         var merged = 0
         for person in candidates {
-            if let keeper = keepers.first(where: { namesMatch($0.name, person.name) }) {
+            let nameKey = normalizedNameKey(person.name)
+            if let keeper = keepersByName[nameKey] {
                 merge(sourceID: person.id, into: keeper.id, people: people, observations: observations, context: context, defaults: defaults)
                 merged += 1
             } else {
-                keepers.append(person)
+                keepersByName[nameKey] = person
             }
         }
         return merged

@@ -28,13 +28,16 @@ enum PageProbe {
     private static var report = ""
     private static var importPhase: Phase?
     private static var activePhaseStart: CFTimeInterval?
+    private static var activePhaseToken: UInt64?
     private static var activeMetrics = Metrics()
+    private static var nextPhaseToken: UInt64 = 0
     private static var started = false
 
     private struct Phase {
         let name: String
         let start: CFTimeInterval
         let footprint: UInt64
+        let token: UInt64
     }
 
     private struct Metrics {
@@ -45,6 +48,10 @@ enum PageProbe {
     }
 
     static var isEnabled: Bool { folder != nil }
+
+    /// Page work captures this token when it starts. Events from a task that
+    /// began during an earlier phase cannot satisfy the current phase.
+    static var phaseToken: UInt64? { activePhaseToken }
 
     static func startIfRequested() {
         let arguments = ProcessInfo.processInfo.arguments
@@ -82,27 +89,29 @@ enum PageProbe {
     static func importStarted() {
         guard isEnabled else { return }
         stretches.removeAll()
-        let phase = Phase(name: "first import", start: CACurrentMediaTime(), footprint: footprint())
+        nextPhaseToken &+= 1
+        let phase = Phase(name: "first import", start: CACurrentMediaTime(), footprint: footprint(), token: nextPhaseToken)
         importPhase = phase
         begin(phase)
         // Import takes minutes: a coarser sample covers it.
         MainThreadSampler.start(interval: 10_000)
     }
 
-    /// Called by the host after a destination has replaced the previous page
-    /// shell. The probe records the callback itself, never the action call.
-    static func shellReady() { mark(\.selectionToShell) }
+    /// Called by a destination after its shell has appeared. The phase token
+    /// keeps a delayed callback from an earlier page from being counted here.
+    static func shellReady(token: UInt64?) { mark(\.selectionToShell, token: token) }
 
-    /// Called on the next main-queue turn after the destination shell is
-    /// installed, when its first useful content can be drawn.
-    static func contentReady() { mark(\.firstContent) }
+    /// Called after a destination's first useful content or first batch is
+    /// ready. It is intentionally separate from shell appearance.
+    static func contentReady(token: UInt64?) { mark(\.firstContent, token: token) }
 
     /// Called after a real thumbnail has been obtained or read from cache.
-    static func thumbnailReady() { mark(\.firstThumbnail) }
+    static func thumbnailReady(token: UInt64?) { mark(\.firstThumbnail, token: token) }
 
-    /// Called when a page task is cancelled while a new generation replaces it.
-    static func cancellationObserved() {
-        guard activePhaseStart != nil else { return }
+    /// Called by a page task from its cancellation path. Projection saves do
+    /// not count: they are source changes, not proof that page work stopped.
+    static func cancellationObserved(token: UInt64?) {
+        guard activePhaseStart != nil, token == activePhaseToken else { return }
         activeMetrics.cancellationObserved = true
     }
 
@@ -163,7 +172,8 @@ enum PageProbe {
         // Let the previous step's last frames pass.
         try? await Task.sleep(for: .milliseconds(300))
         stretches.removeAll()
-        let phase = Phase(name: name, start: CACurrentMediaTime(), footprint: footprint())
+        nextPhaseToken &+= 1
+        let phase = Phase(name: name, start: CACurrentMediaTime(), footprint: footprint(), token: nextPhaseToken)
         begin(phase)
         MainThreadSampler.start(interval: sampleInterval)
         action()
@@ -200,17 +210,19 @@ enum PageProbe {
         )
         report += MainThreadSampler.stopAndReport(top: 25, ownTop: 30, selfTop: 12)
         activePhaseStart = nil
+        activePhaseToken = nil
         activeMetrics = Metrics()
         write()
     }
 
     private static func begin(_ phase: Phase) {
         activePhaseStart = phase.start
+        activePhaseToken = phase.token
         activeMetrics = Metrics()
     }
 
-    private static func mark(_ keyPath: WritableKeyPath<Metrics, CFTimeInterval?>) {
-        guard let start = activePhaseStart else { return }
+    private static func mark(_ keyPath: WritableKeyPath<Metrics, CFTimeInterval?>, token: UInt64?) {
+        guard let start = activePhaseStart, token == activePhaseToken else { return }
         if activeMetrics[keyPath: keyPath] == nil {
             activeMetrics[keyPath: keyPath] = max(0, CACurrentMediaTime() - start)
         }

@@ -957,8 +957,22 @@ struct PeopleScreen: View {
         .onAppear {
             mergeSameNamedPeople()
             scanner.scanIfNeeded()
+            #if DEBUG
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+            #endif
         }
-        .onChange(of: observationsKey, initial: true) { _, _ in refreshFaceCaches() }
+        .task(id: observationsKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            defer {
+                if Task.isCancelled { PageProbe.cancellationObserved(token: probeToken) }
+            }
+            #endif
+            refreshFaceCaches()
+            #if DEBUG
+            if !Task.isCancelled { PageProbe.contentReady(token: probeToken) }
+            #endif
+        }
         .onChange(of: people.map(\.id), initial: true) { _, ids in
             if !personFilterIsValid(ids: ids) { UserDefaults.standard.removeObject(forKey: "moments.library.person") }
         }
@@ -1545,9 +1559,18 @@ struct FaceCropView: View {
         .clipShape(Circle())
         .overlay(Circle().stroke(Color.white.opacity(0.7), lineWidth: 1))
         .task(id: cacheKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            defer {
+                if Task.isCancelled { PageProbe.cancellationObserved(token: probeToken) }
+            }
+            #endif
             let key = cacheKey as NSString
             if let cached = Self.cache.object(forKey: key) {
                 image = cached
+                #if DEBUG
+                PageProbe.thumbnailReady(token: probeToken)
+                #endif
                 return
             }
             let decodeTask = Task.detached(priority: .utility) { () -> Data? in
@@ -1562,6 +1585,9 @@ struct FaceCropView: View {
             guard let decoded = decodedData.flatMap(NSImage.init(data:)) else { return }
             Self.cache.setObject(decoded, forKey: key)
             image = decoded
+            #if DEBUG
+            PageProbe.thumbnailReady(token: probeToken)
+            #endif
         }
     }
 }

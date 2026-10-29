@@ -240,12 +240,26 @@ struct LibraryView: View {
         .onChange(of: people.map(\.id), initial: true) { _, ids in
             if !personFilterID.isEmpty && !ids.contains(personFilterID) { personFilterID = "" }
         }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
         .task(id: groupingKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            defer {
+                if Task.isCancelled { PageProbe.cancellationObserved(token: probeToken) }
+            }
+            #endif
             // A new filter or projection generation starts from the first
             // viewport again; a previously expanded batch must not make the
             // next navigation render hundreds of cards synchronously.
             loadedPhotoLimit = 36
             regroup()
+            #if DEBUG
+            if !Task.isCancelled { PageProbe.contentReady(token: probeToken) }
+            #endif
         }
         .sheet(isPresented: $showingReview) {
             ReviewSheet()

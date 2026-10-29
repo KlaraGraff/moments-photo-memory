@@ -190,6 +190,11 @@ struct TripsScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { _ in
             notice = nil
         }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
         .task(id: notice?.id) {
             // A note without a question goes away by itself.
             guard let notice, notice.offer == nil else { return }
@@ -204,6 +209,12 @@ struct TripsScreen: View {
             )
         }
         .task(id: inputKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            defer {
+                if Task.isCancelled { PageProbe.cancellationObserved(token: probeToken) }
+            }
+            #endif
             // Publish the empty shelf once before building trip/chapter cards.
             // The build remains generation-bound by the task id and can be
             // cancelled when navigation or projection data changes.
@@ -216,6 +227,9 @@ struct TripsScreen: View {
             document = buildDocument(snapshots)
             chapterDocs = buildChapters(snapshots: Dictionary(snapshots.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }))
             itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            #if DEBUG
+            PageProbe.contentReady(token: probeToken)
+            #endif
         }
     }
 
@@ -643,6 +657,11 @@ private struct TripShelfView: View {
             }
             .onAppear {
                 if let returnTripID { proxy.scrollTo(returnTripID, anchor: .center) }
+                #if DEBUG
+                let token = PageProbe.phaseToken
+                PageProbe.shellReady(token: token)
+                PageProbe.contentReady(token: token)
+                #endif
             }
         }
     }
@@ -1078,6 +1097,13 @@ private struct TripDetailView: View {
                 }
             }
         }
+        #if DEBUG
+        .onAppear {
+            let token = PageProbe.phaseToken
+            PageProbe.shellReady(token: token)
+            PageProbe.contentReady(token: token)
+        }
+        #endif
     }
 
     private func dayActions(for day: TimelineDay) -> TripDayActions? {

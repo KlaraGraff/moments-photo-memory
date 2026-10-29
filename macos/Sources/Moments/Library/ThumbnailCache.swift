@@ -338,10 +338,13 @@ struct ThumbnailView: View {
             // Clipping hides the overflow but not its clicks.
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .task(id: "\(source.id)-\(width)x\(height)") {
+                #if DEBUG
+                let probeToken = PageProbe.phaseToken
+                #endif
                 if let cached = ThumbnailCache.shared.cachedImage(for: source.id, width: width, height: height) {
                     image = cached
                     #if DEBUG
-                    PageProbe.thumbnailReady()
+                    PageProbe.thumbnailReady(token: probeToken)
                     #endif
                     return
                 }
@@ -351,7 +354,7 @@ struct ThumbnailView: View {
                 guard !Task.isCancelled else { return }
                 image = loaded
                 #if DEBUG
-                if loaded != nil { PageProbe.thumbnailReady() }
+                if loaded != nil { PageProbe.thumbnailReady(token: probeToken) }
                 #endif
             }
     }

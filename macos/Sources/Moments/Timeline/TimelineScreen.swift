@@ -80,12 +80,26 @@ struct TimelineScreen: View {
         // The page's name lives in the window's title bar, not in the page.
         .navigationTitle(String(localized: "Timeline"))
         .navigationSubtitle(isBuilt && dayCount > 0 ? String(localized: "\(dayCount) days") : "")
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
         .task(id: inputKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            defer {
+                if Task.isCancelled { PageProbe.cancellationObserved(token: probeToken) }
+            }
+            #endif
             // Give the shell one run-loop turn before the bounded first batch
             // is grouped. Navigation must never wait for the entire document.
             await Task.yield()
             guard !Task.isCancelled else { return }
             rebuild()
+            #if DEBUG
+            PageProbe.contentReady(token: probeToken)
+            #endif
         }
         .compactLibraryFilters()
     }

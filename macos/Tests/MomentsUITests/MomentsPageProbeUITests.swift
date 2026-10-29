@@ -65,6 +65,15 @@ final class MomentsPageProbeUITests: XCTestCase {
         XCTAssertEqual(text.components(separatedBy: "first-content ").count - 1, phases.count, "Every phase must report first-content timing")
         XCTAssertEqual(text.components(separatedBy: "first-thumbnail ").count - 1, phases.count, "Every phase must report thumbnail timing")
         XCTAssertEqual(text.components(separatedBy: "fully-settled ").count - 1, phases.count, "Every phase must report settled timing")
+        let pagePhases = phases.dropFirst(2)
+        let pageReportLines = text
+            .split(separator: "\n")
+            .map(String.init)
+            .filter { line in
+                pagePhases.contains { line.hasPrefix("page report (\($0)):") }
+            }
+        XCTAssertFalse(pageReportLines.contains { $0.contains("selection-to-shell not observed") }, "A page never reported its rendered shell:\n\(text)")
+        XCTAssertFalse(pageReportLines.contains { $0.contains("first-content not observed") }, "A page never reported its first useful content:\n\(text)")
         XCTAssertFalse(text.contains("(timed out)"), "A timed-out responsiveness phase must fail the probe:\n\(text)")
 
     }

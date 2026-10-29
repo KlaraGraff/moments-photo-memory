@@ -134,7 +134,18 @@ struct MapScreen: View {
         mapArea
         .compactLibraryFilters()
         .navigationTitle("Map")
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
         .task(id: snapshotKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            defer {
+                if Task.isCancelled { PageProbe.cancellationObserved(token: probeToken) }
+            }
+            #endif
             let stops = currentWorldInput.stops
             let delta = latitudeDelta
             let projection = projectionStore.projection
@@ -161,6 +172,9 @@ struct MapScreen: View {
             guard !Task.isCancelled else { return }
             cachedClusterDisplayNames = built.names
             cachedSnapshot = built.snapshot
+            #if DEBUG
+            PageProbe.contentReady(token: probeToken)
+            #endif
             // "Show on Map" from another screen: fly there once the pins exist.
             if let requested = selection.mapFocusRequest {
                 selection.mapFocusRequest = nil
@@ -168,6 +182,12 @@ struct MapScreen: View {
             }
         }
         .task(id: worldInputKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            defer {
+                if Task.isCancelled { PageProbe.cancellationObserved(token: probeToken) }
+            }
+            #endif
             await refreshWorld(for: currentWorldInput)
         }
         .onChange(of: selection.focusedItemID) { _, focusedItemID in

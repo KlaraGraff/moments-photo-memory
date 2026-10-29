@@ -91,7 +91,14 @@ extension LibraryProjectionTests {
 
     func testMapBucketsRespectGridAndCap() {
         let photos = (0..<20).map { i in
-            LibraryPhotoDescriptor(id: "p\(i)", captureDate: Date(timeIntervalSince1970: TimeInterval(i)), latitude: Double(i / 2), longitude: Double(i / 2))
+            let coordinate = Double(i / 2)
+            let captureDate = Date(timeIntervalSince1970: TimeInterval(i))
+            return LibraryPhotoDescriptor(
+                id: "p\(i)",
+                captureDate: captureDate,
+                latitude: coordinate,
+                longitude: coordinate
+            )
         }
         let projection = LibraryProjection(photos: photos)
         let all = projection.mapBuckets(gridDegrees: 1)

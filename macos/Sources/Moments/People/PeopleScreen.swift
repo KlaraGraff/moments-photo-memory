@@ -818,6 +818,12 @@ enum PeopleImageLoader {
 }
 
 struct PeopleScreen: View {
+    /// A card is a summary, not the full face history. Keeping the card's
+    /// horizontal strip bounded prevents SwiftUI from building one context
+    /// menu and correction overlay for every face in a large library. The
+    /// key-photo popover remains the unbounded view for deliberate browsing.
+    private static let cardFaceLimit = 24
+
     @Environment(\.modelContext) private var modelContext
     @Environment(PeopleScanController.self) private var scanner
     @Environment(LibraryProjectionStore.self) private var projectionStore
@@ -1131,6 +1137,7 @@ struct PeopleScreen: View {
 
     private func namedCard(_ person: Person) -> some View {
         let faces = cachedFacesByPerson[person.id] ?? []
+        let cardFaces = Array(faces.prefix(Self.cardFaceLimit))
         let photoCount = Set(faces.map(\.mediaID)).count
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -1179,7 +1186,7 @@ struct PeopleScreen: View {
             if !faces.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 6) {
-                        ForEach(faces, id: \.id) { face in
+                        ForEach(cardFaces, id: \.id) { face in
                             FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
                                 .contextMenu {
                                     Button(String(localized: "Make Key Photo")) { setKeyPhoto(face, for: person) }
@@ -1210,6 +1217,17 @@ struct PeopleScreen: View {
                                     }
                                 }
                                 .frame(width: 56, height: 56)
+                        }
+                        if faces.count > cardFaces.count {
+                            Button { keyPhotoPersonID = person.id } label: {
+                                Image(systemName: "ellipsis")
+                                    .font(.title3.weight(.semibold))
+                                    .frame(width: 56, height: 56)
+                                    .background(Paper.well, in: Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .help(String(localized: "Choose key photo"))
+                            .accessibilityLabel(String(localized: "Choose key photo"))
                         }
                     }
                 }

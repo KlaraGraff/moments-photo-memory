@@ -76,3 +76,27 @@ final class LibraryProjectionTests: XCTestCase {
         XCTAssertLessThan(elapsed, 1.0)
     }
 }
+
+extension LibraryProjectionTests {
+    func testPhotoBatchIsDeterministicAndCarriesGeneration() {
+        let projection = LibraryProjection(photos: (0..<5).map { LibraryPhotoDescriptor(id: "p\($0)", captureDate: Date(timeIntervalSince1970: TimeInterval($0))) })
+        let result = projection.photoBatch(PageBatchRequest(generation: 7, offset: 2, limit: 2))
+        XCTAssertEqual(result.generation, 7)
+        XCTAssertEqual(result.offset, 2)
+        XCTAssertEqual(result.values.map(\.id), ["p2", "p3"])
+        XCTAssertTrue(result.hasMore)
+        XCTAssertEqual(result.total, 5)
+        XCTAssertEqual(projection.photoBatch(PageBatchRequest(offset: 99, limit: 4)).values, [])
+    }
+
+    func testMapBucketsRespectGridAndCap() {
+        let photos = (0..<20).map { i in
+            LibraryPhotoDescriptor(id: "p\(i)", captureDate: Date(timeIntervalSince1970: TimeInterval(i)), latitude: Double(i / 2), longitude: Double(i / 2))
+        }
+        let projection = LibraryProjection(photos: photos)
+        let all = projection.mapBuckets(gridDegrees: 1)
+        XCTAssertEqual(all.reduce(0) { $0 + $1.photoCount }, 20)
+        XCTAssertLessThanOrEqual(projection.mapBuckets(gridDegrees: 1, cap: 3).count, 3)
+        XCTAssertEqual(all, projection.mapBuckets(gridDegrees: 1))
+    }
+}

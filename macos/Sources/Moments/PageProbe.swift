@@ -9,8 +9,8 @@ import SwiftData
 /// and when each page opens. The app drives itself, so the UI test does not
 /// query it while it measures (accessibility queries run on the main thread).
 ///
-/// Each step reports when the page was ready (the end of the last main-thread
-/// stretch of 50 ms or more before a quiet second and a half), the longest
+/// Each step reports when the page settled (the end of the last main-thread
+/// stretch of 50 ms or more before a quiet second and a half), plus the longest
 /// stretch (what feels like a freeze), how many stretches passed 100 ms, the
 /// main-thread time, the app's memory, and where the main thread spent it.
 /// The report goes to `page-report.txt`; `page-report-done` marks the end.
@@ -33,6 +33,13 @@ enum PageProbe {
         let name: String
         let start: CFTimeInterval
         let footprint: UInt64
+        // These require explicit page callbacks; until the page host exposes
+        // them, the report must say unavailable rather than infer them from
+        // the action call or the settle time.
+        let selectionToShell = "unavailable"
+        let firstContent = "unavailable"
+        let firstThumbnail = "unavailable"
+        let cancellationObserved = "unavailable"
     }
 
     static var isEnabled: Bool { folder != nil }
@@ -161,9 +168,11 @@ enum PageProbe {
         let busy = mine.reduce(0) { $0 + $1.length }
         let memory = footprint()
         report += String(
-            format: "page report (%@): ready %.2f s%@, longest stall %.0f ms, stalls>100ms %d, main busy %.2f s, memory %.0f MB (%+.0f)\n",
-            phase.name, max(0, settled - phase.start), timedOut ? " (timed out)" : "",
-            longest * 1000, mine.filter { $0.length > 0.1 }.count, busy,
+            format: "page report (%@): selection-to-shell %@, first-content %@, first-thumbnail %@, fully-settled %.2f s%@, cancellation-observed %@, longest stall %.0f ms, stalls>100ms %d, main busy %.2f s, memory %.0f MB (%+.0f)\n",
+            phase.name, phase.selectionToShell, phase.firstContent, phase.firstThumbnail,
+            max(0, settled - phase.start), timedOut ? " (timed out)" : "",
+            phase.cancellationObserved, longest * 1000,
+            mine.filter { $0.length > 0.1 }.count, busy,
             Double(memory) / 1_048_576, (Double(memory) - Double(phase.footprint)) / 1_048_576
         )
         report += MainThreadSampler.stopAndReport(top: 25, ownTop: 30, selfTop: 12)

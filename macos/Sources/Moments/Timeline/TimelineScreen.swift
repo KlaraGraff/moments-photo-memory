@@ -21,39 +21,28 @@ struct TimelineScreen: View {
     @State private var tripsByItemID: [String: TripLink] = [:]
     @State private var viewerOrder: [String] = []
     @State private var isBuilt = false
+    @State private var loadedPhotoLimit = 120
 
     private var visibleItems: [MediaItem] {
-        items.filter { selection.isVisible($0.id) }
+        let candidates = items.filter { selection.isVisible($0.id) }
+        guard candidates.count > loadedPhotoLimit else { return candidates }
+        let byID = Dictionary(candidates.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let orderedIDs = projectionStore.projection.photos.reversed().map(\.id)
+        let selected = orderedIDs.compactMap { byID[$0] }
+        return Array(selected.prefix(loadedPhotoLimit))
     }
 
+    private var visibleItemCount: Int { items.reduce(into: 0) { if selection.isVisible($1.id) { $0 += 1 } } }
+
     private var inputKey: Int {
+        // Page invalidation is revision based. Avoid hashing every SwiftData
+        // model and relationship on each sidebar switch; the loaded window is
+        // intentionally small and grows only as the person scrolls.
         var hasher = Hasher()
         hasher.combine(projectionStore.revision)
-        for item in visibleItems {
-            hasher.combine(item.id)
-            hasher.combine(item.effectiveCaptureDate)
-            hasher.combine(item.localDayKey)
-            hasher.combine(item.latitude)
-            hasher.combine(item.longitude)
-            for memory in item.memories {
-                hasher.combine(memory.text)
-                hasher.combine(memory.updatedAt)
-            }
-        }
-        for trip in trips {
-            hasher.combine(trip.id)
-            hasher.combine(trip.effectiveName)
-            hasher.combine(trip.items.count)
-        }
-        for place in places {
-            hasher.combine(place.id)
-            hasher.combine(PlaceDisplayName.resolvedName(of: place))
-        }
+        hasher.combine(loadedPhotoLimit)
+        hasher.combine(selection.visibleItemIDs?.count ?? -1)
         hasher.combine(stacks.generation)
-        for record in stackRecords {
-            hasher.combine(record.id)
-            hasher.combine(record.rulesData)
-        }
         return hasher.finalize()
     }
 
@@ -91,7 +80,13 @@ struct TimelineScreen: View {
         // The page's name lives in the window's title bar, not in the page.
         .navigationTitle(String(localized: "Timeline"))
         .navigationSubtitle(isBuilt && dayCount > 0 ? String(localized: "\(dayCount) days") : "")
-        .task(id: inputKey) { rebuild() }
+        .task(id: inputKey) {
+            // Give the shell one run-loop turn before the bounded first batch
+            // is grouped. Navigation must never wait for the entire document.
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            rebuild()
+        }
         .compactLibraryFilters()
     }
 
@@ -119,6 +114,12 @@ struct TimelineScreen: View {
                     } header: {
                         TimelineMonthHeader(month: month)
                     }
+                }
+                if loadedPhotoLimit < visibleItemCount {
+                    ProgressView(String(localized: "Loading more memories…"))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 18)
+                        .onAppear { loadedPhotoLimit += 120 }
                 }
             }
             .padding(.horizontal, PaperMetrics.screenInset)

@@ -73,7 +73,7 @@ struct MapScreen: View {
     /// dozen views instead of thousands; zooming in recomputes the detailed
     /// city/area/spot clusters.
     private var displayedClusters: [PlaceCluster] {
-        Self.worldClusters(from: snapshot.clusters, aggregate: isWorldView || snapshot.level == .city)
+        MapLODPolicy.aggregate(snapshot.clusters, level: MapLODPolicy.level(latitudeDelta: latitudeDelta))
     }
 
     private var snapshotKey: Int {
@@ -138,18 +138,27 @@ struct MapScreen: View {
             let stops = currentWorldInput.stops
             let delta = latitudeDelta
             let projection = projectionStore.projection
+            let coarseThreshold = Self.coarseWorldThreshold
             let built = await Task.detached(priority: .utility) {
                 let snapshot: PlacesViewModel.Snapshot
-                if stops.count >= Self.coarseWorldThreshold,
-                   delta >= viewModel.thresholds.city {
+                // A globe never needs city clustering or routes. Build one
+                // cheap spatial seed first; closer levels can refine it.
+                if MapLODPolicy.level(latitudeDelta: delta) == .globe {
+                    snapshot = Self.coarseWorldSnapshot(stops)
+                } else if stops.count >= coarseThreshold,
+                          delta >= viewModel.thresholds.city {
                     snapshot = Self.coarseWorldSnapshot(stops)
                 } else {
                     snapshot = viewModel.snapshot(stops: stops, latitudeDelta: delta)
                 }
-                let clusters = Self.worldClusters(from: snapshot.clusters, aggregate: snapshot.level == .city)
+                let clusters = MapLODPolicy.aggregate(
+                    snapshot.clusters,
+                    level: MapLODPolicy.level(latitudeDelta: delta)
+                )
                 let names = Self.clusterDisplayNames(for: clusters, projection: projection)
                 return (snapshot: snapshot, names: names)
             }.value
+            guard !Task.isCancelled else { return }
             cachedClusterDisplayNames = built.names
             cachedSnapshot = built.snapshot
             // "Show on Map" from another screen: fly there once the pins exist.
@@ -217,7 +226,7 @@ struct MapScreen: View {
 
     private var mapView: some View {
         Map(position: $cameraPosition, interactionModes: [.pan, .zoom, .rotate, .pitch]) {
-            ForEach(snapshot.routeSegments) { segment in
+            ForEach(isWorldView ? [] : snapshot.routeSegments) { segment in
                 if let from = segment.from.center, let to = segment.to.center {
                     let coordinates = [from.coordinate, to.coordinate]
                     MapPolyline(MKGeodesicPolyline(coordinates: coordinates, count: coordinates.count))
@@ -1059,5 +1068,61 @@ private struct AnyLabelStyle: LabelStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         make(configuration)
+    }
+}
+
+/// Deterministic annotation limits for each map scale. The map intentionally
+/// aggregates at broad scales so MapKit never lays out one view per photo.
+struct MapLODPolicy {
+    enum Level: Int, Sendable { case globe, regional, city, local }
+
+    static let globeCap = 120
+    static let regionalCap = 240
+    static let cityCap = 400
+
+    static func level(latitudeDelta: Double) -> Level {
+        if latitudeDelta >= 45 { return .globe }
+        if latitudeDelta >= 12 { return .regional }
+        if latitudeDelta >= 2 { return .city }
+        return .local
+    }
+
+    static func cap(for level: Level) -> Int? {
+        switch level {
+        case .globe: return globeCap
+        case .regional: return regionalCap
+        case .city: return cityCap
+        case .local: return nil
+        }
+    }
+
+    static func aggregate(_ clusters: [PlaceCluster], level: Level) -> [PlaceCluster] {
+        guard level != .local else { return clusters }
+        let grid: Double = switch level {
+        case .globe: 5
+        case .regional: 2
+        case .city: 0.5
+        case .local: 0.5
+        }
+        var buckets: [String: (points: [GeoPoint], clusters: [PlaceCluster])] = [:]
+        for cluster in clusters {
+            guard let center = cluster.center else { continue }
+            let key = "\(Int(floor(center.latitude / grid))),\(Int(floor(center.longitude / grid)))"
+            buckets[key, default: ([], [])].points.append(center)
+            buckets[key, default: ([], [])].clusters.append(cluster)
+        }
+        let all = buckets.map { key, bucket in
+            PlaceCluster(
+                id: "lod:\(level.rawValue):\(key)", level: .city,
+                stopIDs: bucket.clusters.flatMap(\.stopIDs),
+                center: GeoPoint.centre(of: bucket.points),
+                firstDate: bucket.clusters.map(\.firstDate).min() ?? .distantPast
+            )
+        }.sorted { ($0.firstDate, $0.id) < ($1.firstDate, $1.id) }
+        guard let cap = cap(for: level), all.count > cap else { return all }
+        // Sample by fractional position rather than prefixing by date. This
+        // keeps geographic coverage deterministic when there are more buckets
+        // than annotations supported at the current zoom level.
+        return (0..<cap).map { index in all[min(all.count - 1, index * all.count / cap)] }
     }
 }

@@ -46,9 +46,8 @@ final class MomentsPageProbeUITests: XCTestCase {
         add(note)
         print("PAGE-REPORT-BEGIN\n\(text)\nPAGE-REPORT-END")
         XCTAssertTrue(FileManager.default.fileExists(atPath: done.path), "The page probe did not finish:\n\(text)")
-        // A timeout is measurement evidence while the responsiveness target
-        // is still a product decision; it must remain visible in the report
-        // rather than turning this baseline run into an unclassified failure.
+        // A timed-out phase is a failed responsiveness assertion. It remains
+        // visible in the attachment so the slow phase can be diagnosed.
         let phases = [
             "first import", "after import (faces, bursts, place names)",
             "People", "Map", "Timeline", "Chapters", "Library",
@@ -62,5 +61,11 @@ final class MomentsPageProbeUITests: XCTestCase {
         XCTAssertEqual(text.components(separatedBy: "longest stall").count - 1, phases.count, "Every phase must report a stall")
         XCTAssertEqual(text.components(separatedBy: "main thread samples:").count - 1, phases.count, "Every phase must report a stack sample")
         XCTAssertEqual(text.components(separatedBy: "memory ").count - 1, phases.count, "Every phase must report memory")
+        XCTAssertEqual(text.components(separatedBy: "selection-to-shell ").count - 1, phases.count, "Every phase must report shell timing")
+        XCTAssertEqual(text.components(separatedBy: "first-content ").count - 1, phases.count, "Every phase must report first-content timing")
+        XCTAssertEqual(text.components(separatedBy: "first-thumbnail ").count - 1, phases.count, "Every phase must report thumbnail timing")
+        XCTAssertEqual(text.components(separatedBy: "fully-settled ").count - 1, phases.count, "Every phase must report settled timing")
+        XCTAssertFalse(text.contains("(timed out)"), "A timed-out responsiveness phase must fail the probe:\n\(text)")
+
     }
 }

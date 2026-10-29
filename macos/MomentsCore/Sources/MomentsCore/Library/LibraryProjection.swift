@@ -219,3 +219,97 @@ public struct LibraryPlaceIndex: Equatable, Sendable {
         return nearest?.name
     }
 }
+
+/// A cancellable, value-only request for a deterministic page of projection data.
+public struct PageBatchRequest: Equatable, Sendable {
+    public let generation: Int
+    public let offset: Int
+    public let limit: Int
+    public let anchor: String?
+    public let filter: LibraryProjectionFilter
+
+    public init(generation: Int = 0, offset: Int = 0, limit: Int = 36, anchor: String? = nil, filter: LibraryProjectionFilter = .init()) {
+        self.generation = generation
+        self.offset = max(0, offset)
+        self.limit = max(0, limit)
+        self.anchor = anchor
+        self.filter = filter
+    }
+}
+
+/// A concrete page result keeps the public API Swift 5.9/Linux friendly.
+public struct PhotoPageBatch: Equatable, Sendable {
+    public let generation: Int
+    public let offset: Int
+    public let values: [LibraryPhotoDescriptor]
+    public let total: Int?
+    public let hasMore: Bool
+
+    public init(generation: Int, offset: Int, values: [LibraryPhotoDescriptor], total: Int?, hasMore: Bool) {
+        self.generation = generation
+        self.offset = offset
+        self.values = values
+        self.total = total
+        self.hasMore = hasMore
+    }
+}
+
+/// A stable, bounded map bucket used by every map level of detail.
+public struct MapLODBucket: Equatable, Hashable, Sendable, Identifiable {
+    public let id: String
+    public let level: Int
+    public let center: GeoPoint
+    public let photoCount: Int
+    public let firstDate: Date
+    public let representativeID: String?
+    public let childIDs: [String]
+
+    public init(id: String, level: Int, center: GeoPoint, photoCount: Int, firstDate: Date = .distantPast, representativeID: String? = nil, childIDs: [String] = []) {
+        self.id = id
+        self.level = level
+        self.center = center
+        self.photoCount = max(0, photoCount)
+        self.firstDate = firstDate
+        self.representativeID = representativeID
+        self.childIDs = childIDs
+    }
+}
+
+public extension LibraryProjection {
+    /// Returns a deterministic page from the shared sorted projection.
+    func photoBatch(_ request: PageBatchRequest) -> PhotoPageBatch {
+        let ids = matchingIDs(request.filter)
+        let start = min(request.offset, ids.count)
+        let end = min(start + request.limit, ids.count)
+        let values = ids[start..<end].compactMap { photoByID[$0] }
+        return PhotoPageBatch(generation: request.generation, offset: start, values: values, total: ids.count, hasMore: end < ids.count)
+    }
+
+    /// Aggregates geotagged photos into deterministic latitude/longitude cells.
+    /// A stable sort and round-robin selection ensures every populated region can
+    /// contribute when a caller applies a cap.
+    func mapBuckets(gridDegrees: Double = 5, level: Int = 0, cap: Int? = nil) -> [MapLODBucket] {
+        guard gridDegrees > 0 else { return [] }
+        var groups: [String: [(photo: LibraryPhotoDescriptor, point: GeoPoint)]] = [:]
+        for photo in photos {
+            guard let lat = photo.latitude, let lon = photo.longitude,
+                  lat.isFinite, lon.isFinite else { continue }
+            let key = "\(Int(floor(lat / gridDegrees))),\(Int(floor(lon / gridDegrees)))"
+            groups[key, default: []].append((photo, GeoPoint(latitude: lat, longitude: lon)))
+        }
+        let buckets = groups.map { key, entries -> MapLODBucket in
+            let ordered = entries.sorted { ($0.photo.captureDate ?? .distantPast, $0.photo.id) < ($1.photo.captureDate ?? .distantPast, $1.photo.id) }
+            let lat = entries.map { $0.point.latitude }.reduce(0, +) / Double(entries.count)
+            let lon = entries.map { $0.point.longitude }.reduce(0, +) / Double(entries.count)
+            return MapLODBucket(id: "lod:\(level):\(key)", level: level,
+                                center: GeoPoint(latitude: lat, longitude: lon),
+                                photoCount: entries.count,
+                                firstDate: ordered.first?.photo.captureDate ?? .distantPast,
+                                representativeID: ordered.first?.photo.id,
+                                childIDs: ordered.map { $0.photo.id })
+        }.sorted { ($0.firstDate, $0.id) < ($1.firstDate, $1.id) }
+        guard let cap, cap >= 0, buckets.count > cap else { return buckets }
+        // Keep the oldest/most stable entries when a hard annotation cap is hit.
+        return Array(buckets.prefix(cap))
+    }
+}

@@ -44,40 +44,16 @@ struct TripsScreen: View {
     @State private var filterRaw = ""
 
     private var inputKey: Int {
+        // Navigation must not hash every photo and relationship. The shared
+        // projection revision is the invalidation boundary; counts keep
+        // chapter edits visible even while a projection rebuild is pending.
         var hasher = Hasher()
         hasher.combine(projectionStore.revision)
-        for item in items {
-            hasher.combine(item.id)
-            hasher.combine(item.effectiveCaptureDate)
-            hasher.combine(item.localDayKey)
-            hasher.combine(item.latitude)
-            hasher.combine(item.longitude)
-            hasher.combine(item.tripID)
-            for memory in item.memories {
-                hasher.combine(memory.text)
-                hasher.combine(memory.updatedAt)
-            }
-        }
-        for trip in trips {
-            hasher.combine(trip.id)
-            hasher.combine(trip.effectiveName)
-            hasher.combine(trip.items.count)
-            hasher.combine(trip.startDate)
-            hasher.combine(trip.endDate)
-        }
-        for place in places {
-            hasher.combine(place.id)
-            hasher.combine(PlaceDisplayName.resolvedName(of: place))
-        }
-        for group in chapterGroups {
-            hasher.combine(group.id)
-            hasher.combine(group.name)
-            hasher.combine(group.rulesData)
-        }
-        for membership in groupItems {
-            hasher.combine(membership.id)
-            hasher.combine(membership.excluded)
-        }
+        hasher.combine(items.count)
+        hasher.combine(trips.count)
+        hasher.combine(chapterGroups.count)
+        hasher.combine(groupItems.count)
+        hasher.combine(selection.openTripID)
         return hasher.finalize()
     }
 
@@ -228,6 +204,11 @@ struct TripsScreen: View {
             )
         }
         .task(id: inputKey) {
+            // Publish the empty shelf once before building trip/chapter cards.
+            // The build remains generation-bound by the task id and can be
+            // cancelled when navigation or projection data changes.
+            await Task.yield()
+            guard !Task.isCancelled else { return }
             let projection = projectionStore.projection
             let snapshots = items.map { item in
                 TimelineItemSnapshot(item: item, placeHint: projection.photoByID[item.id]?.placeName ?? nearestPlaceName(for: item))

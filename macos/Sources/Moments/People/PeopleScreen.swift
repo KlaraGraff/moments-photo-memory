@@ -835,6 +835,7 @@ struct PeopleScreen: View {
     @State private var addPersonName = ""
     /// The unnamed groups picked in the Add person sheet.
     @State private var addPersonClusters: Set<String> = []
+    @State private var namedPeopleLimit = 24
     @Environment(SelectionModel.self) private var selection
     @AppStorage("moments.library.person") private var libraryPersonFilterID = ""
 
@@ -1112,7 +1113,13 @@ struct PeopleScreen: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(String(localized: "Named people")).font(.system(.title3, design: .serif).weight(.medium)).foregroundStyle(Paper.ink)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 14)], alignment: .leading, spacing: 14) {
-                ForEach(namedPeople, id: \.id) { person in namedCard(person) }
+                ForEach(namedPeople.prefix(namedPeopleLimit), id: \.id) { person in namedCard(person) }
+                if namedPeopleLimit < namedPeople.count {
+                    ProgressView(String(localized: "Loading more people…"))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .onAppear { namedPeopleLimit += 24 }
+                }
             }
         }
     }

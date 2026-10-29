@@ -253,7 +253,27 @@ struct ContentView: View {
         .tint(MomentsPalette.accent)
         .onChange(of: selection) { _, _ in
             shared.viewerRequest = nil
+            #if DEBUG
+            if PageProbe.isEnabled {
+                PageProbe.shellReady()
+                DispatchQueue.main.async { PageProbe.contentReady() }
+            }
+            #endif
         }
+        #if DEBUG
+        .onChange(of: shared.viewerRequest) { _, _ in
+            if PageProbe.isEnabled {
+                PageProbe.shellReady()
+                DispatchQueue.main.async { PageProbe.contentReady() }
+            }
+        }
+        .onChange(of: shared.openTripID) { _, _ in
+            if PageProbe.isEnabled {
+                PageProbe.shellReady()
+                DispatchQueue.main.async { PageProbe.contentReady() }
+            }
+        }
+        #endif
         .onChange(of: shared.requestedDestination) { _, destination in
             guard let destination else { return }
             // A scoped jump opens the Library at the top of those photos,

@@ -27,19 +27,21 @@ enum PageProbe {
     private static var stretches: [(end: CFTimeInterval, length: CFTimeInterval)] = []
     private static var report = ""
     private static var importPhase: Phase?
+    private static var activePhaseStart: CFTimeInterval?
+    private static var activeMetrics = Metrics()
     private static var started = false
 
     private struct Phase {
         let name: String
         let start: CFTimeInterval
         let footprint: UInt64
-        // These require explicit page callbacks; until the page host exposes
-        // them, the report must say unavailable rather than infer them from
-        // the action call or the settle time.
-        let selectionToShell = "unavailable"
-        let firstContent = "unavailable"
-        let firstThumbnail = "unavailable"
-        let cancellationObserved = "unavailable"
+    }
+
+    private struct Metrics {
+        var selectionToShell: CFTimeInterval?
+        var firstContent: CFTimeInterval?
+        var firstThumbnail: CFTimeInterval?
+        var cancellationObserved = false
     }
 
     static var isEnabled: Bool { folder != nil }
@@ -80,9 +82,28 @@ enum PageProbe {
     static func importStarted() {
         guard isEnabled else { return }
         stretches.removeAll()
-        importPhase = Phase(name: "first import", start: CACurrentMediaTime(), footprint: footprint())
+        let phase = Phase(name: "first import", start: CACurrentMediaTime(), footprint: footprint())
+        importPhase = phase
+        begin(phase)
         // Import takes minutes: a coarser sample covers it.
         MainThreadSampler.start(interval: 10_000)
+    }
+
+    /// Called by the host after a destination has replaced the previous page
+    /// shell. The probe records the callback itself, never the action call.
+    static func shellReady() { mark(\.selectionToShell) }
+
+    /// Called on the next main-queue turn after the destination shell is
+    /// installed, when its first useful content can be drawn.
+    static func contentReady() { mark(\.firstContent) }
+
+    /// Called after a real thumbnail has been obtained or read from cache.
+    static func thumbnailReady() { mark(\.firstThumbnail) }
+
+    /// Called when a page task is cancelled while a new generation replaces it.
+    static func cancellationObserved() {
+        guard activePhaseStart != nil else { return }
+        activeMetrics.cancellationObserved = true
     }
 
     static func importFinished(summary: String) {
@@ -143,6 +164,7 @@ enum PageProbe {
         try? await Task.sleep(for: .milliseconds(300))
         stretches.removeAll()
         let phase = Phase(name: name, start: CACurrentMediaTime(), footprint: footprint())
+        begin(phase)
         MainThreadSampler.start(interval: sampleInterval)
         action()
         var timedOut = false
@@ -163,20 +185,40 @@ enum PageProbe {
     }
 
     private static func finish(_ phase: Phase, settled: CFTimeInterval, timedOut: Bool) {
+        let metrics = activeMetrics
         let mine = stretches.filter { $0.end >= phase.start }
         let longest = mine.map(\.length).max() ?? 0
         let busy = mine.reduce(0) { $0 + $1.length }
         let memory = footprint()
         report += String(
             format: "page report (%@): selection-to-shell %@, first-content %@, first-thumbnail %@, fully-settled %.2f s%@, cancellation-observed %@, longest stall %.0f ms, stalls>100ms %d, main busy %.2f s, memory %.0f MB (%+.0f)\n",
-            phase.name, phase.selectionToShell, phase.firstContent, phase.firstThumbnail,
+            phase.name, format(metrics.selectionToShell), format(metrics.firstContent), format(metrics.firstThumbnail),
             max(0, settled - phase.start), timedOut ? " (timed out)" : "",
-            phase.cancellationObserved, longest * 1000,
+            metrics.cancellationObserved ? "yes" : "no", longest * 1000,
             mine.filter { $0.length > 0.1 }.count, busy,
             Double(memory) / 1_048_576, (Double(memory) - Double(phase.footprint)) / 1_048_576
         )
         report += MainThreadSampler.stopAndReport(top: 25, ownTop: 30, selfTop: 12)
+        activePhaseStart = nil
+        activeMetrics = Metrics()
         write()
+    }
+
+    private static func begin(_ phase: Phase) {
+        activePhaseStart = phase.start
+        activeMetrics = Metrics()
+    }
+
+    private static func mark(_ keyPath: WritableKeyPath<Metrics, CFTimeInterval?>) {
+        guard let start = activePhaseStart else { return }
+        if activeMetrics[keyPath: keyPath] == nil {
+            activeMetrics[keyPath: keyPath] = max(0, CACurrentMediaTime() - start)
+        }
+    }
+
+    private static func format(_ value: CFTimeInterval?) -> String {
+        guard let value else { return "not observed" }
+        return String(format: "%.2f s", value)
     }
 
     private static func write() {

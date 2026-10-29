@@ -28,6 +28,9 @@ final class LibraryProjectionStore {
         // debounced rebuild starts.
         generation &+= 1
         sourceGeneration &+= 1
+        #if DEBUG
+        PageProbe.cancellationObserved()
+        #endif
         scheduledRefresh?.cancel()
         scheduledRefresh = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
@@ -39,6 +42,9 @@ final class LibraryProjectionStore {
     func refresh(container: ModelContainer) {
         generation &+= 1
         sourceGeneration &+= 1
+        #if DEBUG
+        PageProbe.cancellationObserved()
+        #endif
         refresh(container: container, token: generation)
     }
 
@@ -68,6 +74,9 @@ final class LibraryProjectionStore {
     func cancel() {
         generation &+= 1
         sourceGeneration &+= 1
+        #if DEBUG
+        PageProbe.cancellationObserved()
+        #endif
         scheduledRefresh?.cancel()
         scheduledRefresh = nil
         task?.cancel()

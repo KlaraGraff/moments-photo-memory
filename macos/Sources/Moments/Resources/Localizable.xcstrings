@@ -14506,6 +14506,50 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading more photos…" } },
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载更多照片…" } }
       }
+    },
+    "Show all face matches" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle Gesichtsübereinstimmungen anzeigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show all face matches"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示全部面孔匹配"
+          }
+        }
+      }
+    },
+    "Show fewer face matches" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weniger Gesichtsübereinstimmungen anzeigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show fewer face matches"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示较少面孔匹配"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

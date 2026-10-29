@@ -340,6 +340,9 @@ struct ThumbnailView: View {
             .task(id: "\(source.id)-\(width)x\(height)") {
                 if let cached = ThumbnailCache.shared.cachedImage(for: source.id, width: width, height: height) {
                     image = cached
+                    #if DEBUG
+                    PageProbe.thumbnailReady()
+                    #endif
                     return
                 }
                 image = nil
@@ -347,6 +350,9 @@ struct ThumbnailView: View {
                 // A newer task may already have set this view's image.
                 guard !Task.isCancelled else { return }
                 image = loaded
+                #if DEBUG
+                if loaded != nil { PageProbe.thumbnailReady() }
+                #endif
             }
     }
 }

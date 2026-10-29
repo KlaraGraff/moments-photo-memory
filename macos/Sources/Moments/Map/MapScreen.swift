@@ -853,7 +853,13 @@ struct MapScreen: View {
         let wanted = Set(ids)
         guard !wanted.isEmpty else { return }
         Task { @MainActor in
-            let fetched = (try? modelContext.fetch(FetchDescriptor<MediaItem>())) ?? []
+            // A cluster can contain only a few photos while the store holds
+            // tens of thousands. Keep selection lazy by asking SwiftData for
+            // those IDs instead of materializing the whole library on the
+            // main actor.
+            let wantedIDs = Array(wanted)
+            let descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { wantedIDs.contains($0.id) })
+            let fetched = (try? modelContext.fetch(descriptor)) ?? []
             guard !Task.isCancelled else { return }
             for item in fetched where wanted.contains(item.id) {
                 itemsByID[item.id] = item

@@ -832,6 +832,7 @@ struct PeopleScreen: View {
     /// Faces in Recently Deleted photos stay stored but are not shown.
     @Query(filter: #Predicate<MediaItem> { $0.deletedAt != nil }) private var deletedItems: [MediaItem]
     @State private var clusterNames: [String: String] = [:]
+    @State private var expandedPeopleIDs: Set<String> = []
     @State private var mergeSource: String?
     @State private var mergeTarget: String?
     @State private var pendingNameMerge: PendingNameMerge?
@@ -1137,7 +1138,8 @@ struct PeopleScreen: View {
 
     private func namedCard(_ person: Person) -> some View {
         let faces = cachedFacesByPerson[person.id] ?? []
-        let cardFaces = Array(faces.prefix(Self.cardFaceLimit))
+        let expanded = expandedPeopleIDs.contains(person.id)
+        let cardFaces = expanded ? faces : Array(faces.prefix(Self.cardFaceLimit))
         let photoCount = Set(faces.map(\.mediaID)).count
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -1218,16 +1220,30 @@ struct PeopleScreen: View {
                                 }
                                 .frame(width: 56, height: 56)
                         }
-                        if faces.count > cardFaces.count {
-                            Button { keyPhotoPersonID = person.id } label: {
+                        if !expanded && faces.count > cardFaces.count {
+                            Button {
+                                expandedPeopleIDs.insert(person.id)
+                            } label: {
                                 Image(systemName: "ellipsis")
                                     .font(.title3.weight(.semibold))
                                     .frame(width: 56, height: 56)
                                     .background(Paper.well, in: Circle())
                             }
                             .buttonStyle(.plain)
-                            .help(String(localized: "Choose key photo"))
-                            .accessibilityLabel(String(localized: "Choose key photo"))
+                            .help(String(localized: "Show all face matches"))
+                            .accessibilityLabel(String(localized: "Show all face matches"))
+                        } else if expanded && faces.count > Self.cardFaceLimit {
+                            Button {
+                                expandedPeopleIDs.remove(person.id)
+                            } label: {
+                                Image(systemName: "chevron.left")
+                                    .font(.title3.weight(.semibold))
+                                    .frame(width: 56, height: 56)
+                                    .background(Paper.well, in: Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .help(String(localized: "Show fewer face matches"))
+                            .accessibilityLabel(String(localized: "Show fewer face matches"))
                         }
                     }
                 }

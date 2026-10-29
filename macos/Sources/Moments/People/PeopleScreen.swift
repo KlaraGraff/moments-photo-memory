@@ -813,6 +813,7 @@ enum PeopleImageLoader {
 struct PeopleScreen: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PeopleScanController.self) private var scanner
+    @Environment(LibraryProjectionStore.self) private var projectionStore
     @Query(sort: \Person.name) private var people: [Person]
     @Query private var observations: [FaceObservation]
     /// Faces in Recently Deleted photos stay stored but are not shown.
@@ -847,16 +848,13 @@ struct PeopleScreen: View {
 
     private var observationsKey: Int {
         var hasher = Hasher()
-        for observation in observations {
-            hasher.combine(observation.id)
-            hasher.combine(observation.mediaID)
-            hasher.combine(observation.personID)
-            hasher.combine(observation.clusterID)
-            hasher.combine(observation.confirmed)
-            hasher.combine(observation.assignmentSource)
-            hasher.combine(observation.updatedAt)
-        }
-        for item in deletedItems { hasher.combine(item.id) }
+        // The projection revision is the invalidation boundary for imported
+        // media. Hashing every face and deleted item from `body` made a large
+        // People page spend seconds rebuilding its task key on every render.
+        hasher.combine(projectionStore.revision)
+        hasher.combine(people.count)
+        hasher.combine(observations.count)
+        hasher.combine(deletedItems.count)
         return hasher.finalize()
     }
 

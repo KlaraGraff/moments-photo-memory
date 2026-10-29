@@ -889,7 +889,13 @@ struct MapScreen: View {
         guard Date().timeIntervalSince(lastMarkerSelection) > 0.4 else { return }
         guard let itemID, let coordinate = snapshot.coordinateByID[itemID] else { return }
         moveCamera(to: .region(viewModel.focusRegion(for: coordinate)), isGlobe: false)
-        selectedClusterID = snapshot.cluster(containing: itemID)?.id
+        // A globe snapshot uses synthetic LOD bucket IDs. Let the focused
+        // item select its real cluster after the camera zooms and the detailed
+        // snapshot arrives; retaining the coarse ID would be cleared as soon
+        // as the zoom level changes and the panel would never open.
+        if !isWorldView {
+            selectedClusterID = snapshot.cluster(containing: itemID)?.id
+        }
     }
 
     private func fitAll() {

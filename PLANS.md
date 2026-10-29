@@ -33,6 +33,8 @@ Updated by the coordinator. This is the recovery point for a new thread.
 - Added the projection design and initial implementation on PR #103; local app build and tests pass.
 - Hosted 5,000-item probe run `40750890590` completed all 14 phases. Timeline, Chapters, and repeat navigation timed out, so this is diagnostic baseline evidence rather than a responsiveness pass.
 - Projection invalidation now coalesces SwiftData saves, publishes a revision for Timeline/Chapters/Map rebuilds, and resolves display names before publishing.
+- Hosted 5,000-item probe run `40754894000` on `9363f44` completed all 14 phases with no timeout; Map ready was 10.77 s and Timeline ready was 26.61 s.
+- Hosted 20,000-item runs `40757239709`, `40765465778`, `40775038910`, and `40787759587` all reached import, post-import work, and People, then stalled before Map. The remaining blocker is page-switch initialization on the hosted Mac; no complete 20k page report exists yet.
 
 ## Decision log
 

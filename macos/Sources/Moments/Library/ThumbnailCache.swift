@@ -304,17 +304,22 @@ struct ThumbnailView: View {
     let source: ThumbnailSource
     let width: Int
     let height: Int
+    /// Only the page that owns the visible batch may opt into probe timing.
+    /// Generic thumbnail cells otherwise outlive a page switch and can report
+    /// a delayed result into the next phase.
+    let probeToken: UInt64?
 
     @State private var image: NSImage?
 
-    init(item: MediaItem, width: Int, height: Int) {
-        self.init(source: ThumbnailSource(item: item), width: width, height: height)
+    init(item: MediaItem, width: Int, height: Int, probeToken: UInt64? = nil) {
+        self.init(source: ThumbnailSource(item: item), width: width, height: height, probeToken: probeToken)
     }
 
-    init(source: ThumbnailSource, width: Int, height: Int) {
+    init(source: ThumbnailSource, width: Int, height: Int, probeToken: UInt64? = nil) {
         self.source = source
         self.width = width
         self.height = height
+        self.probeToken = probeToken
     }
 
     var body: some View {
@@ -338,13 +343,10 @@ struct ThumbnailView: View {
             // Clipping hides the overflow but not its clicks.
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .task(id: "\(source.id)-\(width)x\(height)") {
-                #if DEBUG
-                let probeToken = PageProbe.phaseToken
-                #endif
                 if let cached = ThumbnailCache.shared.cachedImage(for: source.id, width: width, height: height) {
                     image = cached
                     #if DEBUG
-                    PageProbe.thumbnailReady(token: probeToken)
+                    if let probeToken { PageProbe.thumbnailReady(token: probeToken) }
                     #endif
                     return
                 }
@@ -354,7 +356,7 @@ struct ThumbnailView: View {
                 guard !Task.isCancelled else { return }
                 image = loaded
                 #if DEBUG
-                if loaded != nil { PageProbe.thumbnailReady(token: probeToken) }
+                if loaded != nil, let probeToken { PageProbe.thumbnailReady(token: probeToken) }
                 #endif
             }
     }

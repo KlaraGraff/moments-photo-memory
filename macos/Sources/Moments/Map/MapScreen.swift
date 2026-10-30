@@ -48,6 +48,10 @@ struct MapScreen: View {
     /// Nearest-place lookup is O(clusters × places); cache it before MapKit
     /// asks for annotation labels during every graph update.
     @State private var cachedClusterDisplayNames: [String: String] = [:]
+    /// The LOD projection is part of the snapshot build. Keeping it in state
+    /// avoids aggregating every time selection, the map panel, or MapKit asks
+    /// SwiftUI to reevaluate the body.
+    @State private var cachedDisplayedClusters: [PlaceCluster] = []
     @State private var itemsByID: [String: MediaItem] = [:]
     @State private var world = MapWorldState()
     /// Created once per screen; it reads its cache file from disk.
@@ -73,7 +77,7 @@ struct MapScreen: View {
     /// dozen views instead of thousands; zooming in recomputes the detailed
     /// city/area/spot clusters.
     private var displayedClusters: [PlaceCluster] {
-        MapLODPolicy.aggregate(snapshot.clusters, level: MapLODPolicy.level(latitudeDelta: latitudeDelta))
+        cachedDisplayedClusters
     }
 
     private var snapshotKey: Int {
@@ -167,10 +171,11 @@ struct MapScreen: View {
                     level: MapLODPolicy.level(latitudeDelta: delta)
                 )
                 let names = Self.clusterDisplayNames(for: clusters, projection: projection)
-                return (snapshot: snapshot, names: names)
+                return (snapshot: snapshot, clusters: clusters, names: names)
             }.value
             guard !Task.isCancelled else { return }
             cachedClusterDisplayNames = built.names
+            cachedDisplayedClusters = built.clusters
             cachedSnapshot = built.snapshot
             #if DEBUG
             PageProbe.contentReady(token: probeToken)

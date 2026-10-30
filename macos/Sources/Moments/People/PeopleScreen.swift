@@ -1161,7 +1161,7 @@ struct PeopleScreen: View {
                 // opens this person's photos.
                 if let cover = coverFace(of: person) {
                     Button { keyPhotoPersonID = person.id } label: {
-                        FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72)
+                        FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72, probeToken: faceProbeToken)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -1203,7 +1203,7 @@ struct PeopleScreen: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 6) {
                         ForEach(cardFaces, id: \.id) { face in
-                            FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
+                            FaceCropView(data: face.cropData, cacheKey: face.id, size: 56, probeToken: faceProbeToken)
                                 .contextMenu {
                                     Button(String(localized: "Make Key Photo")) { setKeyPhoto(face, for: person) }
                                     Divider()
@@ -1345,7 +1345,7 @@ struct PeopleScreen: View {
                             LazyHStack(spacing: 10) {
                                 ForEach(cluster.faces, id: \.id) { face in
                                     VStack(spacing: 4) {
-                                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 64)
+                                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 64, probeToken: faceProbeToken)
                                             .contextMenu { faceCorrectionMenu(face, current: nil) }
                                         HStack(spacing: 4) {
                                             Button { confirm(face) } label: {
@@ -1531,6 +1531,14 @@ struct PeopleScreen: View {
         let value = UserDefaults.standard.string(forKey: "moments.library.person") ?? ""
         return value.isEmpty || ids.contains(value)
     }
+
+    private var faceProbeToken: UInt64? {
+        #if DEBUG
+        PageProbe.phaseToken
+        #else
+        nil
+        #endif
+    }
 }
 
 struct FaceCropView: View {
@@ -1545,7 +1553,15 @@ struct FaceCropView: View {
     /// person's face in another person's slot.
     let cacheKey: String
     let size: CGFloat
+    let probeToken: UInt64?
     @State private var image: NSImage?
+
+    init(data: Data, cacheKey: String, size: CGFloat, probeToken: UInt64? = nil) {
+        self.data = data
+        self.cacheKey = cacheKey
+        self.size = size
+        self.probeToken = probeToken
+    }
 
     var body: some View {
         Group {
@@ -1560,16 +1576,16 @@ struct FaceCropView: View {
         .overlay(Circle().stroke(Color.white.opacity(0.7), lineWidth: 1))
         .task(id: cacheKey) {
             #if DEBUG
-            let probeToken = PageProbe.phaseToken
+            let taskToken = PageProbe.phaseToken
             defer {
-                if Task.isCancelled { PageProbe.cancellationObserved(token: probeToken) }
+                if Task.isCancelled { PageProbe.cancellationObserved(token: taskToken) }
             }
             #endif
             let key = cacheKey as NSString
             if let cached = Self.cache.object(forKey: key) {
                 image = cached
                 #if DEBUG
-                PageProbe.thumbnailReady(token: probeToken)
+                if let probeToken { PageProbe.thumbnailReady(token: probeToken) }
                 #endif
                 return
             }
@@ -1586,7 +1602,7 @@ struct FaceCropView: View {
             Self.cache.setObject(decoded, forKey: key)
             image = decoded
             #if DEBUG
-            PageProbe.thumbnailReady(token: probeToken)
+            if let probeToken { PageProbe.thumbnailReady(token: probeToken) }
             #endif
         }
     }

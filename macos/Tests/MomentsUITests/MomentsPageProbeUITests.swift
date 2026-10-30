@@ -65,6 +65,15 @@ final class MomentsPageProbeUITests: XCTestCase {
         XCTAssertEqual(text.components(separatedBy: "first-content ").count - 1, phases.count, "Every phase must report first-content timing")
         XCTAssertEqual(text.components(separatedBy: "first-thumbnail ").count - 1, phases.count, "Every phase must report thumbnail timing")
         XCTAssertEqual(text.components(separatedBy: "fully-settled ").count - 1, phases.count, "Every phase must report settled timing")
+        // Closing the viewer is a transition, not a new destination. It has
+        // no shell or first-content event of its own; the next Chapters phase
+        // records the destination that becomes visible after the close.
+        let shellPhases = [
+            "People", "Map", "Timeline", "Chapters", "Library", "viewer open",
+            "Chapters again", "chapter with most photos", "back to chapters",
+            "Timeline again", "Library again"
+        ]
+        let contentPhases = shellPhases
         let pagePhases = phases.dropFirst(2)
         let pageReportLines = text
             .split(separator: "\n")
@@ -72,8 +81,20 @@ final class MomentsPageProbeUITests: XCTestCase {
             .filter { line in
                 pagePhases.contains { line.hasPrefix("page report (\($0)):") }
             }
-        XCTAssertFalse(pageReportLines.contains { $0.contains("selection-to-shell not observed") }, "A page never reported its rendered shell:\n\(text)")
-        XCTAssertFalse(pageReportLines.contains { $0.contains("first-content not observed") }, "A page never reported its first useful content:\n\(text)")
+        for phase in shellPhases {
+            let line = pageReportLines.first { $0.hasPrefix("page report (\(phase)):") }
+            XCTAssertNotNil(line)
+            XCTAssertFalse(line?.contains("selection-to-shell not observed") == true, "\(phase) never reported its rendered shell:\n\(text)")
+        }
+        for phase in contentPhases {
+            let line = pageReportLines.first { $0.hasPrefix("page report (\(phase)):") }
+            XCTAssertNotNil(line)
+            XCTAssertFalse(line?.contains("first-content not observed") == true, "\(phase) never reported its first useful content:\n\(text)")
+        }
+        let viewerClose = pageReportLines.first { $0.hasPrefix("page report (viewer close):") }
+        XCTAssertNotNil(viewerClose)
+        XCTAssertTrue(viewerClose?.contains("selection-to-shell not observed") == true)
+        XCTAssertTrue(viewerClose?.contains("first-content not observed") == true)
         XCTAssertFalse(text.contains("(timed out)"), "A timed-out responsiveness phase must fail the probe:\n\(text)")
 
     }

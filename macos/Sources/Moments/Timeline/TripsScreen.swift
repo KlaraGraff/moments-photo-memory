@@ -660,7 +660,6 @@ private struct TripShelfView: View {
                 #if DEBUG
                 let token = PageProbe.phaseToken
                 PageProbe.shellReady(token: token)
-                PageProbe.contentReady(token: token)
                 #endif
             }
         }
@@ -1008,6 +1007,11 @@ private struct TripDetailView: View {
                     Text(TripText.summary(trip))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(Paper.muted)
+                        #if DEBUG
+                        // Attach first-content to a concrete visible detail
+                        // element instead of the container's onAppear.
+                        .onAppear { PageProbe.contentReady(token: PageProbe.phaseToken) }
+                        #endif
                     if !trip.cityNames.isEmpty {
                         Text(trip.cityNames.joined(separator: " → "))
                             .font(.callout)
@@ -1101,7 +1105,6 @@ private struct TripDetailView: View {
         .onAppear {
             let token = PageProbe.phaseToken
             PageProbe.shellReady(token: token)
-            PageProbe.contentReady(token: token)
         }
         #endif
     }

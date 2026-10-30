@@ -142,7 +142,6 @@ struct PhotoViewer: View {
             #if DEBUG
             let token = PageProbe.phaseToken
             PageProbe.shellReady(token: token)
-            PageProbe.contentReady(token: token)
             #endif
         }
         // When a field in the column lets go of the keyboard, the arrows page again.
@@ -198,11 +197,6 @@ struct PhotoViewer: View {
             stopVideo()
             removeEventMonitor()
             stacks.dismissLastChange()
-            #if DEBUG
-            let token = PageProbe.phaseToken
-            PageProbe.shellReady(token: token)
-            PageProbe.contentReady(token: token)
-            #endif
         }
     }
 
@@ -757,6 +751,11 @@ struct PhotoViewer: View {
             return
         }
         item = found
+        #if DEBUG
+        // The viewer has useful content only after the selected model has
+        // been fetched. Opening the sheet itself is shell readiness.
+        PageProbe.contentReady(token: probeToken)
+        #endif
         loadStackMembers()
         zoom = ViewerZoom()
         // Neighbours start loading now, alongside this photo, so a quick second

@@ -863,6 +863,9 @@ struct PeopleScreen: View {
     /// The unnamed groups picked in the Add person sheet.
     @State private var addPersonClusters: Set<String> = []
     @State private var namedPeopleLimit = 24
+    /// Unnamed groups can outnumber named people by orders of magnitude after
+    /// a large scan. Keep their correction cards incremental as well.
+    @State private var unnamedClustersLimit = 24
     @Environment(SelectionModel.self) private var selection
     @AppStorage("moments.library.person") private var libraryPersonFilterID = ""
 
@@ -1346,7 +1349,7 @@ struct PeopleScreen: View {
         // Lazy so a card's zoomed photo loads only when the card scrolls in.
         LazyVStack(alignment: .leading, spacing: 14) {
             Text(String(localized: "Is this the same person?")).font(.system(.title3, design: .serif).weight(.medium)).foregroundStyle(Paper.ink)
-            ForEach(unnamedClusters) { cluster in
+            ForEach(unnamedClusters.prefix(unnamedClustersLimit)) { cluster in
                 HStack(alignment: .top, spacing: 14) {
                     if let cover = PeopleFacePicker.cover(cluster.faces) {
                         FaceInPhotoView(
@@ -1395,6 +1398,12 @@ struct PeopleScreen: View {
                     }
                 }
                 .paperCard(cornerRadius: 12, padding: 14)
+            }
+            if unnamedClustersLimit < unnamedClusters.count {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .onAppear { unnamedClustersLimit += 24 }
             }
         }
     }

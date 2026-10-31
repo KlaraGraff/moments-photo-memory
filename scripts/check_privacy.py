@@ -10,7 +10,7 @@ import subprocess
 ROOT=Path(__file__).resolve().parents[1]
 IGNORED={'.git','dist','private-data','local-data','exports','backups','research','qa',
          '__pycache__','node_modules','.venv','.derivedData','DerivedData','build','.build'}
-EXACT={'.gitignore','README.md','AGENTS.md','GOALS.md','PLANS.md','demo/sample-data.json','docs/design-notes.html','docs/ui-quality-principles.md','docs/performance-backend-redesign.md','docs/performance-instant-pages.md','docs/performance-instant-pages-preview.html',
+EXACT={'.gitignore','README.md','AGENTS.md','GOALS.md','PLANS.md','demo/sample-data.json','docs/design-notes.html','docs/ui-quality-principles.md','docs/performance-backend-redesign.md','docs/performance-instant-pages.md','docs/performance-instant-pages-preview.html','docs/performance-probe-handoff.md',
        'scripts/apple_photos_bridge.swift','scripts/apple_photos_host.swift',
        'scripts/run-ui-smoke.sh','scripts/run-ui-import-check.sh','scripts/make_synthetic_import_fixtures.swift',
        'vendor/leaflet/leaflet.js','vendor/leaflet/leaflet.css','vendor/leaflet/LICENSE',

@@ -32,7 +32,7 @@ final class MomentsPageProbeUITests: XCTestCase {
         // take many minutes at library scale. Keep only a hard ceiling below
         // the workflow's 60-minute job timeout; phase timeouts remain measured
         // and reported by PageProbe.
-        let deadline = Date().addingTimeInterval(55 * 60)
+        let deadline = Date().addingTimeInterval(50 * 60)
         while !FileManager.default.fileExists(atPath: done.path), Date() < deadline {
             Thread.sleep(forTimeInterval: 2)
         }

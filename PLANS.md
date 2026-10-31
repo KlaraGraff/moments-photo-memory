@@ -4,7 +4,7 @@ Updated by the coordinator. This is the recovery point for a new thread.
 
 ## In progress
 
-- **P102 measurement harness** — inspect the failed 5,000-item run, make the probe finish reliably, and collect complete 5,000/20,000 reports. Scope: the probe and its test until the harness is accepted. The latest hosted 5,000-item run measured People at its 45 s page timeout; XCTest's separate 26.9 min total deadline then expired during that phase because it omitted the actual import duration. The test now allows up to 55 min within the workflow's 60 min job ceiling.
+- **P102 measurement harness** — inspect the failed 5,000-item run, make the probe finish reliably, and collect complete 5,000/20,000 reports. Scope: the probe and its test until the harness is accepted. The latest hosted 5,000-item run measured People at its 45 s page timeout; XCTest's separate 26.9 min total deadline then expired during that phase because it omitted the actual import duration. The test now allows up to 50 min within the workflow's 60 min job ceiling, leaving suite startup and teardown margin.
 - **Performance backend redesign** — replace per-screen SwiftData-derived work with a shared background projection. P1/P2 are in PR #103; screen migration is partial and needs independent review plus hosted probe evidence.
 - **Performance baseline** — use completed probe evidence to rank the slowest shared mechanisms before assigning the next non-overlapping packages. No optimization is selected from a guess.
 - **People prominence research** — public Apple documentation plus read-only observation on the owner's Mac. Personal screenshots and observations stay outside the repository.

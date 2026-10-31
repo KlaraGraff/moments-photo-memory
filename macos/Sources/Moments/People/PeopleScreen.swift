@@ -58,6 +58,18 @@ private struct PeopleClusterSnapshot: Identifiable {
     let faces: [FaceObservation]
 }
 
+struct PeoplePersonFacesSnapshot {
+    let faces: [FaceObservation]
+    let cover: FaceObservation?
+    let photoCount: Int
+
+    init(faces: [FaceObservation], keyFaceID: String?) {
+        self.faces = faces
+        cover = PeopleFacePicker.cover(faces, keyFaceID: keyFaceID)
+        photoCount = Set(faces.map(\.mediaID)).count
+    }
+}
+
 /// A face's state before ✓ or ✗, so the change can be taken back.
 private struct FaceUndoSnapshot {
     let faceID: String
@@ -836,7 +848,7 @@ struct PeopleScreen: View {
     @State private var mergeSource: String?
     @State private var mergeTarget: String?
     @State private var pendingNameMerge: PendingNameMerge?
-    @State private var cachedFacesByPerson: [String: [FaceObservation]] = [:]
+    @State private var cachedPersonFaces: [String: PeoplePersonFacesSnapshot] = [:]
     @State private var cachedUnnamedClusters: [PeopleClusterSnapshot] = []
     @State private var lastFaceChange: FaceUndoSnapshot?
     @State private var renamingPersonID: String?
@@ -867,7 +879,11 @@ struct PeopleScreen: View {
         // People page spend seconds rebuilding its task key on every render.
         hasher.combine(projectionStore.revision)
         hasher.combine(people.count)
-        hasher.combine(observations.count)
+        // Face scanning writes observations in batches. Rebuilding every
+        // person cache for each write keeps SwiftUI on a full-library loop;
+        // the final transition out of scanning below refreshes once with all
+        // faces visible.
+        hasher.combine(scanner.isScanning ? 0 : observations.count)
         hasher.combine(deletedItems.count)
         return hasher.finalize()
     }
@@ -875,7 +891,13 @@ struct PeopleScreen: View {
     private func refreshFaceCaches() {
         let deletedIDs = Set(deletedItems.map(\.id))
         let shown = deletedIDs.isEmpty ? observations : observations.filter { !deletedIDs.contains($0.mediaID) }
-        cachedFacesByPerson = Dictionary(grouping: shown.compactMap { $0.personID == nil ? nil : $0 }, by: { $0.personID! })
+        let groupedByPerson = Dictionary(grouping: shown.compactMap { $0.personID == nil ? nil : $0 }, by: { $0.personID! })
+        cachedPersonFaces = Dictionary(uniqueKeysWithValues: groupedByPerson.map { personID, faces in
+            (personID, PeoplePersonFacesSnapshot(
+                faces: faces,
+                keyFaceID: PeopleStoreActions.keyFaceID(for: personID)
+            ))
+        })
         let grouped = Dictionary(grouping: shown.filter { $0.personID == nil && $0.clusterID != nil }, by: { $0.clusterID! })
         cachedUnnamedClusters = grouped.map { PeopleClusterSnapshot(id: $0.key, faces: $0.value.sorted { $0.createdAt < $1.createdAt }) }.sorted { $0.id < $1.id }
     }
@@ -1151,15 +1173,16 @@ struct PeopleScreen: View {
     }
 
     private func namedCard(_ person: Person) -> some View {
-        let faces = cachedFacesByPerson[person.id] ?? []
+        let summary = cachedPersonFaces[person.id]
+        let faces = summary?.faces ?? []
         let expanded = expandedPeopleIDs.contains(person.id)
         let cardFaces = expanded ? faces : Array(faces.prefix(Self.cardFaceLimit))
-        let photoCount = Set(faces.map(\.mediaID)).count
+        let photoCount = summary?.photoCount ?? 0
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 // Like Photos: the big face picks the key photo, the name
                 // opens this person's photos.
-                if let cover = coverFace(of: person) {
+                if let cover = summary?.cover {
                     Button { keyPhotoPersonID = person.id } label: {
                         FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72, probeToken: faceProbeToken)
                             .contentShape(Circle())
@@ -1268,14 +1291,14 @@ struct PeopleScreen: View {
 
     private func coverFace(of person: Person) -> FaceObservation? {
         _ = keyPhotoRevision
-        return PeopleFacePicker.cover(
-            cachedFacesByPerson[person.id] ?? [],
-            keyFaceID: PeopleStoreActions.keyFaceID(for: person.id)
-        )
+        return cachedPersonFaces[person.id]?.cover
     }
 
     private func setKeyPhoto(_ face: FaceObservation, for person: Person) {
         PeopleStoreActions.setKeyFace(face.id, for: person.id)
+        if let summary = cachedPersonFaces[person.id] {
+            cachedPersonFaces[person.id] = PeoplePersonFacesSnapshot(faces: summary.faces, keyFaceID: face.id)
+        }
         keyPhotoRevision += 1
         keyPhotoPersonID = nil
     }

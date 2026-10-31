@@ -18,11 +18,14 @@ enum MainThreadSampler {
     private nonisolated(unsafe) static var installed = false
     /// Stops the previous run's thread when a new run starts right away.
     private nonisolated(unsafe) static var generation = 0
+    private nonisolated(unsafe) static var interval: UInt32 = 2_000
 
-    /// Call on the main thread.
-    static func start() {
+    /// Call on the main thread. Every `interval` microseconds; 2 ms covers
+    /// 24 s before the buffer is full, longer intervals cover longer runs.
+    static func start(interval: UInt32 = 2_000) {
         mainThread = pthread_self()
         count = 0
+        self.interval = interval
         // Allocate the buffers here: the signal handler must not malloc.
         _ = frames
         _ = depths
@@ -36,7 +39,7 @@ enum MainThreadSampler {
         Thread.detachNewThread {
             while recording, generation == run, let mainThread {
                 pthread_kill(mainThread, SIGUSR2)
-                usleep(2_000)
+                usleep(interval)
             }
         }
     }
@@ -49,7 +52,7 @@ enum MainThreadSampler {
     }
 
     /// Stops sampling and returns the report. Call on the main thread.
-    static func stopAndReport(top: Int = 45) -> String {
+    static func stopAndReport(top: Int = 45, ownTop: Int = 60, selfTop: Int = 30) -> String {
         recording = false
         var inclusive: [String: Int] = [:]
         var selfCounts: [String: Int] = [:]
@@ -86,18 +89,18 @@ enum MainThreadSampler {
                 if seen.insert(symbol).inserted { inclusive[symbol, default: 0] += 1 }
             }
         }
-        var text = "main thread samples: \(count) (every 2 ms)\n"
+        var text = "main thread samples: \(count) (every \(Double(interval) / 1_000) ms)\n"
         text += "inclusive (on the stack):\n"
         for (symbol, hits) in inclusive.sorted(by: { $0.value > $1.value }).prefix(top) {
             text += String(format: "  %5.1f%% %@\n", Double(hits) * 100 / Double(max(count, 1)), String(symbol.prefix(200)))
         }
         // The app's own frames, which the framework lines above hide.
         text += "inclusive, Moments code only:\n"
-        for (symbol, hits) in inclusive.filter({ $0.key.contains("Moments.") && !$0.key.contains("$main") }).sorted(by: { $0.value > $1.value }).prefix(60) {
+        for (symbol, hits) in inclusive.filter({ $0.key.contains("Moments.") && !$0.key.contains("$main") }).sorted(by: { $0.value > $1.value }).prefix(ownTop) {
             text += String(format: "  %5.1f%% %@\n", Double(hits) * 100 / Double(max(count, 1)), String(symbol.prefix(240)))
         }
         text += "self (top of stack):\n"
-        for (symbol, hits) in selfCounts.sorted(by: { $0.value > $1.value }).prefix(30) {
+        for (symbol, hits) in selfCounts.sorted(by: { $0.value > $1.value }).prefix(selfTop) {
             text += String(format: "  %5.1f%% %@\n", Double(hits) * 100 / Double(max(count, 1)), String(symbol.prefix(200)))
         }
         return text

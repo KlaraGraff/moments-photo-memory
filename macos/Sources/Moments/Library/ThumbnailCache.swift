@@ -304,17 +304,22 @@ struct ThumbnailView: View {
     let source: ThumbnailSource
     let width: Int
     let height: Int
+    /// Only the page that owns the visible batch may opt into probe timing.
+    /// Generic thumbnail cells otherwise outlive a page switch and can report
+    /// a delayed result into the next phase.
+    let probeToken: UInt64?
 
     @State private var image: NSImage?
 
-    init(item: MediaItem, width: Int, height: Int) {
-        self.init(source: ThumbnailSource(item: item), width: width, height: height)
+    init(item: MediaItem, width: Int, height: Int, probeToken: UInt64? = nil) {
+        self.init(source: ThumbnailSource(item: item), width: width, height: height, probeToken: probeToken)
     }
 
-    init(source: ThumbnailSource, width: Int, height: Int) {
+    init(source: ThumbnailSource, width: Int, height: Int, probeToken: UInt64? = nil) {
         self.source = source
         self.width = width
         self.height = height
+        self.probeToken = probeToken
     }
 
     var body: some View {
@@ -340,6 +345,9 @@ struct ThumbnailView: View {
             .task(id: "\(source.id)-\(width)x\(height)") {
                 if let cached = ThumbnailCache.shared.cachedImage(for: source.id, width: width, height: height) {
                     image = cached
+                    #if DEBUG
+                    if let probeToken { PageProbe.thumbnailReady(token: probeToken) }
+                    #endif
                     return
                 }
                 image = nil
@@ -347,6 +355,9 @@ struct ThumbnailView: View {
                 // A newer task may already have set this view's image.
                 guard !Task.isCancelled else { return }
                 image = loaded
+                #if DEBUG
+                if loaded != nil, let probeToken { PageProbe.thumbnailReady(token: probeToken) }
+                #endif
             }
     }
 }

@@ -23,6 +23,7 @@ struct TripsScreen: View {
     @Query private var places: [Place]
     @Query(sort: \CollectionMemory.createdAt) private var memories: [CollectionMemory]
     @Environment(SelectionModel.self) private var selection
+    @Environment(LibraryProjectionStore.self) private var projectionStore
     @Environment(\.modelContext) private var modelContext
     @Environment(\.undoManager) private var undoManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -43,39 +44,16 @@ struct TripsScreen: View {
     @State private var filterRaw = ""
 
     private var inputKey: Int {
+        // Navigation must not hash every photo and relationship. The shared
+        // projection revision is the invalidation boundary; counts keep
+        // chapter edits visible even while a projection rebuild is pending.
         var hasher = Hasher()
-        for item in items {
-            hasher.combine(item.id)
-            hasher.combine(item.effectiveCaptureDate)
-            hasher.combine(item.localDayKey)
-            hasher.combine(item.latitude)
-            hasher.combine(item.longitude)
-            hasher.combine(item.tripID)
-            for memory in item.memories {
-                hasher.combine(memory.text)
-                hasher.combine(memory.updatedAt)
-            }
-        }
-        for trip in trips {
-            hasher.combine(trip.id)
-            hasher.combine(trip.effectiveName)
-            hasher.combine(trip.items.count)
-            hasher.combine(trip.startDate)
-            hasher.combine(trip.endDate)
-        }
-        for place in places {
-            hasher.combine(place.id)
-            hasher.combine(PlaceDisplayName.resolvedName(of: place))
-        }
-        for group in chapterGroups {
-            hasher.combine(group.id)
-            hasher.combine(group.name)
-            hasher.combine(group.rulesData)
-        }
-        for membership in groupItems {
-            hasher.combine(membership.id)
-            hasher.combine(membership.excluded)
-        }
+        hasher.combine(projectionStore.revision)
+        hasher.combine(items.count)
+        hasher.combine(trips.count)
+        hasher.combine(chapterGroups.count)
+        hasher.combine(groupItems.count)
+        hasher.combine(selection.openTripID)
         return hasher.finalize()
     }
 
@@ -212,6 +190,11 @@ struct TripsScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { _ in
             notice = nil
         }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
         .task(id: notice?.id) {
             // A note without a question goes away by itself.
             guard let notice, notice.offer == nil else { return }
@@ -226,12 +209,27 @@ struct TripsScreen: View {
             )
         }
         .task(id: inputKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            defer {
+                if Task.isCancelled { PageProbe.cancellationObserved(token: probeToken) }
+            }
+            #endif
+            // Publish the empty shelf once before building trip/chapter cards.
+            // The build remains generation-bound by the task id and can be
+            // cancelled when navigation or projection data changes.
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            let projection = projectionStore.projection
             let snapshots = items.map { item in
-                TimelineItemSnapshot(item: item, placeHint: nearestPlaceName(for: item))
+                TimelineItemSnapshot(item: item, placeHint: projection.photoByID[item.id]?.placeName ?? nearestPlaceName(for: item))
             }
             document = buildDocument(snapshots)
             chapterDocs = buildChapters(snapshots: Dictionary(snapshots.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }))
             itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            #if DEBUG
+            PageProbe.contentReady(token: probeToken)
+            #endif
         }
     }
 
@@ -454,17 +452,12 @@ struct TripsScreen: View {
     }
 
     private func nearestPlaceName(for item: MediaItem) -> String? {
+        if let name = item.effectivePlaceName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return name
+        }
         guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
         let coordinate = GeoPoint(latitude: latitude, longitude: longitude)
-        let nearest = places.compactMap { place -> (name: String, distance: Double)? in
-            guard let placeLatitude = place.latitude, let placeLongitude = place.longitude,
-                  let name = PlaceDisplayName.resolvedName(of: place) else { return nil }
-            let distance = coordinate.distance(to: GeoPoint(latitude: placeLatitude, longitude: placeLongitude))
-            return (name, distance)
-        }
-        .min { $0.distance < $1.distance }
-        guard let nearest, nearest.distance <= 100_000 else { return nil }
-        return nearest.name
+        return projectionStore.projection.placeIndex.nearestName(to: coordinate, within: 100_000)
     }
 }
 
@@ -664,6 +657,10 @@ private struct TripShelfView: View {
             }
             .onAppear {
                 if let returnTripID { proxy.scrollTo(returnTripID, anchor: .center) }
+                #if DEBUG
+                let token = PageProbe.phaseToken
+                PageProbe.shellReady(token: token)
+                #endif
             }
         }
     }
@@ -1010,6 +1007,11 @@ private struct TripDetailView: View {
                     Text(TripText.summary(trip))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(Paper.muted)
+                        #if DEBUG
+                        // Attach first-content to a concrete visible detail
+                        // element instead of the container's onAppear.
+                        .onAppear { PageProbe.contentReady(token: PageProbe.phaseToken) }
+                        #endif
                     if !trip.cityNames.isEmpty {
                         Text(trip.cityNames.joined(separator: " → "))
                             .font(.callout)
@@ -1099,6 +1101,12 @@ private struct TripDetailView: View {
                 }
             }
         }
+        #if DEBUG
+        .onAppear {
+            let token = PageProbe.phaseToken
+            PageProbe.shellReady(token: token)
+        }
+        #endif
     }
 
     private func dayActions(for day: TimelineDay) -> TripDayActions? {

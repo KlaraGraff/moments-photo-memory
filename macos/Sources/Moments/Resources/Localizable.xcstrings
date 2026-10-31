@@ -14482,6 +14482,74 @@
           }
         }
       }
+    },
+    "Loading more memories…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Weitere Erinnerungen werden geladen …" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading more memories…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载更多记忆…" } }
+      }
+    },
+    "Loading more people…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Weitere Personen werden geladen …" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading more people…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载更多人物…" } }
+      }
+    },
+    "Loading more photos…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Weitere Fotos werden geladen …" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading more photos…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载更多照片…" } }
+      }
+    },
+    "Show all face matches" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle Gesichtsübereinstimmungen anzeigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show all face matches"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示全部面孔匹配"
+          }
+        }
+      }
+    },
+    "Show fewer face matches" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weniger Gesichtsübereinstimmungen anzeigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show fewer face matches"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示较少面孔匹配"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

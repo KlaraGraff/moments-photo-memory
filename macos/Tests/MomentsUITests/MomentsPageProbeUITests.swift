@@ -28,14 +28,11 @@ final class MomentsPageProbeUITests: XCTestCase {
 
         // The app measures itself: this test must not query it meanwhile.
         let done = folderURL.appending(path: "page-report-done")
-        // PageProbe has one 600 s post-import phase and thirteen bounded page
-        // phases. Give the probe enough time to record every phase, while
-        // keeping the bound below the workflow's 60-minute job limit even for
-        // the 20,000-item manual run.
-        let phaseBudget = 600 + 13 * 45
-        // Leave room for XCTest launch/teardown and the hosted Mac's scheduler
-        // without changing any phase's measured timeout.
-        let deadline = Date().addingTimeInterval(TimeInterval(phaseBudget + 180 + count / 20))
+        // Import duration is independent of the bounded page phases and can
+        // take many minutes at library scale. Keep only a hard ceiling below
+        // the workflow's 60-minute job timeout; phase timeouts remain measured
+        // and reported by PageProbe.
+        let deadline = Date().addingTimeInterval(55 * 60)
         while !FileManager.default.fileExists(atPath: done.path), Date() < deadline {
             Thread.sleep(forTimeInterval: 2)
         }

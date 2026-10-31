@@ -922,11 +922,17 @@ struct MapScreen: View {
         // snapshot arrives; retaining the coarse ID would be cleared as soon
         // as the zoom level changes and the panel would never open.
         if !isWorldView {
-            if let cluster = snapshot.cluster(containing: itemID) {
+            if let cluster = detailedCluster(containing: itemID) {
                 selectedClusterID = cluster.id
                 loadItems(for: cluster.stopIDs)
             }
         }
+    }
+
+    private func detailedCluster(containing itemID: String) -> PlaceCluster? {
+        guard let cluster = snapshot.cluster(containing: itemID),
+              !cluster.id.hasPrefix("coarse-world:") else { return nil }
+        return cluster
     }
 
     private func handleMapFocusRequest(_ itemID: String) {
@@ -934,7 +940,7 @@ struct MapScreen: View {
         // A globe snapshot may contain the coordinate but only a coarse
         // synthetic cluster. Keep the request until the detailed cluster is
         // available so the next snapshot can load its photos and open panel.
-        guard !isWorldView, snapshot.cluster(containing: itemID) != nil else { return }
+        guard !isWorldView, detailedCluster(containing: itemID) != nil else { return }
         if selection.mapFocusRequest == itemID { selection.mapFocusRequest = nil }
     }
 

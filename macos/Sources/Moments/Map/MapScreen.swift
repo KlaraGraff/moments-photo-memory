@@ -180,11 +180,9 @@ struct MapScreen: View {
             #if DEBUG
             PageProbe.contentReady(token: probeToken)
             #endif
-            // "Show on Map" from another screen: fly there once the pins exist.
-            if let requested = selection.mapFocusRequest {
-                selection.mapFocusRequest = nil
-                focus(on: requested)
-            }
+            // A cross-page request first moves the globe to the photo, then
+            // waits for the closer snapshot before opening its real cluster.
+            if let requested = selection.mapFocusRequest { handleMapFocusRequest(requested) }
         }
         .task(id: worldInputKey) {
             #if DEBUG
@@ -201,8 +199,7 @@ struct MapScreen: View {
         // A request made while the map is already showing (e.g. from the viewer).
         .onChange(of: selection.mapFocusRequest) { _, requested in
             guard let requested else { return }
-            selection.mapFocusRequest = nil
-            focus(on: requested)
+            handleMapFocusRequest(requested)
         }
         .onChange(of: selection.selectedItemIDs) { _, selectedItemIDs in
             clearSelectedClusterIfNeeded(selectedItemIDs, in: snapshot)
@@ -914,10 +911,10 @@ struct MapScreen: View {
         selection.openViewer(itemID, in: selectedClusterItems.map(\.id))
     }
 
-    private func focus(on itemID: String?) {
+    private func focus(on itemID: String?, force: Bool = false) {
         // A pin clicked here is already on screen; only selections made in
         // other screens move the camera.
-        guard Date().timeIntervalSince(lastMarkerSelection) > 0.4 else { return }
+        guard force || Date().timeIntervalSince(lastMarkerSelection) > 0.4 else { return }
         guard let itemID, let coordinate = snapshot.coordinateByID[itemID] else { return }
         moveCamera(to: .region(viewModel.focusRegion(for: coordinate)), isGlobe: false)
         // A globe snapshot uses synthetic LOD bucket IDs. Let the focused
@@ -925,8 +922,20 @@ struct MapScreen: View {
         // snapshot arrives; retaining the coarse ID would be cleared as soon
         // as the zoom level changes and the panel would never open.
         if !isWorldView {
-            selectedClusterID = snapshot.cluster(containing: itemID)?.id
+            if let cluster = snapshot.cluster(containing: itemID) {
+                selectedClusterID = cluster.id
+                loadItems(for: cluster.stopIDs)
+            }
         }
+    }
+
+    private func handleMapFocusRequest(_ itemID: String) {
+        focus(on: itemID, force: true)
+        // A globe snapshot may contain the coordinate but only a coarse
+        // synthetic cluster. Keep the request until the detailed cluster is
+        // available so the next snapshot can load its photos and open panel.
+        guard !isWorldView, snapshot.cluster(containing: itemID) != nil else { return }
+        if selection.mapFocusRequest == itemID { selection.mapFocusRequest = nil }
     }
 
     private func fitAll() {

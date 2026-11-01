@@ -75,37 +75,54 @@ struct TripsScreen: View {
         return hasher.finalize()
     }
 
-    static func chapterID(_ group: UserGroup) -> String { "chapter." + group.id }
+    nonisolated static func chapterID(_ group: UserGroup) -> String { "chapter." + group.id }
+
+    /// One chapter that is not a trip, as plain values: the main actor reads
+    /// the group, its dates and its member photo ids; the build then runs off it.
+    struct ChapterSource: Sendable {
+        let id: String
+        let name: String
+        let mediaIDs: [String]
+        let startDate: Date?
+        let endDate: Date?
+    }
 
     /// Each chapter that is not a trip, built from its own photos only, so
     /// photos it shares with a trip appear in both.
-    private func buildChapters(snapshots: [String: TimelineItemSnapshot]) -> [String: TimelineTrip] {
-        let membersByGroup = Dictionary(grouping: groupItems.filter { !$0.excluded }, by: \.groupID)
+    nonisolated private static func buildChapters(
+        sources: [ChapterSource],
+        snapshots: [String: TimelineItemSnapshot],
+        calendar: Calendar
+    ) -> [String: TimelineTrip] {
         var result: [String: TimelineTrip] = [:]
-        let builder = TimelineBuilder(calendar: Calendar.autoupdatingCurrent)
-        for group in chapterGroups {
-            let id = Self.chapterID(group)
-            let ids = Array(Set((membersByGroup[group.id] ?? []).map(\.mediaID)))
-            let members = ids.compactMap { snapshots[$0] }
-            let info = group.chapterInfo
-            let source = TimelineSourceTrip(id: id, name: group.name, itemIDs: ids, startDate: info.startDate, endDate: info.endDate)
-            let built = builder.build(items: members, trips: [source]).trips.first { $0.id == id }
-            result[id] = built ?? TimelineTrip(id: id, name: group.name, days: [], startDate: info.startDate, plannedEndDate: info.endDate)
+        let builder = TimelineBuilder(calendar: calendar)
+        for source in sources {
+            let members = source.mediaIDs.compactMap { snapshots[$0] }
+            let trips = [TimelineSourceTrip(
+                id: source.id,
+                name: source.name,
+                itemIDs: source.mediaIDs,
+                startDate: source.startDate,
+                endDate: source.endDate
+            )]
+            let built = builder.build(items: members, trips: trips).trips.first { $0.id == source.id }
+            result[source.id] = built ?? TimelineTrip(
+                id: source.id,
+                name: source.name,
+                days: [],
+                startDate: source.startDate,
+                plannedEndDate: source.endDate
+            )
         }
         return result
     }
 
-    private func buildDocument(_ sourceItems: [TimelineItemSnapshot]) -> TimelineDocument {
-        let sourceTrips = trips.map { trip in
-            TimelineSourceTrip(
-                id: trip.id,
-                name: trip.effectiveName,
-                itemIDs: trip.items.map(\.id),
-                startDate: trip.startDate,
-                endDate: trip.endDate
-            )
-        }
-        return TimelineBuilder(calendar: Calendar.autoupdatingCurrent).build(
+    nonisolated private static func buildDocument(
+        _ sourceItems: [TimelineItemSnapshot],
+        sourceTrips: [TimelineSourceTrip],
+        calendar: Calendar
+    ) -> TimelineDocument {
+        TimelineBuilder(calendar: calendar).build(
             items: sourceItems,
             trips: sourceTrips
         )
@@ -230,17 +247,81 @@ struct TripsScreen: View {
             #if DEBUG
             let probeToken = PageProbe.phaseToken
             #endif
-            let placeIndex = NearestPlaceIndex(places: places)
-            let snapshots = items.map { item in
-                TimelineItemSnapshot(item: item, placeHint: placeIndex.nearestPlaceName(for: item))
-            }
-            document = buildDocument(snapshots)
-            chapterDocs = buildChapters(snapshots: Dictionary(snapshots.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }))
-            itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            await rebuild()
+            guard !Task.isCancelled else { return }
             #if DEBUG
             PageProbe.contentReady(token: probeToken)
             #endif
         }
+    }
+
+    /// Reads everything SwiftData in one pass on the main actor, then builds
+    /// the shelf and every chapter off the main thread. A newer `inputKey`
+    /// cancels the build, whose result is then dropped unassigned.
+    private func rebuild() async {
+        let placeIndex = NearestPlaceIndex(places: places)
+        let memoriesByPhotoID = TimelineScreen.memoriesByPhotoID(memoryRecords)
+        let sourceItems = items.map { item in
+            TimelineItemSnapshot(item: item, placeHint: nil, memories: memoriesByPhotoID[item.persistentModelID] ?? [])
+        }
+        let sourceTrips = trips.map { trip in
+            TimelineSourceTrip(
+                id: trip.id,
+                name: trip.effectiveName,
+                itemIDs: trip.items.map(\.id),
+                startDate: trip.startDate,
+                endDate: trip.endDate
+            )
+        }
+        let chapterSources = Self.chapterSources(groups: chapterGroups, members: groupItems)
+        let libraryItemByID = store.itemsByID
+        let calendar = Calendar.autoupdatingCurrent
+
+        let built = await Task.detached(priority: .userInitiated) { () -> ChaptersBuildResult in
+            let hinted = sourceItems.map { snapshot in
+                snapshot.withPlaceHint(Self.placeHint(for: snapshot, index: placeIndex))
+            }
+            let byID = Dictionary(hinted.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let document = Self.buildDocument(hinted, sourceTrips: sourceTrips, calendar: calendar)
+            let chapterDocs = Self.buildChapters(sources: chapterSources, snapshots: byID, calendar: calendar)
+            return ChaptersBuildResult(document: document, chapterDocs: chapterDocs)
+        }.value
+        guard !Task.isCancelled else { return }
+
+        document = built.document
+        chapterDocs = built.chapterDocs
+        itemByID = libraryItemByID
+    }
+
+    /// The chapters that are not trips, as plain values: their ids, names,
+    /// own dates, and the photo ids of their members (`excluded` left out).
+    private static func chapterSources(
+        groups: [UserGroup],
+        members: [UserGroupItem]
+    ) -> [ChapterSource] {
+        let membersByGroup = Dictionary(grouping: members.filter { !$0.excluded }, by: \.groupID)
+        return groups.map { group in
+            let mediaIDs = Array(Set((membersByGroup[group.id] ?? []).map(\.mediaID)))
+            let info = group.chapterInfo
+            return ChapterSource(
+                id: chapterID(group),
+                name: group.name,
+                mediaIDs: mediaIDs,
+                startDate: info.startDate,
+                endDate: info.endDate
+            )
+        }
+    }
+
+    /// The place name a snapshot's photo would have been labelled with, from
+    /// its raw latitude and longitude: the same rule `nearestPlaceName(for:)`
+    /// applies, kept here so it can run off the main actor.
+    nonisolated private static func placeHint(
+        for snapshot: TimelineItemSnapshot,
+        index: NearestPlaceIndex
+    ) -> String? {
+        guard let latitude = snapshot.latitude, let longitude = snapshot.longitude else { return nil }
+        return index.nearestName(to: GeoPoint(latitude: latitude, longitude: longitude), within: 100_000)
     }
 
     private func open(_ trip: TimelineTrip) {

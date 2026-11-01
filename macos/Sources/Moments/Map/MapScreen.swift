@@ -152,6 +152,7 @@ struct MapScreen: View {
             itemsByID = store.itemsByID
             clusterNames = built.names
             cachedSnapshot = built.snapshot
+            keepSelectedCluster(in: built.snapshot)
             // Also clears the world grid and rebuilds both pin layers.
             refreshPinCounts()
             let input = FootprintsCalculator.input(from: items, visibleItemIDs: selection.visibleItemIDs)
@@ -868,6 +869,25 @@ struct MapScreen: View {
         lastMarkerSelection = Date()
         selection.select([itemID], focus: itemID)
         selection.openViewer(itemID, in: selectedClusterItems.map(\.id))
+    }
+
+    /// A cluster id names its zoom level and its first photo, so the same
+    /// place gets another id in a snapshot built at another level. When that
+    /// happens, keep the strip open on the selected photos' new cluster.
+    private func keepSelectedCluster(in newSnapshot: PlacesViewModel.Snapshot) {
+        guard let selectedClusterID else { return }
+        let isStillThere: Bool = newSnapshot.clusters.contains { cluster in
+            cluster.id == selectedClusterID
+        }
+        guard !isStillThere else { return }
+        let focusedID: String? = selection.focusedItemID
+        let selectedID: String? = selection.selectedItemIDs.sorted().first { itemID in
+            newSnapshot.coordinateByID[itemID] != nil
+        }
+        let anchor: String? = focusedID ?? selectedID
+        self.selectedClusterID = anchor.flatMap { itemID in
+            newSnapshot.cluster(containing: itemID)?.id
+        }
     }
 
     private func focus(on itemID: String?) {

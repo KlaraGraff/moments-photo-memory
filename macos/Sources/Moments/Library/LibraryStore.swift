@@ -67,8 +67,13 @@ final class LibraryStore {
     /// places renamed. Not bumped by saves that change none of that.
     private(set) var revision = 0
     /// How many batches were applied and how many full fetches ran; for tests
-    /// and the page probe.
+    /// and the page probe. A batch applied from its own changes counts here
+    /// but not in `fullFetchCount`.
     private(set) var refreshCount = 0
+    /// How many times the whole library was fetched again from scratch. Only
+    /// `refreshNow()` bumps it, so a test can tell an applied batch from a
+    /// full fetch.
+    private(set) var fullFetchCount = 0
 
     @ObservationIgnored private var context: ModelContext?
     @ObservationIgnored private var observer: NSObjectProtocol?
@@ -97,6 +102,9 @@ final class LibraryStore {
     @ObservationIgnored private var faceIDs: [PersistentIdentifier: String] = [:]
 
     @ObservationIgnored private var placeSum = 0
+    /// Per-place hash, like `itemHash`: a place that changes fixes the total
+    /// without every place being hashed again.
+    @ObservationIgnored private var placeHash: [PersistentIdentifier: Int] = [:]
     /// What the last applied batch (or the last fetch) looked like;
     /// `revision` moves when one of these values differs.
     @ObservationIgnored private var applied: Measures?
@@ -163,13 +171,18 @@ final class LibraryStore {
         firstPendingSave = nil
         guard let context else { return }
 
-        let live = (try? context.fetch(FetchDescriptor<MediaItem>(
-            predicate: #Predicate { $0.deletedAt == nil }
-        ))) ?? []
-        let deleted = (try? context.fetch(FetchDescriptor<MediaItem>(
-            predicate: #Predicate { $0.deletedAt != nil }
-        ))) ?? []
-        let allFaces = (try? context.fetch(FetchDescriptor<FaceObservation>())) ?? []
+        // A typed descriptor and a typed result per fetch: the CI compilers
+        // time out on a long one-line `fetch(FetchDescriptor(…))`.
+        let liveDescriptor = FetchDescriptor<MediaItem>(
+            predicate: #Predicate<MediaItem> { $0.deletedAt == nil }
+        )
+        let live: [MediaItem] = (try? context.fetch(liveDescriptor)) ?? []
+        let deletedDescriptor = FetchDescriptor<MediaItem>(
+            predicate: #Predicate<MediaItem> { $0.deletedAt != nil }
+        )
+        let deleted: [MediaItem] = (try? context.fetch(deletedDescriptor)) ?? []
+        let facesDescriptor = FetchDescriptor<FaceObservation>()
+        let allFaces: [FaceObservation] = (try? context.fetch(facesDescriptor)) ?? []
 
         itemByPID = [:]
         itemHash = [:]
@@ -201,6 +214,7 @@ final class LibraryStore {
         rebuildFaces()
         refetchPlaces()
         refreshCount += 1
+        fullFetchCount += 1
         bumpRevisionIfNeeded()
     }
 
@@ -293,21 +307,18 @@ final class LibraryStore {
         var photoLists = false
         var faces = false
         var places = false
+        /// Every place has to be hashed again: a deleted override cannot say
+        /// which place it was on.
+        var allPlaces = false
+        /// The places that changed themselves (inserted or updated).
+        var changedPlacePIDs: Set<PersistentIdentifier> = []
+        /// The places named by a changed place-wide override, by string id.
+        var changedPlaceIDs: Set<String> = []
     }
 
     private func apply(_ changes: SavedChanges) {
         guard let context else { return }
         var touched = Touched()
-
-        // `model(for:)` hands back a model this context already holds, with the
-        // values it read before another context saved. A small fetch by
-        // identifier both refreshes those values and leaves the same object
-        // in place, so the lists can keep their elements.
-        let updatedIDs = changes.inserted + changes.updated
-        let photos = refreshedPhotoModels(for: updatedIDs, in: context)
-        let faces = refreshedFaceModels(for: updatedIDs, in: context)
-        let favorites = favoriteModels(for: updatedIDs, in: context)
-        let overrides = placeOverrideModels(for: updatedIDs, in: context)
 
         // Removals first: a model that is gone from the store must never be
         // read (SwiftData traps on the invalidated instance), and a save
@@ -320,13 +331,37 @@ final class LibraryStore {
                 removePhoto(id, touched: &touched)
             case String(describing: FaceObservation.self):
                 removeFace(id, touched: &touched)
-            case String(describing: Place.self), String(describing: PlaceOverride.self):
-                // A removed place override changes what a place is called.
+            case String(describing: Place.self):
+                // A removed place leaves the list; the refetch below drops its
+                // hash and sum.
                 touched.places = true
+            case String(describing: PlaceOverride.self):
+                // A removed override may have been a place-wide rename, and it
+                // no longer says which place that was: hash every place.
+                touched.places = true
+                touched.allPlaces = true
             default:
                 break
             }
         }
+
+        // Only ids whose row still exists may be refreshed. A deleted id is
+        // never handed to `model(for:)` and never read, so a photo that another
+        // context removed in this same batch cannot come back.
+        var updatedIDs: [PersistentIdentifier] = []
+        updatedIDs.reserveCapacity(changes.inserted.count + changes.updated.count)
+        for id in changes.inserted + changes.updated where !removed.contains(id) {
+            updatedIDs.append(id)
+        }
+
+        // `model(for:)` hands back a model this context already holds, with the
+        // values it read before another context saved. A small fetch by
+        // identifier both refreshes those values and leaves the same object
+        // in place, so the lists can keep their elements.
+        let photos = refreshedPhotoModels(for: updatedIDs, in: context)
+        let faces = refreshedFaceModels(for: updatedIDs, in: context)
+        let favorites = favoriteModels(for: updatedIDs, in: context)
+        let overrides = placeOverrideModels(for: updatedIDs, in: context)
 
         var seen = Set<PersistentIdentifier>()
         seen.reserveCapacity(updatedIDs.count)
@@ -340,18 +375,35 @@ final class LibraryStore {
                 guard let model = faces[id] else { removeFace(id, touched: &touched); continue }
                 upsertFace(id, model: model, touched: &touched)
             case String(describing: Favorite.self):
-                applyFavoriteChange(id, favorite: favorites[id], photos: photos, context: context, touched: &touched)
+                applyFavoriteChange(
+                    id,
+                    favorite: favorites[id],
+                    photos: photos,
+                    removed: removed,
+                    context: context,
+                    touched: &touched
+                )
             case String(describing: PlaceOverride.self):
-                applyPlaceOverrideChange(id, override: overrides[id], photos: photos, context: context, touched: &touched)
+                applyPlaceOverrideChange(
+                    id,
+                    override: overrides[id],
+                    photos: photos,
+                    removed: removed,
+                    context: context,
+                    touched: &touched
+                )
             case String(describing: Place.self):
                 touched.places = true
+                touched.changedPlacePIDs.insert(id)
             default:
                 break
             }
         }
 
-        // Places are few and change rarely, so they stay a full fetch.
-        if touched.places { refetchPlaces() }
+        // The place list is a few thousand rows and must stay right, so any
+        // place change refetches it; only the places a batch can have changed
+        // are hashed again.
+        if touched.places { refetchPlaces(rehash: touched) }
         if touched.photoLists { rebuildPhotos() }
         if touched.faces { rebuildFaces() }
         refreshCount += 1
@@ -402,13 +454,21 @@ final class LibraryStore {
         _ id: PersistentIdentifier,
         favorite: Favorite?,
         photos: [PersistentIdentifier: MediaItem],
+        removed: Set<PersistentIdentifier>,
         context: ModelContext,
         touched: inout Touched
     ) {
         // A removed favorite needs nothing: `setFavorite` also changes the
         // photo's `updatedAt`, so the photo is in the same save.
         guard let favorite else { return }
-        guard let photo = photoModel(for: favorite.mediaItem, mediaID: favorite.mediaID, photos: photos, context: context) else { return }
+        // The stored string id first: the relationship may point at a photo
+        // this same save removed, and reading that is what brings a deleted
+        // photo back (or traps).
+        let mediaID = favorite.mediaID
+        let linked = mediaID == nil ? favorite.mediaItem : nil
+        if let linked, removed.contains(linked.persistentModelID) { return }
+        guard let photo = photoModel(for: linked, mediaID: mediaID, photos: photos, context: context) else { return }
+        guard !removed.contains(photo.persistentModelID) else { return }
         upsertPhoto(photo.persistentModelID, model: photo, touched: &touched)
     }
 
@@ -416,26 +476,49 @@ final class LibraryStore {
         _ id: PersistentIdentifier,
         override: PlaceOverride?,
         photos: [PersistentIdentifier: MediaItem],
+        removed: Set<PersistentIdentifier>,
         context: ModelContext,
         touched: inout Touched
     ) {
         guard let override else {
-            // Its removal may have dropped a place-wide rename.
+            // Its removal may have dropped a place-wide rename, and nothing
+            // says which place it was on.
             touched.places = true
+            touched.allPlaces = true
             return
         }
-        if override.mediaItem != nil || override.mediaID != nil {
+        // The stored ids first; a relationship may point at a photo this save
+        // removed, and reading that is what brings a deleted photo back.
+        let mediaID = override.mediaID
+        let linked = mediaID == nil ? override.mediaItem : nil
+        if let linked, removed.contains(linked.persistentModelID) { return }
+        if mediaID != nil || linked != nil {
             // A photo's own place name: only that photo is affected.
-            guard let photo = photoModel(for: override.mediaItem, mediaID: override.mediaID, photos: photos, context: context) else { return }
+            guard let photo = photoModel(for: linked, mediaID: mediaID, photos: photos, context: context) else { return }
+            guard !removed.contains(photo.persistentModelID) else { return }
             upsertPhoto(photo.persistentModelID, model: photo, touched: &touched)
         } else {
-            // A place-wide rename changes `Place.correctedName`.
+            // A place-wide rename changes `Place.correctedName` of one place:
+            // `override.place`, or the place whose `id` is `override.placeID`.
             touched.places = true
+            if let pid = override.place?.persistentModelID {
+                touched.changedPlacePIDs.insert(pid)
+            } else if let placeID = override.placeID {
+                touched.changedPlaceIDs.insert(placeID)
+            } else {
+                // Nothing says which place it was on.
+                touched.allPlaces = true
+            }
         }
     }
 
     /// The refreshed photo an override or favorite points at. The batch's own
     /// fetch is used first, so its values are the ones just saved.
+    ///
+    /// A fetch by string id that finds no row returns nil: the photo was
+    /// removed, and a removed row must never be read or put back into
+    /// `itemByPID`. Falling back to the model the store still holds would do
+    /// exactly that.
     private func photoModel(
         for item: MediaItem?,
         mediaID: String?,
@@ -444,14 +527,9 @@ final class LibraryStore {
     ) -> MediaItem? {
         if let item, let fresh = photos[item.persistentModelID] { return fresh }
         guard let id = mediaID ?? item?.id else { return nil }
-        // The photo is not part of this batch's fetch: fetch it once so its
-        // values are the ones just saved, and fall back to what the store
-        // already holds only when the row is gone.
-        if let found = try? context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == id })).first {
-            return found
-        }
-        if let known = mediaItem(withID: id) { return photos[known.persistentModelID] ?? known }
-        return nil
+        let descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate<MediaItem> { $0.id == id })
+        let found: [MediaItem] = (try? context.fetch(descriptor)) ?? []
+        return found.first
     }
 
     // MARK: - Reading the changed models
@@ -466,24 +544,30 @@ final class LibraryStore {
     ///
     /// A photo this store has never seen is new: `model(for:)` has nothing
     /// stale to return for it and is used directly.
+    ///
+    /// `MediaItem.id` is not unique in the schema, so one string id can name
+    /// several rows. The fetch asks once per distinct string id and then
+    /// keeps each model under its own persistent id, so two photos that share
+    /// an id keep their own models instead of one taking the other's.
     private func refreshedPhotoModels(for ids: [PersistentIdentifier], in context: ModelContext) -> [PersistentIdentifier: MediaItem] {
         var result: [PersistentIdentifier: MediaItem] = [:]
-        var wanted: [String] = []
-        var byID: [String: PersistentIdentifier] = [:]
+        var wantedIDs = Set<String>()
+        var wantedPIDs = Set<PersistentIdentifier>()
         for id in ids where id.entityName == String(describing: MediaItem.self) {
             if let known = itemKeys[id]?.id ?? itemByPID[id]?.id {
-                wanted.append(known)
-                byID[known] = id
+                wantedIDs.insert(known)
+                wantedPIDs.insert(id)
             } else if let model = context.model(for: id) as? MediaItem {
                 result[id] = model
             }
         }
-        guard !wanted.isEmpty else { return result }
-        result.reserveCapacity(result.count + wanted.count)
-        for chunk in wanted.chunked(every: Self.fetchChunkSize) {
-            let found = (try? context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { chunk.contains($0.id) }))) ?? []
-            for model in found {
-                if let pid = byID[model.id] { result[pid] = model }
+        guard !wantedIDs.isEmpty else { return result }
+        result.reserveCapacity(result.count + wantedPIDs.count)
+        for chunk in Array(wantedIDs).chunked(every: Self.fetchChunkSize) {
+            let descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate<MediaItem> { chunk.contains($0.id) })
+            let found: [MediaItem] = (try? context.fetch(descriptor)) ?? []
+            for model in found where wantedPIDs.contains(model.persistentModelID) {
+                result[model.persistentModelID] = model
             }
         }
         return result
@@ -491,22 +575,23 @@ final class LibraryStore {
 
     private func refreshedFaceModels(for ids: [PersistentIdentifier], in context: ModelContext) -> [PersistentIdentifier: FaceObservation] {
         var result: [PersistentIdentifier: FaceObservation] = [:]
-        var wanted: [String] = []
-        var byID: [String: PersistentIdentifier] = [:]
+        var wantedIDs = Set<String>()
+        var wantedPIDs = Set<PersistentIdentifier>()
         for id in ids where id.entityName == String(describing: FaceObservation.self) {
             if let known = faceIDs[id] {
-                wanted.append(known)
-                byID[known] = id
+                wantedIDs.insert(known)
+                wantedPIDs.insert(id)
             } else if let model = context.model(for: id) as? FaceObservation {
                 result[id] = model
             }
         }
-        guard !wanted.isEmpty else { return result }
-        result.reserveCapacity(result.count + wanted.count)
-        for chunk in wanted.chunked(every: Self.fetchChunkSize) {
-            let found = (try? context.fetch(FetchDescriptor<FaceObservation>(predicate: #Predicate { chunk.contains($0.id) }))) ?? []
-            for model in found {
-                if let pid = byID[model.id] { result[pid] = model }
+        guard !wantedIDs.isEmpty else { return result }
+        result.reserveCapacity(result.count + wantedPIDs.count)
+        for chunk in Array(wantedIDs).chunked(every: Self.fetchChunkSize) {
+            let descriptor = FetchDescriptor<FaceObservation>(predicate: #Predicate<FaceObservation> { chunk.contains($0.id) })
+            let found: [FaceObservation] = (try? context.fetch(descriptor)) ?? []
+            for model in found where wantedPIDs.contains(model.persistentModelID) {
+                result[model.persistentModelID] = model
             }
         }
         return result
@@ -529,11 +614,6 @@ final class LibraryStore {
             if let model = context.model(for: id) as? PlaceOverride { result[id] = model }
         }
         return result
-    }
-
-    private func mediaItem(withID mediaID: String) -> MediaItem? {
-        if let item = itemsByID[mediaID] { return item }
-        return itemByPID.values.first { $0.id == mediaID }
     }
 
     // MARK: - Rebuilding the public lists
@@ -592,28 +672,74 @@ final class LibraryStore {
         }
     }
 
+    /// Sorts by face string id, then persistent id. The keys are read into one
+    /// array first; read from a comparator they would be looked up again on
+    /// every comparison.
     private func rebuildFaces() {
-        let sorted = faceByPID.sorted { lhs, rhs in
-            let left = faceIDs[lhs.key] ?? ""
-            let right = faceIDs[rhs.key] ?? ""
-            if left != right { return left < right }
-            return lhs.key < rhs.key
-        }.map(\.value)
+        var keyed: [(id: String, pid: PersistentIdentifier, face: FaceObservation)] = []
+        keyed.reserveCapacity(faceByPID.count)
+        for (pid, face) in faceByPID {
+            keyed.append((id: faceIDs[pid] ?? "", pid: pid, face: face))
+        }
+        keyed.sort { lhs, rhs in
+            if lhs.id != rhs.id { return lhs.id < rhs.id }
+            return lhs.pid < rhs.pid
+        }
+        let sorted = keyed.map(\.face)
         if !faces.elementsEqual(sorted, by: { $0 === $1 }) { faces = sorted }
     }
 
-    private func refetchPlaces() {
+    /// Refetches the place list itself (a few thousand rows, sorted by id) and
+    /// keeps `placeHash`/`placeSum` incremental. With `rehash` given, only the
+    /// places the applied batch can have changed are hashed again; without it
+    /// (a full refresh) every place is.
+    private func refetchPlaces(rehash touched: Touched? = nil) {
         guard let context else { return }
-        let next = (try? context.fetch(FetchDescriptor<Place>(sortBy: [SortDescriptor(\.id)]))) ?? []
+        let descriptor = FetchDescriptor<Place>(sortBy: [SortDescriptor(\Place.id)])
+        let next: [Place] = (try? context.fetch(descriptor)) ?? []
         if !places.elementsEqual(next, by: { $0 === $1 }) { places = next }
-        var sum = 0
-        for place in next { sum &+= Self.hash(of: place) }
-        placeSum = sum
+
+        var known = Set<PersistentIdentifier>()
+        known.reserveCapacity(next.count)
+        for place in next { known.insert(place.persistentModelID) }
+        // A place that left the list leaves the hash and the sum, so a removed
+        // place still moves the signature.
+        for pid in placeHash.keys where !known.contains(pid) {
+            if let old = placeHash.removeValue(forKey: pid) { placeSum &-= old }
+        }
+
+        if let touched {
+            guard touched.places else { return }
+            // A deleted place is already gone from `next` above; with no
+            // place named and no override removed there is nothing to rehash.
+            let rehashAll = touched.allPlaces
+            for place in next {
+                let pid = place.persistentModelID
+                if !rehashAll,
+                   !touched.changedPlacePIDs.contains(pid),
+                   !touched.changedPlaceIDs.contains(place.id) { continue }
+                if let old = placeHash[pid] { placeSum &-= old }
+                let hash = Self.hash(of: place)
+                placeHash[pid] = hash
+                placeSum &+= hash
+            }
+        } else {
+            placeHash = [:]
+            placeSum = 0
+            for place in next {
+                let hash = Self.hash(of: place)
+                placeHash[place.persistentModelID] = hash
+                placeSum &+= hash
+            }
+        }
     }
 
     // MARK: - Revision
 
-    private struct Measures: Equatable {
+    /// The per-list sums and counts `revision` is computed from. Not private:
+    /// tests compare two stores' signatures, because `revision` values cannot
+    /// be compared across stores (each counts its own bumps).
+    struct Measures: Equatable {
         var itemSum = 0
         var itemCount = 0
         var faceSum = 0
@@ -622,8 +748,10 @@ final class LibraryStore {
         var placeCount = 0
     }
 
-    private func bumpRevisionIfNeeded() {
-        let next = Measures(
+    /// The signature the store reports right now. The only reader outside the
+    /// store is the test suite.
+    var measures: Measures {
+        Measures(
             itemSum: itemSum,
             itemCount: itemByPID.count,
             faceSum: faceSum,
@@ -631,6 +759,10 @@ final class LibraryStore {
             placeSum: placeSum,
             placeCount: places.count
         )
+    }
+
+    private func bumpRevisionIfNeeded() {
+        let next = measures
         guard next != applied else { return }
         applied = next
         revision &+= 1

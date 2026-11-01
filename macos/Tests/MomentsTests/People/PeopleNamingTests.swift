@@ -146,11 +146,15 @@ final class PeopleNamingTests: XCTestCase {
         let chosen = face("chosen", personID: "alice")
         chosen.quality = 0.2
         XCTAssertEqual(PeopleFacePicker.cover([sharp, chosen])?.id, "sharp")
+        let initialSummary = PeoplePersonFacesSnapshot(faces: [sharp, chosen], keyFaceID: nil)
+        XCTAssertEqual(initialSummary.cover?.id, "sharp")
+        XCTAssertEqual(initialSummary.photoCount, 2)
 
         PeopleStoreActions.setKeyFace("chosen", for: "alice", defaults: defaults)
         let key = PeopleStoreActions.keyFaceID(for: "alice", defaults: defaults)
         XCTAssertEqual(key, "chosen")
         XCTAssertEqual(PeopleFacePicker.cover([sharp, chosen], keyFaceID: key)?.id, "chosen")
+        XCTAssertEqual(PeoplePersonFacesSnapshot(faces: [sharp, chosen], keyFaceID: key).cover?.id, "chosen")
         // A key face that no longer belongs to the person falls back.
         XCTAssertEqual(PeopleFacePicker.cover([sharp], keyFaceID: key)?.id, "sharp")
 

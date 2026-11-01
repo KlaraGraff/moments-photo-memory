@@ -117,3 +117,27 @@ private final class CountingGeocoder: FootprintsGeocoder {
         return result
     }
 }
+
+extension FootprintsTests {
+    func testMapLODPolicyCapsAndLevels() {
+        XCTAssertEqual(MapLODPolicy.level(latitudeDelta: 90), .globe)
+        XCTAssertEqual(MapLODPolicy.level(latitudeDelta: 20), .regional)
+        XCTAssertEqual(MapLODPolicy.level(latitudeDelta: 5), .city)
+        XCTAssertEqual(MapLODPolicy.level(latitudeDelta: 1), .local)
+        XCTAssertEqual(MapLODPolicy.globeCap, 120)
+    }
+
+    func testMapLODPolicySamplesBroadCoverageWithinCap() {
+        let clusters = (0..<500).map { index in
+            PlaceCluster(
+                id: "cluster-\(index)", level: .city, stopIDs: ["photo-\(index)"],
+                center: GeoPoint(latitude: -80 + Double(index % 100), longitude: -170 + Double(index / 3)),
+                firstDate: origin.addingTimeInterval(Double(index))
+            )
+        }
+        let result = MapLODPolicy.aggregate(clusters, level: .globe)
+        XCTAssertLessThanOrEqual(result.count, MapLODPolicy.globeCap)
+        XCTAssertGreaterThan(Set(result.flatMap(\.stopIDs)).count, result.count)
+        XCTAssertGreaterThan(Set(result.compactMap { $0.center }.map { Int($0.latitude / 5) }).count, 1)
+    }
+}

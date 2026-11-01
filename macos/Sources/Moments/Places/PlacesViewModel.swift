@@ -4,7 +4,7 @@ import MomentsCore
 
 /// Pure data preparation for the Places screen. Keeping clustering and selection
 /// decisions here makes them deterministic and testable without rendering a map.
-struct PlacesViewModel {
+struct PlacesViewModel: Sendable {
     struct SpanThresholds: Equatable, Sendable {
         var city: Double = 2.0
         var area: Double = 0.35
@@ -15,7 +15,7 @@ struct PlacesViewModel {
         }
     }
 
-    struct Snapshot {
+    struct Snapshot: Sendable {
         let level: PlaceLevel
         let stops: [PhotoStop]
         let clusters: [PlaceCluster]
@@ -82,6 +82,37 @@ struct PlacesViewModel {
         // Undated photos are still clustered, but have no place in the route order.
         let datedIDs = Set(items.lazy.filter { $0.effectiveCaptureDate != nil }.map(\.id))
         let routeStops = stops.filter { datedIDs.contains($0.id) }
+        let routeSegments: [RouteSegment]
+        switch level {
+        case .city:
+            routeSegments = RouteBuilder(stops: routeStops, clusterer: clusterer).overview(level: .city)
+        case .area:
+            routeSegments = RouteBuilder(stops: routeStops, clusterer: clusterer).local(level: .area)
+        case .spot:
+            routeSegments = RouteBuilder(stops: routeStops, clusterer: clusterer).local(level: .spot)
+        }
+        let coordinateByID: [String: GeoPoint] = Dictionary(
+            uniqueKeysWithValues: stops.compactMap { stop in
+                guard let coordinate = stop.coordinate else { return nil }
+                return (stop.id, coordinate)
+            }
+        )
+        return Snapshot(
+            level: level,
+            stops: stops,
+            clusters: clusters,
+            routeSegments: routeSegments,
+            coordinateByID: coordinateByID
+        )
+    }
+
+    /// Builds the map read model from detached photo stops. Large-library
+    /// screens should pass the shared projection here instead of traversing
+    /// SwiftData relationships on the main actor.
+    func snapshot(stops: [PhotoStop], latitudeDelta: Double) -> Snapshot {
+        let level = level(for: latitudeDelta)
+        let clusters = clusterer.clusters(for: stops, level: level)
+        let routeStops = stops.filter { $0.date != .distantPast }
         let routeSegments: [RouteSegment]
         switch level {
         case .city:

@@ -30,6 +30,7 @@ struct ContentView: View {
     @Environment(SelectionModel.self) private var shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(ImportController.self) private var importController
+    @Environment(LibraryProjectionStore.self) private var projectionStore
     @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
     /// "My groups" only; chapters live on the Chapters page, and stack
     /// records are not groups anyone made.
@@ -262,6 +263,7 @@ struct ContentView: View {
             }
             switch destination {
             case .library: selection = .library
+            case .people: selection = .people
             case .map: selection = .map
             case .timeline: selection = .timeline
             case .trips: selection = .trips
@@ -312,15 +314,10 @@ struct ContentView: View {
         ScrollProbe.count("sidebar.groupCountsKey")
         #endif
         var hasher = Hasher()
-        for item in items {
-            hasher.combine(item.id)
-            hasher.combine(item.updatedAt)
-            hasher.combine(item.captureDate)
-            hasher.combine(item.kindRaw)
-            hasher.combine(item.isScreenshot)
-            hasher.combine(item.tripID)
-            hasher.combine(item.place?.id)
-        }
+        // The projection revision changes once after a complete snapshot is
+        // published. Rehashing every MediaItem and faulting every Place here
+        // on each sidebar switch made a 20k library block navigation.
+        hasher.combine(projectionStore.revision)
         // Place renames reach rules through overrides.
         for override in placeOverrides {
             hasher.combine(override.id)

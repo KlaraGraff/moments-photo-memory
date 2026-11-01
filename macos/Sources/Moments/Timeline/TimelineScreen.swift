@@ -14,44 +14,35 @@ struct TimelineScreen: View {
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw == "stack" }) private var stackRecords: [UserGroup]
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks
+    @Environment(LibraryProjectionStore.self) private var projectionStore
     /// Rebuilt only when the inputs change, not on every selection change or render.
     @State private var months: [TimelineMonth] = []
     @State private var itemByID: [String: MediaItem] = [:]
     @State private var tripsByItemID: [String: TripLink] = [:]
     @State private var viewerOrder: [String] = []
     @State private var isBuilt = false
+    @State private var loadedPhotoLimit = 120
 
     private var visibleItems: [MediaItem] {
-        items.filter { selection.isVisible($0.id) }
+        let candidates = items.filter { selection.isVisible($0.id) }
+        guard candidates.count > loadedPhotoLimit else { return candidates }
+        let byID = Dictionary(candidates.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let orderedIDs = projectionStore.projection.photos.reversed().map(\.id)
+        let selected = orderedIDs.compactMap { byID[$0] }
+        return Array(selected.prefix(loadedPhotoLimit))
     }
 
+    private var visibleItemCount: Int { items.reduce(into: 0) { if selection.isVisible($1.id) { $0 += 1 } } }
+
     private var inputKey: Int {
+        // Page invalidation is revision based. Avoid hashing every SwiftData
+        // model and relationship on each sidebar switch; the loaded window is
+        // intentionally small and grows only as the person scrolls.
         var hasher = Hasher()
-        for item in visibleItems {
-            hasher.combine(item.id)
-            hasher.combine(item.effectiveCaptureDate)
-            hasher.combine(item.localDayKey)
-            hasher.combine(item.latitude)
-            hasher.combine(item.longitude)
-            for memory in item.memories {
-                hasher.combine(memory.text)
-                hasher.combine(memory.updatedAt)
-            }
-        }
-        for trip in trips {
-            hasher.combine(trip.id)
-            hasher.combine(trip.effectiveName)
-            hasher.combine(trip.items.count)
-        }
-        for place in places {
-            hasher.combine(place.id)
-            hasher.combine(PlaceDisplayName.resolvedName(of: place))
-        }
+        hasher.combine(projectionStore.revision)
+        hasher.combine(loadedPhotoLimit)
+        hasher.combine(selection.visibleItemIDs?.count ?? -1)
         hasher.combine(stacks.generation)
-        for record in stackRecords {
-            hasher.combine(record.id)
-            hasher.combine(record.rulesData)
-        }
         return hasher.finalize()
     }
 
@@ -89,7 +80,27 @@ struct TimelineScreen: View {
         // The page's name lives in the window's title bar, not in the page.
         .navigationTitle(String(localized: "Timeline"))
         .navigationSubtitle(isBuilt && dayCount > 0 ? String(localized: "\(dayCount) days") : "")
-        .task(id: inputKey) { rebuild() }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
+        .task(id: inputKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            defer {
+                if Task.isCancelled { PageProbe.cancellationObserved(token: probeToken) }
+            }
+            #endif
+            // Give the shell one run-loop turn before the bounded first batch
+            // is grouped. Navigation must never wait for the entire document.
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            rebuild()
+            #if DEBUG
+            PageProbe.contentReady(token: probeToken)
+            #endif
+        }
         .compactLibraryFilters()
     }
 
@@ -118,6 +129,12 @@ struct TimelineScreen: View {
                         TimelineMonthHeader(month: month)
                     }
                 }
+                if loadedPhotoLimit < visibleItemCount {
+                    ProgressView(String(localized: "Loading more memories…"))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 18)
+                        .onAppear { loadedPhotoLimit += 120 }
+                }
             }
             .padding(.horizontal, PaperMetrics.screenInset)
             .padding(.top, PaperMetrics.screenTopInset)
@@ -128,8 +145,9 @@ struct TimelineScreen: View {
     }
 
     private func rebuild() {
+        let projection = projectionStore.projection
         let snapshots = visibleItems.map { item in
-            TimelineItemSnapshot(item: item, placeHint: nearestPlaceName(for: item))
+            TimelineItemSnapshot(item: item, placeHint: projection.photoByID[item.id]?.placeName ?? nearestPlaceName(for: item))
         }
         // No trips given: every photo lands in one stream, grouped by day and place.
         let document = TimelineBuilder(calendar: Calendar.autoupdatingCurrent).build(items: snapshots, trips: [])
@@ -169,17 +187,15 @@ struct TimelineScreen: View {
     }
 
     private func nearestPlaceName(for item: MediaItem) -> String? {
+        // Imported items already carry their resolved place (including this
+        // person's override). Use it directly; scanning every Place for every
+        // item makes a 5,000-photo timeline quadratic before it can render.
+        if let name = item.effectivePlaceName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return name
+        }
         guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
         let coordinate = GeoPoint(latitude: latitude, longitude: longitude)
-        let nearest = places.compactMap { place -> (name: String, distance: Double)? in
-            guard let placeLatitude = place.latitude, let placeLongitude = place.longitude,
-                  let name = PlaceDisplayName.resolvedName(of: place) else { return nil }
-            let distance = coordinate.distance(to: GeoPoint(latitude: placeLatitude, longitude: placeLongitude))
-            return (name, distance)
-        }
-        .min { $0.distance < $1.distance }
-        guard let nearest, nearest.distance <= 100_000 else { return nil }
-        return nearest.name
+        return projectionStore.projection.placeIndex.nearestName(to: coordinate, within: 100_000)
     }
 }
 

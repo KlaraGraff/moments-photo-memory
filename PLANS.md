@@ -4,13 +4,20 @@ Updated by the coordinator. This is the recovery point for a new thread.
 
 ## In progress
 
-- **P102 measurement harness** — inspect the failed 5,000-item run, make the probe finish reliably, and collect complete 5,000/20,000 reports. Scope: PR #102 files only until the harness is accepted.
-- **Performance baseline** — after P102 is reliable, rank the slowest shared mechanisms before assigning fixes. No optimization is selected from a guess.
+- **P102 measurement harness** — inspect the failed 5,000-item run, make the probe finish reliably, and collect complete 5,000/20,000 reports. Scope: the probe and its test until the harness is accepted. Hosted run `41214019387` completed all 14 phases in 29m, but failed because People did not settle within its 45 s phase timeout and two place-to-map UI tests failed. The independent total-deadline bug was fixed; the latest local People cache fix is awaiting hosted verification.
+- **Performance backend redesign** — replace per-screen SwiftData-derived work with a shared background projection. P1/P2 are in PR #103; screen migration is partial and needs independent review plus hosted probe evidence.
+- **Performance baseline** — use completed probe evidence to rank the slowest shared mechanisms before assigning the next non-overlapping packages. No optimization is selected from a guess.
 - **People prominence research** — public Apple documentation plus read-only observation on the owner's Mac. Personal screenshots and observations stay outside the repository.
+
+## Delegated work
+
+- probe_research — read-only audit of the incomplete hosted page probe and a reliable continuation design.
+- projection_review — read-only concurrency and data-consistency review of the shared library projection.
+- independent_reviewer — read-only review of the current cross-module performance changes, CI and privacy risks.
 
 ## Waiting for CI
 
-- None in this checkout. PR #102's latest hosted UI run failed because the probe did not finish; the failure is evidence, not a passing baseline.
+- PR #103's current remote head `cbbafdc` has a failed UI run (`41214019387`). Local commit `f4462ed` adds the People cache fix and a 50 min test deadline but is not yet on the PR; separate work is diagnosing the two place-to-map failures before the next hosted run.
 
 ## Waiting for owner
 
@@ -23,6 +30,12 @@ Updated by the coordinator. This is the recovery point for a new thread.
 - Cloned the public repository and verified `main` at PR #100's merge.
 - Verified open PRs and their latest checks with GitHub: #101 open/green, #102 draft/Linux green/macOS and UI skipped for the draft; the manual #102 UI probe failed after the People phase.
 - Added this board, `GOALS.md`, and the Codex agent role files.
+- Added the projection design and initial implementation on PR #103; local app build and tests pass.
+- Hosted 5,000-item probe run `40750890590` completed all 14 phases. Timeline, Chapters, and repeat navigation timed out, so this is diagnostic baseline evidence rather than a responsiveness pass.
+- Projection invalidation now coalesces SwiftData saves, publishes a revision for Timeline/Chapters/Map rebuilds, and resolves display names before publishing.
+- Hosted 5,000-item probe run `40754894000` on `9363f44` completed all 14 phases with no timeout; Map ready was 10.77 s and Timeline ready was 26.61 s.
+- Hosted 5,000-item probe run `41214019387` completed all 14 phases. People shell/content/thumbnail were 0.94/0.97/1.11 s but the phase hit its 45 s settle cap with 44.14 s main-thread busy time; Map was 0.59/1.63 s shell/content, Timeline 0.84/0.98 s, Chapters 1.06/4.28 s, and Library 1.01/1.17 s. The UI suite also failed two place-to-map click tests. These are diagnostic samples; the numeric responsiveness threshold remains a pending product decision.
+- Hosted 20,000-item runs `40757239709`, `40765465778`, `40775038910`, and `40787759587` all reached import, post-import work, and People, then stalled before Map. The remaining blocker is page-switch initialization on the hosted Mac; no complete 20k page report exists yet.
 
 ## Decision log
 

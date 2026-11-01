@@ -18,6 +18,7 @@ struct LibraryView: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(ImportController.self) private var importController
     @Environment(PhotoStackModel.self) private var stacks
+    @Environment(LibraryProjectionStore.self) private var projectionStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Keep the common Library query free of explicit screenshots in SwiftData.
     // The screenshot segment switches to the second descriptor without making
@@ -71,6 +72,7 @@ struct LibraryView: View {
     @State private var cachedReviewCount = 0
     @State private var showingReview = false
     @State private var cachedFilterOptions = LibraryFilterOptions()
+    @State private var loadedPhotoLimit = 36
 
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
@@ -178,20 +180,11 @@ struct LibraryView: View {
         hasher.combine(query)
         hasher.combine(state.focusedMemoryItemID)
         hasher.combine(selection.libraryScope?.itemIDs)
-        // All items, not just the visible type: the Place and Trip menus
-        // are built from both.
-        for item in allItems {
-            hasher.combine(item.id)
-            hasher.combine(item.captureDate)
-            hasher.combine(item.userCorrectedCaptureDateUTC)
-            hasher.combine(item.isScreenshot)
-            // Only read the stars while Favorites is shown; it faults a relation.
-            if typeRaw == LibraryMediaTypeFilter.favorite.rawValue { hasher.combine(item.isFavorite) }
-            hasher.combine(item.kindRaw)
-            hasher.combine(item.tripID)
-            hasher.combine(item.place?.id)
-            hasher.combine(item.updatedAt)
-        }
+        // The projection revision is the invalidation boundary for scalar
+        // photo fields. Rehashing every MediaItem and faulting every Place
+        // here made a page switch scale with the entire library.
+        hasher.combine(projectionStore.revision)
+        hasher.combine(allItems.count)
         for trip in allTrips {
             hasher.combine(trip.id)
             hasher.combine(trip.name)
@@ -247,7 +240,27 @@ struct LibraryView: View {
         .onChange(of: people.map(\.id), initial: true) { _, ids in
             if !personFilterID.isEmpty && !ids.contains(personFilterID) { personFilterID = "" }
         }
-        .task(id: groupingKey) { regroup() }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
+        .task(id: groupingKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            defer {
+                if Task.isCancelled { PageProbe.cancellationObserved(token: probeToken) }
+            }
+            #endif
+            // A new filter or projection generation starts from the first
+            // viewport again; a previously expanded batch must not make the
+            // next navigation render hundreds of cards synchronously.
+            loadedPhotoLimit = 36
+            regroup()
+            #if DEBUG
+            if !Task.isCancelled { PageProbe.contentReady(token: probeToken) }
+            #endif
+        }
         .sheet(isPresented: $showingReview) {
             ReviewSheet()
         }
@@ -465,6 +478,16 @@ struct LibraryView: View {
                             allItemIDs: cachedUnfoldedSectionItems[section.id] ?? section.itemIDs
                         )
                     }
+                    if cachedItemByID.count < cachedVisibleCount {
+                        ProgressView(String(localized: "Loading more photos…"))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 18)
+                            .onAppear {
+                                guard loadedPhotoLimit < cachedVisibleCount else { return }
+                                loadedPhotoLimit += 36
+                                regroup()
+                            }
+                    }
                 }
                 .reportsLibraryGridColumns(to: state)
                 .scrollTargetLayout()
@@ -607,10 +630,16 @@ struct LibraryView: View {
             preservingEditingItemID: state.focusedMemoryItemID,
             personIDsByMediaID: personIndex
         )
-        cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
+        // Keep the count and selection scope complete, but build only the first
+        // viewport-sized batch for the initial frame. More cells are appended
+        // by the sentinel below; this avoids asking SwiftUI to lay out the
+        // entire library during navigation.
+        let orderedVisible = visible.sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) > ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
+        let initialVisible = Array(orderedVisible.prefix(max(36, loadedPhotoLimit)))
+        cachedItemByID = Dictionary(uniqueKeysWithValues: initialVisible.map { ($0.id, $0) })
         // A burst is one cell showing its cover, and counts as one photo.
         let stackIndex = stacks.update(items: allItems, decisions: stackRecords)
-        let unfolded = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
+        let unfolded = LibraryFilterEngine.sections(forVisibleItems: initialVisible, by: grouping, sortOrder: .newestFirst)
         let folded = LibraryFilterEngine.folding(unfolded, with: stackIndex)
         cachedSections = folded.sections
         cachedUnfoldedSectionItems = Dictionary(unfolded.map { ($0.id, $0.itemIDs) }, uniquingKeysWith: { first, _ in first })
@@ -752,6 +781,14 @@ private struct LibrarySectionView: View {
 
     @Environment(SelectionModel.self) private var selection
 
+    private var thumbnailProbeToken: UInt64? {
+        #if DEBUG
+        PageProbe.phaseToken
+        #else
+        nil
+        #endif
+    }
+
     private var sectionTripID: String? {
         section.id.hasPrefix("trip:") ? String(section.id.dropFirst("trip:".count)) : nil
     }
@@ -819,7 +856,7 @@ private struct LibrarySectionView: View {
 
         LazyVGrid(columns: gridColumns, alignment: .leading, spacing: size.rowSpacing) {
             ForEach(items, id: \.id) { item in
-                LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact, stackCount: stackCounts[item.id] ?? 1)
+                LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact, stackCount: stackCounts[item.id] ?? 1, probeToken: thumbnailProbeToken)
             }
         }
         .padding(.bottom, LibrarySectionView.sectionSpacing)
@@ -875,6 +912,7 @@ private struct LibraryPhotoCell: View {
     var isCompact = false
     /// More than one: the cell is a burst, shown as a stack with its cover.
     var stackCount = 1
+    let probeToken: UInt64?
     @State private var isHovering = false
 
     private var showsMemoryEditor: Bool {
@@ -897,12 +935,12 @@ private struct LibraryPhotoCell: View {
                     click()
                 } label: {
                     if isCompact {
-                        ThumbnailView(item: item, width: 280, height: 280)
+                        ThumbnailView(item: item, width: 280, height: 280, probeToken: probeToken)
                             .aspectRatio(1, contentMode: .fit)
                             .stackedPaper(stackCount, isCompact: true, cornerRadius: 10)
                             .overlay { LibraryPhotoSelectionFrame(itemID: item.id, cornerRadius: 10) }
                     } else {
-                        ThumbnailView(item: item, width: 560, height: 420)
+                        ThumbnailView(item: item, width: 560, height: 420, probeToken: probeToken)
                             .aspectRatio(1.33, contentMode: .fit)
                             .padding(5)
                             // A print's white mat, lifted by a warm two-layer shadow.

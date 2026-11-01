@@ -148,15 +148,27 @@ public struct PlaceClusterer: Sendable {
     private func boundedClusters(_ stops: [PhotoStop], level: PlaceLevel) -> [[PhotoStop]] {
         guard !stops.isEmpty else { return [] }
         let radius = radiusMeters(for: level)
+        let bucketSize = max(1, chordDistance(for: radius))
         var clusters: [RunningPlaceCluster] = []
         clusters.reserveCapacity(stops.count)
+        var buckets: [SpatialBucket: [Int]] = [:]
 
         for stop in stops {
             guard let coordinate = stop.coordinate else { continue }
 
             var nearestIndex: Int?
             var nearestDistance = Double.greatestFiniteMagnitude
-            for index in clusters.indices {
+            let bucket = SpatialBucket(SpatialVector(coordinate), size: bucketSize)
+            let candidateIndices = Set(
+                (-1...1).flatMap { dx in
+                    (-1...1).flatMap { dy in
+                        (-1...1).compactMap { dz in
+                            buckets[SpatialBucket(x: bucket.x + dx, y: bucket.y + dy, z: bucket.z + dz)]
+                        }
+                    }
+                }.flatMap { $0 }
+            )
+            for index in candidateIndices.sorted() {
                 let cluster = clusters[index]
                 if level == .spot {
                     let gap = abs(stop.date.timeIntervalSince(cluster.lastDate))
@@ -172,9 +184,17 @@ public struct PlaceClusterer: Sendable {
             }
 
             if let nearestIndex {
+                let oldBucket = SpatialBucket(clusters[nearestIndex].centerVector, size: bucketSize)
                 clusters[nearestIndex].append(stop, coordinate: coordinate)
+                let newBucket = SpatialBucket(clusters[nearestIndex].centerVector, size: bucketSize)
+                if oldBucket != newBucket {
+                    buckets[oldBucket]?.removeAll { $0 == nearestIndex }
+                    buckets[newBucket, default: []].append(nearestIndex)
+                }
             } else {
+                let index = clusters.count
                 clusters.append(RunningPlaceCluster(firstStop: stop, coordinate: coordinate))
+                buckets[bucket, default: []].append(index)
             }
         }
 
@@ -191,6 +211,14 @@ public struct PlaceClusterer: Sendable {
         }
     }
 
+    /// Chord distance is monotonic with great-circle distance. A cube of this
+    /// size is a conservative index: any cluster within the requested radius
+    /// is in this bucket or one of its 26 neighbours.
+    private func chordDistance(for surfaceDistance: Double) -> Double {
+        let earthRadius = 6_371_000.0
+        return 2 * earthRadius * sin(min(.pi, max(0, surfaceDistance) / (2 * earthRadius)))
+    }
+
     private static func photoOrder(_ lhs: PhotoStop, _ rhs: PhotoStop) -> Bool {
         if lhs.date != rhs.date { return lhs.date < rhs.date }
         return lhs.id < rhs.id
@@ -199,6 +227,49 @@ public struct PlaceClusterer: Sendable {
     private static func stableComponentKey(_ id: String) -> String {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "unnamed" : trimmed
+    }
+}
+
+private struct SpatialVector: Hashable {
+    let x: Double
+    let y: Double
+    let z: Double
+
+    init(_ point: GeoPoint) {
+        let radians = Double.pi / 180
+        let latitude = point.latitude * radians
+        let longitude = point.longitude * radians
+        let cosLatitude = cos(latitude)
+        let earthRadius = 6_371_000.0
+        self.init(
+            x: earthRadius * cosLatitude * cos(longitude),
+            y: earthRadius * cosLatitude * sin(longitude),
+            z: earthRadius * sin(latitude)
+        )
+    }
+
+    init(x: Double, y: Double, z: Double) {
+        self.x = x
+        self.y = y
+        self.z = z
+    }
+}
+
+private struct SpatialBucket: Hashable {
+    let x: Int
+    let y: Int
+    let z: Int
+
+    init(x: Int, y: Int, z: Int) {
+        self.x = x
+        self.y = y
+        self.z = z
+    }
+
+    init(_ vector: SpatialVector, size: Double) {
+        x = Int(floor(vector.x / size))
+        y = Int(floor(vector.y / size))
+        z = Int(floor(vector.z / size))
     }
 }
 
@@ -211,6 +282,10 @@ private struct RunningPlaceCluster {
     private var vectorX: Double
     private var vectorY: Double
     private var vectorZ: Double
+
+    var centerVector: SpatialVector {
+        SpatialVector(center)
+    }
 
     init(firstStop: PhotoStop, coordinate: GeoPoint) {
         self.stops = [firstStop]

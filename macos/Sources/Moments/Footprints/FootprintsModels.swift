@@ -142,11 +142,17 @@ struct FootprintsCountrySummary: Identifiable, Equatable {
 struct FootprintsInput: Equatable, Sendable {
     let stops: [PhotoStop]
 
-    var signature: String {
-        stops.map { stop in
-            let coordinate = stop.coordinate.map { "\($0.latitude),\($0.longitude)" } ?? "-"
-            return "\(stop.id)|\(stop.date.timeIntervalSince1970)|\(coordinate)"
-        }.joined(separator: ";")
+    /// A stable, compact task key. Building a long string for every stop on
+    /// every Map body evaluation made camera changes rescan the whole library.
+    var signature: Int {
+        var hasher = Hasher()
+        for stop in stops {
+            hasher.combine(stop.id)
+            hasher.combine(stop.date)
+            hasher.combine(stop.coordinate?.latitude)
+            hasher.combine(stop.coordinate?.longitude)
+        }
+        return hasher.finalize()
     }
 }
 

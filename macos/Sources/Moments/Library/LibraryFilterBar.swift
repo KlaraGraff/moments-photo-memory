@@ -9,7 +9,7 @@ struct LibraryFilterChips: View {
     var showsScope = false
 
     @Environment(SelectionModel.self) private var selection
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var allItems: [MediaItem]
+    @Environment(LibraryProjectionStore.self) private var projectionStore
     @Query(sort: \Person.name) private var people: [Person]
     @Query(sort: \Trip.id) private var allTrips: [Trip]
     @Query(sort: \Place.id) private var allPlaces: [Place]
@@ -80,7 +80,13 @@ struct LibraryFilterChips: View {
         }
         .onAppear {
             // A place filter saved by id before places were listed by name.
-            if let migrated = PlaceNames.optionID(forLegacy: placeFilterID, items: allItems) { placeFilterID = migrated }
+            guard !placeFilterID.isEmpty, !placeFilterID.hasPrefix(PlaceNames.optionPrefix) else { return }
+            if placeFilterID.hasPrefix("override:") {
+                let key = PlaceNames.key(String(placeFilterID.dropFirst("override:".count)))
+                if !key.isEmpty { placeFilterID = PlaceNames.optionPrefix + key }
+            } else if let name = projectionStore.projection.places.first(where: { $0.id == placeFilterID })?.name {
+                placeFilterID = PlaceNames.optionPrefix + PlaceNames.key(name)
+            }
         }
     }
 
@@ -89,13 +95,7 @@ struct LibraryFilterChips: View {
 
     private var optionsKey: Int {
         var hasher = Hasher()
-        for item in allItems {
-            hasher.combine(item.id)
-            hasher.combine(item.tripID)
-            hasher.combine(item.place?.id)
-            hasher.combine(item.placeOverrideName)
-            hasher.combine(item.updatedAt)
-        }
+        hasher.combine(projectionStore.revision)
         for trip in allTrips {
             hasher.combine(trip.id)
             hasher.combine(trip.name)
@@ -113,18 +113,23 @@ struct LibraryFilterChips: View {
     }
 
     private func buildOptions() -> Options {
+        var placeCounts: [String: (name: String, count: Int)] = [:]
+        for photo in projectionStore.projection.photos {
+            guard let name = photo.placeName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { continue }
+            let key = PlaceNames.key(name)
+            guard !key.isEmpty else { continue }
+            let current = placeCounts[key]
+            placeCounts[key] = (current?.name ?? name, (current?.count ?? 0) + 1)
+        }
         var tripNames: [String: String] = [:]
-        for item in allItems {
-            if let tripID = item.tripID, tripNames[tripID] == nil {
-                tripNames[tripID] = item.trip?.effectiveName ?? tripID
-            }
+        for trip in allTrips {
+            tripNames[trip.id] = trip.effectiveName
         }
         return Options(
-            // One row per name: unnamed spots are listed under the area or
-            // city that names them, places with the same name are one row,
-            // and the filter matches all of them.
-            places: PlaceNames.options(for: allItems),
-            trips: tripNames.keys.sorted(),
+            places: placeCounts.map { key, value in
+                LibraryPlaceOption(id: PlaceNames.optionPrefix + key, name: value.name)
+            }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending },
+            trips: projectionStore.projection.photos.compactMap(\.tripID).reduce(into: Set<String>()) { $0.insert($1) }.sorted(),
             tripNames: tripNames
         )
     }
@@ -167,7 +172,7 @@ struct LibraryFilterChips: View {
     /// Days with photos, for the dots in the date picker.
     private var photoDays: Set<Date> {
         let calendar = Calendar.current
-        return Set(allItems.compactMap { $0.effectiveCaptureDate.map(calendar.startOfDay(for:)) })
+        return Set(projectionStore.projection.photos.compactMap { $0.captureDate.map(calendar.startOfDay(for:)) })
     }
 
     private var hasActiveFilters: Bool {

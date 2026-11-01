@@ -11,10 +11,10 @@ import MomentsCore
 /// is a globe with the visited countries; zoomed in it shows places and the
 /// routes between them. Pins are the photos themselves, like Apple Photos.
 struct MapScreen: View {
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }, sort: \MediaItem.captureDate) private var items: [MediaItem]
-    @Query private var places: [Place]
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks
+    @Environment(LibraryProjectionStore.self) private var projectionStore
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var cameraPosition = MapCameraPosition.camera(
@@ -45,6 +45,13 @@ struct MapScreen: View {
     /// Clustering and routes are rebuilt only when items, the Library filter
     /// or the zoom level change, not on every render or selection change.
     @State private var cachedSnapshot: PlacesViewModel.Snapshot?
+    /// Nearest-place lookup is O(clusters × places); cache it before MapKit
+    /// asks for annotation labels during every graph update.
+    @State private var cachedClusterDisplayNames: [String: String] = [:]
+    /// The LOD projection is part of the snapshot build. Keeping it in state
+    /// avoids aggregating every time selection, the map panel, or MapKit asks
+    /// SwiftUI to reevaluate the body.
+    @State private var cachedDisplayedClusters: [PlaceCluster] = []
     @State private var itemsByID: [String: MediaItem] = [:]
     @State private var world = MapWorldState()
     /// Created once per screen; it reads its cache file from disk.
@@ -55,6 +62,9 @@ struct MapScreen: View {
     /// Above this camera altitude the map is a globe: city pins, countries and
     /// the whole trip's route. Below it, places and local routes.
     static let worldDistanceMetres = 3_000_000.0
+    /// At very large scale the first globe frame uses projection-backed region
+    /// counts. Detailed clustering and routes are rebuilt after zooming in.
+    private static let coarseWorldThreshold = 10_000
 
     private var isWorldView: Bool { cameraDistance >= Self.worldDistanceMetres }
 
@@ -62,21 +72,34 @@ struct MapScreen: View {
         cachedSnapshot ?? PlacesViewModel.Snapshot(level: .city, stops: [], clusters: [], routeSegments: [], coordinateByID: [:])
     }
 
+    /// A whole-world map cannot usefully show every city pin. Aggregate the
+    /// city clusters into coarse regional count pins so MapKit lays out a few
+    /// dozen views instead of thousands; zooming in recomputes the detailed
+    /// city/area/spot clusters.
+    private var displayedClusters: [PlaceCluster] {
+        cachedDisplayedClusters
+    }
+
     private var snapshotKey: Int {
         var hasher = Hasher()
-        for item in items {
-            hasher.combine(item.id)
-            hasher.combine(item.effectiveCaptureDate)
-            hasher.combine(item.latitude)
-            hasher.combine(item.longitude)
-        }
-        hasher.combine(selection.visibleItemIDs)
+        hasher.combine(projectionStore.revision)
+        hasher.combine(projectionStore.projection.mapStops.count)
+        for id in selection.visibleItemIDs?.sorted() ?? [] { hasher.combine(id) }
         hasher.combine(viewModel.level(for: latitudeDelta))
         return hasher.finalize()
     }
 
+    private var worldInputKey: Int {
+        var hasher = Hasher()
+        hasher.combine(projectionStore.revision)
+        for id in selection.visibleItemIDs?.sorted() ?? [] { hasher.combine(id) }
+        return hasher.finalize()
+    }
+
     private var worldInput: FootprintsInput {
-        FootprintsCalculator.input(from: items, visibleItemIDs: selection.visibleItemIDs)
+        let visible = selection.visibleItemIDs
+        let stops = projectionStore.projection.mapStops.filter { visible?.contains($0.id) ?? true }
+        return FootprintsInput(stops: stops)
     }
 
     private var selectedCluster: PlaceCluster? {
@@ -115,20 +138,59 @@ struct MapScreen: View {
         mapArea
         .compactLibraryFilters()
         .navigationTitle("Map")
-        .task(id: snapshotKey) {
-            itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            cachedSnapshot = viewModel.snapshot(
-                items: items,
-                visibleItemIDs: selection.visibleItemIDs,
-                latitudeDelta: latitudeDelta
-            )
-            // "Show on Map" from another screen: fly there once the pins exist.
-            if let requested = selection.mapFocusRequest {
-                selection.mapFocusRequest = nil
-                focus(on: requested)
-            }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
         }
-        .task(id: currentWorldInput.signature) {
+        #endif
+        .task(id: snapshotKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            defer {
+                if Task.isCancelled { PageProbe.cancellationObserved(token: probeToken) }
+            }
+            #endif
+            let stops = currentWorldInput.stops
+            let delta = latitudeDelta
+            let projection = projectionStore.projection
+            let coarseThreshold = Self.coarseWorldThreshold
+            let built = await Task.detached(priority: .utility) {
+                let snapshot: PlacesViewModel.Snapshot
+                // A globe never needs city clustering or routes. Build one
+                // cheap spatial seed first; closer levels can refine it.
+                if MapLODPolicy.level(latitudeDelta: delta) == .globe {
+                    snapshot = Self.coarseWorldSnapshot(stops)
+                } else if stops.count >= coarseThreshold,
+                          delta >= viewModel.thresholds.city {
+                    snapshot = Self.coarseWorldSnapshot(stops)
+                } else {
+                    snapshot = viewModel.snapshot(stops: stops, latitudeDelta: delta)
+                }
+                let clusters = MapLODPolicy.aggregate(
+                    snapshot.clusters,
+                    level: MapLODPolicy.level(latitudeDelta: delta)
+                )
+                let names = Self.clusterDisplayNames(for: clusters, projection: projection)
+                return (snapshot: snapshot, clusters: clusters, names: names)
+            }.value
+            guard !Task.isCancelled else { return }
+            cachedClusterDisplayNames = built.names
+            cachedDisplayedClusters = built.clusters
+            cachedSnapshot = built.snapshot
+            #if DEBUG
+            PageProbe.contentReady(token: probeToken)
+            #endif
+            // A cross-page request first moves the globe to the photo, then
+            // waits for the closer snapshot before opening its real cluster.
+            if let requested = selection.mapFocusRequest { handleMapFocusRequest(requested) }
+        }
+        .task(id: worldInputKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            defer {
+                if Task.isCancelled { PageProbe.cancellationObserved(token: probeToken) }
+            }
+            #endif
             await refreshWorld(for: currentWorldInput)
         }
         .onChange(of: selection.focusedItemID) { _, focusedItemID in
@@ -137,15 +199,10 @@ struct MapScreen: View {
         // A request made while the map is already showing (e.g. from the viewer).
         .onChange(of: selection.mapFocusRequest) { _, requested in
             guard let requested else { return }
-            selection.mapFocusRequest = nil
-            focus(on: requested)
+            handleMapFocusRequest(requested)
         }
         .onChange(of: selection.selectedItemIDs) { _, selectedItemIDs in
-            guard let selectedClusterID,
-                  let cluster = snapshot.clusters.first(where: { $0.id == selectedClusterID }) else { return }
-            if selectedItemIDs.isDisjoint(with: cluster.stopIDs) {
-                self.selectedClusterID = nil
-            }
+            clearSelectedClusterIfNeeded(selectedItemIDs, in: snapshot)
         }
         .onChange(of: selection.visibleItemIDs) { _, _ in
             selectedClusterID = nil
@@ -191,7 +248,7 @@ struct MapScreen: View {
 
     private var mapView: some View {
         Map(position: $cameraPosition, interactionModes: [.pan, .zoom, .rotate, .pitch]) {
-            ForEach(snapshot.routeSegments) { segment in
+            ForEach(isWorldView ? [] : snapshot.routeSegments) { segment in
                 if let from = segment.from.center, let to = segment.to.center {
                     let coordinates = [from.coordinate, to.coordinate]
                     MapPolyline(MKGeodesicPolyline(coordinates: coordinates, count: coordinates.count))
@@ -212,10 +269,14 @@ struct MapScreen: View {
                 }
             }
 
-            ForEach(snapshot.clusters) { cluster in
+            ForEach(displayedClusters) { cluster in
                 if let center = cluster.center {
                     Annotation(coordinate: center.coordinate, anchor: .bottom) {
-                        photoPin(cluster)
+                        if isWorldView {
+                            worldPhotoPin(cluster)
+                        } else {
+                            photoPin(cluster)
+                        }
                     } label: {
                         Text(clusterDisplayName(cluster))
                     }
@@ -300,6 +361,42 @@ struct MapScreen: View {
             .shadow(color: Paper.shadow.opacity(0.28), radius: 4, y: 2)
             .scaleEffect(isSelected ? 1.08 : 1)
             .animation(Motion.animation(Motion.snap, reduceMotion: reduceMotion), value: isSelected)
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .help(clusterDisplayName(cluster))
+        .accessibilityLabel(clusterDisplayName(cluster))
+        .accessibilityValue(Text(String(localized: "\(photoCount) photos")))
+        .accessibilityIdentifier("map.marker.\(cluster.stopIDs.first ?? cluster.id)")
+    }
+
+    /// At globe scale a library can contain thousands of city clusters. A
+    /// thumbnail task for every annotation makes MapKit's first layout fight
+    /// the map itself. The count pin keeps the same selection and accessibility
+    /// contract; zooming in restores the photo pin above.
+    private func worldPhotoPin(_ cluster: PlaceCluster) -> some View {
+        let photoCount = stacks.foldedCount(cluster.stopIDs)
+        return Button {
+            pinClicked(cluster)
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "mappin.circle.fill")
+                    .font(.title2)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(Paper.accent, Color.white)
+                    .shadow(color: Paper.shadow.opacity(0.28), radius: 3, y: 1)
+                if photoCount > 1 {
+                    Text(photoCount, format: .number)
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .frame(minWidth: 16, minHeight: 16)
+                        .background(Paper.accent, in: Capsule())
+                        .overlay(Capsule().stroke(.white, lineWidth: 1))
+                        .offset(x: 8, y: -6)
+                }
+            }
+            .frame(width: 28, height: 28)
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
@@ -591,7 +688,7 @@ struct MapScreen: View {
     /// every photo that does. Each says so, and the second offers a way back.
     private var emptyState: some View {
         Group {
-            if items.contains(where: { !$0.isScreenshot && $0.latitude != nil && $0.longitude != nil }) {
+            if !projectionStore.projection.mapStops.isEmpty {
                 ContentUnavailableView {
                     Label("No photos match these filters", systemImage: "line.3.horizontal.decrease.circle")
                 } description: {
@@ -657,18 +754,104 @@ struct MapScreen: View {
         if let name = cluster.name, !name.isEmpty {
             return name
         }
-        if let center = cluster.center {
-            let nearest = places
-                .compactMap { place -> (Place, Double)? in
-                    guard let latitude = place.latitude, let longitude = place.longitude else { return nil }
-                    return (place, center.distance(to: GeoPoint(latitude: latitude, longitude: longitude)))
-                }
-                .min { $0.1 < $1.1 }
-            if let nearest, nearest.1 <= 1_500, let name = PlaceDisplayName.resolvedName(of: nearest.0) {
-                return name
+        if let stopID = cluster.stopIDs.first,
+           let name = projectionStore.projection.photoByID[stopID]?.placeName,
+           !name.isEmpty {
+            return name
+        }
+        if let cached = cachedClusterDisplayNames[cluster.id] {
+            return cached
+        }
+        // Preserve a correct label during the first render before the task
+        // has filled the cache. Normal map rendering takes the cached path.
+        return nearestPlaceName(for: cluster) ?? String(localized: "Unknown place")
+    }
+
+    private nonisolated static func clusterDisplayNames(
+        for clusters: [PlaceCluster],
+        projection: LibraryProjection
+    ) -> [String: String] {
+        var names: [String: String] = [:]
+        names.reserveCapacity(clusters.count)
+        for cluster in clusters {
+            if let name = cluster.name, !name.isEmpty {
+                names[cluster.id] = name
+            } else if let stopID = cluster.stopIDs.first,
+                      let name = projection.photoByID[stopID]?.placeName,
+                      !name.isEmpty {
+                names[cluster.id] = name
+            } else {
+                names[cluster.id] = cluster.center.flatMap {
+                    projection.placeIndex.nearestName(to: $0, within: 1_500)
+                } ?? String(localized: "Unknown place")
             }
         }
-        return String(localized: "Unknown place")
+        return names
+    }
+
+    private nonisolated static func worldClusters(from clusters: [PlaceCluster], aggregate: Bool) -> [PlaceCluster] {
+        guard aggregate else { return clusters }
+        let grid = 5.0
+        var buckets: [String: (clusters: [PlaceCluster], points: [GeoPoint])] = [:]
+        for cluster in clusters {
+            guard let center = cluster.center else { continue }
+            let key = "\(Int(floor(center.latitude / grid))),\(Int(floor(center.longitude / grid)))"
+            buckets[key, default: ([], [])].clusters.append(cluster)
+            buckets[key, default: ([], [])].points.append(center)
+        }
+        return buckets.map { key, bucket in
+            PlaceCluster(
+                id: "world:\(key)",
+                level: .city,
+                stopIDs: bucket.clusters.flatMap(\.stopIDs),
+                center: GeoPoint.centre(of: bucket.points),
+                firstDate: bucket.clusters.map(\.firstDate).min() ?? .distantPast
+            )
+        }
+        .sorted {
+            if $0.firstDate != $1.firstDate { return $0.firstDate < $1.firstDate }
+            return $0.id < $1.id
+        }
+    }
+
+    private nonisolated static func coarseWorldSnapshot(_ stops: [PhotoStop]) -> PlacesViewModel.Snapshot {
+        let grid = 5.0
+        var buckets: [String: [PhotoStop]] = [:]
+        for stop in stops {
+            guard let point = stop.coordinate else { continue }
+            let key = "\(Int(floor(point.latitude / grid))),\(Int(floor(point.longitude / grid)))"
+            buckets[key, default: []].append(stop)
+        }
+        let clusters = buckets.map { key, members in
+            PlaceCluster(
+                id: "coarse-world:\(key)",
+                level: .city,
+                stopIDs: members.map(\.id),
+                center: GeoPoint.centre(of: members.compactMap(\.coordinate)),
+                firstDate: members.map(\.date).min() ?? .distantPast
+            )
+        }.sorted {
+            if $0.firstDate != $1.firstDate { return $0.firstDate < $1.firstDate }
+            return $0.id < $1.id
+        }
+        return PlacesViewModel.Snapshot(
+            level: .city,
+            stops: stops,
+            clusters: clusters,
+            routeSegments: [],
+            coordinateByID: Dictionary(uniqueKeysWithValues: stops.compactMap { stop in
+                guard let coordinate = stop.coordinate else { return nil }
+                return (stop.id, coordinate)
+            })
+        )
+    }
+
+    private func nearestPlaceName(for cluster: PlaceCluster) -> String? {
+        guard let center = cluster.center else { return nil }
+        // The projection already owns a coarse spatial index. Scanning every
+        // SwiftData Place for every cluster made Map's first render quadratic
+        // at library scale and kept the page probe from reaching later pages.
+        return projectionStore.projection.placeIndex.nearestName(to: center, within: 1_500)
     }
 
     /// On the globe a pin flies down to its city; closer in it opens the
@@ -680,8 +863,30 @@ struct MapScreen: View {
             flyTo(center, latitudeDelta: viewModel.thresholds.city * 0.9)
             return
         }
+        loadItems(for: cluster.stopIDs)
         selectedClusterID = cluster.id
         selection.select(viewModel.selectionIDs(for: cluster), focus: cluster.stopIDs.first)
+    }
+
+    /// The map's first frame only needs immutable projection data. Materialize
+    /// SwiftData models after a person opens a place so thumbnails and viewer
+    /// actions remain available without fetching the whole library up front.
+    private func loadItems(for ids: [String]) {
+        let wanted = Set(ids)
+        guard !wanted.isEmpty else { return }
+        Task { @MainActor in
+            // A cluster can contain only a few photos while the store holds
+            // tens of thousands. Keep selection lazy by asking SwiftData for
+            // those IDs instead of materializing the whole library on the
+            // main actor.
+            let wantedIDs = Array(wanted)
+            let descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { wantedIDs.contains($0.id) })
+            let fetched = (try? modelContext.fetch(descriptor)) ?? []
+            guard !Task.isCancelled else { return }
+            for item in fetched where wanted.contains(item.id) {
+                itemsByID[item.id] = item
+            }
+        }
     }
 
     private func closePanel() {
@@ -691,6 +896,14 @@ struct MapScreen: View {
         selection.clear()
     }
 
+    private func clearSelectedClusterIfNeeded(_ selectedItemIDs: Set<String>, in snapshot: PlacesViewModel.Snapshot) {
+        guard let selectedClusterID else { return }
+        guard let cluster = snapshot.clusters.first(where: { $0.id == selectedClusterID }) else { return }
+        if selectedItemIDs.isDisjoint(with: cluster.stopIDs) {
+            self.selectedClusterID = nil
+        }
+    }
+
     /// A photo in the strip opens in the large viewer, paging through the strip.
     private func open(itemID: String) {
         lastMarkerSelection = Date()
@@ -698,13 +911,37 @@ struct MapScreen: View {
         selection.openViewer(itemID, in: selectedClusterItems.map(\.id))
     }
 
-    private func focus(on itemID: String?) {
+    private func focus(on itemID: String?, force: Bool = false) {
         // A pin clicked here is already on screen; only selections made in
         // other screens move the camera.
-        guard Date().timeIntervalSince(lastMarkerSelection) > 0.4 else { return }
+        guard force || Date().timeIntervalSince(lastMarkerSelection) > 0.4 else { return }
         guard let itemID, let coordinate = snapshot.coordinateByID[itemID] else { return }
         moveCamera(to: .region(viewModel.focusRegion(for: coordinate)), isGlobe: false)
-        selectedClusterID = snapshot.cluster(containing: itemID)?.id
+        // A globe snapshot uses synthetic LOD bucket IDs. Let the focused
+        // item select its real cluster after the camera zooms and the detailed
+        // snapshot arrives; retaining the coarse ID would be cleared as soon
+        // as the zoom level changes and the panel would never open.
+        if !isWorldView {
+            if let cluster = detailedCluster(containing: itemID) {
+                selectedClusterID = cluster.id
+                loadItems(for: cluster.stopIDs)
+            }
+        }
+    }
+
+    private func detailedCluster(containing itemID: String) -> PlaceCluster? {
+        guard let cluster = snapshot.cluster(containing: itemID),
+              !cluster.id.hasPrefix("coarse-world:") else { return nil }
+        return cluster
+    }
+
+    private func handleMapFocusRequest(_ itemID: String) {
+        focus(on: itemID, force: true)
+        // A globe snapshot may contain the coordinate but only a coarse
+        // synthetic cluster. Keep the request until the detailed cluster is
+        // available so the next snapshot can load its photos and open panel.
+        guard !isWorldView, detailedCluster(containing: itemID) != nil else { return }
+        if selection.mapFocusRequest == itemID { selection.mapFocusRequest = nil }
     }
 
     private func fitAll() {
@@ -751,7 +988,10 @@ struct MapScreen: View {
 
     @MainActor
     private func refreshWorld(for input: FootprintsInput) async {
-        let snapshot = FootprintsCalculator.snapshot(for: input)
+        let snapshot = await Task.detached(priority: .utility) {
+            FootprintsCalculator.snapshot(for: input)
+        }.value
+        guard !Task.isCancelled else { return }
         let previousTarget = world.snapshot.cameraTarget
         world = MapWorldState(
             snapshot: snapshot,
@@ -880,5 +1120,61 @@ private struct AnyLabelStyle: LabelStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         make(configuration)
+    }
+}
+
+/// Deterministic annotation limits for each map scale. The map intentionally
+/// aggregates at broad scales so MapKit never lays out one view per photo.
+struct MapLODPolicy {
+    enum Level: Int, Sendable { case globe, regional, city, local }
+
+    static let globeCap = 120
+    static let regionalCap = 240
+    static let cityCap = 400
+
+    static func level(latitudeDelta: Double) -> Level {
+        if latitudeDelta >= 45 { return .globe }
+        if latitudeDelta >= 12 { return .regional }
+        if latitudeDelta >= 2 { return .city }
+        return .local
+    }
+
+    static func cap(for level: Level) -> Int? {
+        switch level {
+        case .globe: return globeCap
+        case .regional: return regionalCap
+        case .city: return cityCap
+        case .local: return nil
+        }
+    }
+
+    static func aggregate(_ clusters: [PlaceCluster], level: Level) -> [PlaceCluster] {
+        guard level != .local else { return clusters }
+        let grid: Double = switch level {
+        case .globe: 5
+        case .regional: 2
+        case .city: 0.5
+        case .local: 0.5
+        }
+        var buckets: [String: (points: [GeoPoint], clusters: [PlaceCluster])] = [:]
+        for cluster in clusters {
+            guard let center = cluster.center else { continue }
+            let key = "\(Int(floor(center.latitude / grid))),\(Int(floor(center.longitude / grid)))"
+            buckets[key, default: ([], [])].points.append(center)
+            buckets[key, default: ([], [])].clusters.append(cluster)
+        }
+        let all = buckets.map { key, bucket in
+            PlaceCluster(
+                id: "lod:\(level.rawValue):\(key)", level: .city,
+                stopIDs: bucket.clusters.flatMap(\.stopIDs),
+                center: GeoPoint.centre(of: bucket.points),
+                firstDate: bucket.clusters.map(\.firstDate).min() ?? .distantPast
+            )
+        }.sorted { ($0.firstDate, $0.id) < ($1.firstDate, $1.id) }
+        guard let cap = cap(for: level), all.count > cap else { return all }
+        // Sample by fractional position rather than prefixing by date. This
+        // keeps geographic coverage deterministic when there are more buckets
+        // than annotations supported at the current zoom level.
+        return (0..<cap).map { index in all[min(all.count - 1, index * all.count / cap)] }
     }
 }

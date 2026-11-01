@@ -15,6 +15,7 @@ struct MomentsApp: App {
     @State private var peopleController = PeopleScanController()
     @State private var photoStacks = PhotoStackModel()
     @State private var stackAnalyzer = PhotoStackAnalyzer()
+    @State private var projectionStore = LibraryProjectionStore()
     @State private var photosImportController = PhotosImportController(importer: PhotosImporter(source: PhotoKitAssetSource()))
     @State private var showingPhotosImport = false
 
@@ -82,6 +83,8 @@ struct MomentsApp: App {
         FlashProbe.startIfRequested()
         ScrollProbe.startIfRequested()
         ResizeProbe.startIfRequested()
+        PageProbe.startIfRequested()
+        StressLibrary.prepareIfRequested()
         #endif
         do {
             #if DEBUG
@@ -155,6 +158,7 @@ struct MomentsApp: App {
                     .environment(noteService)
                     .environment(peopleController)
                     .environment(photoStacks)
+                    .environment(projectionStore)
                     .modelContainer(modelContainer)
                     .onAppear {
                         importController.configure(container: modelContainer)
@@ -163,6 +167,11 @@ struct MomentsApp: App {
                         stackAnalyzer.configure(container: modelContainer)
                         stackAnalyzer.analyzeIfNeeded()
                         photoStacks.refresh(container: modelContainer)
+                        projectionStore.refresh(container: modelContainer)
+                        #if DEBUG
+                        PageProbe.attach(container: modelContainer, selection: selection, people: peopleController, stacks: stackAnalyzer)
+                        StressLibrary.startIfRequested(container: modelContainer)
+                        #endif
                     }
                     // Map and Chapters only read the stacks, so new results
                     // are folded in here, whichever screen is showing.
@@ -174,6 +183,14 @@ struct MomentsApp: App {
                         peopleController.scanIfNeeded()
                         stackAnalyzer.analyzeIfNeeded()
                         photoStacks.refresh(container: modelContainer)
+                        projectionStore.refresh(container: modelContainer)
+                    }
+                    // Every SwiftData save can change dates, coordinates,
+                    // place names, notes or deletion state. Coalesce bursts
+                    // of saves so the shared read model catches up without
+                    // rebuilding once per edited field or import batch.
+                    .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { _ in
+                        projectionStore.scheduleRefresh(container: modelContainer)
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
                         showingPhotosImport = true

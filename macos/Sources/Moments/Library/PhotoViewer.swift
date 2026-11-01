@@ -139,6 +139,10 @@ struct PhotoViewer: View {
             rebuildPaging()
             // An Undo offer from earlier (the Library's Unstack) is not about this photo.
             stacks.dismissLastChange()
+            #if DEBUG
+            let token = PageProbe.phaseToken
+            PageProbe.shellReady(token: token)
+            #endif
         }
         // When a field in the column lets go of the keyboard, the arrows page again.
         .onChange(of: isEditingText) { _, editing in
@@ -163,7 +167,17 @@ struct PhotoViewer: View {
             guard !isTyping, selection.pendingDeletion == nil, item?.deletedAt == nil else { return }
             deleteOpenPhoto(confirm: false)
         }
-        .task(id: request.itemID) { await load(request.itemID) }
+        .task(id: request.itemID) {
+            #if DEBUG
+            let token = PageProbe.phaseToken
+            defer {
+                if Task.isCancelled { PageProbe.cancellationObserved(token: token) }
+            }
+            await load(request.itemID, probeToken: token)
+            #else
+            await load(request.itemID, probeToken: nil)
+            #endif
+        }
         // Taken apart, a shot taken out, or Undo: the strip and the photos
         // ready to slide in follow.
         .onChange(of: selection.viewerRequest?.itemIDs ?? []) { _, _ in rebuildPaging() }
@@ -727,7 +741,7 @@ struct PhotoViewer: View {
         selection.viewerRequest = nil
     }
 
-    private func load(_ id: String) async {
+    private func load(_ id: String, probeToken: UInt64?) async {
         stopVideo()
         var descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == id })
         descriptor.fetchLimit = 1
@@ -737,6 +751,11 @@ struct PhotoViewer: View {
             return
         }
         item = found
+        #if DEBUG
+        // The viewer has useful content only after the selected model has
+        // been fetched. Opening the sheet itself is shell readiness.
+        PageProbe.contentReady(token: probeToken)
+        #endif
         loadStackMembers()
         zoom = ViewerZoom()
         // Neighbours start loading now, alongside this photo, so a quick second
@@ -744,6 +763,9 @@ struct PhotoViewer: View {
         async let neighbours: Void = loadNeighbours()
         if let cached = PhotoViewerImageCache.shared.image(for: id) {
             image = cached
+            #if DEBUG
+            PageProbe.thumbnailReady(token: probeToken)
+            #endif
         } else {
             // The grid's thumbnail first, so the photo appears at once; the
             // full-size image replaces it when it is ready. A page turned in
@@ -751,6 +773,9 @@ struct PhotoViewer: View {
             let thumbnail = await ThumbnailCache.shared.image(for: found, width: 560, height: 420)
             guard !Task.isCancelled else { return await neighbours }
             if image == nil { image = thumbnail }
+            #if DEBUG
+            if thumbnail != nil { PageProbe.thumbnailReady(token: probeToken) }
+            #endif
             // The photo on screen is the one thing downloaded from iCloud.
             if let full = await PhotoViewerImageCache.shared.load(found, allowDownload: true), !Task.isCancelled {
                 image = full

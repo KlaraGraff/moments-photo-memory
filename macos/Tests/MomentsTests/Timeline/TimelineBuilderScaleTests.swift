@@ -9,11 +9,12 @@ final class TimelineBuilderScaleTests: XCTestCase {
         let calendar = utcCalendar()
 
         // 36 made-up destinations spread over the world, 40 trips between them.
-        let destinations: [(latitude: Double, longitude: Double)] = (0..<36).map { index in
-            (
-                latitude: -60 + Double(index) * 3.4,
-                longitude: -170 + Double(index) * 9.4
-            )
+        // Typed step by step: the CI compiler cannot type-check the one-line form in time.
+        let destinations: [(latitude: Double, longitude: Double)] = (0..<36).map { (index: Int) -> (latitude: Double, longitude: Double) in
+            let step = Double(index)
+            let latitude: Double = -60 + step * 3.4
+            let longitude: Double = -170 + step * 9.4
+            return (latitude: latitude, longitude: longitude)
         }
         let tripDestination = (0..<40).map { $0 % destinations.count }
         let home = (latitude: 12.0, longitude: 20.0)

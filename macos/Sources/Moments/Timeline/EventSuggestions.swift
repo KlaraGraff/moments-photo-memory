@@ -31,7 +31,7 @@ enum EventSuggestions {
         let chapters = (try? context.fetch(FetchDescriptor<UserGroup>(predicate: #Predicate { $0.kindRaw == "chapter" }))) ?? []
         let covered = chapters.compactMap { group -> ClosedRange<String>? in
             let info = group.chapterInfo
-            guard let start = info.startDate, let end = info.endDate, start <= end else { return nil }
+            guard let start = info.startDate, let end = info.endDate, start.isOnOrBefore(end) else { return nil }
             return dayKey(start, calendar: calendar)...dayKey(end, calendar: calendar)
         }
         let byDay = Dictionary(grouping: daily.filter { $0.localDayKey != nil }, by: { $0.localDayKey ?? "" })

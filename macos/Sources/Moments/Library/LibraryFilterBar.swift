@@ -402,6 +402,9 @@ struct LibraryFilterPublisher: View {
         // without touching the item; only read them when they matter.
         let readsText = !query.isEmpty || memoryFilterRaw != LibraryMemoryFilter.all.rawValue
         hasher.combine(store.revision)
+        // A favorite save leaves `revision` alone, so the Favorites filter
+        // follows its own revision.
+        if criteria.favoritesOnly { hasher.combine(store.favoriteRevision) }
         if readsText {
             for item in items {
                 hasher.combine(item.latestMemory?.text)

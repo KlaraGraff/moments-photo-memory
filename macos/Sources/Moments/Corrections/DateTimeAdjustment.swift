@@ -210,12 +210,12 @@ enum DateTimeAdjustment {
             var start = first
             if let set = trip.startDate, let old, set < old.lowerBound {
                 let kept = set.addingTimeInterval(shift ?? 0)
-                start = kept <= first ? kept : calendar.startOfDay(for: first)
+                start = kept.isOnOrBefore(first) ? kept : calendar.startOfDay(for: first)
             }
             var end = last
             if let set = trip.endDate, let old, set > old.upperBound {
                 let kept = set.addingTimeInterval(shift ?? 0)
-                end = kept >= last ? kept : TripEdits.endOfDay(last, calendar: calendar)
+                end = kept.isOnOrAfter(last) ? kept : TripEdits.endOfDay(last, calendar: calendar)
             }
             guard trip.startDate != start || trip.endDate != end else { continue }
             trip.startDate = start

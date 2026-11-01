@@ -165,6 +165,9 @@ struct LibraryView: View {
         hasher.combine(selection.libraryScope?.itemIDs)
         // All photos, faces and places the pages group by, as one revision.
         hasher.combine(store.revision)
+        // A favorite save leaves `revision` alone, so the Favorites filter
+        // (and the Favorites segment) follows its own revision.
+        if criteria.favoritesOnly { hasher.combine(store.favoriteRevision) }
         for trip in allTrips {
             hasher.combine(trip.id)
             hasher.combine(trip.name)
@@ -593,7 +596,9 @@ struct LibraryView: View {
     }
 
     private func regroup() {
-        cachedReviewCount = allItems.reduce(into: 0) { count, item in
+        // `allItems` builds a new array each time it is read.
+        let all = allItems
+        cachedReviewCount = all.reduce(into: 0) { count, item in
             if item.needsImportReview { count += 1 }
         }
         let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
@@ -603,16 +608,20 @@ struct LibraryView: View {
         let scopedItems = selection.libraryScope.map { scope in
             items.filter { scope.itemIDs.contains($0.id) }
         } ?? items
-        let filtered = LibraryFilterEngine.filteredItems(scopedItems, by: criteria, personIDsByMediaID: personIndex)
-        let visible = LibraryFilterEngine.filteredItems(
-            scopedItems,
-            by: criteria,
-            preservingEditingItemID: state.focusedMemoryItemID,
+        // One call for all three results, so each photo is tested once.
+        let passes = LibraryFilterEngine.regroupPasses(
+            scopedItems: scopedItems,
+            allItems: all,
+            hasScope: selection.libraryScope != nil,
+            criteria: criteria,
+            editingItemID: state.focusedMemoryItemID,
             personIDsByMediaID: personIndex
         )
+        let filtered = passes.filtered
+        let visible = passes.visible
         cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
         // A burst is one cell showing its cover, and counts as one photo.
-        let stackIndex = stacks.update(items: allItems, decisions: stackRecords)
+        let stackIndex = stacks.update(items: all, decisions: stackRecords)
         let unfolded = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
         let folded = LibraryFilterEngine.folding(unfolded, with: stackIndex)
         cachedSections = folded.sections
@@ -650,7 +659,7 @@ struct LibraryView: View {
             cachedSectionDayKeys = sectionDayKeys
         }
         applySectionMemories(memories)
-        let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
+        let publishedVisible = passes.publishedIDs
         if selection.visibleItemIDs != publishedVisible { selection.visibleItemIDs = publishedVisible }
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
         if let focus = selection.focusedItemID,

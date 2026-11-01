@@ -139,7 +139,7 @@ enum StressLibrary {
                 let group = UserGroup(name: "Synthetic chapter \(index + 1)", kind: .chapter)
                 group.chapterInfo = ChapterInfo(type: index % 2 == 0 ? ChapterType.event.raw : ChapterType.period.raw, startDate: start, endDate: end)
                 context.insert(group)
-                for (item, date) in dated where date >= start && date <= end {
+                for (item, date) in dated where date.isOnOrAfter(start) && date.isOnOrBefore(end) {
                     context.insert(UserGroupItem(groupID: group.id, mediaID: item.id))
                 }
                 chapters += 1

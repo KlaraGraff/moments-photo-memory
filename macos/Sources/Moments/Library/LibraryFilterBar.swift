@@ -88,8 +88,14 @@ struct LibraryFilterChips: View {
         LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips)
     }
 
+    /// The photos' key: a place-only save leaves it alone, so the options are
+    /// rebuilt from the cached counts instead of reading every photo again.
+    private var sourceKey: Int {
+        LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
+    }
+
     private func buildOptions() -> LibraryFilterOptionSet {
-        LibraryFilterOptionsCache.options(for: allItems, key: optionsKey)
+        LibraryFilterOptionsCache.options(for: allItems, key: optionsKey, sourceKey: sourceKey)
     }
 
     private var selectedPlaceName: String? {

@@ -339,7 +339,8 @@ struct LibraryView: View {
         .onChange(of: store.placeRevision) { _, _ in
             cachedFilterOptions = LibraryFilterOptionsCache.options(
                 for: store.items,
-                key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips)
+                key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips),
+                sourceKey: LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
             )
         }
         .sheet(isPresented: $showingReview) {
@@ -726,7 +727,8 @@ struct LibraryView: View {
         // trip whose photos disagree can otherwise depend on the order.
         cachedFilterOptions = LibraryFilterOptionsCache.options(
             for: store.items,
-            key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips)
+            key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips),
+            sourceKey: LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
         )
         // Day memories are matched per section; reading every photo's day in
         // the section's body repeated that pass on each render.

@@ -201,4 +201,80 @@ final class LibraryFilterOptionsCacheTests: XCTestCase {
             "The order decides which photo's answer names the trip"
         )
     }
+
+    /// The counted build and the item walk must list the same places: the
+    /// counted one only reads the places' names, once per place.
+    func testCountedPlaceOptionsEqualTheItemWalk() throws {
+        let context = try makeContext()
+        let items: [MediaItem] = try makeFixture(in: context)
+        var overrideCounts: [String: Int] = [:]
+        var placeCounts: [PersistentIdentifier: (place: Place, count: Int)] = [:]
+        for item in items {
+            let override: String? = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let override, !override.isEmpty {
+                overrideCounts[override, default: 0] += 1
+                continue
+            }
+            guard let place: Place = item.place else { continue }
+            let id: PersistentIdentifier = place.persistentModelID
+            let count: Int = (placeCounts[id]?.count ?? 0) + 1
+            placeCounts[id] = (place: place, count: count)
+        }
+
+        let counted: [LibraryPlaceOption] = PlaceNames.options(
+            overrideCounts: overrideCounts,
+            placeCounts: placeCounts
+        )
+        let walked: [LibraryPlaceOption] = PlaceNames.options(for: items)
+
+        XCTAssertEqual(counted, walked)
+        let countedIDs: [String] = counted.map { $0.id }
+        let walkedIDs: [String] = walked.map { $0.id }
+        XCTAssertEqual(countedIDs, walkedIDs)
+        XCTAssertFalse(walked.isEmpty)
+    }
+
+    /// A place rename moves `store.revision` but no photo changed: the new
+    /// name is listed and the photos are not read again.
+    func testPlaceRenameRebuildsOptionsWithoutReadingPhotos() throws {
+        let context = try makeContext()
+        let items: [MediaItem] = try makeFixture(in: context)
+
+        let before: LibraryFilterOptionSet = LibraryFilterOptionsCache.options(for: items, key: 1, sourceKey: 10)
+        let sourcesAfterFirstBuild: Int = LibraryFilterOptionsCache.sourceBuildCount
+        let buildsAfterFirstBuild: Int = LibraryFilterOptionsCache.buildCount
+        XCTAssertEqual(sourcesAfterFirstBuild, 1)
+
+        // The items' own place objects: the cached sources hold the same ones.
+        guard let renamedItem: MediaItem = items.first(where: { (item: MediaItem) -> Bool in
+            item.place?.id == "spot-fixture-0"
+        }), let spot: Place = renamedItem.place else {
+            return XCTFail("The fixture must create spot-fixture-0")
+        }
+        spot.name = "Synthetic Renamed Spot"
+        try context.save()
+
+        let after: LibraryFilterOptionSet = LibraryFilterOptionsCache.options(for: items, key: 2, sourceKey: 10)
+        let reference: LibraryFilterOptionSet = referenceOptions(for: items)
+
+        XCTAssertEqual(LibraryFilterOptionsCache.sourceBuildCount, sourcesAfterFirstBuild, "A place-only save must not read the photos again")
+        XCTAssertEqual(LibraryFilterOptionsCache.buildCount, buildsAfterFirstBuild + 1, "A new key must build the options once")
+        XCTAssertEqual(after, reference)
+        XCTAssertNotEqual(before, after, "The renamed place must be listed under its new name")
+        let names: [String] = after.places.map { $0.name }
+        XCTAssertTrue(names.contains("Synthetic Renamed Spot"))
+    }
+
+    /// A photo change (a new source key) must read the photos again.
+    func testNewSourceKeyReadsThePhotosAgain() throws {
+        let context = try makeContext()
+        let items: [MediaItem] = try makeFixture(in: context)
+
+        _ = LibraryFilterOptionsCache.options(for: items, key: 1, sourceKey: 10)
+        XCTAssertEqual(LibraryFilterOptionsCache.sourceBuildCount, 1)
+        _ = LibraryFilterOptionsCache.options(for: items, key: 2, sourceKey: 11)
+
+        XCTAssertEqual(LibraryFilterOptionsCache.sourceBuildCount, 2)
+        XCTAssertEqual(LibraryFilterOptionsCache.buildCount, 2)
+    }
 }

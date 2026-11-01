@@ -89,6 +89,22 @@ final class PlaceClustererEquivalenceTests: XCTestCase {
         }
     }
 
+    func testANaNDateAmongOrdinaryDatesMatchesTheReference() {
+        // Sorting leaves [10, NaN, 0, 9] as it is, so the dates are not in order.
+        let place = GeoPoint(latitude: 48.85, longitude: 2.35)
+        let seconds: [Double] = [10, .nan, 0, 9]
+        let stops = seconds.enumerated().map { index, second in
+            PhotoStop(id: "s\(index)", date: Date(timeIntervalSinceReferenceDate: second), coordinate: place)
+        }
+        for level in PlaceLevel.allCases {
+            XCTAssertEqual(
+                Set(PlaceClusterer(maximumTimeGap: 5).clusters(for: stops, level: level).map { Set($0.stopIDs) }),
+                Set(ReferencePlaceClusterer(maximumTimeGap: 5).clusters(for: stops, level: level).map { Set($0.stopIDs) }),
+                "level \(level)"
+            )
+        }
+    }
+
     func testAGapOfExactlyTheMaximumStillJoins() {
         let place = GeoPoint(latitude: 48.85, longitude: 2.35)
         for gap in [0.0, 1, 3_600, 86_400] {

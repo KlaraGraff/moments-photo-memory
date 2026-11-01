@@ -157,11 +157,13 @@ public struct PlaceClusterer: Sendable {
         // Indices of clusters that can still take a photo, in creation order.
         var openIndices: [Int] = []
         openIndices.reserveCapacity(stops.count)
+        // A NaN date leaves the date order unreliable; then nothing is dropped.
+        let datesAreOrdered = !stops.contains { $0.date.timeIntervalSinceReferenceDate.isNaN }
 
         for stop in stops {
             guard let coordinate = stop.coordinate else { continue }
 
-            if level == .spot {
+            if level == .spot, datesAreOrdered {
                 // Photos arrive in date order, so a cluster whose last photo is
                 // more than the gap away can never take another photo.
                 openIndices.removeAll { index in

@@ -219,4 +219,30 @@ final class UserGroupTests: XCTestCase {
         XCTAssertEqual(items.map(\.id), ["frozen-v4-item"])
         XCTAssertTrue(try current.mainContext.fetch(FetchDescriptor<UserGroup>()).isEmpty)
     }
+
+    func testRulesWithAPlaceRuleReadPlaces() {
+        let rules: [UserGroupRule] = [
+            UserGroupRule(field: .trip, value: "trip-1"),
+            UserGroupRule(field: .place, value: "place-1")
+        ]
+        XCTAssertTrue(UserGroupRule.anyReadsPlaces(rules))
+
+        let placeOnly: [UserGroupRule] = [UserGroupRule(field: .place, value: "place-1")]
+        XCTAssertTrue(UserGroupRule.anyReadsPlaces(placeOnly))
+    }
+
+    func testRulesWithoutAPlaceRuleDoNotReadPlaces() {
+        let rules: [UserGroupRule] = [
+            UserGroupRule(field: .trip, value: "trip-1"),
+            UserGroupRule(field: .type, value: "photo"),
+            UserGroupRule(field: .dateRange, value: "2023-11-14", secondaryValue: "2023-11-15"),
+            UserGroupRule(field: .hasMemory, value: "true"),
+            UserGroupRule(field: .tag, value: "tag-1"),
+            UserGroupRule(field: .person, value: "person-1")
+        ]
+        XCTAssertFalse(UserGroupRule.anyReadsPlaces(rules))
+
+        let empty: [UserGroupRule] = []
+        XCTAssertFalse(UserGroupRule.anyReadsPlaces(empty))
+    }
 }

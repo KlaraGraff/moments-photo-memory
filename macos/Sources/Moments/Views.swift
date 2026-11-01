@@ -321,7 +321,7 @@ struct ContentView: View {
         ScrollProbe.count("sidebar.groupCountsKey")
         #endif
         var hasher = Hasher()
-        hasher.combine(store.revision)
+        hasher.combine(store.photoFaceRevision)
         // A favorite save leaves `revision` alone; smart groups can have a
         // favorite rule, so their counts follow this one too.
         hasher.combine(store.favoriteRevision)
@@ -342,6 +342,10 @@ struct ContentView: View {
                 hasher.combine(rule.secondaryValue)
             }
         }
+        // Smart groups read place names only through a place rule; a save that
+        // changed only places recounts them only then.
+        let rulesReadPlaces: Bool = groups.contains { (group: UserGroup) -> Bool in UserGroupRule.anyReadsPlaces(group.rules.rules) }
+        if rulesReadPlaces { hasher.combine(store.placeRevision) }
         for membership in groupItems {
             hasher.combine(membership.groupID)
             hasher.combine(membership.mediaID)
@@ -363,12 +367,18 @@ struct ContentView: View {
     }
 
     private func refreshGroupCounts() {
+        #if DEBUG
+        let started: CFTimeInterval = CACurrentMediaTime()
+        #endif
         var counts: [String: Int] = [:]
         let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
         for group in groups {
             counts[group.id] = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: groupItems, observations: faceObservations, personIDsByMediaID: personIndex).count
         }
         cachedGroupCounts = counts
+        #if DEBUG
+        PageProbe.tally("sidebar group counts", seconds: CACurrentMediaTime() - started)
+        #endif
     }
 
     private func receiveDrop(_ providers: [NSItemProvider], into group: UserGroup) -> Bool {

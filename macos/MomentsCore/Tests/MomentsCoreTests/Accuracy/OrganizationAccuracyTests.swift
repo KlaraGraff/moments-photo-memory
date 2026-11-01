@@ -22,6 +22,20 @@ final class OrganizationAccuracyTests: XCTestCase {
         "two-homes": (0.9919, 0.9842)
     ]
 
+    /// The harder libraries: moves without photos in between, sea days,
+    /// layovers, a far day trip, screenshots on a trip, monthly weekends.
+    private static let hardTripFloors: [String: (pairF1: Double, agreement: Double)] = [
+        // Sea days split the cruise into three trips.
+        "cruise": (0.5294, 1),
+        "road-trip": (1, 1),
+        "layover": (1, 1),
+        "day-trip-far": (1, 1),
+        // A three-day photo gap between far cities splits the trip in two.
+        "sparse-long-trip": (0.6785, 1),
+        "screenshots-on-trip": (1, 1),
+        "monthly-weekends": (1, 1)
+    ]
+
     /// Pairwise F1 of burst stacks.
     private static let stackFloors: [String: Double] = [
         "bursts": 1
@@ -37,6 +51,21 @@ final class OrganizationAccuracyTests: XCTestCase {
             let pairF1: Double = AccuracyScoring.pairwise(predicted: trips, truth: scenario.truthTrips, universe: ids).f1
             let agreement: Double = AccuracyScoring.membershipAgreement(predicted: trips, truth: scenario.truthTrips, universe: ids)
             print(String(format: "ACCURACY trips %@ pairF1=%.4f agreement=%.4f", scenario.name, pairF1, agreement))
+            XCTAssertGreaterThanOrEqual(pairF1, floor.pairF1 - 1e-9, "\(scenario.name) trip pairs")
+            XCTAssertGreaterThanOrEqual(agreement, floor.agreement - 1e-9, "\(scenario.name) trip or daily life")
+        }
+    }
+
+    func testHarderTripsScoreAtLeastTheirFloors() {
+        let scenarios = SyntheticLibrary.hardScenarios()
+        XCTAssertEqual(Set(scenarios.map(\.name)), Set(Self.hardTripFloors.keys), "every scenario needs a floor")
+        for scenario in scenarios {
+            guard let floor = Self.hardTripFloors[scenario.name] else { continue }
+            let ids: [String] = scenario.photos.map(\.id)
+            let trips: [[String]] = TripSegmenter().segment(scenario.photos.map(\.stop)).trips
+            let pairF1: Double = AccuracyScoring.pairwise(predicted: trips, truth: scenario.truthTrips, universe: ids).f1
+            let agreement: Double = AccuracyScoring.membershipAgreement(predicted: trips, truth: scenario.truthTrips, universe: ids)
+            print(String(format: "ACCURACY hard trips %@ pairF1=%.4f agreement=%.4f", scenario.name, pairF1, agreement))
             XCTAssertGreaterThanOrEqual(pairF1, floor.pairF1 - 1e-9, "\(scenario.name) trip pairs")
             XCTAssertGreaterThanOrEqual(agreement, floor.agreement - 1e-9, "\(scenario.name) trip or daily life")
         }

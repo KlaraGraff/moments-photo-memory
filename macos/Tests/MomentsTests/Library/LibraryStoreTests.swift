@@ -1082,6 +1082,31 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertTrue(changes.touchesGroupSources, "a membership save touches the sidebar's group sources")
         XCTAssertTrue(changes.updated.isEmpty, "a membership is not one of the store's tracked entities")
     }
+
+    // A smart group's tag rule matches a photo's tags by id, normalized name or
+    // display name, so renaming a tag can change a count even though no photo
+    // or membership was saved: the sidebar's key has to move.
+    func testTagRenameMovesTheGroupSourcesRevision() async throws {
+        let context: ModelContext = try makeContext()
+        let photo: MediaItem = MediaItem(id: "photo-tag", captureDate: base.addingTimeInterval(45))
+        context.insert(photo)
+        let tag: Tag = Tag(id: "tag-1", displayName: "Synthetic Tag One")
+        context.insert(tag)
+        try context.save()
+
+        let store: LibraryStore = makeStore(context: context)
+        let groupSourcesRevision: Int = store.groupSourcesRevision
+
+        let renamed: String = "Synthetic Tag Renamed"
+        tag.displayName = renamed
+        tag.normalizedName = Tag.normalize(renamed)
+        try context.save()
+
+        let moved: Bool = await waitUntil(timeout: 3) { () -> Bool in
+            store.groupSourcesRevision > groupSourcesRevision
+        }
+        XCTAssertTrue(moved, "a tag rename must move the group sources revision")
+    }
 }
 
 /// A small deterministic generator for the random-walk test; `SystemRandom`

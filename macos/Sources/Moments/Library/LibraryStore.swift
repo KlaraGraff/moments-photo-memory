@@ -41,14 +41,18 @@ private let trackedEntityNames: Set<String> = [
 ]
 
 /// The entities the sidebar's group counts read besides the photos and faces
-/// above: the groups and their memberships, memories, media tags and place
-/// overrides. A save of any of these can change a count, so it moves
-/// `groupSourcesRevision` even though the store itself lists none of them.
+/// above: the groups and their memberships, memories, media tags, the tags
+/// those media tags name and place overrides. A save of any of these can
+/// change a count, so it moves `groupSourcesRevision` even though the store
+/// itself lists none of them. Tags belong here because a smart group's tag
+/// rule matches a photo's tags by id, `normalizedName` or `displayName`, so
+/// renaming a tag can change a count without touching a photo or membership.
 private let groupSourceEntityNames: Set<String> = [
     String(describing: UserGroup.self),
     String(describing: UserGroupItem.self),
     String(describing: Memory.self),
     String(describing: MediaTag.self),
+    String(describing: Tag.self),
     String(describing: PlaceOverride.self)
 ]
 

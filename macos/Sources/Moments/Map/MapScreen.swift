@@ -115,13 +115,24 @@ struct MapScreen: View {
         mapArea
         .compactLibraryFilters()
         .navigationTitle("Map")
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
         .task(id: snapshotKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            #endif
             itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             cachedSnapshot = viewModel.snapshot(
                 items: items,
                 visibleItemIDs: selection.visibleItemIDs,
                 latitudeDelta: latitudeDelta
             )
+            #if DEBUG
+            PageProbe.contentReady(token: probeToken)
+            #endif
             // "Show on Map" from another screen: fly there once the pins exist.
             if let requested = selection.mapFocusRequest {
                 selection.mapFocusRequest = nil

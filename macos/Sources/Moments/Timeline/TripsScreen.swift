@@ -212,6 +212,11 @@ struct TripsScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { _ in
             notice = nil
         }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
         .task(id: notice?.id) {
             // A note without a question goes away by itself.
             guard let notice, notice.offer == nil else { return }
@@ -226,12 +231,18 @@ struct TripsScreen: View {
             )
         }
         .task(id: inputKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            #endif
             let snapshots = items.map { item in
                 TimelineItemSnapshot(item: item, placeHint: nearestPlaceName(for: item))
             }
             document = buildDocument(snapshots)
             chapterDocs = buildChapters(snapshots: Dictionary(snapshots.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }))
             itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            #if DEBUG
+            PageProbe.contentReady(token: probeToken)
+            #endif
         }
     }
 
@@ -664,6 +675,12 @@ private struct TripShelfView: View {
             }
             .onAppear {
                 if let returnTripID { proxy.scrollTo(returnTripID, anchor: .center) }
+                #if DEBUG
+                // The shelf only shows once its cards are built, so coming
+                // back from a chapter shows content as soon as it appears.
+                PageProbe.shellReady(token: PageProbe.phaseToken)
+                PageProbe.contentReady(token: PageProbe.phaseToken)
+                #endif
             }
         }
     }
@@ -1010,6 +1027,9 @@ private struct TripDetailView: View {
                     Text(TripText.summary(trip))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(Paper.muted)
+                        #if DEBUG
+                        .onAppear { PageProbe.contentReady(token: PageProbe.phaseToken) }
+                        #endif
                     if !trip.cityNames.isEmpty {
                         Text(trip.cityNames.joined(separator: " → "))
                             .font(.callout)
@@ -1099,6 +1119,11 @@ private struct TripDetailView: View {
                 }
             }
         }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
     }
 
     private func dayActions(for day: TimelineDay) -> TripDayActions? {

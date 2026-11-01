@@ -296,7 +296,8 @@ final class PeopleScanController {
     nonisolated static func makeAssignmentsResult(
         faces: [PeopleFaceSnapshot],
         people: [PeoplePersonSnapshot],
-        shouldStop: (@Sendable () -> Bool)? = nil
+        shouldStop: (@Sendable () -> Bool)? = nil,
+        chunkSize: Int = 3_000
     ) -> PeopleAssignmentResult {
         let confirmed = people.compactMap { person -> (id: String, centroid: [Float])? in
             let vectors = faces.filter { $0.personID == person.id && $0.confirmed && $0.assignmentSource == "user" }.compactMap { decode($0.embedding) }
@@ -357,24 +358,100 @@ final class PeopleScanController {
                 clusteringIndices.append(index)
             }
         }
-        let limitedIndices = Array(clusteringIndices.prefix(3_000))
-        let vectors = limitedIndices.compactMap { decode(faces[$0].embedding) }
-        guard vectors.count == limitedIndices.count else {
-            separateSamePhotoFaces(&assignments, faces: faces)
-            return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false)
-        }
-        let result = FaceClustering.averageLinkResult(vectors, shouldStop: stop)
-        if result.stopped {
-            return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
-        }
-        for cluster in result.clusters {
-            guard let first = cluster.first else { continue }
-            let firstIndex = limitedIndices[first]
-            let clusterID = "cluster-\(assignments[firstIndex].id)"
-            for member in cluster { assignments[limitedIndices[member]].clusterID = clusterID }
+        // Group the faces nobody has named yet in rounds of at most `chunkSize`
+        // (about 18 MB of distance matrix at 3,000 faces). Each round clusters
+        // its chunk, then pulls close faces of the later chunks into the new
+        // groups, so a whole import is grouped in one pass and the leftover
+        // faces shrink round by round. With at most one chunk left this is
+        // exactly the single pass it used to be.
+        let roundSize = max(chunkSize, 1)
+        while !clusteringIndices.isEmpty {
+            let chunk = Array(clusteringIndices.prefix(roundSize))
+            let vectors = chunk.compactMap { decode(faces[$0].embedding) }
+            guard vectors.count == chunk.count else {
+                separateSamePhotoFaces(&assignments, faces: faces)
+                return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false)
+            }
+            let result = FaceClustering.averageLinkResult(vectors, shouldStop: stop)
+            if result.stopped {
+                return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
+            }
+            var newClusterMeans: [(id: String, mean: [Float])] = []
+            for cluster in result.clusters {
+                guard let first = cluster.first else { continue }
+                let firstIndex = chunk[first]
+                let clusterID = "cluster-\(assignments[firstIndex].id)"
+                for member in cluster { assignments[chunk[member]].clusterID = clusterID }
+                if let mean = meanOfUnitVectors(cluster.map { vectors[$0] }) {
+                    newClusterMeans.append((clusterID, mean))
+                }
+            }
+            let rest = Array(clusteringIndices.dropFirst(chunk.count))
+            guard !rest.isEmpty else { break }
+            let next = assignToNearestNewCluster(&assignments, faces: faces, indices: rest, clusterMeans: newClusterMeans, stop: stop)
+            if next.stopped {
+                return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
+            }
+            clusteringIndices = next.left
         }
         separateSamePhotoFaces(&assignments, faces: faces)
         return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false)
+    }
+
+    nonisolated private static func unitVector(_ vector: [Float]) -> [Float] {
+        let norm = sqrt(vector.reduce(Float.zero) { $0 + $1 * $1 })
+        return norm > 0 ? vector.map { $0 / norm } : vector
+    }
+
+    /// Mean of the unit vectors, the same averaging the existing unnamed groups
+    /// get above: unit vectors added up and divided by their count.
+    nonisolated private static func meanOfUnitVectors(_ vectors: [[Float]]) -> [Float]? {
+        let unitVectors = vectors.map(unitVector)
+        guard let dimension = unitVectors.first?.count else { return nil }
+        var sum = [Float](repeating: 0, count: dimension)
+        var count = 0
+        for vector in unitVectors where vector.count == dimension {
+            for d in 0..<dimension { sum[d] += vector[d] }
+            count += 1
+        }
+        guard count > 0 else { return nil }
+        return sum.map { $0 / Float(count) }
+    }
+
+    /// The rule the first step above already applies to existing groups: a face
+    /// joins the nearest of this round's new groups when its cosine distance to
+    /// that group's mean is below the threshold. Faces that stay on their own
+    /// come back in their order for the next round.
+    nonisolated private static func assignToNearestNewCluster(
+        _ assignments: inout [PeopleFaceAssignment],
+        faces: [PeopleFaceSnapshot],
+        indices: [Int],
+        clusterMeans: [(id: String, mean: [Float])],
+        stop: @Sendable () -> Bool
+    ) -> (left: [Int], stopped: Bool) {
+        var left: [Int] = []
+        for (position, index) in indices.enumerated() {
+            if position % 64 == 0, stop() { return (left, true) }
+            guard let vector = decode(faces[index].embedding).map(unitVector) else {
+                left.append(index)
+                continue
+            }
+            var best: (id: String, distance: Float)?
+            for cluster in clusterMeans where cluster.mean.count == vector.count {
+                var dot: Float = 0
+                for d in 0..<vector.count { dot += vector[d] * cluster.mean[d] }
+                let distance: Float = 1 - dot
+                if distance < FaceClustering.defaultThreshold, distance < (best?.distance ?? .infinity) {
+                    best = (cluster.id, distance)
+                }
+            }
+            if let best {
+                assignments[index].clusterID = best.id
+            } else {
+                left.append(index)
+            }
+        }
+        return (left, false)
     }
 
     /// One person appears at most once in a photo, so two faces from the same

@@ -282,7 +282,7 @@ enum LibraryFilterEngine {
         }
         if criteria.screenshotFilter == .possibleOnly && !isPossibleScreenshot(item) { return false }
         if let from = criteria.fromDate.map(calendar.startOfDay(for:)) {
-            guard let captureDate = item.effectiveCaptureDate, captureDate >= from else { return false }
+            guard let captureDate = item.effectiveCaptureDate, captureDate.isOnOrAfter(from) else { return false }
         }
         if let to = criteria.toDate,
            let toExclusive = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: to)) {
@@ -371,6 +371,56 @@ enum LibraryFilterEngine {
         var withoutScreenshotSegment = criteria
         withoutScreenshotSegment.mediaType = .all
         return filteredItems(items, by: withoutScreenshotSegment, personIDsByMediaID: personIDsByMediaID)
+    }
+
+    /// What `regroup` reads from the filters: the grid's photos before and
+    /// after keeping the one being edited, and the ids the maps show.
+    struct RegroupPasses {
+        let filtered: [MediaItem]
+        let visible: [MediaItem]
+        let publishedIDs: Set<String>
+    }
+
+    /// What `regroup` needs from the filters, with each photo tested once
+    /// in the usual case. Same results as calling `filteredItems` (both
+    /// overloads) and `publishedItems` one after another.
+    static func regroupPasses(
+        scopedItems: [MediaItem],
+        allItems: [MediaItem],
+        hasScope: Bool,
+        criteria: LibraryFilterCriteria,
+        editingItemID: String?,
+        personIDsByMediaID: [String: Set<String>]
+    ) -> RegroupPasses {
+        let filtered = filteredItems(scopedItems, by: criteria, personIDsByMediaID: personIDsByMediaID)
+
+        // Keeping a photo that the memory filter drops is the rare case: only
+        // while someone edits that photo's memory.
+        var keepsEditingItem = true
+        if criteria.memoryFilter != .all, let editingItemID {
+            keepsEditingItem = filtered.contains(where: { $0.id == editingItemID })
+        }
+        let visible: [MediaItem]
+        if keepsEditingItem {
+            visible = filtered
+        } else {
+            visible = filteredItems(
+                scopedItems,
+                by: criteria,
+                preservingEditingItemID: editingItemID,
+                personIDsByMediaID: personIDsByMediaID
+            )
+        }
+
+        // The maps show the regular filters, so a scope from another screen
+        // does not shrink them. `filtered` holds the same photos then.
+        let publishedIDs: Set<String>
+        if !hasScope && criteria.mediaType != .screenshot {
+            publishedIDs = Set(filtered.map(\.id))
+        } else {
+            publishedIDs = Set(publishedItems(allItems, by: criteria, personIDsByMediaID: personIDsByMediaID).map(\.id))
+        }
+        return RegroupPasses(filtered: filtered, visible: visible, publishedIDs: publishedIDs)
     }
 
     static func filteredItems(

@@ -84,16 +84,6 @@ enum StressLibrary {
         let items = try context.fetch(FetchDescriptor<MediaItem>(sortBy: [SortDescriptor(\.id)]))
             .filter { $0.photosLocalIdentifier.map(isSynthetic) == true }
         let photos = items.filter { $0.kind != .video && !$0.isScreenshot }
-        // The chapters below are written after many inserts into this context,
-        // so they are planned from plain values, never from model objects.
-        let datedIDs: [(id: String, date: Date)] = items
-            .compactMap { (item: MediaItem) -> (id: String, date: Date)? in
-                guard let date = item.captureDate else { return nil }
-                return (id: item.id, date: date)
-            }
-            .sorted { (left: (id: String, date: Date), right: (id: String, date: Date)) -> Bool in
-                left.date < right.date
-            }
 
         // About a third of photos have people in them; a few people are in most.
         let peopleCount = 30
@@ -138,8 +128,9 @@ enum StressLibrary {
         }
 
         // A few chapters that are not trips: a week-long event, a season.
+        let dated = items.compactMap { item in item.captureDate.map { (item, $0) } }.sorted { $0.1 < $1.1 }
         var chapters = 0
-        if let first = datedIDs.first?.date, let last = datedIDs.last?.date {
+        if let first = dated.first?.1, let last = dated.last?.1 {
             let span = last.timeIntervalSince(first)
             for index in 0..<8 {
                 let start = first.addingTimeInterval(span * Double(index) / 8 + 86_400 * 20)
@@ -147,10 +138,9 @@ enum StressLibrary {
                 let end = start.addingTimeInterval(length)
                 let group = UserGroup(name: "Synthetic chapter \(index + 1)", kind: .chapter)
                 group.chapterInfo = ChapterInfo(type: index % 2 == 0 ? ChapterType.event.raw : ChapterType.period.raw, startDate: start, endDate: end)
-                let groupID: String = group.id
                 context.insert(group)
-                for entry in datedIDs where entry.date >= start && entry.date <= end {
-                    context.insert(UserGroupItem(groupID: groupID, mediaID: entry.id))
+                for (item, date) in dated where date.isOnOrAfter(start) && date.isOnOrBefore(end) {
+                    context.insert(UserGroupItem(groupID: group.id, mediaID: item.id))
                 }
                 chapters += 1
             }

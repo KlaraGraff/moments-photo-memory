@@ -27,13 +27,7 @@ struct LibraryFilterChips: View {
     @State private var showingDatePicker = false
     /// The menus' options, rebuilt only when items, trips or places change:
     /// this view's body runs on every Library update, including scrolling.
-    @State private var options = Options()
-
-    private struct Options {
-        var places: [LibraryPlaceOption] = []
-        var trips: [String] = []
-        var tripNames: [String: String] = [:]
-    }
+    @State private var options = LibraryFilterOptionSet()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -89,32 +83,13 @@ struct LibraryFilterChips: View {
     private var places: [LibraryPlaceOption] { options.places }
     private var trips: [String] { options.trips }
 
+    /// The same key the Library grid uses, so both share one build.
     private var optionsKey: Int {
-        var hasher = Hasher()
-        hasher.combine(store.revision)
-        for trip in allTrips {
-            hasher.combine(trip.id)
-            hasher.combine(trip.name)
-            hasher.combine(trip.overrideName)
-        }
-        return hasher.finalize()
+        LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips)
     }
 
-    private func buildOptions() -> Options {
-        var tripNames: [String: String] = [:]
-        for item in allItems {
-            if let tripID = item.tripID, tripNames[tripID] == nil {
-                tripNames[tripID] = item.trip?.effectiveName ?? tripID
-            }
-        }
-        return Options(
-            // One row per name: unnamed spots are listed under the area or
-            // city that names them, places with the same name are one row,
-            // and the filter matches all of them.
-            places: PlaceNames.options(for: allItems),
-            trips: tripNames.keys.sorted(),
-            tripNames: tripNames
-        )
+    private func buildOptions() -> LibraryFilterOptionSet {
+        LibraryFilterOptionsCache.options(for: allItems, key: optionsKey)
     }
 
     private var selectedPlaceName: String? {
@@ -427,6 +402,9 @@ struct LibraryFilterPublisher: View {
         // without touching the item; only read them when they matter.
         let readsText = !query.isEmpty || memoryFilterRaw != LibraryMemoryFilter.all.rawValue
         hasher.combine(store.revision)
+        // A favorite save leaves `revision` alone, so the Favorites filter
+        // follows its own revision.
+        if criteria.favoritesOnly { hasher.combine(store.favoriteRevision) }
         if readsText {
             for item in items {
                 hasher.combine(item.latestMemory?.text)

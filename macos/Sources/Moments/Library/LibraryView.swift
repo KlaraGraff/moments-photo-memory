@@ -3,12 +3,6 @@ import Foundation
 import SwiftUI
 import SwiftData
 
-private struct LibraryFilterOptions {
-    var places: [LibraryPlaceOption] = []
-    var trips: [String] = []
-    var tripNames: [String: String] = [:]
-}
-
 private enum LibraryScrollTarget {
     static func section(_ id: String) -> String { "section:\(id)" }
     static func item(_ id: String) -> String { "item:\(id)" }
@@ -67,7 +61,9 @@ struct LibraryView: View {
     /// Photos the import flagged for a look; shown as a banner, not a sidebar row.
     @State private var cachedReviewCount = 0
     @State private var showingReview = false
-    @State private var cachedFilterOptions = LibraryFilterOptions()
+    @State private var cachedFilterOptions = LibraryFilterOptionSet()
+    /// Each section's day-memory keys, built once with the sections.
+    @State private var cachedSectionDayKeys: [String: Set<String>] = [:]
 
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
@@ -116,23 +112,6 @@ struct LibraryView: View {
 
     private var trips: [String] { cachedFilterOptions.trips }
 
-    private static func filterOptions(for items: [MediaItem]) -> LibraryFilterOptions {
-        var tripNames: [String: String] = [:]
-        for item in items {
-            if let tripID = item.tripID, tripNames[tripID] == nil {
-                tripNames[tripID] = item.trip?.effectiveName ?? tripID
-            }
-        }
-        return LibraryFilterOptions(
-            // One row per name: unnamed spots are listed under the area or
-            // city that names them, places with the same name are one row,
-            // and the filter matches all of them.
-            places: PlaceNames.options(for: items),
-            trips: tripNames.keys.sorted(),
-            tripNames: tripNames
-        )
-    }
-
     private var selectedPlaceName: String? {
         places.first(where: { $0.id == placeFilterID })?.name
     }
@@ -177,6 +156,9 @@ struct LibraryView: View {
         hasher.combine(selection.libraryScope?.itemIDs)
         // All photos, faces and places the pages group by, as one revision.
         hasher.combine(store.revision)
+        // A favorite save leaves `revision` alone, so the Favorites filter
+        // (and the Favorites segment) follows its own revision.
+        if criteria.favoritesOnly { hasher.combine(store.favoriteRevision) }
         for trip in allTrips {
             hasher.combine(trip.id)
             hasher.combine(trip.name)
@@ -449,7 +431,8 @@ struct LibraryView: View {
                             allGroups: allGroups,
                             groupItems: groupItems,
                             stackCounts: cachedStackCounts,
-                            allItemIDs: cachedUnfoldedSectionItems[section.id] ?? section.itemIDs
+                            allItemIDs: cachedUnfoldedSectionItems[section.id] ?? section.itemIDs,
+                            dayKeys: cachedSectionDayKeys[section.id] ?? []
                         )
                     }
                 }
@@ -577,7 +560,9 @@ struct LibraryView: View {
     }
 
     private func regroup() {
-        cachedReviewCount = allItems.reduce(into: 0) { count, item in
+        // `allItems` builds a new array each time it is read.
+        let all = allItems
+        cachedReviewCount = all.reduce(into: 0) { count, item in
             if item.needsImportReview { count += 1 }
         }
         let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
@@ -587,16 +572,20 @@ struct LibraryView: View {
         let scopedItems = selection.libraryScope.map { scope in
             items.filter { scope.itemIDs.contains($0.id) }
         } ?? items
-        let filtered = LibraryFilterEngine.filteredItems(scopedItems, by: criteria, personIDsByMediaID: personIndex)
-        let visible = LibraryFilterEngine.filteredItems(
-            scopedItems,
-            by: criteria,
-            preservingEditingItemID: state.focusedMemoryItemID,
+        // One call for all three results, so each photo is tested once.
+        let passes = LibraryFilterEngine.regroupPasses(
+            scopedItems: scopedItems,
+            allItems: all,
+            hasScope: selection.libraryScope != nil,
+            criteria: criteria,
+            editingItemID: state.focusedMemoryItemID,
             personIDsByMediaID: personIndex
         )
+        let filtered = passes.filtered
+        let visible = passes.visible
         cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
         // A burst is one cell showing its cover, and counts as one photo.
-        let stackIndex = stacks.update(items: allItems, decisions: stackRecords)
+        let stackIndex = stacks.update(items: all, decisions: stackRecords)
         let unfolded = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
         let folded = LibraryFilterEngine.folding(unfolded, with: stackIndex)
         cachedSections = folded.sections
@@ -606,8 +595,24 @@ struct LibraryView: View {
         state.gridSections = cachedSections.map(\.itemIDs)
         state.viewerItemIDs = unfolded.flatMap(\.itemIDs)
         hasGrouped = true
-        cachedFilterOptions = Self.filterOptions(for: allItems)
-        let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
+        // The chips build from `store.items` too, so both callers hand the
+        // cache the same photos in the same order: the trip name taken for a
+        // trip whose photos disagree can otherwise depend on the order.
+        cachedFilterOptions = LibraryFilterOptionsCache.options(
+            for: store.items,
+            key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips)
+        )
+        // Day memories are matched per section; reading every photo's day in
+        // the section's body repeated that pass on each render.
+        var sectionDayKeys: [String: Set<String>] = [:]
+        sectionDayKeys.reserveCapacity(cachedSections.count)
+        for section in cachedSections {
+            let sectionItems: [MediaItem] = section.itemIDs.compactMap { cachedItemByID[$0] }
+            let keys: Set<String> = Set(sectionItems.compactMap { PhotoNoteDay.key(for: $0) })
+            sectionDayKeys[section.id] = keys
+        }
+        cachedSectionDayKeys = sectionDayKeys
+        let publishedVisible = passes.publishedIDs
         if selection.visibleItemIDs != publishedVisible { selection.visibleItemIDs = publishedVisible }
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
         if let focus = selection.focusedItemID,
@@ -727,6 +732,9 @@ private struct LibrarySectionView: View {
     var stackCounts: [String: Int] = [:]
     /// The section's photos with each stack's shots, for "Show only these".
     var allItemIDs: [String]? = nil
+    /// The day-memory keys of the section's photos, built once by the page
+    /// that groups them instead of on each render.
+    var dayKeys: Set<String> = []
     @Query private var placeNotes: [PlaceNote]
     @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
@@ -825,7 +833,6 @@ private struct LibrarySectionView: View {
     private var sectionMemories: [CollectionMemory] {
         guard !collectionMemories.isEmpty else { return [] }
         let tripID = section.id.hasPrefix("trip:") ? String(section.id.dropFirst("trip:".count)) : nil
-        let dayKeys = Set(items.compactMap { PhotoNoteDay.key(for: $0) })
         return collectionMemories.filter { memory in
             switch memory.scope {
             case .trip: return memory.scopeKey == tripID
@@ -1436,6 +1443,8 @@ struct GroupDetailView: View {
     @State private var cachedVisibleItemIDs: [String] = []
     @State private var cachedVisibleItemsByID: [String: MediaItem] = [:]
     @State private var cachedPersonIndex: [String: Set<String>] = [:]
+    /// Each section's day-memory keys, built once with the section list.
+    @State private var cachedSectionDayKeys: [String: Set<String>] = [:]
 
     init(groupID: String, state: LibraryViewState) {
         self.groupID = groupID
@@ -1501,7 +1510,18 @@ struct GroupDetailView: View {
             .sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) > ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
         cachedVisibleItemIDs = sorted.map(\.id)
         cachedVisibleItemsByID = Dictionary(uniqueKeysWithValues: sorted.map { ($0.id, $0) })
-        state.gridSections = sections.map(\.itemIDs)
+        let nextSections = sections
+        state.gridSections = nextSections.map(\.itemIDs)
+        // GroupDetailView has no regroup() of its own; its section list is
+        // rebuilt here, so its day-memory keys are built here too.
+        var sectionDayKeys: [String: Set<String>] = [:]
+        sectionDayKeys.reserveCapacity(nextSections.count)
+        for section in nextSections {
+            let sectionItems: [MediaItem] = section.itemIDs.compactMap { cachedVisibleItemsByID[$0] }
+            let keys: Set<String> = Set(sectionItems.compactMap { PhotoNoteDay.key(for: $0) })
+            sectionDayKeys[section.id] = keys
+        }
+        cachedSectionDayKeys = sectionDayKeys
     }
 
     private var sections: [LibrarySection] {
@@ -1536,7 +1556,8 @@ struct GroupDetailView: View {
                                             state: state,
                                             allGroups: groups.filter { $0.kindRaw != UserGroup.Kind.chapter.rawValue },
                                             groupItems: memberships,
-                                            group: group
+                                            group: group,
+                                            dayKeys: cachedSectionDayKeys[section.id] ?? []
                                         )
                                     }
                                 }

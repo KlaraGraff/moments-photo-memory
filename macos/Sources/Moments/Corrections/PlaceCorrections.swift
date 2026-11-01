@@ -49,8 +49,10 @@ enum PlaceNames {
     static func groups(for items: [MediaItem]) -> [Group] {
         var groups: [String: Group] = [:]
         var spellings: [String: [String: Int]] = [:]
+        // About 2,100 places for 20,000 photos: resolve each place's name once.
+        var resolvedNames: [PersistentIdentifier: String?] = [:]
         for item in items {
-            guard let name = listedName(of: item) else { continue }
+            guard let name = listedOrResolvedName(of: item, resolving: &resolvedNames) else { continue }
             let key = Self.key(name)
             guard !key.isEmpty else { continue }
             spellings[key, default: [:]][name, default: 0] += 1
@@ -60,6 +62,22 @@ enum PlaceNames {
             if let name = counts.max(by: { ($0.value, $1.key) < ($1.value, $0.key) })?.key { groups[key]?.name = name }
         }
         return groups.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// `listedName(of:)`, except that a place's own name is resolved once per
+    /// place: photos of one place share the result, `nil` included.
+    private static func listedOrResolvedName(
+        of item: MediaItem,
+        resolving resolvedNames: inout [PersistentIdentifier: String?]
+    ) -> String? {
+        let override = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let override, !override.isEmpty { return override }
+        guard let place = item.place else { return nil }
+        let id = place.persistentModelID
+        if let cached = resolvedNames[id] { return cached }
+        let name = PlaceDisplayName.resolvedName(of: place)
+        resolvedNames[id] = .some(name)
+        return name
     }
 
     static func options(for items: [MediaItem]) -> [LibraryPlaceOption] {

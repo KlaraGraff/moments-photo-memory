@@ -69,6 +69,9 @@ final class LibraryStore {
     /// photos added, removed or moved in time or place, faces assigned,
     /// places renamed. Not bumped by saves that change none of that.
     private(set) var revision = 0
+    /// Moves when a favorite is set or cleared. `revision` does not move for a
+    /// save that changed nothing but favorites.
+    private(set) var favoriteRevision = 0
     /// How many batches were applied and how many full fetches ran; for tests
     /// and the page probe. A batch applied from its own changes counts here
     /// but not in `fullFetchCount`.
@@ -97,6 +100,11 @@ final class LibraryStore {
     /// fixes the total without walking the library.
     @ObservationIgnored private var itemHash: [PersistentIdentifier: Int] = [:]
     @ObservationIgnored private var itemSum = 0
+    /// The same per-photo hash without `updatedAt`: what a page actually
+    /// groups by. A save that moved only `updatedAt` (a favorite, a rename)
+    /// leaves this sum alone, which is how such a save skips the full bump.
+    @ObservationIgnored private var layoutHash: [PersistentIdentifier: Int] = [:]
+    @ObservationIgnored private var layoutSum = 0
     /// Sort keys kept beside each photo, so rebuilding a list never reads a
     /// SwiftData property inside a comparator.
     @ObservationIgnored private var itemKeys: [PersistentIdentifier: PhotoKeys] = [:]
@@ -114,6 +122,10 @@ final class LibraryStore {
     /// What the last applied batch (or the last fetch) looked like;
     /// `revision` moves when one of these values differs.
     @ObservationIgnored private var applied: Measures?
+    /// `layoutSum` at the moment `applied` was recorded. A save that changed
+    /// nothing but `updatedAt` moves the full item sum and leaves this alone,
+    /// which is what lets a favorite save skip the bump.
+    @ObservationIgnored private var appliedLayoutSum = 0
 
     /// Quiet time after the last save before applying what changed.
     static let settleSeconds: TimeInterval = 0.25
@@ -213,15 +225,20 @@ final class LibraryStore {
 
         itemByPID = [:]
         itemHash = [:]
+        layoutHash = [:]
         itemKeys = [:]
         itemSum = 0
+        layoutSum = 0
         for item in live + deleted {
             let id = item.persistentModelID
             let hash = Self.hash(of: item)
+            let layout = Self.layoutHash(of: item)
             itemByPID[id] = item
             itemHash[id] = hash
+            layoutHash[id] = layout
             itemKeys[id] = PhotoKeys(item: item)
             itemSum &+= hash
+            layoutSum &+= layout
         }
         #if DEBUG
         let hashPhotosEnd = CACurrentMediaTime()
@@ -261,6 +278,9 @@ final class LibraryStore {
         #endif
         refreshCount += 1
         fullFetchCount += 1
+        // A full fetch reads every favorite too, so pages that filter by
+        // favorites are told to look again, whatever `revision` did.
+        favoriteRevision &+= 1
         #if DEBUG
         let bumpRevisionStart = CACurrentMediaTime()
         #endif
@@ -397,6 +417,21 @@ final class LibraryStore {
         guard let context else { return }
         var touched = Touched()
 
+        // A favorite alone changes what the Favorites filter and the sidebar
+        // smart groups show, not how a page groups its photos; the batch's
+        // own contents decide whether `revision` has to move at all.
+        let mediaEntityName = String(describing: MediaItem.self)
+        let favoriteEntityName = String(describing: Favorite.self)
+        var hadFavoriteRow = false
+        var hadOtherEntityRow = false
+        for id in changes.inserted + changes.updated + changes.deleted {
+            if id.entityName == favoriteEntityName {
+                hadFavoriteRow = true
+            } else if id.entityName != mediaEntityName {
+                hadOtherEntityRow = true
+            }
+        }
+
         // Removals first: a model that is gone from the store must never be
         // read (SwiftData traps on the invalidated instance), and a save
         // lists a removed row as deleted, not as updated.
@@ -492,14 +527,55 @@ final class LibraryStore {
         if touched.photoLists { rebuildPhotos() }
         if touched.faces { rebuildFaces() }
         refreshCount += 1
-        bumpRevisionIfNeeded()
+        appliedRevisionRule(
+            hadFavoriteRow: hadFavoriteRow,
+            hadOnlyPhotosAndFavorites: !hadOtherEntityRow
+        )
+    }
+
+    /// What one applied batch does to `revision` and `favoriteRevision`.
+    ///
+    /// A favorite is not something a page groups its photos by; only the
+    /// Favorites filter and the sidebar smart groups read it. So a batch of
+    /// favorites and their photos, whose layout did not move, must not make
+    /// every page rebuild its groups. It still records the new measures, so
+    /// the next batch compares against them.
+    ///
+    /// Only a batch that carries a `Favorite` row may take that path; every
+    /// other save keeps the old rule, even one that moved only `updatedAt`.
+    private func appliedRevisionRule(hadFavoriteRow: Bool, hadOnlyPhotosAndFavorites: Bool) {
+        if hadFavoriteRow { favoriteRevision &+= 1 }
+        guard hadFavoriteRow, hadOnlyPhotosAndFavorites, let previous = applied else {
+            bumpRevisionIfNeeded()
+            return
+        }
+        let next = measures
+        let sameCounts = next.itemCount == previous.itemCount
+            && next.faceCount == previous.faceCount
+            && next.placeCount == previous.placeCount
+        let sameFacesAndPlaces = next.faceSum == previous.faceSum
+            && next.placeSum == previous.placeSum
+        let sameLayout = layoutSum == appliedLayoutSum
+        guard sameCounts, sameFacesAndPlaces, sameLayout else {
+            bumpRevisionIfNeeded()
+            return
+        }
+        // Only `updatedAt` (the full item sum) moved: nothing pages group or
+        // filter their photos by changed, so `revision` stays. The batch's
+        // new measures are recorded, so the next batch compares against them.
+        applied = next
+        appliedLayoutSum = layoutSum
     }
 
     private func upsertPhoto(_ id: PersistentIdentifier, model: MediaItem, touched: inout Touched) {
         if let old = itemHash[id] { itemSum &-= old }
+        if let old = layoutHash[id] { layoutSum &-= old }
         let hash = Self.hash(of: model)
+        let layout = Self.layoutHash(of: model)
         itemHash[id] = hash
+        layoutHash[id] = layout
         itemSum &+= hash
+        layoutSum &+= layout
 
         let existed = itemByPID[id] != nil
         itemByPID[id] = model
@@ -514,6 +590,7 @@ final class LibraryStore {
 
     private func removePhoto(_ id: PersistentIdentifier, touched: inout Touched) {
         if let old = itemHash.removeValue(forKey: id) { itemSum &-= old }
+        if let old = layoutHash.removeValue(forKey: id) { layoutSum &-= old }
         itemKeys[id] = nil
         if itemByPID.removeValue(forKey: id) != nil { touched.photoLists = true }
     }
@@ -855,9 +932,15 @@ final class LibraryStore {
 
     private func bumpRevisionIfNeeded() {
         let next = measures
-        guard next != applied else { return }
-        applied = next
-        revision &+= 1
+        let layout = layoutSum
+        if next != applied {
+            applied = next
+            revision &+= 1
+        }
+        // Kept beside `applied`: a batch that only moved `updatedAt` records
+        // its measures without a bump, and the next batch must compare
+        // against that same layout sum.
+        appliedLayoutSum = layout
     }
 
     // MARK: - Per-object hashes
@@ -877,6 +960,23 @@ final class LibraryStore {
         hasher.combine(item.kindRaw)
         hasher.combine(item.isScreenshot)
         hasher.combine(item.updatedAt)
+        hasher.combine(item.deletedAt)
+        return hasher.finalize()
+    }
+
+    /// The same fields as `hash(of:)` without `updatedAt`: the layout a page
+    /// groups by, and nothing that a favorite or a rename moves.
+    private static func layoutHash(of item: MediaItem) -> Int {
+        var hasher = Hasher()
+        hasher.combine(item.id)
+        hasher.combine(item.effectiveCaptureDate)
+        hasher.combine(item.localDayKey)
+        hasher.combine(item.latitude)
+        hasher.combine(item.longitude)
+        hasher.combine(item.tripID)
+        hasher.combine(item.place?.id)
+        hasher.combine(item.kindRaw)
+        hasher.combine(item.isScreenshot)
         hasher.combine(item.deletedAt)
         return hasher.finalize()
     }

@@ -480,13 +480,16 @@ final class LibraryStoreTests: XCTestCase {
     }
 
     // 7
-    func testFavoriteStillBumpsRevision() async throws {
+    // A favorite used to bump `revision`, which regrouped the whole library.
+    // It now moves `favoriteRevision` only; see the favorite tests at the end.
+    func testFavoriteBumpsOnlyTheFavoriteRevision() async throws {
         let context = try makeContext()
         let item = MediaItem(id: "a", captureDate: base)
         context.insert(item)
         try context.save()
         let store = makeStore(context: context)
-        let revision = store.revision
+        let revision: Int = store.revision
+        let favoriteRevision: Int = store.favoriteRevision
 
         store.itemsByID["a"]?.setFavorite(true, context: context)
         try context.save()
@@ -494,9 +497,10 @@ final class LibraryStoreTests: XCTestCase {
         var bumped = false
         for _ in 0..<20 {
             await Task.yield()
-            if store.revision > revision { bumped = true; break }
+            if store.favoriteRevision > favoriteRevision { bumped = true; break }
         }
-        XCTAssertTrue(bumped, "a favorite change must still bump revision")
+        XCTAssertTrue(bumped, "a favorite change must bump the favorite revision")
+        XCTAssertEqual(store.revision, revision, "a favorite must not regroup the library")
     }
 
     // 8
@@ -611,6 +615,142 @@ final class LibraryStoreTests: XCTestCase {
         // The GitHub Mac measured 51 ms for the save plus the applied batch
         // (Debug, 2026-11-01); the bound is twice that.
         XCTAssertLessThan(elapsed, 0.1, "one applied batch of 50 faces took \(elapsed * 1_000) ms")
+    }
+
+    // MARK: - Favorites do not regroup the library
+
+    /// Twenty photos, one store started on them, and the revision it began at.
+    private func makeTwentyPhotoStore() throws -> (context: ModelContext, store: LibraryStore, first: MediaItem) {
+        let context = try makeContext()
+        var photos: [MediaItem] = []
+        photos.reserveCapacity(20)
+        for index in 0..<20 {
+            let step: Double = Double(index)
+            let seconds: TimeInterval = step * 60
+            let photo = MediaItem(id: "photo-\(index)", captureDate: base.addingTimeInterval(seconds))
+            context.insert(photo)
+            photos.append(photo)
+        }
+        try context.save()
+        let store = makeStore(context: context)
+        let first: MediaItem = try XCTUnwrap(photos.first)
+        return (context, store, first)
+    }
+
+    // Favorite alone: only the favorite revision moves.
+    func testFavoriteAloneBumpsOnlyTheFavoriteRevision() async throws {
+        let setup = try makeTwentyPhotoStore()
+        let context: ModelContext = setup.context
+        let store: LibraryStore = setup.store
+        let photo: MediaItem = setup.first
+        let revision: Int = store.revision
+        let favoriteRevision: Int = store.favoriteRevision
+        let refreshes: Int = store.refreshCount
+
+        photo.setFavorite(true, context: context)
+        try context.save()
+
+        let applied = await waitUntil(timeout: 3) { store.refreshCount > refreshes }
+        XCTAssertTrue(applied, "the store never applied the favorite save")
+        XCTAssertEqual(store.favoriteRevision, favoriteRevision + 1)
+        XCTAssertEqual(store.revision, revision, "a favorite alone must not regroup the library")
+        XCTAssertEqual(store.refreshCount, refreshes + 1)
+    }
+
+    // Favorite from another context: the same, after the settle delay.
+    func testFavoriteFromAnotherContextBumpsOnlyTheFavoriteRevision() async throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        self.container = container
+        let context: ModelContext = container.mainContext
+        for index in 0..<20 {
+            let step: Double = Double(index)
+            let seconds: TimeInterval = step * 60
+            context.insert(MediaItem(id: "photo-\(index)", captureDate: base.addingTimeInterval(seconds)))
+        }
+        try context.save()
+        let store = makeStore(context: context)
+        let revision: Int = store.revision
+        let favoriteRevision: Int = store.favoriteRevision
+        let refreshes: Int = store.refreshCount
+
+        let other = ModelContext(container)
+        let descriptor = FetchDescriptor<MediaItem>()
+        let photos: [MediaItem] = try other.fetch(descriptor)
+        let photo: MediaItem = try XCTUnwrap(photos.first(where: { $0.id == "photo-0" }))
+        photo.setFavorite(true, context: other)
+        try other.save()
+
+        let applied = await waitUntil(timeout: 3) { store.refreshCount > refreshes }
+        XCTAssertTrue(applied, "the store never applied the other context's favorite")
+        XCTAssertEqual(store.favoriteRevision, favoriteRevision + 1)
+        XCTAssertEqual(store.revision, revision, "a favorite alone must not regroup the library")
+        XCTAssertEqual(store.refreshCount, refreshes + 1)
+    }
+
+    // Favorite plus a date change in one save: both revisions move.
+    func testFavoriteWithADateChangeMovesBothRevisions() async throws {
+        let setup = try makeTwentyPhotoStore()
+        let context: ModelContext = setup.context
+        let store: LibraryStore = setup.store
+        let photo: MediaItem = setup.first
+        let revision: Int = store.revision
+        let favoriteRevision: Int = store.favoriteRevision
+        let refreshes: Int = store.refreshCount
+
+        photo.setFavorite(true, context: context)
+        photo.captureDate = base.addingTimeInterval(-3600)
+        try context.save()
+
+        let applied = await waitUntil(timeout: 3) { store.refreshCount > refreshes }
+        XCTAssertTrue(applied, "the store never applied the save")
+        XCTAssertGreaterThan(store.favoriteRevision, favoriteRevision)
+        XCTAssertGreaterThan(store.revision, revision, "a moved photo still regroups the library")
+    }
+
+    // A date change alone: only the revision moves.
+    func testDateChangeAloneBumpsOnlyTheRevision() async throws {
+        let setup = try makeTwentyPhotoStore()
+        let context: ModelContext = setup.context
+        let store: LibraryStore = setup.store
+        let photo: MediaItem = setup.first
+        let revision: Int = store.revision
+        let favoriteRevision: Int = store.favoriteRevision
+        let refreshes: Int = store.refreshCount
+
+        photo.captureDate = base.addingTimeInterval(-3600)
+        try context.save()
+
+        let applied = await waitUntil(timeout: 3) { store.refreshCount > refreshes }
+        XCTAssertTrue(applied, "the store never applied the date change")
+        XCTAssertGreaterThan(store.revision, revision)
+        XCTAssertEqual(store.favoriteRevision, favoriteRevision, "no favorite row, no favorite bump")
+    }
+
+    // After a favorite batch, a full fetch leaves `revision` alone.
+    func testFullFetchAfterAFavoriteLeavesRevisionAlone() async throws {
+        let setup = try makeTwentyPhotoStore()
+        let context: ModelContext = setup.context
+        let store: LibraryStore = setup.store
+        let photo: MediaItem = setup.first
+        let revision: Int = store.revision
+        let favoriteRevision: Int = store.favoriteRevision
+        let refreshes: Int = store.refreshCount
+
+        photo.setFavorite(true, context: context)
+        try context.save()
+
+        let applied = await waitUntil(timeout: 3) { store.refreshCount > refreshes }
+        XCTAssertTrue(applied, "the store never applied the favorite save")
+        XCTAssertEqual(store.favoriteRevision, favoriteRevision + 1)
+        XCTAssertEqual(store.revision, revision)
+
+        store.refreshNow()
+        XCTAssertEqual(store.revision, revision, "a full fetch after a favorite changes nothing pages group by")
+        XCTAssertEqual(store.favoriteRevision, favoriteRevision + 2, "a full fetch tells favorite readers to look again")
+
+        let fresh = LibraryStore()
+        fresh.start(context: context)
+        XCTAssertEqual(store.measures, fresh.measures, "the applied batch left the store in a state a fresh fetch disagrees with")
     }
 
     // MARK: - Helpers

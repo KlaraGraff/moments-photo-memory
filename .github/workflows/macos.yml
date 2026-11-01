@@ -39,6 +39,8 @@ jobs:
         run: xcodegen generate --spec macos/project.yml
       - name: Build and test native app
         run: xcodebuild -project macos/Moments.xcodeproj -scheme Moments -destination 'platform=macOS' -derivedDataPath macos/.derivedData CODE_SIGNING_ALLOWED=NO build test
+      - name: Check the app does not call Date >= or <=
+        run: bash scripts/check_date_symbols.sh macos/.derivedData/Build/Products/Debug/Moments.app
       - name: Compile native UI smoke tests
         run: xcodebuild -project macos/Moments.xcodeproj -scheme MomentsUITests -destination 'platform=macOS' -derivedDataPath macos/.derivedData CODE_SIGNING_ALLOWED=NO build-for-testing
       - name: Test MomentsCore package on macOS

@@ -106,6 +106,13 @@ final class LibraryStore {
     /// `refreshNow()` bumps it, so a test can tell an applied batch from a
     /// full fetch.
     private(set) var fullFetchCount = 0
+    /// How many place-only saves refreshed just their changed places instead
+    /// of fetching the whole place list; for tests and the page probe.
+    private(set) var placeQuickRefreshCount = 0
+    /// How many times the whole place list was fetched again (an insert or
+    /// delete, a full fetch, or a save that named no place); for tests and the
+    /// page probe.
+    private(set) var placeListFetchCount = 0
 
     @ObservationIgnored private var context: ModelContext?
     /// Held here, not read from `context` on every save: a context does not
@@ -151,6 +158,9 @@ final class LibraryStore {
     /// Per-place hash, like `itemHash`: a place that changes fixes the total
     /// without every place being hashed again.
     @ObservationIgnored private var placeHash: [PersistentIdentifier: Int] = [:]
+    /// The places of `places` by persistent id, kept in step with it, so a
+    /// save can look up the few places it changed instead of the whole list.
+    @ObservationIgnored private var placeByPID: [PersistentIdentifier: Place] = [:]
     /// What the last applied batch (or the last fetch) looked like;
     /// `revision` moves when one of these values differs.
     @ObservationIgnored private var applied: Measures?
@@ -470,6 +480,9 @@ final class LibraryStore {
         /// Every place has to be hashed again: a deleted override cannot say
         /// which place it was on.
         var allPlaces = false
+        /// A place was inserted or deleted, so the list itself has to be
+        /// fetched again. A place that was only renamed keeps the list.
+        var placeListChanged = false
         /// The places that changed themselves (inserted or updated).
         var changedPlacePIDs: Set<PersistentIdentifier> = []
         /// The places named by a changed place-wide override, by string id.
@@ -489,6 +502,7 @@ final class LibraryStore {
             faces = faces || other.faces
             places = places || other.places
             allPlaces = allPlaces || other.allPlaces
+            placeListChanged = placeListChanged || other.placeListChanged
             changedPlacePIDs.formUnion(other.changedPlacePIDs)
             changedPlaceIDs.formUnion(other.changedPlaceIDs)
             hadFavoriteRow = hadFavoriteRow || other.hadFavoriteRow
@@ -539,6 +553,7 @@ final class LibraryStore {
                 // A removed place leaves the list; the refetch below drops its
                 // hash and sum.
                 touched.places = true
+                touched.placeListChanged = true
             case String(describing: PlaceOverride.self):
                 // A removed override may have been a place-wide rename, and it
                 // no longer says which place that was: hash every place.
@@ -556,6 +571,16 @@ final class LibraryStore {
         updatedIDs.reserveCapacity(changes.inserted.count + changes.updated.count)
         for id in changes.inserted + changes.updated where !removed.contains(id) {
             updatedIDs.append(id)
+        }
+
+        // A place this batch inserted gains the list a row, so the list itself
+        // has to be fetched again. Inserted and updated ids share the loop
+        // below, so the inserted place ids are collected first.
+        let placeEntityName = String(describing: Place.self)
+        var insertedPlaces = Set<PersistentIdentifier>()
+        insertedPlaces.reserveCapacity(changes.inserted.count)
+        for id in changes.inserted where id.entityName == placeEntityName {
+            insertedPlaces.insert(id)
         }
 
         // `model(for:)` hands back a model this context already holds, with the
@@ -607,6 +632,7 @@ final class LibraryStore {
             case String(describing: Place.self):
                 touched.places = true
                 touched.changedPlacePIDs.insert(id)
+                if insertedPlaces.contains(id) { touched.placeListChanged = true }
             default:
                 break
             }
@@ -961,11 +987,24 @@ final class LibraryStore {
     /// keeps `placeHash`/`placeSum` incremental. With `rehash` given, only the
     /// places the applied batch can have changed are hashed again; without it
     /// (a full refresh) every place is.
+    ///
+    /// A save that only renamed places the store already lists takes the quick
+    /// path: no place was inserted or deleted, so the list itself cannot have
+    /// changed, and only the changed places are fetched by id and hashed again.
     private func refetchPlaces(rehash touched: Touched? = nil) {
         guard let context else { return }
+        if let touched, canRefreshOnlyChangedPlaces(touched) {
+            refreshOnlyChangedPlaces(touched, in: context)
+            return
+        }
         let descriptor = FetchDescriptor<Place>(sortBy: [SortDescriptor(\Place.id)])
         let next: [Place] = (try? context.fetch(descriptor)) ?? []
+        placeListFetchCount += 1
         if !places.elementsEqual(next, by: { $0 === $1 }) { places = next }
+        var byPID: [PersistentIdentifier: Place] = [:]
+        byPID.reserveCapacity(next.count)
+        for place in next { byPID[place.persistentModelID] = place }
+        placeByPID = byPID
 
         var known = Set<PersistentIdentifier>()
         known.reserveCapacity(next.count)
@@ -998,6 +1037,48 @@ final class LibraryStore {
                 let hash = Self.hash(of: place)
                 placeHash[place.persistentModelID] = hash
                 placeSum &+= hash
+            }
+        }
+    }
+
+    /// True when a batch changed only places the store already lists: no place
+    /// was inserted or deleted (so the list itself cannot have changed), no
+    /// place has to be hashed again because an override went away, and every
+    /// changed place is in `placeByPID`.
+    private func canRefreshOnlyChangedPlaces(_ touched: Touched) -> Bool {
+        guard touched.places, !touched.placeListChanged, !touched.allPlaces else { return false }
+        for pid in touched.changedPlacePIDs where placeByPID[pid] == nil { return false }
+        return true
+    }
+
+    /// The quick path: fetches just the changed places themselves and the
+    /// places a changed place-wide override named, by string id, in chunks of
+    /// `fetchChunkSize`. The fetch refreshes
+    /// the values of the objects the store already holds, so `places` is not
+    /// reassigned and only those places are hashed again. A named place that
+    /// is not found is skipped, as the full path also only rehashes places it
+    /// has.
+    private func refreshOnlyChangedPlaces(_ touched: Touched, in context: ModelContext) {
+        placeQuickRefreshCount += 1
+        let changedIDs: [String] = touched.changedPlacePIDs.compactMap { (pid: PersistentIdentifier) -> String? in
+            placeByPID[pid]?.id
+        }
+        var wantedIDs = Set(changedIDs)
+        wantedIDs.formUnion(touched.changedPlaceIDs)
+        guard !wantedIDs.isEmpty else { return }
+        for chunk in Array(wantedIDs).chunked(every: Self.fetchChunkSize) {
+            let descriptor = FetchDescriptor<Place>(predicate: #Predicate<Place> { chunk.contains($0.id) })
+            let found: [Place] = (try? context.fetch(descriptor)) ?? []
+            for place in found {
+                let pid = place.persistentModelID
+                guard placeHash[pid] != nil || placeByPID[pid] != nil else { continue }
+                if let old = placeHash[pid] { placeSum &-= old }
+                let hash = Self.hash(of: place)
+                placeHash[pid] = hash
+                placeSum &+= hash
+                // The list holds this same object, so its values are the ones
+                // just fetched; keeping the map in step costs nothing.
+                placeByPID[pid] = place
             }
         }
     }

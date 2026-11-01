@@ -1,9 +1,6 @@
 import Foundation
 import Observation
 import SwiftData
-#if DEBUG
-import QuartzCore
-#endif
 
 /// What one save changed, read from the `ModelContext.didSave` notification.
 /// Small and `Sendable`, so it can leave the saving thread before the main
@@ -185,9 +182,6 @@ final class LibraryStore {
     /// Fetches everything again and refills every map, hash and sum from
     /// scratch. Called at start and when a save could not say what changed.
     func refreshNow() {
-        #if DEBUG
-        let refreshStart = CACurrentMediaTime()
-        #endif
         pendingTask?.cancel()
         pendingTask = nil
         pendingImmediately = false
@@ -197,31 +191,16 @@ final class LibraryStore {
 
         // A typed descriptor and a typed result per fetch: the CI compilers
         // time out on a long one-line `fetch(FetchDescriptor(…))`.
-        #if DEBUG
-        let fetchLiveStart = CACurrentMediaTime()
-        #endif
         let liveDescriptor = FetchDescriptor<MediaItem>(
             predicate: #Predicate<MediaItem> { $0.deletedAt == nil }
         )
         let live: [MediaItem] = (try? context.fetch(liveDescriptor)) ?? []
-        #if DEBUG
-        let fetchLiveEnd = CACurrentMediaTime()
-        let fetchDeletedStart = CACurrentMediaTime()
-        #endif
         let deletedDescriptor = FetchDescriptor<MediaItem>(
             predicate: #Predicate<MediaItem> { $0.deletedAt != nil }
         )
         let deleted: [MediaItem] = (try? context.fetch(deletedDescriptor)) ?? []
-        #if DEBUG
-        let fetchDeletedEnd = CACurrentMediaTime()
-        let fetchFacesStart = CACurrentMediaTime()
-        #endif
         let facesDescriptor = FetchDescriptor<FaceObservation>()
         let allFaces: [FaceObservation] = (try? context.fetch(facesDescriptor)) ?? []
-        #if DEBUG
-        let fetchFacesEnd = CACurrentMediaTime()
-        let hashPhotosStart = CACurrentMediaTime()
-        #endif
 
         itemByPID = [:]
         itemHash = [:]
@@ -240,10 +219,6 @@ final class LibraryStore {
             itemSum &+= hash
             layoutSum &+= layout
         }
-        #if DEBUG
-        let hashPhotosEnd = CACurrentMediaTime()
-        let hashFacesStart = CACurrentMediaTime()
-        #endif
 
         faceByPID = [:]
         faceHash = [:]
@@ -257,59 +232,16 @@ final class LibraryStore {
             faceHash[id] = hash
             faceSum &+= hash
         }
-        #if DEBUG
-        let hashFacesEnd = CACurrentMediaTime()
-        let rebuildPhotosStart = CACurrentMediaTime()
-        #endif
 
         rebuildPhotos()
-        #if DEBUG
-        let rebuildPhotosEnd = CACurrentMediaTime()
-        let rebuildFacesStart = CACurrentMediaTime()
-        #endif
         rebuildFaces()
-        #if DEBUG
-        let rebuildFacesEnd = CACurrentMediaTime()
-        let refetchPlacesStart = CACurrentMediaTime()
-        #endif
         refetchPlaces()
-        #if DEBUG
-        let refetchPlacesEnd = CACurrentMediaTime()
-        #endif
         refreshCount += 1
         fullFetchCount += 1
         // A full fetch reads every favorite too, so pages that filter by
         // favorites are told to look again, whatever `revision` did.
         favoriteRevision &+= 1
-        #if DEBUG
-        let bumpRevisionStart = CACurrentMediaTime()
-        #endif
         bumpRevisionIfNeeded()
-        #if DEBUG
-        let bumpRevisionEnd = CACurrentMediaTime()
-        let refreshEnd = CACurrentMediaTime()
-        let fetchLiveMS: Int = Int(((fetchLiveEnd - fetchLiveStart) * 1000).rounded())
-        let fetchDeletedMS: Int = Int(((fetchDeletedEnd - fetchDeletedStart) * 1000).rounded())
-        let fetchFacesMS: Int = Int(((fetchFacesEnd - fetchFacesStart) * 1000).rounded())
-        let hashPhotosMS: Int = Int(((hashPhotosEnd - hashPhotosStart) * 1000).rounded())
-        let hashFacesMS: Int = Int(((hashFacesEnd - hashFacesStart) * 1000).rounded())
-        let rebuildPhotosMS: Int = Int(((rebuildPhotosEnd - rebuildPhotosStart) * 1000).rounded())
-        let rebuildFacesMS: Int = Int(((rebuildFacesEnd - rebuildFacesStart) * 1000).rounded())
-        let refetchPlacesMS: Int = Int(((refetchPlacesEnd - refetchPlacesStart) * 1000).rounded())
-        let bumpRevisionMS: Int = Int(((bumpRevisionEnd - bumpRevisionStart) * 1000).rounded())
-        let totalMS: Int = Int(((refreshEnd - refreshStart) * 1000).rounded())
-        let photoCount: Int = itemByPID.count
-        let faceCount: Int = faceByPID.count
-
-        let countsText: String = "store refresh: photos \(photoCount), faces \(faceCount)"
-        let fetchText: String = ", fetch live \(fetchLiveMS), fetch deleted \(fetchDeletedMS)"
-        let faceFetchText: String = ", fetch faces \(fetchFacesMS), hash photos \(hashPhotosMS)"
-        let hashText: String = ", hash faces \(hashFacesMS), rebuild photos \(rebuildPhotosMS)"
-        let rebuildText: String = ", rebuild faces \(rebuildFacesMS), places \(refetchPlacesMS)"
-        let revisionText: String = ", revision \(bumpRevisionMS), total \(totalMS)"
-        let line: String = countsText + fetchText + faceFetchText + hashText + rebuildText + revisionText
-        PageProbe.note(line)
-        #endif
     }
 
     // MARK: - Reading a save
@@ -388,9 +320,6 @@ final class LibraryStore {
         pendingChanges = nil
         guard changes.isKnown, changes.identifierCount <= Self.maximumBatchSize else {
             // The notification could not say what changed, or too much did.
-            #if DEBUG
-            PageProbe.note("store batch too large or unknown: \(changes.identifierCount) rows, known \(changes.isKnown)")
-            #endif
             refreshNow()
             return
         }

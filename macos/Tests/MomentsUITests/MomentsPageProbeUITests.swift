@@ -70,11 +70,24 @@ final class MomentsPageProbeUITests: XCTestCase {
         // Closing the viewer is a transition, not a new destination. It has
         // no shell or first-content event of its own; the next Chapters phase
         // records the destination that becomes visible after the close.
-        let shellPhases = [
-            "People", "Map", "Timeline", "Chapters", "Library", "viewer open",
-            "Chapters again", "chapter with most photos", "back to chapters",
-            "Timeline again", "Library again"
-        ].filter { !skipped.contains($0) }
+        // A page phase whose page is already on screen, because the phases
+        // between were skipped (Library again right after the viewer when
+        // Chapters and Timeline are skipped), shows no new shell either.
+        let pageOfPhase = [
+            "People": "people", "Map": "map", "Timeline": "timeline", "Chapters": "chapters",
+            "Library": "library", "Chapters again": "chapters", "chapter with most photos": "chapter",
+            "back to chapters": "chapters", "Timeline again": "timeline", "Library again": "library"
+        ]
+        var pageOnScreen = "library"
+        var shellPhases: [String] = []
+        for phase in phases {
+            if phase == "viewer open" {
+                shellPhases.append(phase)
+            } else if let page = pageOfPhase[phase] {
+                if page != pageOnScreen { shellPhases.append(phase) }
+                pageOnScreen = page
+            }
+        }
         let contentPhases = shellPhases + ["favorite on", "favorite off"].filter { !skipped.contains($0) }
         let pagePhases = phases.filter { $0 != "first import" && !$0.hasPrefix("after import") }
         let pageReportLines = text

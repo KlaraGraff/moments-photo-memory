@@ -21,6 +21,7 @@ struct PlacesViewModel {
         let clusters: [PlaceCluster]
         let routeSegments: [RouteSegment]
         let coordinateByID: [String: GeoPoint]
+        var twoWayRouteIDs: Set<String> = []
 
         var isEmpty: Bool { clusters.isEmpty }
 
@@ -76,12 +77,20 @@ struct PlacesViewModel {
         visibleItemIDs: Set<String>?,
         latitudeDelta: Double
     ) -> Snapshot {
-        let stops = photoStops(from: items, visibleItemIDs: visibleItemIDs)
+        snapshot(
+            stops: photoStops(from: items, visibleItemIDs: visibleItemIDs),
+            latitudeDelta: latitudeDelta
+        )
+    }
+
+    /// Clusters and routes from stops alone, safe to run off the main thread.
+    /// Stops dated `.distantPast` (photos without a date) are clustered but
+    /// left out of the routes, as `snapshot(items:…)` does.
+    func snapshot(stops: [PhotoStop], latitudeDelta: Double) -> Snapshot {
         let level = level(for: latitudeDelta)
         let clusters = clusterer.clusters(for: stops, level: level)
         // Undated photos are still clustered, but have no place in the route order.
-        let datedIDs = Set(items.lazy.filter { $0.effectiveCaptureDate != nil }.map(\.id))
-        let routeStops = stops.filter { datedIDs.contains($0.id) }
+        let routeStops = stops.filter { $0.date != .distantPast }
         let routeSegments: [RouteSegment]
         switch level {
         case .city:
@@ -91,6 +100,10 @@ struct PlacesViewModel {
         case .spot:
             routeSegments = RouteBuilder(stops: routeStops, clusterer: clusterer).local(level: .spot)
         }
+        // Only the city overview is capped: a wide view has thousands of pairs,
+        // while a close view keeps every segment and the screen picks the
+        // visible ones.
+        let routes = MapRoutes(segments: routeSegments, limit: level == .city ? 400 : .max)
         let coordinateByID: [String: GeoPoint] = Dictionary(
             uniqueKeysWithValues: stops.compactMap { stop in
                 guard let coordinate = stop.coordinate else { return nil }
@@ -101,8 +114,9 @@ struct PlacesViewModel {
             level: level,
             stops: stops,
             clusters: clusters,
-            routeSegments: routeSegments,
-            coordinateByID: coordinateByID
+            routeSegments: routes.segments,
+            coordinateByID: coordinateByID,
+            twoWayRouteIDs: routes.twoWayIDs
         )
     }
 

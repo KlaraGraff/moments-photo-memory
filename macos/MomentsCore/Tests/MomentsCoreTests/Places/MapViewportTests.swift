@@ -231,6 +231,83 @@ final class MapViewportTests: XCTestCase {
         XCTAssertTrue(viewport.segments([]).isEmpty)
     }
 
+    func testSegmentKeptWhenOnlyTheGreatCircleBendCrossesTheRegion() {
+        // Sydney to Santiago: both ends lie at about 33° south, but the drawn
+        // great circle bends south over the Pacific and crosses this view.
+        let viewport = MapViewport(
+            centerLatitude: -61.8,
+            centerLongitude: -139.4,
+            latitudeDelta: 4,
+            longitudeDelta: 10
+        )
+        let sydney = cluster("sydney", latitude: -33.87, longitude: 151.21)
+        let santiago = cluster("santiago", latitude: -33.45, longitude: -70.67)
+        let crossing = segment(from: sydney, to: santiago)
+
+        XCTAssertEqual(viewport.segments([crossing]), [crossing])
+    }
+
+    func testGreatCircleRouteIsKeptForSmallerViews() {
+        // The same route and an almost identical centre, with smaller views:
+        // the centre lies halfway between two great-circle samples, so a view
+        // narrower than the gap between samples still has to keep the route.
+        let sydney = cluster("sydney", latitude: -33.87, longitude: 151.21)
+        let santiago = cluster("santiago", latitude: -33.45, longitude: -70.67)
+        let crossing = segment(from: sydney, to: santiago)
+        let deltas: [(latitude: Double, longitude: Double)] = [
+            (4, 10),
+            (2, 4),
+            (1, 2),
+            (0.5, 1)
+        ]
+
+        for delta in deltas {
+            let viewport = MapViewport(
+                centerLatitude: -61.78,
+                centerLongitude: -139.36,
+                latitudeDelta: delta.latitude,
+                longitudeDelta: delta.longitude
+            )
+            XCTAssertEqual(
+                viewport.segments([crossing]),
+                [crossing],
+                "route dropped for latitudeDelta \(delta.latitude), longitudeDelta \(delta.longitude)"
+            )
+        }
+    }
+
+    func testGreatCircleRouteIsNotKeptByAViewAwayFromTheArc() {
+        // The same long route, with the view on the equator: the great circle
+        // between Sydney and Santiago never comes near it.
+        let viewport = MapViewport(
+            centerLatitude: 10,
+            centerLongitude: 0,
+            latitudeDelta: 4,
+            longitudeDelta: 10
+        )
+        let sydney = cluster("sydney", latitude: -33.87, longitude: 151.21)
+        let santiago = cluster("santiago", latitude: -33.45, longitude: -70.67)
+        let crossing = segment(from: sydney, to: santiago)
+
+        XCTAssertTrue(viewport.segments([crossing]).isEmpty)
+    }
+
+    func testShortRouteAwayFromTheRegionIsNotKept() {
+        // The great circle from (10, 0) to (10, 20) bends slightly north,
+        // nowhere near a view at 40° south.
+        let viewport = MapViewport(
+            centerLatitude: -40,
+            centerLongitude: 10,
+            latitudeDelta: 4,
+            longitudeDelta: 4
+        )
+        let west = cluster("west", latitude: 10, longitude: 0)
+        let east = cluster("east", latitude: 10, longitude: 20)
+        let away = segment(from: west, to: east)
+
+        XCTAssertTrue(viewport.segments([away]).isEmpty)
+    }
+
     // MARK: - Helpers
 
     private func cluster(_ id: String, latitude: Double, longitude: Double) -> PlaceCluster {

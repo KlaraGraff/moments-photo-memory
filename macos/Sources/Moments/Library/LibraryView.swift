@@ -177,6 +177,9 @@ struct LibraryView: View {
         hasher.combine(selection.libraryScope?.itemIDs)
         // All photos, faces and places the pages group by, as one revision.
         hasher.combine(store.revision)
+        // A favorite save leaves `revision` alone, so the Favorites filter
+        // (and the Favorites segment) follows its own revision.
+        if criteria.favoritesOnly { hasher.combine(store.favoriteRevision) }
         for trip in allTrips {
             hasher.combine(trip.id)
             hasher.combine(trip.name)

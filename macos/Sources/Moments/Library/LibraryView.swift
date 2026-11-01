@@ -23,6 +23,7 @@ struct LibraryView: View {
     @Environment(ImportController.self) private var importController
     @Environment(PhotoStackModel.self) private var stacks
     @Environment(LibraryStore.self) private var store
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // The library's photos, screenshots, faces and places come from the shared
     // store, which fetches them once for every page.
@@ -39,7 +40,9 @@ struct LibraryView: View {
     /// records are not groups anyone made.
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" }, sort: \UserGroup.name)
     private var allGroups: [UserGroup]
-    @Query private var groupItems: [UserGroupItem]
+    /// Group memberships, fetched when the store's `groupSourcesRevision`
+    /// moves, instead of a query SwiftData refreshes on every save.
+    @State private var cachedGroupItems: [UserGroupItem] = []
     @Query(sort: \Person.name) private var people: [Person]
     private var faceObservations: [FaceObservation] { store.faces }
     /// What someone changed about bursts: covers, unstacked, photos taken out.
@@ -345,6 +348,11 @@ struct LibraryView: View {
                 sourceKey: LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
             )
         }
+        // Memberships are fetched when a save touched a group source, not by a
+        // query SwiftData refreshes on every save.
+        .onChange(of: store.groupSourcesRevision, initial: true) { _, _ in
+            refreshGroupItems()
+        }
         .sheet(isPresented: $showingReview) {
             ReviewSheet()
         }
@@ -548,8 +556,8 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var results: some View {
-        // Read once per body: each read of the `@Query` property does work.
-        let memberships: [UserGroupItem] = groupItems
+        // The memberships cached by `refreshGroupItems()`, read once per body.
+        let memberships: [UserGroupItem] = cachedGroupItems
         ScrollViewReader { proxy in
             ScrollView {
                 // Headings and section grids space themselves (LibrarySectionView).
@@ -768,6 +776,19 @@ struct LibraryView: View {
            !selection.shouldRevealSelectionInLibrary {
             selection.focusedItemID = selection.selectedItemIDs.first
         }
+    }
+
+    /// Fetches the group memberships the sections hand to the photo menus.
+    /// Runs when `groupSourcesRevision` moves, so a save of anything else
+    /// leaves them alone.
+    private func refreshGroupItems() {
+        #if DEBUG
+        let started: CFTimeInterval = CACurrentMediaTime()
+        #endif
+        cachedGroupItems = (try? modelContext.fetch(FetchDescriptor<UserGroupItem>())) ?? []
+        #if DEBUG
+        PageProbe.tally("library memberships fetch", seconds: CACurrentMediaTime() - started)
+        #endif
     }
 
     /// Writes newly matched section memories, but only when the ids a section

@@ -55,6 +55,9 @@ struct MapScreen: View {
     /// On the globe, pins that would overlap are drawn as one.
     @State private var worldClusters: [PlaceCluster] = []
     @State private var worldCellDegrees = 0.0
+    /// The globe's routes, capped: a close view's snapshot keeps every segment,
+    /// so the globe must never hand that whole list to MapKit.
+    @State private var globeSegments: [RouteSegment] = []
     /// Below the globe, only the pins and routes the camera can see.
     @State private var viewport: MapViewport?
     @State private var visibleClusters: [PlaceCluster] = []
@@ -158,7 +161,7 @@ struct MapScreen: View {
             let input = FootprintsCalculator.input(from: items, visibleItemIDs: selection.visibleItemIDs)
             if worldInput?.signature != input.signature { worldInput = input }
             #if DEBUG
-            let segmentCount: Int = isWorldView ? snapshot.routeSegments.count : visibleSegments.count
+            let segmentCount: Int = isWorldView ? globeSegments.count : visibleSegments.count
             let clusterCount: Int = isWorldView ? worldClusters.count : visibleClusters.count
             PageProbe.note("routes \(segmentCount), pins \(clusterCount), world view \(isWorldView)")
             PageProbe.contentReady(token: probeToken)
@@ -249,7 +252,7 @@ struct MapScreen: View {
             // Page probe only: the "routes" switch leaves the route layer out,
             // so a measurement can show whether MapKit stalls on the routes.
             if !PageProbe.mapLayersLeftOut.contains("routes") {
-                ForEach(isWorldView ? snapshot.routeSegments : visibleSegments) { segment in
+                ForEach(isWorldView ? globeSegments : visibleSegments) { segment in
                     if let from = segment.from.center, let to = segment.to.center {
                         let coordinates = [from.coordinate, to.coordinate]
                         MapPolyline(MKGeodesicPolyline(coordinates: coordinates, count: coordinates.count))
@@ -284,7 +287,7 @@ struct MapScreen: View {
                 }
             }
             #else
-            ForEach(isWorldView ? snapshot.routeSegments : visibleSegments) { segment in
+            ForEach(isWorldView ? globeSegments : visibleSegments) { segment in
                 if let from = segment.from.center, let to = segment.to.center {
                     let coordinates = [from.coordinate, to.coordinate]
                     MapPolyline(MKGeodesicPolyline(coordinates: coordinates, count: coordinates.count))
@@ -799,6 +802,11 @@ struct MapScreen: View {
             snapshot.clusters.map { ($0.id, stacks.foldedCount($0.stopIDs)) },
             uniquingKeysWith: { first, _ in first }
         )
+        // The globe's lines are rebuilt with its pins. A close view's snapshot
+        // keeps every segment (`limit: .max`), so the globe gets at most 400 of
+        // them and never draws a close-up route list.
+        let worldSegments = MapRoutes.longest(snapshot.routeSegments, limit: 400)
+        if worldSegments != globeSegments { globeSegments = worldSegments }
         worldCellDegrees = 0
         updateWorldClusters()
         updateVisibleClusters()

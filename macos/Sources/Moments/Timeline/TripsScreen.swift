@@ -234,8 +234,9 @@ struct TripsScreen: View {
             #if DEBUG
             let probeToken = PageProbe.phaseToken
             #endif
+            let placeIndex = NearestPlaceIndex(places: places)
             let snapshots = items.map { item in
-                TimelineItemSnapshot(item: item, placeHint: nearestPlaceName(for: item))
+                TimelineItemSnapshot(item: item, placeHint: placeIndex.nearestPlaceName(for: item))
             }
             document = buildDocument(snapshots)
             chapterDocs = buildChapters(snapshots: Dictionary(snapshots.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }))
@@ -462,20 +463,6 @@ struct TripsScreen: View {
             let photos = byDay[day, default: []].sorted { ($0.effectiveCaptureDate ?? .distantPast) < ($1.effectiveCaptureDate ?? .distantPast) }
             return TripNearbyDay(date: day, isBefore: day < first, itemIDs: photos.map(\.id))
         }
-    }
-
-    private func nearestPlaceName(for item: MediaItem) -> String? {
-        guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
-        let coordinate = GeoPoint(latitude: latitude, longitude: longitude)
-        let nearest = places.compactMap { place -> (name: String, distance: Double)? in
-            guard let placeLatitude = place.latitude, let placeLongitude = place.longitude,
-                  let name = PlaceDisplayName.resolvedName(of: place) else { return nil }
-            let distance = coordinate.distance(to: GeoPoint(latitude: placeLatitude, longitude: placeLongitude))
-            return (name, distance)
-        }
-        .min { $0.distance < $1.distance }
-        guard let nearest, nearest.distance <= 100_000 else { return nil }
-        return nearest.name
     }
 }
 

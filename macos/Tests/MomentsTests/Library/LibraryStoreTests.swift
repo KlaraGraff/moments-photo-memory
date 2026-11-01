@@ -753,6 +753,159 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(store.measures, fresh.measures, "the applied batch left the store in a state a fresh fetch disagrees with")
     }
 
+    // MARK: - Sliced application of a big known batch
+
+    // 11
+    func testBigKnownBatchAppliesInSlicesWithOneRebuild() async throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        self.container = container
+        let context = container.mainContext
+        let store = makeStore(context: context)
+        let fullFetches: Int = store.fullFetchCount
+        let refreshes: Int = store.refreshCount
+        let revision: Int = store.revision
+
+        // One save of 6,000 photos: more than `maximumBatchSize`, but every
+        // identifier is known, so it is applied in slices instead of fetched.
+        let other = ModelContext(container)
+        for index in 0..<6_000 {
+            let date: Date = base.addingTimeInterval(Double(index))
+            let item = MediaItem(id: "bulk-\(index)", captureDate: date)
+            other.insert(item)
+        }
+        try other.save()
+
+        let arrived = await waitUntil(timeout: 30) { store.items.count == 6_000 }
+        XCTAssertTrue(arrived, "the store never applied the sliced batch; items count is \(store.items.count)")
+        XCTAssertEqual(store.fullFetchCount, fullFetches, "a known big batch must not fetch the whole library")
+        XCTAssertEqual(store.refreshCount, refreshes + 1, "the slices are applied as one batch")
+        XCTAssertEqual(store.revision, revision + 1, "the lists and revision are rebuilt once, after the last slice")
+
+        // The sliced apply must end in the same order a full fetch gives.
+        let fresh = LibraryStore()
+        fresh.start(context: context)
+        let expected: [String] = fresh.items.map(\.id)
+        let actual: [String] = store.items.map(\.id)
+        XCTAssertEqual(actual.count, 6_000)
+        XCTAssertEqual(actual, expected, "the sliced apply and a full fetch disagree on the order")
+    }
+
+    // 12
+    func testPhotoDeletedWhileSlicingNeverComesBack() async throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        self.container = container
+        let context = container.mainContext
+        let store = makeStore(context: context)
+
+        let other = ModelContext(container)
+        for index in 0..<6_000 {
+            let date: Date = base.addingTimeInterval(Double(index))
+            let item = MediaItem(id: "sliced-\(index)", captureDate: date)
+            other.insert(item)
+        }
+        try other.save()
+
+        // Wait until slicing is under way: the store already knows some of the
+        // new rows, but its public list is still the one from before.
+        var slicing = false
+        let started = Date()
+        while Date().timeIntervalSince(started) < 15 {
+            let known: Int = store.measures.itemCount
+            if known > 0 && known < 6_000 {
+                slicing = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        XCTAssertTrue(slicing, "slicing never started; items count is \(store.items.count)")
+
+        // Another save hard-deletes one of the photos while the slices run.
+        let doomedID = "sliced-5999"
+        let deleting = ModelContext(container)
+        let descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate<MediaItem> { $0.id == doomedID })
+        let found: [MediaItem] = try deleting.fetch(descriptor)
+        let doomed = try XCTUnwrap(found.first, "the photo to delete was not found")
+        deleting.delete(doomed)
+        try deleting.save()
+
+        // The deletion is a second batch, applied after the last slice; its
+        // settle delay is 250 ms, so wait for the result rather than guess it.
+        let settled = await waitUntil(timeout: 30) {
+            store.items.count == 5_999 && store.itemsByID[doomedID] == nil
+        }
+        XCTAssertTrue(settled, "the deleted photo is still listed; items count is \(store.items.count)")
+        XCTAssertEqual(store.items.count, 5_999)
+        XCTAssertFalse(store.items.contains { $0.id == doomedID }, "the deleted photo came back")
+        XCTAssertNil(store.itemsByID[doomedID], "the deleted photo came back")
+        XCTAssertTrue(store.deletedItems.isEmpty, "a hard-deleted photo is not in Recently Deleted")
+    }
+
+    // 13
+    func testKnownBatchOfFourThousandStillAppliesInOneGo() async throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        self.container = container
+        let context = container.mainContext
+        let store = makeStore(context: context)
+        let fullFetches: Int = store.fullFetchCount
+        let refreshes: Int = store.refreshCount
+        let revision: Int = store.revision
+
+        let other = ModelContext(container)
+        for index in 0..<4_000 {
+            let date: Date = base.addingTimeInterval(Double(index))
+            let item = MediaItem(id: "small-\(index)", captureDate: date)
+            other.insert(item)
+        }
+        try other.save()
+
+        let arrived = await waitUntil(timeout: 30) { store.items.count == 4_000 }
+        XCTAssertTrue(arrived, "the store never applied the batch; items count is \(store.items.count)")
+        XCTAssertEqual(store.refreshCount, refreshes + 1, "a batch below the limit still applies in one go")
+        XCTAssertEqual(store.fullFetchCount, fullFetches)
+        XCTAssertEqual(store.revision, revision + 1)
+    }
+
+    // 14
+    // A big batch is applied slice by slice, and only the last slice reaches
+    // `appliedRevisionRule`. The favorite flags must therefore travel with the
+    // slices: a `Favorite` row in an earlier slice still bumps
+    // `favoriteRevision`, and its presence must never hide the new photos.
+    func testBigBatchWithAFavoriteBumpsFavoriteRevisionOnce() async throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        self.container = container
+        let context = container.mainContext
+        let store = makeStore(context: context)
+        let fullFetches: Int = store.fullFetchCount
+        let revision: Int = store.revision
+        let favoriteRevision: Int = store.favoriteRevision
+        XCTAssertEqual(revision, 1)
+
+        // One background save: 6,000 photos and one Favorite for `bulk-0`.
+        // More than `maximumBatchSize`, so it is applied in slices, and only
+        // the last slice reaches the revision rule. The Favorite's row may
+        // land in any slice, so its flag must travel with the slices.
+        let other = ModelContext(container)
+        let first: MediaItem = MediaItem(id: "bulk-0", captureDate: base)
+        other.insert(first)
+        first.setFavorite(true, context: other)
+        for index in 1..<6_000 {
+            let date: Date = base.addingTimeInterval(Double(index))
+            let item: MediaItem = MediaItem(id: "bulk-\(index)", captureDate: date)
+            other.insert(item)
+        }
+        try other.save()
+
+        let arrived: Bool = await waitUntil(timeout: 30) { () -> Bool in
+            store.items.count == 6_000 && store.favoriteRevision > favoriteRevision
+        }
+        XCTAssertTrue(arrived, "the store never applied the sliced batch; items count is \(store.items.count)")
+        // The whole batch carries exactly one Favorite row, so one bump.
+        XCTAssertEqual(store.favoriteRevision, favoriteRevision + 1, "a favorite in an earlier slice must still bump the favorite revision")
+        // Every photo is new, so the batch regroups every page exactly once.
+        XCTAssertEqual(store.revision, revision + 1, "new photos must move the revision")
+        XCTAssertEqual(store.fullFetchCount, fullFetches, "a known big batch must not fetch the whole library")
+    }
+
     // MARK: - Helpers
 
     // Typed once: the CI compilers are slow on tuple literals inside long calls.

@@ -999,6 +999,89 @@ final class LibraryStoreTests: XCTestCase {
         }
         return condition()
     }
+
+    // MARK: - The sidebar's group counts follow a group-source revision
+
+    // Adding a group and its membership moves `groupSourcesRevision`, which is
+    // what the sidebar keys on instead of querying those entities itself.
+    func testMembershipSaveMovesTheGroupSourcesRevision() async throws {
+        let context: ModelContext = try makeContext()
+        let photo: MediaItem = MediaItem(id: "photo-member", captureDate: base.addingTimeInterval(30))
+        context.insert(photo)
+        try context.save()
+
+        let store: LibraryStore = makeStore(context: context)
+        let groupSourcesRevision: Int = store.groupSourcesRevision
+
+        let group: UserGroup = UserGroup(id: "group-1", name: "Synthetic Group One", kind: .manual)
+        context.insert(group)
+        let membership: UserGroupItem = UserGroupItem(id: "membership-1", groupID: group.id, mediaID: photo.id)
+        context.insert(membership)
+        try context.save()
+
+        let moved: Bool = await waitUntil(timeout: 3) { () -> Bool in
+            store.groupSourcesRevision > groupSourcesRevision
+        }
+        XCTAssertTrue(moved, "a membership save must move the group sources revision")
+    }
+
+    // A save that changed only places leaves the group sources revision alone.
+    func testPlaceOnlySaveLeavesTheGroupSourcesRevision() async throws {
+        let context: ModelContext = try makeContext()
+        let place: Place = Place(id: "place-group-1", name: "Synthetic Place One")
+        context.insert(place)
+        let first: MediaItem = MediaItem(
+            id: "photo-place-a",
+            captureDate: base.addingTimeInterval(60),
+            latitude: 0.5,
+            longitude: 0.5
+        )
+        let second: MediaItem = MediaItem(
+            id: "photo-place-b",
+            captureDate: base.addingTimeInterval(120),
+            latitude: 0.5,
+            longitude: 0.5
+        )
+        first.place = place
+        second.place = place
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        let store: LibraryStore = makeStore(context: context)
+        let revision: Int = store.revision
+        let groupSourcesRevision: Int = store.groupSourcesRevision
+
+        place.name = "Synthetic Place Renamed"
+        try context.save()
+
+        let applied: Bool = await waitUntil(timeout: 3) { () -> Bool in
+            store.revision > revision
+        }
+        XCTAssertTrue(applied, "the store never applied the place rename")
+        XCTAssertEqual(
+            store.groupSourcesRevision,
+            groupSourcesRevision,
+            "a place-only save must leave the group sources revision alone"
+        )
+    }
+
+    // A membership alone is not one of the store's tracked entities, yet the
+    // key still has to move: the change is noted before the tracked filter.
+    func testChangesListGroupSourcesBeforeTheTrackedFilter() throws {
+        let context: ModelContext = try makeContext()
+        let group: UserGroup = UserGroup(id: "group-2", name: "Synthetic Group Two", kind: .manual)
+        context.insert(group)
+        let membership: UserGroupItem = UserGroupItem(id: "membership-2", groupID: group.id, mediaID: "photo-nowhere")
+        context.insert(membership)
+        try context.save()
+
+        let id: PersistentIdentifier = membership.persistentModelID
+        let userInfo: [AnyHashable: Any] = ["updated": [id]]
+        let changes: SavedChanges = LibraryStore.changes(in: userInfo)
+        XCTAssertTrue(changes.touchesGroupSources, "a membership save touches the sidebar's group sources")
+        XCTAssertTrue(changes.updated.isEmpty, "a membership is not one of the store's tracked entities")
+    }
 }
 
 /// A small deterministic generator for the random-walk test; `SystemRandom`

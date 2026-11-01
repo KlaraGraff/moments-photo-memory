@@ -337,20 +337,20 @@ struct ContentView: View {
     }
 }
 
-/// Works out the sidebar's group counts, in its own view: the key and the
-/// recount read only these queries and the two revisions, so SwiftUI re-runs
-/// them when those change instead of on every ContentView redraw.
+/// Works out the sidebar's group counts, in its own view: the key hashes only
+/// the store's revisions, so SwiftUI re-runs it when one of them moves instead
+/// of on every ContentView redraw. The five group-source entities (groups,
+/// memberships, memories, media tags, place overrides) reach the key through
+/// `LibraryStore.groupSourcesRevision`, which moves on every save of one of
+/// them, so the view no longer queries them: it fetches groups and memberships
+/// itself, and only when it recounts.
 private struct SidebarGroupCounts: View {
     @Binding var counts: [String: Int]
     @Environment(LibraryStore.self) private var store
-    /// "My groups" only; chapters live on the Chapters page, and stack
-    /// records are not groups anyone made.
-    @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" }, sort: \UserGroup.name)
-    private var groups: [UserGroup]
-    @Query private var groupItems: [UserGroupItem]
-    @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
-    @Query private var mediaTags: [MediaTag]
-    @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
+    @Environment(\.modelContext) private var modelContext
+    /// Whether any group's rules read place names; a place-only save changes a
+    /// count only then, so only then does the key follow `placeRevision`.
+    @State private var rulesReadPlaces = false
 
     var body: some View {
         Color.clear
@@ -372,44 +372,12 @@ private struct SidebarGroupCounts: View {
         // A favorite save leaves `revision` alone; smart groups can have a
         // favorite rule, so their counts follow this one too.
         hasher.combine(store.favoriteRevision)
-        // Place renames reach rules through overrides.
-        for override in placeOverrides {
-            hasher.combine(override.id)
-            hasher.combine(override.nameOverride)
-        }
-        for group in groups {
-            hasher.combine(group.id)
-            hasher.combine(group.kind.rawValue)
-            hasher.combine(group.updatedAt)
-            hasher.combine(group.rules.mode.rawValue)
-            for rule in group.rules.rules {
-                hasher.combine(rule.field.rawValue)
-                hasher.combine(rule.op.rawValue)
-                hasher.combine(rule.value)
-                hasher.combine(rule.secondaryValue)
-            }
-        }
+        // Groups, memberships, memories, media tags and place overrides all
+        // arrive through this one revision, so the key reads none of them.
+        hasher.combine(store.groupSourcesRevision)
         // Smart groups read place names only through a place rule; a save that
         // changed only places recounts them only then.
-        let rulesReadPlaces: Bool = groups.contains { (group: UserGroup) -> Bool in UserGroupRule.anyReadsPlaces(group.rules.rules) }
         if rulesReadPlaces { hasher.combine(store.placeRevision) }
-        for membership in groupItems {
-            hasher.combine(membership.groupID)
-            hasher.combine(membership.mediaID)
-            hasher.combine(membership.excluded)
-        }
-        for memory in memoryRecords {
-            hasher.combine(memory.id)
-            hasher.combine(memory.mediaID)
-            hasher.combine(memory.updatedAt)
-            hasher.combine(memory.revision)
-        }
-        for mediaTag in mediaTags {
-            hasher.combine(mediaTag.id)
-            hasher.combine(mediaTag.mediaID)
-            hasher.combine(mediaTag.tagID)
-            hasher.combine(mediaTag.updatedAt)
-        }
         return hasher.finalize()
     }
 
@@ -417,12 +385,25 @@ private struct SidebarGroupCounts: View {
         #if DEBUG
         let started: CFTimeInterval = CACurrentMediaTime()
         #endif
+        // The same predicate and sort the removed query had: "My groups" only;
+        // chapters live on the Chapters page, and stack records are not groups
+        // anyone made.
+        let descriptor: FetchDescriptor<UserGroup> = FetchDescriptor<UserGroup>(
+            predicate: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" },
+            sortBy: [SortDescriptor<UserGroup>(\.name)]
+        )
+        let groups: [UserGroup] = (try? modelContext.fetch(descriptor)) ?? []
+        let groupItems: [UserGroupItem] = (try? modelContext.fetch(FetchDescriptor<UserGroupItem>())) ?? []
         var counts: [String: Int] = [:]
-        let personIndex = UserGroupRuleEngine.makePersonIndex(store.faces)
+        let personIndex: [String: Set<String>] = UserGroupRuleEngine.makePersonIndex(store.faces)
         for group in groups {
             counts[group.id] = UserGroupRuleEngine.visibleItems(for: group, from: store.items, memberships: groupItems, observations: store.faces, personIDsByMediaID: personIndex).count
         }
         self.counts = counts
+        let readsPlaces: Bool = groups.contains { (group: UserGroup) -> Bool in
+            UserGroupRule.anyReadsPlaces(group.rules.rules)
+        }
+        self.rulesReadPlaces = readsPlaces
         #if DEBUG
         PageProbe.tally("sidebar group counts", seconds: CACurrentMediaTime() - started)
         #endif

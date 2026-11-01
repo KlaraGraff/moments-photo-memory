@@ -183,9 +183,10 @@ final class PlaceNamesGroupsEquivalenceTests: XCTestCase {
     func testOwnNamesAndPlaceNamesShareOneGroup() throws {
         let context = try makeContext()
         let city = Place(id: "city-shared", name: "Marrakesh", kind: .city)
-        let spot = Place(id: "spot-shared", name: "Spot 000000", parent: city)
+        let spot = Place(id: "spot-shared", name: "Spot shared", parent: city)
         context.insert(city)
         context.insert(spot)
+        XCTAssertTrue(PlaceDisplayName.isPlaceholder(spot.name, placeID: spot.id))
         let named = MediaItem(id: "named", place: spot)
         let own = MediaItem(id: "own", place: spot)
         context.insert(named)

@@ -452,7 +452,7 @@ struct TripsScreen: View {
         let isTrip = tripByID[trip.id] != nil
         let inside = Set(trip.orderedItems.map(\.id))
         for item in items where isTrip ? (item.trip == nil && item.tripID == nil) : !inside.contains(item.id) {
-            guard let date = item.effectiveCaptureDate, date >= from, date < to, date < first || date > last else { continue }
+            guard let date = item.effectiveCaptureDate, date.isOnOrAfter(from), date < to, date < first || date > last else { continue }
             byDay[calendar.startOfDay(for: date), default: []].append(item)
         }
         return byDay.keys.sorted().map { day in

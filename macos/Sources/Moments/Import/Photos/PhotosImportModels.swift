@@ -151,7 +151,7 @@ public extension PhotosAssetSource {
             matches = Set(candidates.map(\.localIdentifier)).intersection(Set(selected))
         case .dateRange(let start, let end):
             matches = Set(candidates.compactMap { asset in
-                guard let date = asset.creationDate, date >= start, date <= end else { return nil }
+                guard let date = asset.creationDate, date.isOnOrAfter(start), date.isOnOrBefore(end) else { return nil }
                 return asset.localIdentifier
             })
         case .albums(let selected):

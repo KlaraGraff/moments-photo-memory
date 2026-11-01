@@ -129,8 +129,9 @@ final class LibraryStoreAcceptanceTests: XCTestCase {
             context.insert(photo("a", day: 1))
         }
         defer { withExtendedLifetime(container) {} }
-        store.start(context: context)
         let before = store.refreshCount
+        store.start(context: context)
+        XCTAssertEqual(store.refreshCount, before, "a second start fetches nothing")
         context.insert(photo("b", day: 2))
         try context.save()
         try await Task.sleep(for: .milliseconds(800))

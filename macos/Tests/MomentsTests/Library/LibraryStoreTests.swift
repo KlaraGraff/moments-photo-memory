@@ -560,7 +560,7 @@ final class LibraryStoreTests: XCTestCase {
     }
 
     // 10
-    func testFiftyFaceInsertAppliesInUnderFiftyMilliseconds() async throws {
+    func testFiftyFaceInsertAppliesWithoutAFullFetch() async throws {
         let context = try makeContext()
         for index in 0..<2_000 {
             let crop = Data([UInt8(index % 250)])
@@ -578,6 +578,7 @@ final class LibraryStoreTests: XCTestCase {
         try context.save()
         let store = makeStore(context: context)
         XCTAssertEqual(store.faces.count, 2_000)
+        let fullFetches: Int = store.fullFetchCount
 
         // A person's context saves 50 new faces; the store applies that batch
         // on the next main-actor turn, without fetching all 2,000 again.
@@ -606,7 +607,10 @@ final class LibraryStoreTests: XCTestCase {
         }
         let elapsed: TimeInterval = Date().timeIntervalSince(start)
         XCTAssertTrue(arrived, "the store never saw the 50 faces")
-        XCTAssertLessThan(elapsed, 0.05, "one applied batch of 50 faces took \(elapsed * 1_000) ms")
+        XCTAssertEqual(store.fullFetchCount, fullFetches, "50 new faces must not fetch the whole library")
+        // The GitHub Mac measured 51 ms for the save plus the applied batch
+        // (Debug, 2026-11-01); the bound is twice that.
+        XCTAssertLessThan(elapsed, 0.1, "one applied batch of 50 faces took \(elapsed * 1_000) ms")
     }
 
     // MARK: - Helpers

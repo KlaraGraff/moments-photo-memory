@@ -24,6 +24,11 @@ struct TimelineScreen: View {
     @State private var tripsByItemID: [String: TripLink] = [:]
     @State private var viewerOrder: [String] = []
     @State private var isBuilt = false
+    /// Moves each time `inputKey` changes.
+    @State private var wantedBuild = 0
+    /// The `wantedBuild` the shown result was built for.
+    @State private var shownBuild = -1
+    @State private var isBuilding = false
 
     private var visibleItems: [MediaItem] {
         items.filter { selection.isVisible($0.id) }
@@ -90,14 +95,9 @@ struct TimelineScreen: View {
             PageProbe.shellReady(token: PageProbe.phaseToken)
         }
         #endif
-        .task(id: inputKey) {
-            #if DEBUG
-            let probeToken = PageProbe.phaseToken
-            #endif
-            rebuild()
-            #if DEBUG
-            PageProbe.contentReady(token: probeToken)
-            #endif
+        .onChange(of: inputKey, initial: true) { _, _ in
+            wantedBuild &+= 1
+            startBuildingIfIdle()
         }
         .compactLibraryFilters()
     }
@@ -136,29 +136,98 @@ struct TimelineScreen: View {
         .background(Paper.canvas)
     }
 
-    private func rebuild() {
-        let placeIndex = NearestPlaceIndex(places: places)
-        let snapshots = visibleItems.map { item in
-            TimelineItemSnapshot(item: item, placeHint: placeIndex.nearestPlaceName(for: item))
+    /// Starts a build when none runs. At most one build runs on this page:
+    /// inputs that change meanwhile only move `wantedBuild`, so when the build
+    /// ends its result is shown, and then exactly one more build starts for
+    /// the newest inputs. A newer input therefore never abandons a running
+    /// build, and dozens of superseded builds never run at once.
+    private func startBuildingIfIdle() {
+        guard !isBuilding else { return }
+        isBuilding = true
+        Task { @MainActor in
+            while shownBuild != wantedBuild {
+                #if DEBUG
+                let probeToken = PageProbe.phaseToken
+                #endif
+                let target: Int = wantedBuild
+                await rebuild()
+                shownBuild = target
+                #if DEBUG
+                PageProbe.contentReady(token: probeToken)
+                #endif
+            }
+            isBuilding = false
         }
-        // No trips given: every photo lands in one stream, grouped by day and place.
-        let document = TimelineBuilder(calendar: Calendar.autoupdatingCurrent).build(items: snapshots, trips: [])
-        let days = document.trips.flatMap(\.days)
-        let dated = days.filter { $0.date != nil }.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
-        let undated = days.filter { $0.date == nil }
-        months = TimelineMonth.group(dated, calendar: .autoupdatingCurrent)
-            + (undated.isEmpty ? [] : [TimelineMonth(id: "undated", date: nil, days: undated)])
-        // Every shot goes to the viewer, which folds bursts as the grid does.
-        stacks.update(items: items, decisions: stackRecords)
-        viewerOrder = months.flatMap { $0.days.flatMap { $0.places.flatMap(\.itemIDs) } }
-        itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var links: [String: TripLink] = [:]
+    }
+
+    /// Builds the page off the main thread and assigns it. Only one build runs
+    /// at a time, so no older result can arrive late and overwrite a newer one.
+    private func rebuild() async {
+        // Everything read from SwiftData stays on the main actor; the build
+        // below sees plain values only.
+        let placeIndex = NearestPlaceIndex(places: places)
+        let memoriesByPhotoID = Self.memoriesByPhotoID(memoryRecords)
+        let sourceItems = visibleItems.map { item in
+            TimelineItemSnapshot(item: item, placeHint: nil, memories: memoriesByPhotoID[item.persistentModelID] ?? [])
+        }
+        let libraryItems = items
+        let libraryItemByID = store.itemsByID
+        let stackDecisions = stackRecords
+        var linksByItemID: [String: TripLink] = [:]
         for trip in trips {
             let link = TripLink(id: trip.id, name: trip.effectiveName)
-            for item in trip.items { links[item.id] = link }
+            for item in trip.items { linksByItemID[item.id] = link }
         }
-        tripsByItemID = links
+        let tripLinksByItemID = linksByItemID
+        let calendar = Calendar.autoupdatingCurrent
+
+        let built = await Task.detached(priority: .userInitiated) { () -> TimelineBuildResult in
+            // The place lookup is per photo and pure, so it runs here too.
+            let hinted = sourceItems.map { snapshot in
+                snapshot.withPlaceHint(Self.placeHint(for: snapshot, index: placeIndex))
+            }
+            // No trips given: every photo lands in one stream, grouped by day and place.
+            let document = TimelineBuilder(calendar: calendar).build(items: hinted, trips: [])
+            let days = document.trips.flatMap(\.days)
+            let dated = days.filter { $0.date != nil }.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+            let undated = days.filter { $0.date == nil }
+            let months = TimelineMonth.group(dated, calendar: calendar)
+                + (undated.isEmpty ? [] : [TimelineMonth(id: "undated", date: nil, days: undated)])
+            // Every shot goes to the viewer, which folds bursts as the grid does.
+            let viewerOrder = months.flatMap { month in
+                month.days.flatMap { day in day.places.flatMap(\.itemIDs) }
+            }
+            return TimelineBuildResult(months: months, viewerOrder: viewerOrder)
+        }.value
+        months = built.months
+        viewerOrder = built.viewerOrder
+        stacks.update(items: libraryItems, decisions: stackDecisions)
+        itemByID = libraryItemByID
+        tripsByItemID = tripLinksByItemID
         isBuilt = true
+    }
+
+    /// The pages' grouped memories: every `Memory` once, under the photo its
+    /// own inverse relationship names. A memory without a photo is left out,
+    /// exactly as `item.memories` never showed it.
+    static func memoriesByPhotoID(_ records: [Memory]) -> [PersistentIdentifier: [Memory]] {
+        var grouped: [PersistentIdentifier: [Memory]] = [:]
+        for memory in records {
+            guard let photo = memory.mediaItem else { continue }
+            grouped[photo.persistentModelID, default: []].append(memory)
+        }
+        return grouped
+    }
+
+    /// The place name a snapshot's photo would have been labelled with, from
+    /// its raw latitude and longitude: the same rule `nearestPlaceName(for:)`
+    /// applies, kept here so it can run off the main actor.
+    nonisolated private static func placeHint(
+        for snapshot: TimelineItemSnapshot,
+        index: NearestPlaceIndex
+    ) -> String? {
+        guard let latitude = snapshot.latitude, let longitude = snapshot.longitude else { return nil }
+        return index.nearestName(to: GeoPoint(latitude: latitude, longitude: longitude), within: 100_000)
     }
 
     /// The trips a day's photos belong to, in the order they first appear.
@@ -180,7 +249,7 @@ struct TimelineScreen: View {
 }
 
 /// The days of one calendar month, newest first.
-struct TimelineMonth: Identifiable {
+struct TimelineMonth: Identifiable, Sendable {
     let id: String
     /// Any moment in the month; `nil` for photos without a date.
     let date: Date?

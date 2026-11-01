@@ -18,20 +18,17 @@ struct LibraryView: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(ImportController.self) private var importController
     @Environment(PhotoStackModel.self) private var stacks
+    @Environment(LibraryStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    // Keep the common Library query free of explicit screenshots in SwiftData.
-    // The screenshot segment switches to the second descriptor without making
-    // the normal 5k-item browsing path carry those models through filtering.
-    @Query(filter: #Predicate<MediaItem> { $0.isScreenshot == false && $0.deletedAt == nil }, sort: \MediaItem.captureDate)
-    private var regularItems: [MediaItem]
-    @Query(filter: #Predicate<MediaItem> { $0.isScreenshot == true && $0.deletedAt == nil }, sort: \MediaItem.captureDate)
-    private var screenshotItems: [MediaItem]
+    // The library's photos, screenshots, faces and places come from the shared
+    // store, which fetches them once for every page.
+    private var regularItems: [MediaItem] { store.regularItems }
+    private var screenshotItems: [MediaItem] { store.screenshotItems }
     @Query(sort: \Memory.updatedAt)
     private var memoryRecords: [Memory]
     @Query(sort: \Trip.id)
     private var allTrips: [Trip]
-    @Query(sort: \Place.id)
-    private var allPlaces: [Place]
+    private var allPlaces: [Place] { store.places }
     @Query(sort: \PlaceOverride.id)
     private var placeOverrides: [PlaceOverride]
     /// "My groups" only; chapters live on the Chapters page, and stack
@@ -40,7 +37,7 @@ struct LibraryView: View {
     private var allGroups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
     @Query(sort: \Person.name) private var people: [Person]
-    @Query private var faceObservations: [FaceObservation]
+    private var faceObservations: [FaceObservation] { store.faces }
     /// What someone changed about bursts: covers, unstacked, photos taken out.
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw == "stack" }) private var stackRecords: [UserGroup]
 
@@ -178,28 +175,12 @@ struct LibraryView: View {
         hasher.combine(query)
         hasher.combine(state.focusedMemoryItemID)
         hasher.combine(selection.libraryScope?.itemIDs)
-        // All items, not just the visible type: the Place and Trip menus
-        // are built from both.
-        for item in allItems {
-            hasher.combine(item.id)
-            hasher.combine(item.captureDate)
-            hasher.combine(item.userCorrectedCaptureDateUTC)
-            hasher.combine(item.isScreenshot)
-            // Only read the stars while Favorites is shown; it faults a relation.
-            if typeRaw == LibraryMediaTypeFilter.favorite.rawValue { hasher.combine(item.isFavorite) }
-            hasher.combine(item.kindRaw)
-            hasher.combine(item.tripID)
-            hasher.combine(item.place?.id)
-            hasher.combine(item.updatedAt)
-        }
+        // All photos, faces and places the pages group by, as one revision.
+        hasher.combine(store.revision)
         for trip in allTrips {
             hasher.combine(trip.id)
             hasher.combine(trip.name)
             hasher.combine(trip.overrideName)
-        }
-        for place in allPlaces {
-            hasher.combine(place.id)
-            hasher.combine(place.name)
         }
         for override in placeOverrides {
             hasher.combine(override.id)
@@ -212,13 +193,6 @@ struct LibraryView: View {
             hasher.combine(memory.mediaID)
             hasher.combine(memory.updatedAt)
             hasher.combine(memory.revision)
-        }
-        for observation in faceObservations {
-            hasher.combine(observation.id)
-            hasher.combine(observation.mediaID)
-            hasher.combine(observation.personID)
-            hasher.combine(observation.confirmed)
-            hasher.combine(observation.assignmentSource)
         }
         // Bursts regroup when someone changes a stack or new analysis arrives.
         hasher.combine(stacks.generation)
@@ -1339,9 +1313,10 @@ struct ReviewSheet: View {
 }
 
 struct ReviewListView: View {
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
     @Environment(\.modelContext) private var modelContext
     @Environment(SelectionModel.self) private var selection
+    @Environment(LibraryStore.self) private var store
+    private var items: [MediaItem] { store.items }
     /// The last confirmation, so it can be taken back.
     @State private var lastConfirmed: [(id: String, decision: ImportReviewDecision)] = []
 
@@ -1448,13 +1423,14 @@ struct GroupDetailView: View {
     @Environment(SelectionModel.self) private var selection
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(LibraryStore.self) private var store
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "stack" }) private var groups: [UserGroup]
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
+    private var items: [MediaItem] { store.items }
     @Query private var memberships: [UserGroupItem]
     @Query private var memoryRecords: [Memory]
     @Query private var mediaTags: [MediaTag]
     @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
-    @Query private var faceObservations: [FaceObservation]
+    private var faceObservations: [FaceObservation] { store.faces }
     @State private var showingEditor = false
     @State private var showingDeleteConfirmation = false
     @State private var cachedVisibleItemIDs: [String] = []
@@ -1486,15 +1462,8 @@ struct GroupDetailView: View {
                 hasher.combine(rule.secondaryValue)
             }
         }
-        for item in items {
-            hasher.combine(item.id)
-            hasher.combine(item.updatedAt)
-            hasher.combine(item.captureDate)
-            hasher.combine(item.kindRaw)
-            hasher.combine(item.isScreenshot)
-            hasher.combine(item.tripID)
-            hasher.combine(item.place?.id)
-        }
+        // Photos, faces and places, as one revision.
+        hasher.combine(store.revision)
         // Place renames reach rules through overrides.
         for override in placeOverrides {
             hasher.combine(override.id)
@@ -1504,12 +1473,6 @@ struct GroupDetailView: View {
             hasher.combine(membership.groupID)
             hasher.combine(membership.mediaID)
             hasher.combine(membership.excluded)
-        }
-        for observation in faceObservations {
-            hasher.combine(observation.id)
-            hasher.combine(observation.mediaID)
-            hasher.combine(observation.personID)
-            hasher.combine(observation.confirmed)
         }
         for memory in memoryRecords {
             hasher.combine(memory.id)
@@ -1642,9 +1605,10 @@ struct GroupEditorSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
+    @Environment(LibraryStore.self) private var store
+    private var items: [MediaItem] { store.items }
     @Query(sort: \Person.name) private var people: [Person]
-    @Query private var faceObservations: [FaceObservation]
+    private var faceObservations: [FaceObservation] { store.faces }
     @Query(sort: \Trip.id) private var trips: [Trip]
     @Query(sort: \Tag.displayName) private var tags: [Tag]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

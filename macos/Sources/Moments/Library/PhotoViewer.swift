@@ -230,6 +230,12 @@ struct PhotoViewer: View {
                     Image(systemName: item.isFavorite ? "star.fill" : "star")
                         .foregroundStyle(item.isFavorite ? .yellow : LibraryPalette.muted)
                         .symbolEffect(.bounce, value: item.isFavorite)
+                        #if DEBUG
+                        .onChange(of: item.isFavorite) {
+                            // The edit reached the screen: the star now shows the new value.
+                            PageProbe.contentReady(token: PageProbe.phaseToken)
+                        }
+                        #endif
                         .frame(width: 28, height: 28)
                         .contentShape(Rectangle())
                 }

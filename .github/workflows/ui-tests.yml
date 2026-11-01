@@ -56,10 +56,6 @@ on:
         description: 'Page probe, optional: phases to leave out, comma-separated, e.g. Map (a page that freezes the app hides every page after it)'
         required: false
         default: ''
-      map_layers:
-        description: 'Page probe, optional: map layers to leave out, comma-separated: routes, pins, thumbnails, terrain'
-        required: false
-        default: ''
       measure_ref:
         description: 'Page probe, optional: measure this branch or commit instead, with the probe files of the branch you run from laid over it (a branch name or a full commit SHA; it must already have the probe hooks)'
         required: false
@@ -242,7 +238,6 @@ jobs:
           TEST_RUNNER_MOMENTS_PAGE_DIR: ${{ runner.temp }}/pages
           TEST_RUNNER_MOMENTS_PAGE_STRESS_COUNT: ${{ inputs.page_stress_count || '5000' }}
           TEST_RUNNER_MOMENTS_PAGE_SKIP: ${{ inputs.skip_pages }}
-          TEST_RUNNER_MOMENTS_PAGE_MAP_LAYERS: ${{ inputs.map_layers }}
         run: |
           # Ends the run with diagnostics when no heartbeat appears within
           # 10 minutes, the heartbeat stops for 3, the main thread leaves a

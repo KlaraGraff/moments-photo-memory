@@ -19,20 +19,12 @@ final class MomentsPageProbeUITests: XCTestCase {
         let count = Int(environment["MOMENTS_PAGE_STRESS_COUNT"] ?? "") ?? 5_000
         // Phases the run leaves out, e.g. "Map" while that page freezes the app.
         let skipped = Set((environment["MOMENTS_PAGE_SKIP"] ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
-        // Map layers the run leaves out, e.g. "routes,pins" while the Map
-        // freezes the app.
-        let mapLayerNames: [String] = (environment["MOMENTS_PAGE_MAP_LAYERS"] ?? "")
-            .split(separator: ",")
-            .map { (part: Substring) -> String in part.trimmingCharacters(in: .whitespaces) }
-            .filter { (name: String) -> Bool in !name.isEmpty }
-        let mapLayers = Set(mapLayerNames)
         let folderURL = URL(fileURLWithPath: folder)
         try? FileManager.default.removeItem(at: folderURL)
         let app = XCUIApplication()
         app.launchArguments = [
             "-MomentsUITesting", "-MomentsUITestPageProbe", folder, "-MomentsUITestStressLibrary", String(count),
-            "-MomentsUITestPageProbeSkip", skipped.sorted().joined(separator: ","),
-            "-MomentsUITestPageProbeMapLayers", mapLayers.sorted().joined(separator: ",")
+            "-MomentsUITestPageProbeSkip", skipped.sorted().joined(separator: ",")
         ]
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 60))

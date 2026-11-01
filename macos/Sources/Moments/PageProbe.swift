@@ -43,9 +43,6 @@ enum PageProbe {
     /// Phases left out (`-MomentsUITestPageProbeSkip "Map,People"`): a page
     /// that freezes the app would otherwise hide every page after it.
     private static var skipped: Set<String> = []
-    /// Map layers left out (`-MomentsUITestPageProbeMapLayers "routes,pins"`):
-    /// probe-only switches in the Map screen that narrow down what freezes it.
-    static private(set) var mapLayersLeftOut: Set<String> = []
     /// Read by the heartbeat thread.
     nonisolated private static let status = PageProbeStatus()
 
@@ -78,9 +75,6 @@ enum PageProbe {
         if let skip = arguments.firstIndex(of: "-MomentsUITestPageProbeSkip"), skip + 1 < arguments.count {
             skipped = Set(arguments[skip + 1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
         }
-        if let layers = arguments.firstIndex(of: "-MomentsUITestPageProbeMapLayers"), layers + 1 < arguments.count {
-            mapLayersLeftOut = Set(arguments[layers + 1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
-        }
         MainThreadSampler.prepareForStuckStacks()
         startHeartbeat(folder: url)
         let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { _, activity in
@@ -108,7 +102,6 @@ enum PageProbe {
         self.stacks = stacks
         report = "page probe: \(ProcessInfo.processInfo.processorCount) cores, \(StressLibrary.requestedCount.map { "\($0) synthetic photos" } ?? "no stress library")\n"
         if !skipped.isEmpty { report += "skipped: \(skipped.sorted().joined(separator: ", "))\n" }
-        if !mapLayersLeftOut.isEmpty { report += "map layers left out: \(mapLayersLeftOut.sorted().joined(separator: ", "))\n" }
         status.begin("waiting for the window")
         Task { await run() }
     }

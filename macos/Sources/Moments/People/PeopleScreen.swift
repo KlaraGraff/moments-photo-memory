@@ -790,7 +790,7 @@ enum PeopleImageLoader {
     static func load(
         _ descriptor: PeopleMediaDescriptor,
         allowDownload: Bool,
-        photoSource: any PhotosAssetSource = PhotoKitAssetSource()
+        photoSource: any PhotosAssetSource = PhotoKitAssetSource.shared
     ) async -> CGImage? {
         if let localIdentifier = descriptor.photosLocalIdentifier,
            let image = await photoSource.thumbnailImage(forLocalIdentifier: localIdentifier, targetSize: CGSize(width: 2_000, height: 2_000), networkAccessAllowed: allowDownload) {

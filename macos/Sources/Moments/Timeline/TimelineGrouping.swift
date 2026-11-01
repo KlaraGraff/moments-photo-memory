@@ -50,11 +50,22 @@ struct TimelineBuilder {
 
     private func makeTrip(definition: TimelineSourceTrip, items: [TimelineItemSnapshot]) -> TimelineTrip {
         let orderedItems = items.sorted(by: itemOrder)
+        let itemByID = Dictionary(orderedItems.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let stops = orderedItems.compactMap(\.photoStop)
         let spotClusters = clusterer.clusters(for: stops, level: .spot)
         let cityClusters = clusterer.clusters(for: stops, level: .city)
         let spotByItemID = clusterMap(spotClusters)
         let cityByItemID = clusterMap(cityClusters)
+
+        // Each cluster's name is the same for every photo in it, so work it out once.
+        var nameCache: [String: String?] = [:]
+        func name(of cluster: PlaceCluster) -> String? {
+            let key = "\(cluster.level.rawValue)|\(cluster.id)|\(cluster.stopIDs.count)|\(cluster.stopIDs.first ?? "")"
+            if let cached = nameCache[key] { return cached }
+            let value = clusterName(cluster, itemByID: itemByID)
+            nameCache[key] = value
+            return value
+        }
 
         var dayGroups: [DayKey: [PlaceGroup]] = [:]
         for item in orderedItems {
@@ -62,8 +73,8 @@ struct TimelineBuilder {
             let spot = item.photoStop.flatMap { spotByItemID[$0.id] }
             let placeKey = spot?.id ?? fallbackPlaceKey(for: item)
             let city = item.photoStop.flatMap { cityByItemID[$0.id] }
-            let cityName = city.flatMap { clusterName($0, items: orderedItems) }
-            let placeName = spot.flatMap { clusterName($0, items: orderedItems) }
+            let cityName = city.flatMap { name(of: $0) }
+            let placeName = spot.flatMap { name(of: $0) }
 
             if let index = dayGroups[dayKey]?.firstIndex(where: { $0.key == placeKey }) {
                 dayGroups[dayKey]?[index].items.append(item)
@@ -86,27 +97,33 @@ struct TimelineBuilder {
             }
         }
 
-        let places = dayGroups.flatMap { dayKey, groups in
-            groups.map { (dayKey, $0) }
-        }.map { dayKey, group in
-            TimelinePlace(
-                id: placeID(tripID: definition.id, dayKey: dayKey, placeKey: group.key),
-                date: group.items.min(by: itemOrder)?.date,
-                name: group.name,
-                cityName: group.cityName,
-                items: group.items.sorted(by: itemOrder)
-            )
+        var placesByDay: [DayKey: [TimelinePlace]] = [:]
+        var placeByItemID: [String: TimelinePlace] = [:]
+        for (dayKey, groups) in dayGroups {
+            for group in groups {
+                let place = TimelinePlace(
+                    id: placeID(tripID: definition.id, dayKey: dayKey, placeKey: group.key),
+                    date: group.items.min(by: itemOrder)?.date,
+                    name: group.name,
+                    cityName: group.cityName,
+                    items: group.items.sorted(by: itemOrder)
+                )
+                placesByDay[dayKey, default: []].append(place)
+                for itemID in place.itemIDs {
+                    placeByItemID[itemID] = place
+                }
+            }
         }
 
         let routes = RouteBuilder(stops: stops, clusterer: clusterer).overview()
         let travelByPlaceID = routes.reduce(into: [String: [TimelineTravel]]()) { result, segment in
             guard let targetID = segment.toStopID,
-                  let target = places.first(where: { $0.itemIDs.contains(targetID) }) else { return }
-            let fromName = clusterName(segment.from, items: orderedItems)
-            let toName = clusterName(segment.to, items: orderedItems)
+                  let target = placeByItemID[targetID] else { return }
+            let fromName = name(of: segment.from)
+            let toName = name(of: segment.to)
             let travel = TimelineTravel(
                 id: "\(definition.id)|travel|\(segment.id)|\(target.id)",
-                date: orderedItems.first(where: { $0.id == targetID })?.date,
+                date: itemByID[targetID]?.date,
                 fromName: fromName,
                 toName: toName,
                 distanceMeters: segment.distanceMeters,
@@ -117,13 +134,7 @@ struct TimelineBuilder {
         }
 
         let dayValues = dayGroups.keys.sorted(by: dayOrder).map { dayKey in
-            let dayPlaces = places
-                .filter { place in
-                    dayGroups[dayKey]?.contains(where: {
-                        placeID(tripID: definition.id, dayKey: dayKey, placeKey: $0.key) == place.id
-                    }) ?? false
-                }
-                .sorted(by: placeOrder)
+            let dayPlaces = (placesByDay[dayKey] ?? []).sorted(by: placeOrder)
             var events: [TimelineEvent] = []
             for place in dayPlaces {
                 let travel = (travelByPlaceID[place.id] ?? []).sorted { travelOrder($0, $1) }
@@ -175,11 +186,13 @@ struct TimelineBuilder {
         }
     }
 
-    private func clusterName(_ cluster: PlaceCluster, items: [TimelineItemSnapshot]) -> String? {
+    private func clusterName(_ cluster: PlaceCluster, itemByID: [String: TimelineItemSnapshot]) -> String? {
         if let name = cluster.name, !name.isEmpty { return name }
-        return cluster.stopIDs
-            .compactMap { stopID in items.first(where: { $0.id == stopID })?.placeHint }
-            .first(where: { !$0.isEmpty })
+        for stopID in cluster.stopIDs {
+            guard let hint = itemByID[stopID]?.placeHint, !hint.isEmpty else { continue }
+            return hint
+        }
+        return nil
     }
 
     private func fallbackPlaceKey(for item: TimelineItemSnapshot) -> String {

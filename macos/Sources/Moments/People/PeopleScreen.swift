@@ -56,6 +56,8 @@ struct PeopleStoreAssignmentSnapshot: Sendable {
 private struct PeopleClusterSnapshot: Identifiable {
     let id: String
     let faces: [FaceObservation]
+    /// Worked out once when the snapshot is built, not on every redraw.
+    let cover: FaceObservation?
 }
 
 /// A face's state before ✓ or ✗, so the change can be taken back.
@@ -900,6 +902,7 @@ struct PeopleScreen: View {
     @State private var mergeTarget: String?
     @State private var pendingNameMerge: PendingNameMerge?
     @State private var cachedFacesByPerson: [String: [FaceObservation]] = [:]
+    @State private var cachedCardSummaries: [String: PeopleCardSummary] = [:]
     @State private var cachedUnnamedClusters: [PeopleClusterSnapshot] = []
     @State private var lastFaceChange: FaceUndoSnapshot?
     @State private var renamingPersonID: String?
@@ -907,8 +910,6 @@ struct PeopleScreen: View {
     @State private var pendingRename: PendingRename?
     /// The person whose key-photo picker is open.
     @State private var keyPhotoPersonID: String?
-    /// Bumped when a key photo changes; UserDefaults alone does not redraw.
-    @State private var keyPhotoRevision = 0
     @State private var addingPerson = false
     @State private var addPersonName = ""
     /// The unnamed groups picked in the Add person sheet.
@@ -935,8 +936,16 @@ struct PeopleScreen: View {
         let deletedIDs = Set(deletedItems.map(\.id))
         let shown = deletedIDs.isEmpty ? observations : observations.filter { !deletedIDs.contains($0.mediaID) }
         cachedFacesByPerson = Dictionary(grouping: shown.compactMap { $0.personID == nil ? nil : $0 }, by: { $0.personID! })
+        cachedCardSummaries = PeopleCardSummaries.make(
+            facesByPerson: cachedFacesByPerson,
+            keyFaceID: { (personID: String) -> String? in PeopleStoreActions.keyFaceID(for: personID) }
+        )
         let grouped = Dictionary(grouping: shown.filter { $0.personID == nil && $0.clusterID != nil }, by: { $0.clusterID! })
-        cachedUnnamedClusters = grouped.map { PeopleClusterSnapshot(id: $0.key, faces: $0.value.sorted { $0.createdAt < $1.createdAt }) }.sorted { $0.id < $1.id }
+        cachedUnnamedClusters = grouped.map { group -> PeopleClusterSnapshot in
+            let sortedFaces: [FaceObservation] = group.value.sorted { $0.createdAt < $1.createdAt }
+            let cover: FaceObservation? = PeopleFacePicker.cover(sortedFaces)
+            return PeopleClusterSnapshot(id: group.key, faces: sortedFaces, cover: cover)
+        }.sorted { $0.id < $1.id }
     }
 
     var body: some View {
@@ -946,20 +955,8 @@ struct PeopleScreen: View {
                     Text(String(localized: "People scanning is unavailable on this device."))
                         .font(.callout)
                         .foregroundStyle(Paper.muted)
-                } else if scanner.isScanning || scanner.progress.total > 0 && scanner.progress.completed < scanner.progress.total {
-                    HStack(spacing: 9) {
-                        if scanner.progress.isPaused { ProgressView().controlSize(.small) } else { ProgressView(value: Double(scanner.progress.completed), total: Double(max(scanner.progress.total, 1))).frame(width: 130) }
-                        Text(String(format: String(localized: "Finding faces progress"), scanner.progress.completed, scanner.progress.total))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(Paper.muted)
-                        if scanner.progress.skippedUnavailable > 0 {
-                            Text(String(format: String(localized: "Skipped unavailable"), scanner.progress.skippedUnavailable))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(Paper.muted)
-                        }
-                        if scanner.progress.isPaused { Text(String(localized: "Paused to save battery")).font(.caption).foregroundStyle(Paper.muted) }
-                        Button(String(localized: "Cancel")) { scanner.cancel() }.buttonStyle(.borderless)
-                    }
+                } else {
+                    PeopleScanProgressRow()
                 }
 
                 if !scanner.isAvailable {
@@ -1088,7 +1085,7 @@ struct PeopleScreen: View {
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 10)], spacing: 10) {
                             ForEach(unnamedClusters) { cluster in
-                                if let face = PeopleFacePicker.cover(cluster.faces) {
+                                if let face = cluster.cover {
                                     let picked = addPersonClusters.contains(cluster.id)
                                     Button {
                                         if picked { addPersonClusters.remove(cluster.id) } else { addPersonClusters.insert(cluster.id) }
@@ -1199,7 +1196,7 @@ struct PeopleScreen: View {
 
     private func namedCard(_ person: Person) -> some View {
         let faces = cachedFacesByPerson[person.id] ?? []
-        let photoCount = Set(faces.map(\.mediaID)).count
+        let photoCount = cachedCardSummaries[person.id]?.photoCount ?? 0
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 // Like Photos: the big face picks the key photo, the name
@@ -1287,16 +1284,16 @@ struct PeopleScreen: View {
     }
 
     private func coverFace(of person: Person) -> FaceObservation? {
-        _ = keyPhotoRevision
-        return PeopleFacePicker.cover(
-            cachedFacesByPerson[person.id] ?? [],
-            keyFaceID: PeopleStoreActions.keyFaceID(for: person.id)
-        )
+        cachedCardSummaries[person.id]?.cover
     }
 
     private func setKeyPhoto(_ face: FaceObservation, for person: Person) {
         PeopleStoreActions.setKeyFace(face.id, for: person.id)
-        keyPhotoRevision += 1
+        // Only this person's cover changed: rebuild that one summary instead of
+        // every card. `face` is the key face just chosen, and it belongs to them.
+        let photoCount = cachedCardSummaries[person.id]?.photoCount
+            ?? Set((cachedFacesByPerson[person.id] ?? []).map { (face: FaceObservation) -> String in face.mediaID }).count
+        cachedCardSummaries[person.id] = PeopleCardSummary(cover: face, photoCount: photoCount)
         keyPhotoPersonID = nil
     }
 
@@ -1345,7 +1342,7 @@ struct PeopleScreen: View {
             Text(String(localized: "Is this the same person?")).font(.system(.title3, design: .serif).weight(.medium)).foregroundStyle(Paper.ink)
             ForEach(unnamedClusters) { cluster in
                 HStack(alignment: .top, spacing: 14) {
-                    if let cover = PeopleFacePicker.cover(cluster.faces) {
+                    if let cover = cluster.cover {
                         FaceInPhotoView(
                             faceID: cover.id,
                             faceRect: CGRect(x: cover.rectX, y: cover.rectY, width: cover.rectWidth, height: cover.rectHeight),

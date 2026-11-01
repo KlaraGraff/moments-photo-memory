@@ -984,6 +984,197 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertGreaterThan(store.placeRevision, 0, "the first fetch moves the place revision")
     }
 
+    // MARK: - A place-only save refreshes just the changed places
+
+    // A rename of a place the store already lists fetches that place by id,
+    // not the whole list of a few thousand places.
+    func testPlaceRenameRefreshesOnlyThatPlace() async throws {
+        let context: ModelContext = try makeContext()
+        let place: Place = Place(id: "place-1", name: "Synthetic Place One")
+        let other: Place = Place(id: "place-2", name: "Synthetic Place Two")
+        context.insert(place)
+        context.insert(other)
+        let first: MediaItem = MediaItem(
+            id: "photo-a",
+            captureDate: base.addingTimeInterval(60),
+            latitude: 0.5,
+            longitude: 0.5
+        )
+        let second: MediaItem = MediaItem(
+            id: "photo-b",
+            captureDate: base.addingTimeInterval(120),
+            latitude: 0.5,
+            longitude: 0.5
+        )
+        first.place = place
+        second.place = other
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        let store: LibraryStore = makeStore(context: context)
+        XCTAssertEqual(store.places.count, 2)
+        let fetches: Int = store.placeListFetchCount
+        let quick: Int = store.placeQuickRefreshCount
+        let placeRevision: Int = store.placeRevision
+
+        place.name = "Synthetic Place Renamed"
+        try context.save()
+
+        let moved: Bool = await waitUntil(timeout: 3) { () -> Bool in
+            store.placeRevision > placeRevision
+        }
+        XCTAssertTrue(moved, "the store never applied the place rename")
+        XCTAssertEqual(
+            store.placeListFetchCount,
+            fetches,
+            "a rename must not fetch the whole place list"
+        )
+        XCTAssertGreaterThan(store.placeQuickRefreshCount, quick, "a rename takes the quick path")
+        XCTAssertEqual(store.places.count, 2, "a rename changes no row of the list")
+        let renamed: Place? = store.places.first { (candidate: Place) -> Bool in
+            candidate.id == "place-1"
+        }
+        XCTAssertEqual(renamed?.name, "Synthetic Place Renamed", "the store keeps the new name")
+    }
+
+    // A new place changes the list, so the whole list is fetched again.
+    func testNewPlaceFetchesThePlaceList() async throws {
+        let context: ModelContext = try makeContext()
+        let place: Place = Place(id: "place-1", name: "Synthetic Place One")
+        let other: Place = Place(id: "place-2", name: "Synthetic Place Two")
+        context.insert(place)
+        context.insert(other)
+        let first: MediaItem = MediaItem(
+            id: "photo-a",
+            captureDate: base.addingTimeInterval(60),
+            latitude: 0.5,
+            longitude: 0.5
+        )
+        let second: MediaItem = MediaItem(
+            id: "photo-b",
+            captureDate: base.addingTimeInterval(120),
+            latitude: 0.5,
+            longitude: 0.5
+        )
+        first.place = place
+        second.place = other
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        let store: LibraryStore = makeStore(context: context)
+        XCTAssertEqual(store.places.count, 2)
+        let fetches: Int = store.placeListFetchCount
+
+        let added: Place = Place(id: "place-3", name: "Synthetic Place Three")
+        context.insert(added)
+        try context.save()
+
+        let arrived: Bool = await waitUntil(timeout: 3) { () -> Bool in
+            store.places.count == 3
+        }
+        XCTAssertTrue(arrived, "the store never listed the new place")
+        XCTAssertGreaterThan(
+            store.placeListFetchCount,
+            fetches,
+            "a new place fetches the whole list"
+        )
+    }
+
+    // A removed place leaves the list, so the whole list is fetched again.
+    func testDeletedPlaceLeavesThePlaceList() async throws {
+        let context: ModelContext = try makeContext()
+        let place: Place = Place(id: "place-1", name: "Synthetic Place One")
+        let other: Place = Place(id: "place-2", name: "Synthetic Place Two")
+        context.insert(place)
+        context.insert(other)
+        let first: MediaItem = MediaItem(
+            id: "photo-a",
+            captureDate: base.addingTimeInterval(60),
+            latitude: 0.5,
+            longitude: 0.5
+        )
+        let second: MediaItem = MediaItem(
+            id: "photo-b",
+            captureDate: base.addingTimeInterval(120),
+            latitude: 0.5,
+            longitude: 0.5
+        )
+        first.place = place
+        second.place = other
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        let store: LibraryStore = makeStore(context: context)
+        XCTAssertEqual(store.places.count, 2)
+        let fetches: Int = store.placeListFetchCount
+
+        // The relationship first: a photo must not point at a deleted place.
+        first.place = nil
+        context.delete(place)
+        try context.save()
+
+        let gone: Bool = await waitUntil(timeout: 3) { () -> Bool in
+            store.places.count == 1
+        }
+        XCTAssertTrue(gone, "the store never dropped the removed place")
+        XCTAssertGreaterThan(
+            store.placeListFetchCount,
+            fetches,
+            "a removed place fetches the whole list"
+        )
+    }
+
+    // The quick path must leave the same place hashes a fresh store hashes.
+    func testQuickRefreshMatchesAFullRefresh() async throws {
+        let context: ModelContext = try makeContext()
+        let place: Place = Place(id: "place-1", name: "Synthetic Place One")
+        let other: Place = Place(id: "place-2", name: "Synthetic Place Two")
+        context.insert(place)
+        context.insert(other)
+        let first: MediaItem = MediaItem(
+            id: "photo-a",
+            captureDate: base.addingTimeInterval(60),
+            latitude: 0.5,
+            longitude: 0.5
+        )
+        let second: MediaItem = MediaItem(
+            id: "photo-b",
+            captureDate: base.addingTimeInterval(120),
+            latitude: 0.5,
+            longitude: 0.5
+        )
+        first.place = place
+        second.place = other
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        let store: LibraryStore = makeStore(context: context)
+        let quick: Int = store.placeQuickRefreshCount
+        let placeRevision: Int = store.placeRevision
+
+        place.name = "Synthetic Place Renamed"
+        try context.save()
+
+        let moved: Bool = await waitUntil(timeout: 3) { () -> Bool in
+            store.placeRevision > placeRevision
+        }
+        XCTAssertTrue(moved, "the store never applied the place rename")
+        XCTAssertGreaterThan(store.placeQuickRefreshCount, quick, "the rename takes the quick path")
+
+        // A second store over the same context hashes every place from
+        // scratch: the quick path's hashes must equal its own.
+        let freshStore: LibraryStore = makeStore(context: context)
+        XCTAssertEqual(
+            store.measures,
+            freshStore.measures,
+            "the quick path hashes the places exactly like a full fetch"
+        )
+    }
+
     // MARK: - Helpers
 
     // Typed once: the CI compilers are slow on tuple literals inside long calls.

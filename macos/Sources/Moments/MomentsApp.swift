@@ -135,7 +135,15 @@ struct MomentsApp: App {
             // sees an empty library (which would flash the import screen and
             // clear a selection the Library publishes on its first regroup).
             let store = LibraryStore()
+            #if DEBUG
+            // The unit-test host shows no page, so nothing reads the store
+            // there; tests start stores of their own.
+            if !UnitTestHostDelegate.isUnitTestHost {
+                store.start(context: container.mainContext)
+            }
+            #else
             store.start(context: container.mainContext)
+            #endif
             _libraryStore = State(initialValue: store)
             storeError = nil
         } catch let error as MomentsStoreError {

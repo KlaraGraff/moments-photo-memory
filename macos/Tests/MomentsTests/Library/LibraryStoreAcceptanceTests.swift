@@ -124,6 +124,30 @@ final class LibraryStoreAcceptanceTests: XCTestCase {
         XCTAssertEqual(store.revision, before)
     }
 
+    /// Every context in the process posts `didSave`, and each test builds
+    /// its own container. A save to another container names rows this store
+    /// cannot read, so it must not reach the store at all.
+    func testASaveToAnotherContainerIsIgnored() async throws {
+        let (store, _, container) = try started { context in
+            context.insert(photo("a", day: 1))
+        }
+        defer { withExtendedLifetime(container) {} }
+        let other = try MomentsPersistence.makeContainer(inMemory: true)
+        defer { withExtendedLifetime(other) {} }
+        let refreshes: Int = store.refreshCount
+        let revision: Int = store.revision
+        let background = ModelContext(other)
+        background.insert(photo("b", day: 2))
+        try background.save()
+        other.mainContext.insert(photo("c", day: 3))
+        try other.mainContext.save()
+        try await Task.sleep(for: .milliseconds(800))
+        let ids: [String] = store.items.map(\.id)
+        XCTAssertEqual(ids, ["a"])
+        XCTAssertEqual(store.refreshCount, refreshes, "another container's save fetches nothing")
+        XCTAssertEqual(store.revision, revision)
+    }
+
     func testStartingTwiceObservesOnce() async throws {
         let (store, context, container) = try started { context in
             context.insert(photo("a", day: 1))

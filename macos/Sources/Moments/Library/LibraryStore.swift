@@ -109,7 +109,7 @@ final class LibraryStore {
     /// A batch larger than this is applied with a full fetch instead.
     static let maximumBatchSize = 5_000
 
-    /// Call once with the main context, from the window's onAppear.
+    /// Call once with the main context, from the app's init.
     func start(context: ModelContext) {
         guard self.context == nil else { return }
         self.context = context
@@ -120,9 +120,24 @@ final class LibraryStore {
             let savedContext = notification.object as? ModelContext
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.saved(changes, fromOwnContext: savedContext === self.context)
+                self.received(changes, from: savedContext)
             }
         }
+    }
+
+    /// Every context in the process posts `didSave`, including contexts of
+    /// other containers (each test builds its own). Their identifiers name
+    /// rows this store's context cannot read, and reading one is a crash,
+    /// so only saves to this store's own container count.
+    private func received(_ changes: SavedChanges, from savedContext: ModelContext?) {
+        guard let context else { return }
+        guard let savedContext else {
+            // No context to check: fetch again from this store's own context.
+            scheduleRefresh()
+            return
+        }
+        guard savedContext.container === context.container else { return }
+        saved(changes, fromOwnContext: savedContext === context)
     }
 
     deinit {

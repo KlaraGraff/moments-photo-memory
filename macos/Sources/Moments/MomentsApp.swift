@@ -131,6 +131,12 @@ struct MomentsApp: App {
             }
             #endif
             modelContainer = container
+            // The store is ready before the first page body runs, so no page
+            // sees an empty library (which would flash the import screen and
+            // clear a selection the Library publishes on its first regroup).
+            let store = LibraryStore()
+            store.start(context: container.mainContext)
+            _libraryStore = State(initialValue: store)
             storeError = nil
         } catch let error as MomentsStoreError {
             modelContainer = nil
@@ -161,7 +167,6 @@ struct MomentsApp: App {
                     .environment(libraryStore)
                     .modelContainer(modelContainer)
                     .onAppear {
-                        libraryStore.start(context: modelContainer.mainContext)
                         importController.configure(container: modelContainer)
                         peopleController.configure(container: modelContainer)
                         photosImportController.configure(container: modelContainer)

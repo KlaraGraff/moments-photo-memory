@@ -205,7 +205,7 @@ struct LibraryView: View {
 
     var body: some View {
         Group {
-            if LibraryLaunchState.shouldShowImportFlow(hasCompletedFirstLaunch: firstLaunchCompleted, itemCount: allItems.count) {
+            if LibraryLaunchState.shouldShowImportFlow(hasCompletedFirstLaunch: firstLaunchCompleted, itemCount: store.items.count) {
                 FirstLaunchImportView {
                     importController.chooseFolder()
                 }
@@ -215,7 +215,7 @@ struct LibraryView: View {
         }
         .background(LibraryPalette.content)
         .endsTextEditingOnOutsideClick()
-        .onChange(of: allItems.count, initial: true) { _, count in
+        .onChange(of: store.items.count, initial: true) { _, count in
             if count > 0 { firstLaunchCompleted = true }
         }
         .onChange(of: people.map(\.id), initial: true) { _, ids in
@@ -608,7 +608,7 @@ struct LibraryView: View {
         hasGrouped = true
         cachedFilterOptions = Self.filterOptions(for: allItems)
         let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
-        selection.visibleItemIDs = publishedVisible
+        if selection.visibleItemIDs != publishedVisible { selection.visibleItemIDs = publishedVisible }
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
         if let focus = selection.focusedItemID,
            !filtered.contains(where: { $0.id == focus }),

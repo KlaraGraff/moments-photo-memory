@@ -32,7 +32,7 @@ struct TimelineScreen: View {
     private var inputKey: Int {
         var hasher = Hasher()
         hasher.combine(store.revision)
-        hasher.combine(selection.visibleItemIDs)
+        hasher.combine(selection.visibleGeneration)
         for memory in memoryRecords {
             hasher.combine(memory.id)
             hasher.combine(memory.mediaID)
@@ -64,7 +64,7 @@ struct TimelineScreen: View {
             } else if !isBuilt {
                 // Built on appear; until then show the bare page.
                 Paper.canvas
-            } else if visibleItems.isEmpty {
+            } else if !items.contains(where: { selection.isVisible($0.id) }) {
                 ContentUnavailableView {
                     Label("No photos match these filters", systemImage: "line.3.horizontal.decrease.circle")
                 } description: {

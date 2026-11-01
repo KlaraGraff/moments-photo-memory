@@ -812,11 +812,12 @@ enum PeopleImageLoader {
 
 struct PeopleScreen: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(LibraryStore.self) private var store
     @Environment(PeopleScanController.self) private var scanner
     @Query(sort: \Person.name) private var people: [Person]
-    @Query private var observations: [FaceObservation]
+    private var observations: [FaceObservation] { store.faces }
     /// Faces in Recently Deleted photos stay stored but are not shown.
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt != nil }) private var deletedItems: [MediaItem]
+    private var deletedItems: [MediaItem] { store.deletedItems }
     @State private var clusterNames: [String: String] = [:]
     @State private var mergeSource: String?
     @State private var mergeTarget: String?
@@ -846,16 +847,10 @@ struct PeopleScreen: View {
 
     private var observationsKey: Int {
         var hasher = Hasher()
-        for observation in observations {
-            hasher.combine(observation.id)
-            hasher.combine(observation.mediaID)
-            hasher.combine(observation.personID)
-            hasher.combine(observation.clusterID)
-            hasher.combine(observation.confirmed)
-            hasher.combine(observation.assignmentSource)
-            hasher.combine(observation.updatedAt)
-        }
-        for item in deletedItems { hasher.combine(item.id) }
+        hasher.combine(store.revision)
+        // A face edit can change only `updatedAt`, which is not in the
+        // store's signature, so a refresh must still rebuild the page caches.
+        hasher.combine(store.refreshCount)
         return hasher.finalize()
     }
 

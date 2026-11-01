@@ -25,13 +25,14 @@ final class OrganizationAccuracyTests: XCTestCase {
     /// The harder libraries: moves without photos in between, sea days,
     /// layovers, a far day trip, screenshots on a trip, monthly weekends.
     private static let hardTripFloors: [String: (pairF1: Double, agreement: Double)] = [
-        // Sea days split the cruise into three trips.
-        "cruise": (0.5294, 1),
+        // Sea days no longer split the cruise: the ports are far from home and
+        // much closer to each other than to home.
+        "cruise": (1, 1),
         "road-trip": (1, 1),
         "layover": (1, 1),
         "day-trip-far": (1, 1),
-        // A three-day photo gap between far cities splits the trip in two.
-        "sparse-long-trip": (0.6785, 1),
+        // A far move much shorter than the way home keeps the trip together.
+        "sparse-long-trip": (1, 1),
         "screenshots-on-trip": (1, 1),
         "monthly-weekends": (1, 1)
     ]

@@ -148,20 +148,31 @@ public struct PlaceClusterer: Sendable {
     private func boundedClusters(_ stops: [PhotoStop], level: PlaceLevel) -> [[PhotoStop]] {
         guard !stops.isEmpty else { return [] }
         let radius = radiusMeters(for: level)
+        let radiusDegrees = radius / 6_371_000 * 180 / .pi + 1e-9
         var clusters: [RunningPlaceCluster] = []
         clusters.reserveCapacity(stops.count)
+        // Indices of clusters that can still take a photo, in creation order.
+        var openIndices: [Int] = []
+        openIndices.reserveCapacity(stops.count)
 
         for stop in stops {
             guard let coordinate = stop.coordinate else { continue }
 
+            if level == .spot {
+                // Photos arrive in date order, so a cluster whose last photo is
+                // more than the gap away can never take another photo.
+                openIndices.removeAll { index in
+                    abs(stop.date.timeIntervalSince(clusters[index].lastDate)) > maximumTimeGap
+                }
+            }
+
             var nearestIndex: Int?
             var nearestDistance = Double.greatestFiniteMagnitude
-            for index in clusters.indices {
+            for index in openIndices {
                 let cluster = clusters[index]
-                if level == .spot {
-                    let gap = abs(stop.date.timeIntervalSince(cluster.lastDate))
-                    guard gap <= maximumTimeGap else { continue }
-                }
+                // Latitude difference alone is a lower bound of great-circle
+                // distance, so this cheap check never rejects a real match.
+                guard abs(coordinate.latitude - cluster.center.latitude) <= radiusDegrees else { continue }
 
                 let distance = coordinate.distance(to: cluster.center)
                 guard distance <= radius else { continue }
@@ -174,6 +185,7 @@ public struct PlaceClusterer: Sendable {
             if let nearestIndex {
                 clusters[nearestIndex].append(stop, coordinate: coordinate)
             } else {
+                openIndices.append(clusters.count)
                 clusters.append(RunningPlaceCluster(firstStop: stop, coordinate: coordinate))
             }
         }

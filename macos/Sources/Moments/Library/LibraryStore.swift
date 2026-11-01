@@ -84,6 +84,12 @@ final class LibraryStore {
     @ObservationIgnored private var container: ModelContainer?
     @ObservationIgnored private var observer: NSObjectProtocol?
     @ObservationIgnored private var pendingTask: Task<Void, Never>?
+    /// Applies one big known batch's slices, with the main thread free
+    /// between them. Nil when no slicing runs.
+    @ObservationIgnored private var sliceTask: Task<Void, Never>?
+    /// What the slices applied so far touched. The lists and `revision` are
+    /// rebuilt once, after the last slice.
+    @ObservationIgnored private var sliceTouched: Touched?
     /// Saves not applied yet, merged into one batch.
     @ObservationIgnored private var pendingChanges: SavedChanges?
     @ObservationIgnored private var firstPendingSave: Date?
@@ -129,8 +135,11 @@ final class LibraryStore {
     static let settleDelay: Duration = .milliseconds(250)
     /// While saves keep coming (an import), apply at least this often.
     static let maximumDelay: TimeInterval = 1
-    /// A batch larger than this is applied with a full fetch instead.
+    /// A batch larger than this is applied with a full fetch instead, unless
+    /// its identifiers are known: then it is applied in slices.
     static let maximumBatchSize = 5_000
+    /// How many inserted and updated rows one slice applies.
+    static let sliceSize = 1_000
 
     /// Call once with the main context, from the app's init.
     func start(context: ModelContext) {
@@ -169,6 +178,7 @@ final class LibraryStore {
     deinit {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         pendingTask?.cancel()
+        sliceTask?.cancel()
     }
 
     /// Saves from any context (import, face scan, place names, bursts, edits)
@@ -187,6 +197,10 @@ final class LibraryStore {
         pendingImmediately = false
         pendingChanges = nil
         firstPendingSave = nil
+        // A full fetch covers everything the slices would have applied.
+        sliceTask?.cancel()
+        sliceTask = nil
+        sliceTouched = nil
         guard let context else { return }
 
         // A typed descriptor and a typed result per fetch: the CI compilers
@@ -316,14 +330,92 @@ final class LibraryStore {
         pendingTask = nil
         pendingImmediately = false
         firstPendingSave = nil
+        // A running slice task applies its own batch. Saves that arrived
+        // meanwhile stay pending and are applied right after the last slice.
+        if sliceTask != nil { return }
         guard let changes = pendingChanges else { return }
         pendingChanges = nil
-        guard changes.isKnown, changes.identifierCount <= Self.maximumBatchSize else {
-            // The notification could not say what changed, or too much did.
+        guard changes.isKnown else {
+            // The notification could not say what changed: fetch everything.
             refreshNow()
             return
         }
+        if changes.identifierCount > Self.maximumBatchSize {
+            applyInSlices(changes)
+            return
+        }
         apply(changes)
+    }
+
+    /// A known batch too big for one apply becomes slices: the first holds
+    /// every deletion, the rest at most `sliceSize` inserted and updated rows
+    /// each. The main thread is free between slices, so a first import draws
+    /// frames instead of freezing for seconds; the lists and `revision` are
+    /// rebuilt once, after the last slice.
+    private func applyInSlices(_ changes: SavedChanges) {
+        var removed = Set<PersistentIdentifier>()
+        removed.reserveCapacity(changes.deleted.count)
+        var deleted: [PersistentIdentifier] = []
+        deleted.reserveCapacity(changes.deleted.count)
+        for id in changes.deleted where removed.insert(id).inserted {
+            deleted.append(id)
+        }
+
+        var slices: [SavedChanges] = []
+        if !deleted.isEmpty {
+            var slice = SavedChanges()
+            slice.deleted = deleted
+            slice.isKnown = true
+            slices.append(slice)
+        }
+        // A row deleted in this same batch is never read, so it is left out
+        // of the slices that carry inserted and updated rows.
+        let inserted: [PersistentIdentifier] = changes.inserted.filter { !removed.contains($0) }
+        let updated: [PersistentIdentifier] = changes.updated.filter { !removed.contains($0) }
+        let insertedChunks: [[PersistentIdentifier]] = inserted.chunked(every: Self.sliceSize)
+        let updatedChunks: [[PersistentIdentifier]] = updated.chunked(every: Self.sliceSize)
+        slices.reserveCapacity(slices.count + insertedChunks.count + updatedChunks.count)
+        for chunk in insertedChunks {
+            var slice = SavedChanges()
+            slice.inserted = chunk
+            slice.isKnown = true
+            slices.append(slice)
+        }
+        for chunk in updatedChunks {
+            var slice = SavedChanges()
+            slice.updated = chunk
+            slice.isKnown = true
+            slices.append(slice)
+        }
+        guard !slices.isEmpty else { return }
+
+        sliceTask = Task { [weak self] in
+            guard let self else { return }
+            for (index, slice) in slices.enumerated() {
+                if Task.isCancelled { return }
+                let isLastSlice: Bool = index == slices.count - 1
+                let current: SavedChanges = self.sliceAfterRemovals(slice)
+                self.apply(current, finish: isLastSlice)
+                guard !isLastSlice else { break }
+                // Let the run loop draw a frame between slices.
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            guard !Task.isCancelled else { return }
+            self.sliceTask = nil
+            if self.pendingChanges != nil { self.applyPending() }
+        }
+    }
+
+    /// The slice without any id another save deleted meanwhile: a row that is
+    /// gone from the store must never be read.
+    private func sliceAfterRemovals(_ slice: SavedChanges) -> SavedChanges {
+        guard let deleted = pendingChanges?.deleted, !deleted.isEmpty else { return slice }
+        let gone = Set(deleted)
+        var result = slice
+        result.inserted = slice.inserted.filter { !gone.contains($0) }
+        result.updated = slice.updated.filter { !gone.contains($0) }
+        result.isKnown = true
+        return result
     }
 
     // MARK: - Applying a batch
@@ -340,24 +432,53 @@ final class LibraryStore {
         var changedPlacePIDs: Set<PersistentIdentifier> = []
         /// The places named by a changed place-wide override, by string id.
         var changedPlaceIDs: Set<String> = []
+        /// A `Favorite` row was among the batch's rows. Carried across the
+        /// slices of one batch: only the last slice reaches the revision rule,
+        /// and a big batch's favorite row may sit in an earlier slice.
+        var hadFavoriteRow = false
+        /// A row of any other listed entity (faces, places, overrides) was
+        /// among them. Also carried across slices, for the same reason.
+        var hadOtherEntityRow = false
+
+        /// Everything one slice touched added to everything the slices
+        /// before it did. Flags are OR'd, sets are unioned.
+        mutating func merge(_ other: Touched) {
+            photoLists = photoLists || other.photoLists
+            faces = faces || other.faces
+            places = places || other.places
+            allPlaces = allPlaces || other.allPlaces
+            changedPlacePIDs.formUnion(other.changedPlacePIDs)
+            changedPlaceIDs.formUnion(other.changedPlaceIDs)
+            hadFavoriteRow = hadFavoriteRow || other.hadFavoriteRow
+            hadOtherEntityRow = hadOtherEntityRow || other.hadOtherEntityRow
+        }
     }
 
-    private func apply(_ changes: SavedChanges) {
+    /// Applies one batch's changes. With `finish` false (one slice of a big
+    /// batch) what it touched is kept in `sliceTouched` and the public lists,
+    /// `refreshCount` and `revision` wait for the last slice.
+    private func apply(_ changes: SavedChanges, finish: Bool = true) {
         guard let context else { return }
         var touched = Touched()
+        // What earlier slices of this batch touched joins this slice's; the
+        // last slice rebuilds the lists and bumps `revision` once for all.
+        if let earlier = sliceTouched {
+            touched.merge(earlier)
+            sliceTouched = nil
+        }
 
         // A favorite alone changes what the Favorites filter and the sidebar
         // smart groups show, not how a page groups its photos; the batch's
-        // own contents decide whether `revision` has to move at all.
+        // own contents decide whether `revision` has to move at all. The flags
+        // are set on `touched`, which already carries the earlier slices', so
+        // the last slice judges the whole batch.
         let mediaEntityName = String(describing: MediaItem.self)
         let favoriteEntityName = String(describing: Favorite.self)
-        var hadFavoriteRow = false
-        var hadOtherEntityRow = false
         for id in changes.inserted + changes.updated + changes.deleted {
             if id.entityName == favoriteEntityName {
-                hadFavoriteRow = true
+                touched.hadFavoriteRow = true
             } else if id.entityName != mediaEntityName {
-                hadOtherEntityRow = true
+                touched.hadOtherEntityRow = true
             }
         }
 
@@ -449,6 +570,13 @@ final class LibraryStore {
             }
         }
 
+        // A slice keeps what it touched for the last slice, which rebuilds
+        // the lists and bumps `revision` once, for every slice together.
+        guard finish else {
+            sliceTouched = touched
+            return
+        }
+
         // The place list is a few thousand rows and must stay right, so any
         // place change refetches it; only the places a batch can have changed
         // are hashed again.
@@ -457,8 +585,8 @@ final class LibraryStore {
         if touched.faces { rebuildFaces() }
         refreshCount += 1
         appliedRevisionRule(
-            hadFavoriteRow: hadFavoriteRow,
-            hadOnlyPhotosAndFavorites: !hadOtherEntityRow
+            hadFavoriteRow: touched.hadFavoriteRow,
+            hadOnlyPhotosAndFavorites: !touched.hadOtherEntityRow
         )
     }
 

@@ -162,7 +162,7 @@ enum PageProbe {
         // background work it starts (faces, bursts, place names).
         if StressLibrary.requestedCount != nil {
             while StressLibrary.stage != .finished { try? await Task.sleep(for: .milliseconds(200)) }
-            await measure("after import (faces, bursts, place names)", timeout: 600, quiet: 3, sampleInterval: 10_000) {} until: {
+            await measure("after import (faces, bursts, place names)", timeout: 600, quiet: 3, waitsForContent: false, sampleInterval: 10_000) {} until: {
                 people?.isScanning != true && stacks?.isRunning != true
             } describe: {
                 "faces scanning \(people?.isScanning == true ? "yes" : "no"), bursts \(stacks?.isRunning == true ? "yes" : "no")"
@@ -180,7 +180,7 @@ enum PageProbe {
             await measure("viewer open") { selection?.openViewer(photo, in: [photo]) }
             await measure("favorite on") { toggleFavorite(photo) }
             await measure("favorite off") { toggleFavorite(photo) }
-            await measure("viewer close") { selection?.viewerRequest = nil }
+            await measure("viewer close", waitsForContent: false) { selection?.viewerRequest = nil }
         }
         await measure("Chapters again") { selection?.requestedDestination = .trips }
         if let trip = largestTripID() {
@@ -195,7 +195,8 @@ enum PageProbe {
     }
 
     /// Runs `action`, then waits until the main thread has been quiet for
-    /// `quiet` seconds (and `until` holds) or `timeout` passes.
+    /// `quiet` seconds (and `until` holds, and — with `waitsForContent` — the
+    /// page has reported its first content) or `timeout` passes.
     private static func measure(
         _ name: String,
         // A page can keep producing low-value SwiftUI graph updates while it
@@ -205,6 +206,10 @@ enum PageProbe {
         // page's responsiveness problem.
         timeout: TimeInterval = 45,
         quiet: TimeInterval = 1.5,
+        // A page can build its content off the main thread, so the main thread
+        // may be quiet before the content is there. Keep the phase open until
+        // the page reports its first content (or the timeout passes).
+        waitsForContent: Bool = true,
         sampleInterval: UInt32 = 2_000,
         _ action: () -> Void,
         until done: () -> Bool = { true },
@@ -228,8 +233,13 @@ enum PageProbe {
                 break
             }
             let ready = done()
-            status.set(detail: ready ? "waiting for a quiet main thread" : "waiting for background work: \(describe())")
-            guard now - phase.start > quiet, ready else { continue }
+            let hasContent: Bool = !waitsForContent || activeMetrics.firstContent != nil
+            if ready, !hasContent {
+                status.set(detail: "waiting for first content")
+            } else {
+                status.set(detail: ready ? "waiting for a quiet main thread" : "waiting for background work: \(describe())")
+            }
+            guard now - phase.start > quiet, ready, hasContent else { continue }
             let recent = stretches.filter { $0.end > now - quiet }
             let busy = recent.reduce(0) { $0 + $1.length }
             if recent.allSatisfy({ $0.length < 0.05 }) && busy < quiet * 0.2 { break }

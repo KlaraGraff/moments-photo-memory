@@ -12,7 +12,8 @@ name: macOS UI tests
 # branch to measure. It prints a summary table at the end of its log, and a
 # watchdog ends it early with diagnostics when the probe stops making
 # progress (scripts/page_probe_watchdog.py). Compare two runs with
-# scripts/page_probe_summary.py --compare.
+# scripts/page_probe_summary.py --compare. measure_ref measures another
+# branch or commit with this branch's probe, without pushing a branch.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -51,6 +52,10 @@ on:
         description: 'Page probe: photos in the synthetic library it imports'
         required: false
         default: '5000'
+      measure_ref:
+        description: 'Page probe, optional: measure this branch or commit instead, with the probe files of the branch you run from laid over it (it must already have the probe hooks)'
+        required: false
+        default: ''
 
 # A new push to a pull request cancels that pull request's older run, so
 # superseded runs never hold one of the few hosted Macs; on main only the
@@ -194,6 +199,23 @@ jobs:
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
+      - name: Lay this branch's probe over the commit to measure
+        if: inputs.measure_ref != ''
+        env:
+          MEASURE_REF: ${{ inputs.measure_ref }}
+        run: |
+          probe="$(git rev-parse HEAD)"
+          git fetch --no-tags origin "$MEASURE_REF"
+          git checkout --detach FETCH_HEAD
+          git checkout "$probe" -- \
+            macos/Sources/Moments/PageProbe.swift \
+            macos/Sources/Moments/MainThreadSampler.swift \
+            macos/Sources/Moments/StressLibrary.swift \
+            macos/Tests/MomentsUITests/MomentsPageProbeUITests.swift \
+            scripts/page_probe_watchdog.py \
+            scripts/page_probe_summary.py
+          echo "PROBE_FROM=$(git rev-parse --short "$probe")" >> "$GITHUB_ENV"
+          echo "measuring $(git rev-parse --short HEAD) with the probe from $(git rev-parse --short "$probe")"
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project
@@ -274,11 +296,12 @@ jobs:
         run: |
           report="$RUNNER_TEMP/pages/page-report.txt"
           [ -f "$report" ] || { echo "no page report"; exit 0; }
-          echo "PAGE-SUMMARY-BEGIN commit $(git rev-parse --short HEAD), $STRESS_COUNT synthetic photos"
+          measured="commit $(git rev-parse --short HEAD)${PROBE_FROM:+ with the probe from $PROBE_FROM}"
+          echo "PAGE-SUMMARY-BEGIN $measured, $STRESS_COUNT synthetic photos"
           python3 scripts/page_probe_summary.py "$report"
           echo "PAGE-SUMMARY-END"
           {
-            echo "### Page probe: $(git rev-parse --short HEAD), $STRESS_COUNT synthetic photos"
+            echo "### Page probe: $measured, $STRESS_COUNT synthetic photos"
             echo
             python3 scripts/page_probe_summary.py --markdown "$report"
           } >> "$GITHUB_STEP_SUMMARY"

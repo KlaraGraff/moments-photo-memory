@@ -282,7 +282,7 @@ enum LibraryFilterEngine {
         }
         if criteria.screenshotFilter == .possibleOnly && !isPossibleScreenshot(item) { return false }
         if let from = criteria.fromDate.map(calendar.startOfDay(for:)) {
-            guard let captureDate = item.effectiveCaptureDate, captureDate >= from else { return false }
+            guard let captureDate = item.effectiveCaptureDate, captureDate.isOnOrAfter(from) else { return false }
         }
         if let to = criteria.toDate,
            let toExclusive = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: to)) {

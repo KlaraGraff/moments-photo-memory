@@ -275,7 +275,7 @@ struct DateFilterPicker: View {
                     let start = calendar.date(from: DateComponents(year: shownYear, month: month, day: 1)) ?? .now
                     let end = calendar.date(byAdding: DateComponents(month: 1, day: -1), to: start) ?? start
                     let selected = from == start && to == end
-                    let hasPhotos = photoDays.contains { $0 >= start && $0 <= end }
+                    let hasPhotos = photoDays.contains { $0.isOnOrAfter(start) && $0.isOnOrBefore(end) }
                     periodButton(
                         title: start.formatted(.dateTime.month(.abbreviated)),
                         selected: selected,

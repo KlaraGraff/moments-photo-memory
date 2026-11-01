@@ -15,7 +15,6 @@ struct MomentsApp: App {
     @State private var peopleController = PeopleScanController()
     @State private var photoStacks = PhotoStackModel()
     @State private var stackAnalyzer = PhotoStackAnalyzer()
-    @State private var libraryStore = LibraryStore()
     @State private var photosImportController = PhotosImportController(importer: PhotosImporter(source: PhotoKitAssetSource()))
     @State private var showingPhotosImport = false
 
@@ -158,10 +157,8 @@ struct MomentsApp: App {
                     .environment(noteService)
                     .environment(peopleController)
                     .environment(photoStacks)
-                    .environment(libraryStore)
                     .modelContainer(modelContainer)
                     .onAppear {
-                        libraryStore.start(context: modelContainer.mainContext)
                         importController.configure(container: modelContainer)
                         peopleController.configure(container: modelContainer)
                         photosImportController.configure(container: modelContainer)

@@ -30,17 +30,17 @@ struct ContentView: View {
     @Environment(SelectionModel.self) private var shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(ImportController.self) private var importController
-    /// The shared library lists; fetched once for every page instead of once
-    /// per page, and refreshed when something the sidebar groups by changes.
-    @Environment(LibraryStore.self) private var store
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
     /// "My groups" only; chapters live on the Chapters page, and stack
     /// records are not groups anyone made.
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" }, sort: \UserGroup.name)
     private var groups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
+    @Query private var faceObservations: [FaceObservation]
     @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
     @Query private var mediaTags: [MediaTag]
     @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
+    @Query(filter: #Predicate<MediaItem> { $0.deletedAt != nil }) private var deletedItems: [MediaItem]
     @AppStorage(LibraryLaunchState.appStorageKey) private var firstLaunchCompleted = false
     @State private var groupEditorKind: GroupEditorKind?
     @State private var groupToEdit: UserGroup?
@@ -308,20 +308,20 @@ struct ContentView: View {
         cachedGroupCounts[group.id] ?? 0
     }
 
-    /// The shared library's live photos, not fetched again per sidebar page.
-    private var items: [MediaItem] { store.items }
-
-    private var faceObservations: [FaceObservation] { store.faces }
-
-    /// Photos in Recently Deleted, most recently deleted first.
-    private var deletedItems: [MediaItem] { store.deletedItems }
-
     private var groupCountsKey: Int {
         #if DEBUG
         ScrollProbe.count("sidebar.groupCountsKey")
         #endif
         var hasher = Hasher()
-        hasher.combine(store.revision)
+        for item in items {
+            hasher.combine(item.id)
+            hasher.combine(item.updatedAt)
+            hasher.combine(item.captureDate)
+            hasher.combine(item.kindRaw)
+            hasher.combine(item.isScreenshot)
+            hasher.combine(item.tripID)
+            hasher.combine(item.place?.id)
+        }
         // Place renames reach rules through overrides.
         for override in placeOverrides {
             hasher.combine(override.id)
@@ -343,6 +343,12 @@ struct ContentView: View {
             hasher.combine(membership.groupID)
             hasher.combine(membership.mediaID)
             hasher.combine(membership.excluded)
+        }
+        for observation in faceObservations {
+            hasher.combine(observation.id)
+            hasher.combine(observation.mediaID)
+            hasher.combine(observation.personID)
+            hasher.combine(observation.confirmed)
         }
         for memory in memoryRecords {
             hasher.combine(memory.id)

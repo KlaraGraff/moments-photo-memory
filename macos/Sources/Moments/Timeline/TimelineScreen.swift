@@ -24,6 +24,10 @@ struct TimelineScreen: View {
     @State private var tripsByItemID: [String: TripLink] = [:]
     @State private var viewerOrder: [String] = []
     @State private var isBuilt = false
+    /// Builds started, and the newest one shown, so a late older build never
+    /// replaces a newer result.
+    @State private var buildsStarted = 0
+    @State private var newestAssignedBuild = 0
 
     private var visibleItems: [MediaItem] {
         items.filter { selection.isVisible($0.id) }
@@ -93,11 +97,17 @@ struct TimelineScreen: View {
         .task(id: inputKey) {
             #if DEBUG
             let probeToken = PageProbe.phaseToken
-            #endif
-            await rebuild()
-            guard !Task.isCancelled else { return }
-            #if DEBUG
-            PageProbe.contentReady(token: probeToken)
+            let assigned = await rebuild()
+            // A finished build is shown even when a newer input arrived
+            // meanwhile; the newer task replaces it when it finishes.
+            if assigned {
+                PageProbe.contentReady(token: probeToken)
+            }
+            if Task.isCancelled {
+                PageProbe.cancellationObserved(token: probeToken)
+            }
+            #else
+            _ = await rebuild()
             #endif
         }
         .compactLibraryFilters()
@@ -137,7 +147,13 @@ struct TimelineScreen: View {
         .background(Paper.canvas)
     }
 
-    private func rebuild() async {
+    /// Builds the page off the main thread and assigns it. Returns whether a
+    /// result was assigned: a finished build is kept even when a newer input
+    /// cancelled the task, since the next task replaces it when it finishes;
+    /// an older build that finishes after a newer one was shown is dropped.
+    private func rebuild() async -> Bool {
+        buildsStarted += 1
+        let build: Int = buildsStarted
         // Everything read from SwiftData stays on the main actor; the build
         // below sees plain values only.
         let placeIndex = NearestPlaceIndex(places: places)
@@ -174,14 +190,15 @@ struct TimelineScreen: View {
             }
             return TimelineBuildResult(months: months, viewerOrder: viewerOrder)
         }.value
-        guard !Task.isCancelled else { return }
-
+        guard build > newestAssignedBuild else { return false }
+        newestAssignedBuild = build
         months = built.months
         viewerOrder = built.viewerOrder
         stacks.update(items: libraryItems, decisions: stackDecisions)
         itemByID = libraryItemByID
         tripsByItemID = tripLinksByItemID
         isBuilt = true
+        return true
     }
 
     /// The pages' grouped memories: every `Memory` once, under the photo its

@@ -64,14 +64,16 @@ final class PlaceClustererEquivalenceTests: XCTestCase {
             PhotoStop(id: "b", date: origin.addingTimeInterval(1), coordinate: GeoPoint(latitude: -90, longitude: 0)),
             PhotoStop(id: "c", date: origin.addingTimeInterval(2), coordinate: GeoPoint(latitude: 0, longitude: 180))
         ]
-        for radius in [20_015_070.607951533, 20_015_086.796, 25_000_000, .infinity] {
+        let radii: [Double] = [20_015_070.607951533, 20_015_086.796, 25_000_000, .infinity]
+        for radius in radii {
             assertSameAsReference(stops, radius: radius, gap: 86_400, "radius \(radius)")
         }
     }
 
     func testDatesThatAreNotFiniteMatchTheReference() {
         let place = GeoPoint(latitude: 48.85, longitude: 2.35)
-        for date in [Date(timeIntervalSinceReferenceDate: .infinity), Date(timeIntervalSinceReferenceDate: -.infinity), Date(timeIntervalSinceReferenceDate: .nan)] {
+        let dates: [Date] = [Date(timeIntervalSinceReferenceDate: .infinity), Date(timeIntervalSinceReferenceDate: -.infinity), Date(timeIntervalSinceReferenceDate: .nan)]
+        for date in dates {
             let stops = [
                 PhotoStop(id: "a", date: date, coordinate: place),
                 PhotoStop(id: "b", date: date, coordinate: place)
@@ -80,11 +82,13 @@ final class PlaceClustererEquivalenceTests: XCTestCase {
             // order (in the old code too), so compare what the clusters hold.
             let reference = ReferencePlaceClusterer(maximumTimeGap: 86_400)
             for level in PlaceLevel.allCases {
-                XCTAssertEqual(
-                    PlaceClusterer(maximumTimeGap: 86_400).clusters(for: stops, level: level).map { [$0.id] + $0.stopIDs }.sorted { $0[0] < $1[0] },
-                    reference.clusters(for: stops, level: level).map { [$0.id] + $0.stopIDs }.sorted { $0[0] < $1[0] },
-                    "date \(date.timeIntervalSinceReferenceDate) level \(level)"
-                )
+                let fast: [[String]] = PlaceClusterer(maximumTimeGap: 86_400).clusters(for: stops, level: level)
+                    .map { (cluster: PlaceCluster) -> [String] in [cluster.id] + cluster.stopIDs }
+                    .sorted { (lhs: [String], rhs: [String]) -> Bool in lhs[0] < rhs[0] }
+                let old: [[String]] = reference.clusters(for: stops, level: level)
+                    .map { (cluster: PlaceCluster) -> [String] in [cluster.id] + cluster.stopIDs }
+                    .sorted { (lhs: [String], rhs: [String]) -> Bool in lhs[0] < rhs[0] }
+                XCTAssertEqual(fast, old, "date \(date.timeIntervalSinceReferenceDate) level \(level)")
             }
         }
     }
@@ -93,28 +97,30 @@ final class PlaceClustererEquivalenceTests: XCTestCase {
         // Sorting leaves [10, NaN, 0, 9] as it is, so the dates are not in order.
         let place = GeoPoint(latitude: 48.85, longitude: 2.35)
         let seconds: [Double] = [10, .nan, 0, 9]
-        let stops = seconds.enumerated().map { index, second in
+        let stops: [PhotoStop] = seconds.enumerated().map { (index: Int, second: Double) -> PhotoStop in
             PhotoStop(id: "s\(index)", date: Date(timeIntervalSinceReferenceDate: second), coordinate: place)
         }
         for level in PlaceLevel.allCases {
-            XCTAssertEqual(
-                Set(PlaceClusterer(maximumTimeGap: 5).clusters(for: stops, level: level).map { Set($0.stopIDs) }),
-                Set(ReferencePlaceClusterer(maximumTimeGap: 5).clusters(for: stops, level: level).map { Set($0.stopIDs) }),
-                "level \(level)"
-            )
+            let fast: Set<Set<String>> = Set(PlaceClusterer(maximumTimeGap: 5).clusters(for: stops, level: level)
+                .map { (cluster: PlaceCluster) -> Set<String> in Set(cluster.stopIDs) })
+            let old: Set<Set<String>> = Set(ReferencePlaceClusterer(maximumTimeGap: 5).clusters(for: stops, level: level)
+                .map { (cluster: PlaceCluster) -> Set<String> in Set(cluster.stopIDs) })
+            XCTAssertEqual(fast, old, "level \(level)")
         }
     }
 
     func testAGapOfExactlyTheMaximumStillJoins() {
         let place = GeoPoint(latitude: 48.85, longitude: 2.35)
-        for gap in [0.0, 1, 3_600, 86_400] {
+        let gaps: [TimeInterval] = [0, 1, 3_600, 86_400]
+        for gap in gaps {
             let stops = [
                 PhotoStop(id: "a", date: origin, coordinate: place),
                 PhotoStop(id: "b", date: origin.addingTimeInterval(gap), coordinate: place),
                 PhotoStop(id: "c", date: origin.addingTimeInterval(gap * 2 + 1), coordinate: place)
             ]
             assertSameAsReference(stops, radius: 1_500, gap: gap, "gap \(gap)")
-            XCTAssertEqual(PlaceClusterer(maximumTimeGap: gap).clusters(for: stops, level: .spot).map(\.stopIDs), [["a", "b"], ["c"]])
+            let members: [[String]] = PlaceClusterer(maximumTimeGap: gap).clusters(for: stops, level: .spot).map(\.stopIDs)
+            XCTAssertEqual(members, [["a", "b"], ["c"]])
         }
     }
 

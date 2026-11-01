@@ -7,10 +7,14 @@ import MomentsCore
 /// as a day inside a trip, plus a link to the trip it belongs to. Follows
 /// the Library filters, like the maps.
 struct TimelineScreen: View {
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
+    @Environment(LibraryStore.self) private var store
+    // The library's photos and places come from the shared store, which
+    // fetches them once for every page.
+    private var items: [MediaItem] { store.items }
+    private var places: [Place] { store.places }
     @Query private var trips: [Trip]
-    @Query private var places: [Place]
     @Query(sort: \CollectionMemory.createdAt) private var memories: [CollectionMemory]
+    @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw == "stack" }) private var stackRecords: [UserGroup]
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks
@@ -27,25 +31,17 @@ struct TimelineScreen: View {
 
     private var inputKey: Int {
         var hasher = Hasher()
-        for item in visibleItems {
-            hasher.combine(item.id)
-            hasher.combine(item.effectiveCaptureDate)
-            hasher.combine(item.localDayKey)
-            hasher.combine(item.latitude)
-            hasher.combine(item.longitude)
-            for memory in item.memories {
-                hasher.combine(memory.text)
-                hasher.combine(memory.updatedAt)
-            }
+        hasher.combine(store.revision)
+        hasher.combine(selection.visibleGeneration)
+        for memory in memoryRecords {
+            hasher.combine(memory.id)
+            hasher.combine(memory.mediaID)
+            hasher.combine(memory.updatedAt)
         }
         for trip in trips {
             hasher.combine(trip.id)
             hasher.combine(trip.effectiveName)
             hasher.combine(trip.items.count)
-        }
-        for place in places {
-            hasher.combine(place.id)
-            hasher.combine(PlaceDisplayName.resolvedName(of: place))
         }
         hasher.combine(stacks.generation)
         for record in stackRecords {
@@ -68,7 +64,7 @@ struct TimelineScreen: View {
             } else if !isBuilt {
                 // Built on appear; until then show the bare page.
                 Paper.canvas
-            } else if visibleItems.isEmpty {
+            } else if !items.contains(where: { selection.isVisible($0.id) }) {
                 ContentUnavailableView {
                     Label("No photos match these filters", systemImage: "line.3.horizontal.decrease.circle")
                 } description: {

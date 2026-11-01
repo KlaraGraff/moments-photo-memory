@@ -16,12 +16,16 @@ import MomentsCore
 /// `UserGroup`s of kind `.chapter`, so a photo can be in a trip and in a
 /// birthday at once. Their cards and pages use the id "chapter.<group id>".
 struct TripsScreen: View {
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
+    @Environment(LibraryStore.self) private var store
+    // The library's photos and places come from the shared store, which
+    // fetches them once for every page.
+    private var items: [MediaItem] { store.items }
     @Query private var trips: [Trip]
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw == "chapter" }) private var chapterGroups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
-    @Query private var places: [Place]
+    private var places: [Place] { store.places }
     @Query(sort: \CollectionMemory.createdAt) private var memories: [CollectionMemory]
+    @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
     @Environment(SelectionModel.self) private var selection
     @Environment(\.modelContext) private var modelContext
     @Environment(\.undoManager) private var undoManager
@@ -44,17 +48,13 @@ struct TripsScreen: View {
 
     private var inputKey: Int {
         var hasher = Hasher()
-        for item in items {
-            hasher.combine(item.id)
-            hasher.combine(item.effectiveCaptureDate)
-            hasher.combine(item.localDayKey)
-            hasher.combine(item.latitude)
-            hasher.combine(item.longitude)
-            hasher.combine(item.tripID)
-            for memory in item.memories {
-                hasher.combine(memory.text)
-                hasher.combine(memory.updatedAt)
-            }
+        // All photos, faces and places the page groups by, as one revision.
+        hasher.combine(store.revision)
+        for memory in memoryRecords {
+            hasher.combine(memory.id)
+            hasher.combine(memory.mediaID)
+            hasher.combine(memory.updatedAt)
+            hasher.combine(memory.revision)
         }
         for trip in trips {
             hasher.combine(trip.id)
@@ -62,10 +62,6 @@ struct TripsScreen: View {
             hasher.combine(trip.items.count)
             hasher.combine(trip.startDate)
             hasher.combine(trip.endDate)
-        }
-        for place in places {
-            hasher.combine(place.id)
-            hasher.combine(PlaceDisplayName.resolvedName(of: place))
         }
         for group in chapterGroups {
             hasher.combine(group.id)

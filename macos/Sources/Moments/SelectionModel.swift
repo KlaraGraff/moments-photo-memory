@@ -4,6 +4,7 @@ import Observation
 /// Sidebar destinations other screens can ask the window to switch to.
 enum SidebarDestination: Hashable {
     case library
+    case people
     case map
     case timeline
     case trips

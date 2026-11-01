@@ -145,6 +145,11 @@ public final class PhotoKitAssetSource: NSObject, PhotosAssetSource, PHPhotoLibr
         targetSize: CGSize,
         networkAccessAllowed: Bool
     ) async throws -> Data? {
+        #if DEBUG
+        // The stress library's made-up assets: asking PhotoKit about them
+        // could raise the access prompt on a test Mac.
+        if StressLibrary.isSynthetic(localIdentifier) { return nil }
+        #endif
         guard let asset = cachedAsset(for: localIdentifier)
             ?? PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject else { return nil }
         let image = try await bestImage(for: asset, targetSize: targetSize, contentMode: .aspectFill, networkAccessAllowed: networkAccessAllowed)
@@ -158,6 +163,9 @@ public final class PhotoKitAssetSource: NSObject, PhotosAssetSource, PHPhotoLibr
         targetSize: CGSize,
         networkAccessAllowed: Bool
     ) async -> CGImage? {
+        #if DEBUG
+        if StressLibrary.isSynthetic(localIdentifier) { return nil }
+        #endif
         guard let asset = cachedAsset(for: localIdentifier)
             ?? PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject,
               let image = try? await bestImage(for: asset, targetSize: targetSize, contentMode: .aspectFit, networkAccessAllowed: networkAccessAllowed) else { return nil }

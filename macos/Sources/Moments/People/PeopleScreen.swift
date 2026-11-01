@@ -944,8 +944,16 @@ struct PeopleScreen: View {
         .onAppear {
             mergeSameNamedPeople()
             scanner.scanIfNeeded()
+            #if DEBUG
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+            #endif
         }
-        .onChange(of: observationsKey, initial: true) { _, _ in refreshFaceCaches() }
+        .onChange(of: observationsKey, initial: true) { _, _ in
+            refreshFaceCaches()
+            #if DEBUG
+            PageProbe.contentReady(token: PageProbe.phaseToken)
+            #endif
+        }
         .onChange(of: people.map(\.id), initial: true) { _, ids in
             if !personFilterIsValid(ids: ids) { UserDefaults.standard.removeObject(forKey: "moments.library.person") }
         }
@@ -1126,7 +1134,7 @@ struct PeopleScreen: View {
                 // opens this person's photos.
                 if let cover = coverFace(of: person) {
                     Button { keyPhotoPersonID = person.id } label: {
-                        FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72)
+                        FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72, probeToken: pageProbePhaseToken)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -1168,7 +1176,7 @@ struct PeopleScreen: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 6) {
                         ForEach(faces, id: \.id) { face in
-                            FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
+                            FaceCropView(data: face.cropData, cacheKey: face.id, size: 56, probeToken: pageProbePhaseToken)
                                 .contextMenu {
                                     Button(String(localized: "Make Key Photo")) { setKeyPhoto(face, for: person) }
                                     Divider()
@@ -1285,7 +1293,7 @@ struct PeopleScreen: View {
                             LazyHStack(spacing: 10) {
                                 ForEach(cluster.faces, id: \.id) { face in
                                     VStack(spacing: 4) {
-                                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 64)
+                                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 64, probeToken: pageProbePhaseToken)
                                             .contextMenu { faceCorrectionMenu(face, current: nil) }
                                         HStack(spacing: 4) {
                                             Button { confirm(face) } label: {
@@ -1485,6 +1493,8 @@ struct FaceCropView: View {
     /// person's face in another person's slot.
     let cacheKey: String
     let size: CGFloat
+    /// The page probe phase this crop was built in (DEBUG only).
+    var probeToken: UInt64? = nil
     @State private var image: NSImage?
 
     var body: some View {
@@ -1502,6 +1512,9 @@ struct FaceCropView: View {
             let key = cacheKey as NSString
             if let cached = Self.cache.object(forKey: key) {
                 image = cached
+                #if DEBUG
+                if let probeToken { PageProbe.thumbnailReady(token: probeToken) }
+                #endif
                 return
             }
             let decodeTask = Task.detached(priority: .utility) { () -> Data? in
@@ -1516,6 +1529,9 @@ struct FaceCropView: View {
             guard let decoded = decodedData.flatMap(NSImage.init(data:)) else { return }
             Self.cache.setObject(decoded, forKey: key)
             image = decoded
+            #if DEBUG
+            if let probeToken { PageProbe.thumbnailReady(token: probeToken) }
+            #endif
         }
     }
 }

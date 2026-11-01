@@ -247,7 +247,20 @@ struct LibraryView: View {
         .onChange(of: people.map(\.id), initial: true) { _, ids in
             if !personFilterID.isEmpty && !ids.contains(personFilterID) { personFilterID = "" }
         }
-        .task(id: groupingKey) { regroup() }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
+        .task(id: groupingKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            #endif
+            regroup()
+            #if DEBUG
+            PageProbe.contentReady(token: probeToken)
+            #endif
+        }
         .sheet(isPresented: $showingReview) {
             ReviewSheet()
         }
@@ -819,7 +832,7 @@ private struct LibrarySectionView: View {
 
         LazyVGrid(columns: gridColumns, alignment: .leading, spacing: size.rowSpacing) {
             ForEach(items, id: \.id) { item in
-                LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact, stackCount: stackCounts[item.id] ?? 1)
+                LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact, stackCount: stackCounts[item.id] ?? 1, probeToken: pageProbePhaseToken)
             }
         }
         .padding(.bottom, LibrarySectionView.sectionSpacing)
@@ -875,6 +888,8 @@ private struct LibraryPhotoCell: View {
     var isCompact = false
     /// More than one: the cell is a burst, shown as a stack with its cover.
     var stackCount = 1
+    /// The page probe phase this cell was built in (DEBUG only).
+    var probeToken: UInt64? = nil
     @State private var isHovering = false
 
     private var showsMemoryEditor: Bool {
@@ -897,12 +912,12 @@ private struct LibraryPhotoCell: View {
                     click()
                 } label: {
                     if isCompact {
-                        ThumbnailView(item: item, width: 280, height: 280)
+                        ThumbnailView(item: item, width: 280, height: 280, probeToken: probeToken)
                             .aspectRatio(1, contentMode: .fit)
                             .stackedPaper(stackCount, isCompact: true, cornerRadius: 10)
                             .overlay { LibraryPhotoSelectionFrame(itemID: item.id, cornerRadius: 10) }
                     } else {
-                        ThumbnailView(item: item, width: 560, height: 420)
+                        ThumbnailView(item: item, width: 560, height: 420, probeToken: probeToken)
                             .aspectRatio(1.33, contentMode: .fit)
                             .padding(5)
                             // A print's white mat, lifted by a warm two-layer shadow.

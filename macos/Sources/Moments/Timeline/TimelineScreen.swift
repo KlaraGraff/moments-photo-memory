@@ -89,7 +89,20 @@ struct TimelineScreen: View {
         // The page's name lives in the window's title bar, not in the page.
         .navigationTitle(String(localized: "Timeline"))
         .navigationSubtitle(isBuilt && dayCount > 0 ? String(localized: "\(dayCount) days") : "")
-        .task(id: inputKey) { rebuild() }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
+        .task(id: inputKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            #endif
+            rebuild()
+            #if DEBUG
+            PageProbe.contentReady(token: probeToken)
+            #endif
+        }
         .compactLibraryFilters()
     }
 

@@ -2,9 +2,17 @@ name: macOS UI tests
 
 # UI tests drive the app on a hosted Mac, never on a developer's screen.
 # Synthetic data only: demo seed plus generated fixture photos.
-# The whole suite runs once a pull request is ready for review (drafts skip
+# The smoke suite runs once a pull request is ready for review (drafts skip
 # it) and again on main after each merge, so changes that pass alone but
 # clash together still get caught.
+#
+# The page probe (MomentsPageProbeUITests: a first import of a large
+# synthetic library, then every page) is its own job and runs only by hand:
+# Actions > macOS UI tests > Run workflow > suite "probe" (or "both"), on the
+# branch to measure. It prints a summary table at the end of its log, and a
+# watchdog ends it early with diagnostics when the probe stops making
+# progress (scripts/page_probe_watchdog.py). Compare two runs with
+# scripts/page_probe_summary.py --compare.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -30,10 +38,19 @@ on:
       - '.github/workflows/ui-tests.yml'
   workflow_dispatch:
     inputs:
+      suite:
+        description: 'smoke: the UI suite; probe: the page probe only; both'
+        type: choice
+        options: [smoke, probe, both]
+        default: smoke
       only_testing:
-        description: 'Optional: run only these tests, e.g. MomentsUITests/MomentsUITests/testDoubleClickRenamesATripInPlace (space-separated)'
+        description: 'Optional, smoke suite: run only these tests, e.g. MomentsUITests/MomentsUITests/testDoubleClickRenamesATripInPlace (space-separated)'
         required: false
         default: ''
+      page_stress_count:
+        description: 'Page probe: photos in the synthetic library it imports'
+        required: false
+        default: '5000'
 
 # A new push to a pull request cancels that pull request's older run, so
 # superseded runs never hold one of the few hosted Macs; on main only the
@@ -45,7 +62,10 @@ concurrency:
 
 jobs:
   ui:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: UI smoke suite
+    if: >-
+      (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+      && (github.event_name != 'workflow_dispatch' || inputs.suite != 'probe')
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
@@ -79,6 +99,7 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/MomentsUITests.xcresult" \
             CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
             "${only[@]}" \
+            -skip-testing:MomentsUITests/MomentsPageProbeUITests \
             test
       - name: Print scroll reports
         if: always()
@@ -163,3 +184,101 @@ jobs:
               print(f"{failure.get('testIdentifierString') or failure.get('testName')}: {failure.get('failureText')}")
           print("FAILURES-END")
           PY
+
+  page-probe:
+    name: Page probe (synthetic library)
+    if: github.event_name == 'workflow_dispatch' && inputs.suite != 'smoke'
+    runs-on: macos-latest
+    # Build about 6 minutes, probe 15 to 25 at 5,000 photos; the test itself
+    # gives up after 50 minutes and the watchdog much sooner when stuck.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate --spec macos/project.yml
+      - name: Build the app and UI tests
+        run: |
+          xcodebuild \
+            -project macos/Moments.xcodeproj \
+            -scheme MomentsUITests \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
+            build-for-testing
+      - name: Run the page probe under the watchdog
+        env:
+          TEST_RUNNER_MOMENTS_PAGE_DIR: ${{ runner.temp }}/pages
+          TEST_RUNNER_MOMENTS_PAGE_STRESS_COUNT: ${{ inputs.page_stress_count || '5000' }}
+        run: |
+          # Ends the run with diagnostics when no heartbeat appears within
+          # 10 minutes, the heartbeat stops for 3, the main thread leaves a
+          # ping unanswered for 4, or no phase finishes for 15. Single pages
+          # still have the probe's own 45-second settle limit.
+          python3 scripts/page_probe_watchdog.py \
+            --page-dir "$RUNNER_TEMP/pages" \
+            --diagnostics "$RUNNER_TEMP/probe-diagnostics" \
+            --launch-grace 600 --stale-heartbeat 180 --main-silent 240 --no-progress 900 \
+            -- \
+            xcodebuild \
+              -project macos/Moments.xcodeproj \
+              -scheme MomentsUITests \
+              -destination 'platform=macOS' \
+              -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/PageProbe.xcresult" \
+              CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
+              -only-testing:MomentsUITests/MomentsPageProbeUITests/testFirstImportAndPagesWithALargeLibrary \
+              test-without-building
+      - name: Print the full page report
+        if: always()
+        run: |
+          cat "$RUNNER_TEMP/pages/page-report.txt" 2>/dev/null || echo "no page report"
+          if [ -f "$RUNNER_TEMP/pages/page-stuck-main.txt" ]; then
+            echo "-- main thread stacks the app took while its main thread did not answer --"
+            cat "$RUNNER_TEMP/pages/page-stuck-main.txt"
+          fi
+      - name: Upload the probe's files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: page-probe
+          path: |
+            ${{ runner.temp }}/pages
+            ${{ runner.temp }}/probe-diagnostics
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Print test failures
+        if: always()
+        run: |
+          result="$RUNNER_TEMP/PageProbe.xcresult"
+          [ -d "$result" ] || { echo "no result bundle"; exit 0; }
+          xcrun xcresulttool get test-results summary --path "$result" --compact > "$RUNNER_TEMP/summary.json" || exit 0
+          python3 - "$RUNNER_TEMP/summary.json" <<'PY'
+          import json, sys
+          summary = json.load(open(sys.argv[1]))
+          failures = summary.get("testFailures", [])
+          print(f"FAILURES-BEGIN {len(failures)}")
+          for failure in failures:
+              # The probe's failure text repeats the whole report; the
+              # first lines say what went wrong.
+              text = (failure.get('failureText') or '').splitlines()
+              print(f"{failure.get('testIdentifierString') or failure.get('testName')}: " + "\n".join(text[:8]))
+          print("FAILURES-END")
+          PY
+      - name: Page summary
+        # Last, so the table is at the end of the log.
+        if: always()
+        env:
+          STRESS_COUNT: ${{ inputs.page_stress_count || '5000' }}
+        run: |
+          report="$RUNNER_TEMP/pages/page-report.txt"
+          [ -f "$report" ] || { echo "no page report"; exit 0; }
+          echo "PAGE-SUMMARY-BEGIN commit $(git rev-parse --short HEAD), $STRESS_COUNT synthetic photos"
+          python3 scripts/page_probe_summary.py "$report"
+          echo "PAGE-SUMMARY-END"
+          {
+            echo "### Page probe: $(git rev-parse --short HEAD), $STRESS_COUNT synthetic photos"
+            echo
+            python3 scripts/page_probe_summary.py --markdown "$report"
+          } >> "$GITHUB_STEP_SUMMARY"

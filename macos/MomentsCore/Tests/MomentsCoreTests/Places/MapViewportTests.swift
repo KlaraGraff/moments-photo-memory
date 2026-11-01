@@ -329,4 +329,45 @@ final class MapViewportTests: XCTestCase {
             distanceMeters: 1_000
         )
     }
+
+    // MARK: - Wide views
+
+    /// A view 200° wide is not the whole globe. With the default padding the
+    /// old code reached 200° either way and kept every longitude, so pins on
+    /// the far side stayed on screen.
+    func testWideViewKeepsOnlyTheReportedSpan() {
+        let viewport = MapViewport(
+            centerLatitude: 0,
+            centerLongitude: 0,
+            latitudeDelta: 20,
+            longitudeDelta: 200
+        )
+
+        // 170° is behind the camera: the reported view spans only ±100°.
+        XCTAssertFalse(viewport.contains(GeoPoint(latitude: 0, longitude: 170)))
+        // 95° is inside the reported 200° span, so the padding only widens it.
+        XCTAssertTrue(viewport.contains(GeoPoint(latitude: 0, longitude: 95)))
+    }
+
+    /// Routes are culled with the same half span: a line wholly on the far
+    /// side is out, one that reaches into the reported span is kept.
+    func testWideViewKeepsOnlyRoutesInTheReportedSpan() {
+        let viewport = MapViewport(
+            centerLatitude: 0,
+            centerLongitude: 0,
+            latitudeDelta: 20,
+            longitudeDelta: 200
+        )
+        let farSide: RouteSegment = segment(
+            from: cluster("far-west", latitude: 0, longitude: 150),
+            to: cluster("far-east", latitude: 0, longitude: 170)
+        )
+        let reachingIn: RouteSegment = segment(
+            from: cluster("inner", latitude: 0, longitude: 80),
+            to: cluster("outer", latitude: 0, longitude: 120)
+        )
+
+        XCTAssertTrue(viewport.segments([farSide]).isEmpty)
+        XCTAssertEqual(viewport.segments([reachingIn]), [reachingIn])
+    }
 }

@@ -851,11 +851,14 @@ struct MapScreen: View {
         }
         updateMergedEntries(for: kept, members: members, prefix: Self.nearKeyPrefix)
 
-        if kept.map(\.id) != visibleClusters.map(\.id) {
+        // A cluster keeps its id when its first photo stays, and a route keeps
+        // "from->to", so ids alone miss a moved centre, new members or new
+        // endpoints. Compare the values so the map never draws stale geometry.
+        if kept != visibleClusters {
             visibleClusters = kept
         }
         let segments = MapRoutes.longest(viewport.segments(snapshot.routeSegments), limit: 400)
-        if segments.map(\.id) != visibleSegments.map(\.id) {
+        if segments != visibleSegments {
             visibleSegments = segments
         }
     }

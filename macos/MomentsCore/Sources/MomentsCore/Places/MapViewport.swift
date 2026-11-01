@@ -68,13 +68,19 @@ public struct MapViewport: Equatable, Sendable {
     }
 
     /// Half the padded longitude span, or nil when every longitude matches:
-    /// half the globe or more, or a span that is not finite.
+    /// the reported view reaching half the globe or more, or a span that is
+    /// not finite. The padding never widens the result past the antimeridian.
     private func longitudeHalfSpan(padding: Double) -> Double? {
         guard centerLongitude.isFinite else { return nil }
+        let reportedHalfSpan = longitudeDelta / 2
+        guard reportedHalfSpan.isFinite, reportedHalfSpan < 180 else { return nil }
         let rawHalfSpan = longitudeDelta * (0.5 + padding)
         guard rawHalfSpan.isFinite else { return nil }
-        guard rawHalfSpan < 180 else { return nil }
-        return max(0, rawHalfSpan)
+        // Padding that would reach past the antimeridian is dropped: the
+        // reported view stays what the camera shows, and only then is the
+        // result held just short of half the globe.
+        let halfSpan = rawHalfSpan < 180 ? rawHalfSpan : reportedHalfSpan
+        return min(max(0, halfSpan), 179.999)
     }
 
     /// True when the box around the two ends (the shorter way round in

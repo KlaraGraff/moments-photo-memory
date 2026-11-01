@@ -85,6 +85,79 @@ final class PlacesViewModelTests: XCTestCase {
         XCTAssertEqual(snapshot.routeSegments.count, 1)
     }
 
+    func testUndatedPhotosStayOutOfRoutes() {
+        let viewModel = PlacesViewModel()
+        let places = [(0.0, 0.0), (0.0, 0.02), (0.02, 0.0), (0.02, 0.02)]
+        var items = (0..<40).map { index in
+            let place = places[index % places.count]
+            return item(
+                "photo-\(index)",
+                hours: Double(index),
+                latitude: place.0,
+                longitude: place.1
+            )
+        }
+        // A photo without a date is clustered like any other, but has no place
+        // in the route order.
+        let undatedID = "undated"
+        items.append(MediaItem(id: undatedID, captureDate: nil, latitude: 0.01, longitude: 0.01, title: undatedID))
+
+        for delta in [10.0, 1.0, 0.1] {
+            let snapshot = viewModel.snapshot(items: items, visibleItemIDs: nil, latitudeDelta: delta)
+
+            XCTAssertTrue(
+                snapshot.clusters.contains { $0.stopIDs.contains(undatedID) },
+                "undated photo missing from every cluster at \(delta)"
+            )
+            XCTAssertFalse(
+                snapshot.routeSegments.contains { $0.fromStopID == undatedID || $0.toStopID == undatedID },
+                "undated photo in a route at \(delta)"
+            )
+        }
+    }
+
+    func testSpotLevelKeepsMoreThan400Routes() {
+        let viewModel = PlacesViewModel()
+        // 450 places one hour apart, each 5 km further along a line: at spot
+        // level every move is its own pair, so the city limit must not apply.
+        let items = (0..<450).map { index in
+            item(
+                "photo-\(index)",
+                hours: Double(index),
+                latitude: 0,
+                longitude: Double(index) * 0.045
+            )
+        }
+
+        let snapshot = viewModel.snapshot(items: items, visibleItemIDs: nil, latitudeDelta: 0.01)
+
+        XCTAssertEqual(snapshot.level, .spot)
+        XCTAssertGreaterThan(snapshot.routeSegments.count, 400)
+    }
+
+    func testRepeatedTripsDrawEachRouteOnce() {
+        let viewModel = PlacesViewModel()
+        // Two cities about 300 km apart, a photo in each on alternate days.
+        let items = (0..<20).map { day in
+            let north = day.isMultiple(of: 2)
+            return item(
+                "day-\(day)",
+                hours: Double(day) * 24,
+                latitude: north ? 0 : 2.7,
+                longitude: 0
+            )
+        }
+        let snapshot = viewModel.snapshot(
+            stops: viewModel.photoStops(from: items, visibleItemIDs: nil),
+            latitudeDelta: 10
+        )
+
+        XCTAssertEqual(snapshot.level, .city)
+        XCTAssertEqual(snapshot.routeSegments.count, 1)
+        XCTAssertEqual(snapshot.twoWayRouteIDs.count, 1)
+        XCTAssertEqual(Set(snapshot.routeSegments.map(\.id)).count, snapshot.routeSegments.count)
+    }
+
     private func item(_ id: String, hours: TimeInterval, latitude: Double, longitude: Double) -> MediaItem {
         MediaItem(
             id: id,

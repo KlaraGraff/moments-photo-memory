@@ -9,7 +9,8 @@ import XCTest
 final class LibraryStoreAcceptanceTests: XCTestCase {
     private func photo(_ id: String, day: Double) -> MediaItem {
         let item = MediaItem(id: id, title: "Synthetic \(id)")
-        item.captureDate = Date(timeIntervalSince1970: 1_700_000_000 + day * 86_400)
+        let seconds: TimeInterval = 1_700_000_000 + day * 86_400
+        item.captureDate = Date(timeIntervalSince1970: seconds)
         return item
     }
 
@@ -68,7 +69,10 @@ final class LibraryStoreAcceptanceTests: XCTestCase {
     func testAssigningAFaceBumpsRevision() throws {
         let (store, context, container) = try started { context in
             context.insert(photo("a", day: 1))
-            context.insert(FaceObservation(id: "f", mediaID: "a", rect: (0.1, 0.1, 0.2, 0.2), embedding: Data(), cropData: Data([1]), quality: 0.8, clusterID: "pending-f"))
+            // Typed first: the CI compiler is slow on tuple literals inside long calls.
+            let rect: (x: Double, y: Double, w: Double, h: Double) = (x: 0.1, y: 0.1, w: 0.2, h: 0.2)
+            let face = FaceObservation(id: "f", mediaID: "a", rect: rect, embedding: Data(), cropData: Data([1]), quality: 0.8, clusterID: "pending-f")
+            context.insert(face)
         }
         defer { withExtendedLifetime(container) {} }
         XCTAssertEqual(store.faces.count, 1)

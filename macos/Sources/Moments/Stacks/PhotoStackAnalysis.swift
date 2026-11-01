@@ -253,7 +253,7 @@ final class PhotoStackAnalyzer {
     /// Only what is on this Mac: analysis never downloads from iCloud.
     nonisolated static func loadImage(_ photo: PendingPhoto) async -> CGImage? {
         if let localIdentifier = photo.photosLocalIdentifier,
-           let image = await PhotoKitAssetSource().thumbnailImage(
+           let image = await PhotoKitAssetSource.shared.thumbnailImage(
             forLocalIdentifier: localIdentifier,
             targetSize: CGSize(width: 1_024, height: 1_024),
             networkAccessAllowed: false

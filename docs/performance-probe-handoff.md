@@ -22,6 +22,7 @@ Finish the current People, Map and 5k page-probe work on PR #103. Do not start t
 ## Current Unpushed Changes
 
 - `PeopleScreen.swift` limits initially rendered unnamed face groups to 24, then appends 24 when the loading sentinel appears. The prior 5k report showed People first content at 1.35 seconds, first thumbnail at 1.56 seconds, but a 44.75-second settle timeout and 43.47 seconds of main-thread work. Samples implicated `FaceObservation` view construction and per-face correction menus.
+- The next local change removes the per-image main-actor progress callback from the face scan. The visible progress still advances at each 16-photo batch boundary, while scan results and cancellation behavior remain unchanged. This targets the repeated People view-graph updates seen in the samples.
 - `ui-tests.yml` raises the UI job ceiling from 60 to 75 minutes. The full suite takes about 15 minutes before the PageProbe test begins, so its 50-minute wait could not finish under the old 60-minute job timeout.
 
 ## Verification Evidence
@@ -31,12 +32,14 @@ Finish the current People, Map and 5k page-probe work on PR #103. Do not start t
 - UI run `41223976577` was cancelled at the 60-minute workflow limit, not by an assertion. The probe test started at 17:35:31 UTC and was still waiting when the job ended at 18:20:38 UTC. Its report only contains the import phases and People; it contains no Map result. Screenshot export failed because the job timeout left an incomplete `.xcresult`.
 - The current local People/workflow changes have not yet been tested on the hosted Mac.
 
+The follow-up run `41231328545` tested commit `6939545` with the 75-minute job limit. Linux and native macOS passed. The UI run completed normally and produced all 14 page phases, but the probe still failed only at People: first content 1.30 s, first thumbnail 1.46 s, fully settled 44.89 s (timed out), 131 stalls over 100 ms, and 43.78 s main-thread busy. Map settled in 3.91 s; Timeline 3.83 s; Chapters 5.28 s; Library 2.12 s. The following UI tests, including both information-under-photos tests and map navigation tests, passed. The timeout increase fixed report truncation; it did not fix People.
+
 ## Next Steps
 
-1. Finish the independent review of the two local changes; address any concrete issue.
+1. Validate the per-batch People progress update against the hosted 5k probe.
 2. Run `git diff --check`, the app build, `swift test --package-path macos/MomentsCore`, and the repository's privacy and translation checks.
 3. Commit and push the local changes to PR #103. The new push should start Linux, native macOS, and the 75-minute UI workflow.
-4. Read the complete 5k page report from the new UI run. Confirm the People phase no longer times out and that Map and the following page phases complete; confirm both map-focus tests pass.
+4. Read the complete 5k page report from the new UI run. The latest run proves Map and the following page phases complete and the map-focus tests pass, but People still times out. Continue from the People samples before considering this batch complete.
 5. Only when every required check on the head commit is green, follow the repository rule to squash-merge PR #103 using the PR title and number. Do not tag or release.
 
 ## Boundaries

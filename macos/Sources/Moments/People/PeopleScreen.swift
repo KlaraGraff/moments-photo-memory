@@ -233,14 +233,11 @@ final class PeopleScanController {
                     try Task.checkCancellation()
                     if let image = await PeopleImageLoader.load(descriptor, allowDownload: false) {
                         try Task.checkCancellation()
-                        let batchBase = completed + offset
-                        let skippedBeforeImage = skippedUnavailable
-                        let results = await pipeline.scanDetailed([PeopleScanItem(id: descriptor.id, image: image)]) { [weak self] scanProgress in
-                            Task { @MainActor [weak self] in
-                                guard let self, self.activeScanID == scanID, self.state == .scanning else { return }
-                                self.progress = PeopleScanDisplayProgress(completed: batchBase + scanProgress.completed, total: total, skippedUnavailable: skippedBeforeImage, isPaused: scanProgress.isPaused)
-                            }
-                        }
+                        // The visible progress bar advances at batch boundaries
+                        // below. Publishing a main-actor update for every
+                        // image made the entire People view graph rebuild for
+                        // thousands of scan callbacks in a large library.
+                        let results = await pipeline.scanDetailed([PeopleScanItem(id: descriptor.id, image: image)])
                         batchResults.append(contentsOf: results)
                         batchScannedIDs.append(descriptor.id)
                     } else {

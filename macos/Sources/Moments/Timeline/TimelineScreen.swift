@@ -141,8 +141,9 @@ struct TimelineScreen: View {
     }
 
     private func rebuild() {
+        let placeIndex = NearestPlaceIndex(places: places)
         let snapshots = visibleItems.map { item in
-            TimelineItemSnapshot(item: item, placeHint: nearestPlaceName(for: item))
+            TimelineItemSnapshot(item: item, placeHint: placeIndex.nearestPlaceName(for: item))
         }
         // No trips given: every photo lands in one stream, grouped by day and place.
         let document = TimelineBuilder(calendar: Calendar.autoupdatingCurrent).build(items: snapshots, trips: [])
@@ -179,20 +180,6 @@ struct TimelineScreen: View {
     private func openTrip(_ tripID: String) {
         selection.openTripID = tripID
         selection.requestedDestination = .trips
-    }
-
-    private func nearestPlaceName(for item: MediaItem) -> String? {
-        guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
-        let coordinate = GeoPoint(latitude: latitude, longitude: longitude)
-        let nearest = places.compactMap { place -> (name: String, distance: Double)? in
-            guard let placeLatitude = place.latitude, let placeLongitude = place.longitude,
-                  let name = PlaceDisplayName.resolvedName(of: place) else { return nil }
-            let distance = coordinate.distance(to: GeoPoint(latitude: placeLatitude, longitude: placeLongitude))
-            return (name, distance)
-        }
-        .min { $0.distance < $1.distance }
-        guard let nearest, nearest.distance <= 100_000 else { return nil }
-        return nearest.name
     }
 }
 

@@ -991,6 +991,15 @@ final class LibraryStore {
         let next = measures
         let layout = layoutSum
         if next != applied {
+            #if DEBUG
+            let parts: [String] = Self.revisionParts(
+                next: next,
+                applied: applied,
+                layout: layout,
+                appliedLayout: appliedLayoutSum
+            )
+            PageProbe.tally("store revision: " + parts.joined(separator: " + "))
+            #endif
             applied = next
             revision &+= 1
         }
@@ -1000,6 +1009,31 @@ final class LibraryStore {
         appliedLayoutSum = layout
     }
 
+    #if DEBUG
+    /// Debug-only: which inputs of the store's signature moved compared with
+    /// the last applied one, for the page probe's tally.
+    private static func revisionParts(
+        next: Measures,
+        applied: Measures?,
+        layout: Int,
+        appliedLayout: Int
+    ) -> [String] {
+        guard let applied else { return ["first"] }
+        var parts: [String] = []
+        let photoLayoutMoved: Bool = layout != appliedLayout
+        let photoFieldsMoved: Bool = next.itemSum != applied.itemSum
+        let photoCountMoved: Bool = next.itemCount != applied.itemCount
+        let facesMoved: Bool = next.faceSum != applied.faceSum || next.faceCount != applied.faceCount
+        let placesMoved: Bool = next.placeSum != applied.placeSum || next.placeCount != applied.placeCount
+        if photoLayoutMoved { parts.append("photo layout") }
+        if photoFieldsMoved && !photoLayoutMoved { parts.append("photo other fields") }
+        if photoCountMoved { parts.append("photo count") }
+        if facesMoved { parts.append("faces") }
+        if placesMoved { parts.append("places") }
+        return parts
+    }
+
+    #endif
     // MARK: - Per-object hashes
 
     /// Everything pages group or filter by for one photo. `isFavorite` is

@@ -158,6 +158,9 @@ struct MapScreen: View {
             let input = FootprintsCalculator.input(from: items, visibleItemIDs: selection.visibleItemIDs)
             if worldInput?.signature != input.signature { worldInput = input }
             #if DEBUG
+            let segmentCount: Int = isWorldView ? snapshot.routeSegments.count : visibleSegments.count
+            let clusterCount: Int = isWorldView ? worldClusters.count : visibleClusters.count
+            PageProbe.note("routes \(segmentCount), pins \(clusterCount), world view \(isWorldView)")
             PageProbe.contentReady(token: probeToken)
             #endif
             // "Show on Map" from another screen: fly there once the pins exist.
@@ -242,6 +245,45 @@ struct MapScreen: View {
         // Worked out once per render instead of inside every pin.
         let selectedID = selectedCluster?.id
         return Map(position: $cameraPosition, interactionModes: [.pan, .zoom, .rotate, .pitch]) {
+            #if DEBUG
+            // Page probe only: the "routes" switch leaves the route layer out,
+            // so a measurement can show whether MapKit stalls on the routes.
+            if !PageProbe.mapLayersLeftOut.contains("routes") {
+                ForEach(isWorldView ? snapshot.routeSegments : visibleSegments) { segment in
+                    if let from = segment.from.center, let to = segment.to.center {
+                        let coordinates = [from.coordinate, to.coordinate]
+                        MapPolyline(MKGeodesicPolyline(coordinates: coordinates, count: coordinates.count))
+                            .stroke(Paper.accent.opacity(0.8), lineWidth: isWorldView ? 2.5 : 3)
+                            .mapOverlayLevel(level: .aboveRoads)
+
+                        if !isWorldView, !snapshot.twoWayRouteIDs.contains(segment.id) {
+                            Annotation(coordinate: midpoint(from, to), anchor: .center) {
+                                Image(systemName: "arrowtriangle.right.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(Paper.accent)
+                                    .rotationEffect(.radians(routeBearing(from, to)))
+                                    .accessibilityHidden(true)
+                            } label: {
+                                EmptyView()
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Page probe only: the "pins" switch leaves the pin layer out.
+            if !PageProbe.mapLayersLeftOut.contains("pins") {
+                ForEach(isWorldView ? worldClusters : visibleClusters) { cluster in
+                    if let center = cluster.center {
+                        Annotation(coordinate: center.coordinate, anchor: .bottom) {
+                            photoPin(cluster, selectedID: selectedID)
+                        } label: {
+                            Text(clusterDisplayName(cluster))
+                        }
+                    }
+                }
+            }
+            #else
             ForEach(isWorldView ? snapshot.routeSegments : visibleSegments) { segment in
                 if let from = segment.from.center, let to = segment.to.center {
                     let coordinates = [from.coordinate, to.coordinate]
@@ -272,8 +314,15 @@ struct MapScreen: View {
                     }
                 }
             }
+            #endif
         }
+        #if DEBUG
+        // Page probe only: the "terrain" switch draws flat streets instead of
+        // the satellite globe.
+        .mapStyle(PageProbe.mapLayersLeftOut.contains("terrain") ? .standard(elevation: .flat) : mapStyle.value)
+        #else
         .mapStyle(mapStyle.value)
+        #endif
         .mapControls {
             MapCompass()
             MapScaleView()
@@ -333,11 +382,23 @@ struct MapScreen: View {
         } label: {
             VStack(spacing: 0) {
                 Group {
+                    #if DEBUG
+                    // Page probe only: the "thumbnails" switch draws a plain
+                    // dot instead of the photo, with the same button and badge.
+                    if PageProbe.mapLayersLeftOut.contains("thumbnails") {
+                        Circle().fill(Paper.accent).frame(width: side, height: side)
+                    } else if let cover {
+                        ThumbnailView(item: cover, width: Int(side * 2), height: Int(side * 2))
+                    } else {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Paper.well)
+                    }
+                    #else
                     if let cover {
                         ThumbnailView(item: cover, width: Int(side * 2), height: Int(side * 2))
                     } else {
                         RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Paper.well)
                     }
+                    #endif
                 }
                 .frame(width: side, height: side)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))

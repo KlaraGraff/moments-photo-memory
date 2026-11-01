@@ -36,12 +36,16 @@ enum PageProbe {
     private static var importPhase: Phase?
     private static var activePhaseStart: CFTimeInterval?
     private static var activePhaseToken: UInt64?
+    private static var activePhaseName: String?
     private static var activeMetrics = Metrics()
     private static var nextPhaseToken: UInt64 = 0
     private static var started = false
     /// Phases left out (`-MomentsUITestPageProbeSkip "Map,People"`): a page
     /// that freezes the app would otherwise hide every page after it.
     private static var skipped: Set<String> = []
+    /// Map layers left out (`-MomentsUITestPageProbeMapLayers "routes,pins"`):
+    /// probe-only switches in the Map screen that narrow down what freezes it.
+    static private(set) var mapLayersLeftOut: Set<String> = []
     /// Read by the heartbeat thread.
     nonisolated private static let status = PageProbeStatus()
 
@@ -74,6 +78,9 @@ enum PageProbe {
         if let skip = arguments.firstIndex(of: "-MomentsUITestPageProbeSkip"), skip + 1 < arguments.count {
             skipped = Set(arguments[skip + 1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
         }
+        if let layers = arguments.firstIndex(of: "-MomentsUITestPageProbeMapLayers"), layers + 1 < arguments.count {
+            mapLayersLeftOut = Set(arguments[layers + 1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+        }
         MainThreadSampler.prepareForStuckStacks()
         startHeartbeat(folder: url)
         let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { _, activity in
@@ -101,6 +108,7 @@ enum PageProbe {
         self.stacks = stacks
         report = "page probe: \(ProcessInfo.processInfo.processorCount) cores, \(StressLibrary.requestedCount.map { "\($0) synthetic photos" } ?? "no stress library")\n"
         if !skipped.isEmpty { report += "skipped: \(skipped.sorted().joined(separator: ", "))\n" }
+        if !mapLayersLeftOut.isEmpty { report += "map layers left out: \(mapLayersLeftOut.sorted().joined(separator: ", "))\n" }
         status.begin("waiting for the window")
         Task { await run() }
     }
@@ -126,6 +134,14 @@ enum PageProbe {
 
     /// Called after a real thumbnail has been obtained or read from cache.
     static func thumbnailReady(token: UInt64?) { mark(\.firstThumbnail, token: token) }
+
+    /// A page's note for the current phase, e.g. how much it drew. Ignored
+    /// when no phase is active, so a stale task cannot pollute the report.
+    static func note(_ line: String) {
+        guard let name = activePhaseName, activePhaseStart != nil else { return }
+        report += "note (\(name)): \(line)\n"
+        write()
+    }
 
     /// Called by a page task from its cancellation path. Projection saves do
     /// not count: they are source changes, not proof that page work stopped.
@@ -240,6 +256,7 @@ enum PageProbe {
         status.finished(phase.name, timedOut: timedOut)
         activePhaseStart = nil
         activePhaseToken = nil
+        activePhaseName = nil
         activeMetrics = Metrics()
         write()
     }
@@ -248,6 +265,7 @@ enum PageProbe {
         status.begin(phase.name)
         activePhaseStart = phase.start
         activePhaseToken = phase.token
+        activePhaseName = phase.name
         activeMetrics = Metrics()
     }
 

@@ -5,6 +5,10 @@ import MomentsCore
 @preconcurrency import Photos
 
 public final class PhotoKitAssetSource: NSObject, PhotosAssetSource, PHPhotoLibraryChangeObserver, @unchecked Sendable {
+    /// One source for every image load that has no source of its own. Each
+    /// instance builds a PHCachingImageManager, which is too costly per photo.
+    public static let shared = PhotoKitAssetSource()
+
     private let imageManager = PHCachingImageManager()
     private var changeHandlers: [UUID: @Sendable (PhotosChangeEvent) -> Void] = [:]
     private var observedFetchResult: PHFetchResult<PHAsset>?

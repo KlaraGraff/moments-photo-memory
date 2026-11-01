@@ -76,6 +76,9 @@ final class LibraryStore {
     private(set) var fullFetchCount = 0
 
     @ObservationIgnored private var context: ModelContext?
+    /// Held here, not read from `context` on every save: a context does not
+    /// keep its container alive.
+    @ObservationIgnored private var container: ModelContainer?
     @ObservationIgnored private var observer: NSObjectProtocol?
     @ObservationIgnored private var pendingTask: Task<Void, Never>?
     /// Saves not applied yet, merged into one batch.
@@ -121,6 +124,7 @@ final class LibraryStore {
     func start(context: ModelContext) {
         guard self.context == nil else { return }
         self.context = context
+        self.container = context.container
         refreshNow()
         observer = NotificationCenter.default.addObserver(forName: ModelContext.didSave, object: nil, queue: .main) { [weak self] notification in
             // Read what changed before leaving the notification's own thread.
@@ -138,13 +142,15 @@ final class LibraryStore {
     /// rows this store's context cannot read, and reading one is a crash,
     /// so only saves to this store's own container count.
     private func received(_ changes: SavedChanges, from savedContext: ModelContext?) {
-        guard let context else { return }
+        guard let context, let container else { return }
+        // Autosave fires often with nothing this store lists.
+        if changes.isKnown && changes.isEmpty { return }
         guard let savedContext else {
             // No context to check: fetch again from this store's own context.
             scheduleRefresh()
             return
         }
-        guard savedContext.container === context.container else { return }
+        guard savedContext.container === container else { return }
         saved(changes, fromOwnContext: savedContext === context)
     }
 
@@ -359,6 +365,12 @@ final class LibraryStore {
         // identifier both refreshes those values and leaves the same object
         // in place, so the lists can keep their elements.
         let photos = refreshedPhotoModels(for: updatedIDs, in: context)
+        // Favorites and overrides name their photo by string id; most of
+        // those photos are in this batch (setFavorite and a rename touch the
+        // photo too), so they are found here instead of by one fetch each.
+        var photosByID: [String: MediaItem] = [:]
+        photosByID.reserveCapacity(photos.count)
+        for model in photos.values { photosByID[model.id] = model }
         let faces = refreshedFaceModels(for: updatedIDs, in: context)
         let favorites = favoriteModels(for: updatedIDs, in: context)
         let overrides = placeOverrideModels(for: updatedIDs, in: context)
@@ -379,6 +391,7 @@ final class LibraryStore {
                     id,
                     favorite: favorites[id],
                     photos: photos,
+                    photosByID: photosByID,
                     removed: removed,
                     context: context,
                     touched: &touched
@@ -388,6 +401,7 @@ final class LibraryStore {
                     id,
                     override: overrides[id],
                     photos: photos,
+                    photosByID: photosByID,
                     removed: removed,
                     context: context,
                     touched: &touched
@@ -454,6 +468,7 @@ final class LibraryStore {
         _ id: PersistentIdentifier,
         favorite: Favorite?,
         photos: [PersistentIdentifier: MediaItem],
+        photosByID: [String: MediaItem],
         removed: Set<PersistentIdentifier>,
         context: ModelContext,
         touched: inout Touched
@@ -467,7 +482,7 @@ final class LibraryStore {
         let mediaID = favorite.mediaID
         let linked = mediaID == nil ? favorite.mediaItem : nil
         if let linked, removed.contains(linked.persistentModelID) { return }
-        guard let photo = photoModel(for: linked, mediaID: mediaID, photos: photos, context: context) else { return }
+        guard let photo = photoModel(for: linked, mediaID: mediaID, photos: photos, photosByID: photosByID, context: context) else { return }
         guard !removed.contains(photo.persistentModelID) else { return }
         upsertPhoto(photo.persistentModelID, model: photo, touched: &touched)
     }
@@ -476,6 +491,7 @@ final class LibraryStore {
         _ id: PersistentIdentifier,
         override: PlaceOverride?,
         photos: [PersistentIdentifier: MediaItem],
+        photosByID: [String: MediaItem],
         removed: Set<PersistentIdentifier>,
         context: ModelContext,
         touched: inout Touched
@@ -494,7 +510,7 @@ final class LibraryStore {
         if let linked, removed.contains(linked.persistentModelID) { return }
         if mediaID != nil || linked != nil {
             // A photo's own place name: only that photo is affected.
-            guard let photo = photoModel(for: linked, mediaID: mediaID, photos: photos, context: context) else { return }
+            guard let photo = photoModel(for: linked, mediaID: mediaID, photos: photos, photosByID: photosByID, context: context) else { return }
             guard !removed.contains(photo.persistentModelID) else { return }
             upsertPhoto(photo.persistentModelID, model: photo, touched: &touched)
         } else {
@@ -523,10 +539,15 @@ final class LibraryStore {
         for item: MediaItem?,
         mediaID: String?,
         photos: [PersistentIdentifier: MediaItem],
+        photosByID: [String: MediaItem],
         context: ModelContext
     ) -> MediaItem? {
         if let item, let fresh = photos[item.persistentModelID] { return fresh }
-        guard let id = mediaID ?? item?.id else { return nil }
+        // A linked photo's id comes from what the store recorded, not from the
+        // model: one removed in an earlier batch must not be read.
+        let linkedID: String? = item.flatMap { itemKeys[$0.persistentModelID]?.id }
+        guard let id = mediaID ?? linkedID else { return nil }
+        if let fresh = photosByID[id] { return fresh }
         let descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate<MediaItem> { $0.id == id })
         let found: [MediaItem] = (try? context.fetch(descriptor)) ?? []
         return found.first

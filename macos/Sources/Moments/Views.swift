@@ -38,9 +38,6 @@ struct ContentView: View {
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" }, sort: \UserGroup.name)
     private var groups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
-    @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
-    @Query private var mediaTags: [MediaTag]
-    @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
     @AppStorage(LibraryLaunchState.appStorageKey) private var firstLaunchCompleted = false
     @State private var groupEditorKind: GroupEditorKind?
     @State private var groupToEdit: UserGroup?
@@ -276,9 +273,9 @@ struct ContentView: View {
             DeleteShortcutMonitor.install()
             TitleBarDoubleClick.install()
         }
-        .onChange(of: groupCountsKey, initial: true) { _, _ in
-            refreshGroupCounts()
-        }
+        // The key and the recount live in a small child view with their own
+        // queries, so they run when those change, not on every redraw here.
+        .background { SidebarGroupCounts(counts: $cachedGroupCounts) }
         .sheet(item: $groupEditorKind) { kind in
             GroupEditorSheet(kind: kind, group: groupToEdit, onDismiss: { groupToEdit = nil })
         }
@@ -311,14 +308,64 @@ struct ContentView: View {
     /// The shared library's live photos, not fetched again per sidebar page.
     private var items: [MediaItem] { store.items }
 
-    private var faceObservations: [FaceObservation] { store.faces }
-
     /// Photos in Recently Deleted, most recently deleted first.
     private var deletedItems: [MediaItem] { store.deletedItems }
 
-    private var groupCountsKey: Int {
+    private func receiveDrop(_ providers: [NSItemProvider], into group: UserGroup) -> Bool {
+        for provider in providers {
+            provider.loadObject(ofClass: NSString.self) { object, _ in
+                guard let id = object as? String else { return }
+                DispatchQueue.main.async {
+                    guard let item = items.first(where: { $0.id == id }) else { return }
+                    UserGroupRuleEngine.add(item, to: group, memberships: groupItems, context: modelContext)
+                    try? modelContext.save()
+                }
+            }
+        }
+        return true
+    }
+
+    private func sidebarRow(
+        _ title: LocalizedStringKey,
+        icon: String,
+        section: MomentsSection,
+        identifier: String
+    ) -> some View {
+        Label(title, systemImage: icon)
+            .tag(section)
+            .accessibilityIdentifier(identifier)
+    }
+}
+
+/// Works out the sidebar's group counts, in its own view: the key and the
+/// recount read only these queries and the two revisions, so SwiftUI re-runs
+/// them when those change instead of on every ContentView redraw.
+private struct SidebarGroupCounts: View {
+    @Binding var counts: [String: Int]
+    @Environment(LibraryStore.self) private var store
+    /// "My groups" only; chapters live on the Chapters page, and stack
+    /// records are not groups anyone made.
+    @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" }, sort: \UserGroup.name)
+    private var groups: [UserGroup]
+    @Query private var groupItems: [UserGroupItem]
+    @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
+    @Query private var mediaTags: [MediaTag]
+    @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .onChange(of: key, initial: true) { _, _ in refresh() }
+    }
+
+    private var key: Int {
         #if DEBUG
         ScrollProbe.count("sidebar.groupCountsKey")
+        let started: CFTimeInterval = CACurrentMediaTime()
+        defer {
+            PageProbe.tally("sidebar group key", seconds: CACurrentMediaTime() - started)
+        }
         #endif
         var hasher = Hasher()
         hasher.combine(store.photoFaceRevision)
@@ -366,44 +413,19 @@ struct ContentView: View {
         return hasher.finalize()
     }
 
-    private func refreshGroupCounts() {
+    private func refresh() {
         #if DEBUG
         let started: CFTimeInterval = CACurrentMediaTime()
         #endif
         var counts: [String: Int] = [:]
-        let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
+        let personIndex = UserGroupRuleEngine.makePersonIndex(store.faces)
         for group in groups {
-            counts[group.id] = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: groupItems, observations: faceObservations, personIDsByMediaID: personIndex).count
+            counts[group.id] = UserGroupRuleEngine.visibleItems(for: group, from: store.items, memberships: groupItems, observations: store.faces, personIDsByMediaID: personIndex).count
         }
-        cachedGroupCounts = counts
+        self.counts = counts
         #if DEBUG
         PageProbe.tally("sidebar group counts", seconds: CACurrentMediaTime() - started)
         #endif
-    }
-
-    private func receiveDrop(_ providers: [NSItemProvider], into group: UserGroup) -> Bool {
-        for provider in providers {
-            provider.loadObject(ofClass: NSString.self) { object, _ in
-                guard let id = object as? String else { return }
-                DispatchQueue.main.async {
-                    guard let item = items.first(where: { $0.id == id }) else { return }
-                    UserGroupRuleEngine.add(item, to: group, memberships: groupItems, context: modelContext)
-                    try? modelContext.save()
-                }
-            }
-        }
-        return true
-    }
-
-    private func sidebarRow(
-        _ title: LocalizedStringKey,
-        icon: String,
-        section: MomentsSection,
-        identifier: String
-    ) -> some View {
-        Label(title, systemImage: icon)
-            .tag(section)
-            .accessibilityIdentifier(identifier)
     }
 }
 

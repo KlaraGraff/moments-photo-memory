@@ -322,6 +322,9 @@ struct ContentView: View {
         #endif
         var hasher = Hasher()
         hasher.combine(store.revision)
+        // A favorite save leaves `revision` alone; smart groups can have a
+        // favorite rule, so their counts follow this one too.
+        hasher.combine(store.favoriteRevision)
         // Place renames reach rules through overrides.
         for override in placeOverrides {
             hasher.combine(override.id)

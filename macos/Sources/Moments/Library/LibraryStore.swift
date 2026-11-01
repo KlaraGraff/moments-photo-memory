@@ -69,6 +69,10 @@ final class LibraryStore {
     /// Moves when a favorite is set or cleared. `revision` does not move for a
     /// save that changed nothing but favorites.
     private(set) var favoriteRevision = 0
+    /// `photoRevision` is like `revision`, but not moved by a save that
+    /// changed only faces. For pages that group by photos and places and read
+    /// faces only for a person filter.
+    private(set) var photoRevision = 0
     /// How many batches were applied and how many full fetches ran; for tests
     /// and the page probe. A batch applied from its own changes counts here
     /// but not in `fullFetchCount`.
@@ -991,6 +995,13 @@ final class LibraryStore {
         let next = measures
         let layout = layoutSum
         if next != applied {
+            let previous: Measures? = applied
+            let photosOrPlacesMoved: Bool = previous == nil
+                || next.itemSum != previous?.itemSum
+                || next.itemCount != previous?.itemCount
+                || next.placeSum != previous?.placeSum
+                || next.placeCount != previous?.placeCount
+            if photosOrPlacesMoved { photoRevision &+= 1 }
             applied = next
             revision &+= 1
         }

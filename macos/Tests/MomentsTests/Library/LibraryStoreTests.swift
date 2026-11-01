@@ -906,6 +906,86 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(store.fullFetchCount, fullFetches, "a known big batch must not fetch the whole library")
     }
 
+    // MARK: - photoRevision
+
+    // A face-only save still moves `revision`, so the person filter follows
+    // it, but leaves `photoRevision` alone, so the Library page does not
+    // regroup all its photos for a change it only reads behind a person.
+    func testFaceOnlySaveLeavesPhotoRevisionAlone() async throws {
+        let context: ModelContext = try makeContext()
+        context.insert(MediaItem(id: "photo", captureDate: base))
+        context.insert(FaceObservation(
+            id: "face-1",
+            mediaID: "photo",
+            rect: Self.faceRect,
+            embedding: Data(),
+            cropData: Data([1]),
+            quality: 0.8,
+            clusterID: "pending-f"
+        ))
+        try context.save()
+        let store: LibraryStore = makeStore(context: context)
+        let revision: Int = store.revision
+        let photoRevision: Int = store.photoRevision
+        XCTAssertEqual(store.faces.first?.personID, nil)
+
+        let other = ModelContext(try XCTUnwrap(container))
+        let faces: [FaceObservation] = try other.fetch(FetchDescriptor<FaceObservation>())
+        let face: FaceObservation = try XCTUnwrap(faces.first { $0.id == "face-1" })
+        face.personID = "person-1"
+        try other.save()
+
+        let arrived: Bool = await waitUntil(timeout: 3) { () -> Bool in
+            store.revision > revision
+        }
+        XCTAssertTrue(arrived, "the store never saw the face assignment")
+        XCTAssertEqual(store.faces.first?.personID, "person-1")
+        XCTAssertEqual(store.photoRevision, photoRevision, "a face-only save must not regroup the Library page")
+    }
+
+    // A moved photo is a change the Library page groups by, so both revisions
+    // move.
+    func testPhotoDateChangeMovesPhotoRevision() async throws {
+        let setup = try makeTwentyPhotoStore()
+        let context: ModelContext = setup.context
+        let store: LibraryStore = setup.store
+        let photo: MediaItem = setup.first
+        let revision: Int = store.revision
+        let photoRevision: Int = store.photoRevision
+        let refreshes: Int = store.refreshCount
+
+        photo.captureDate = base.addingTimeInterval(-3600)
+        try context.save()
+
+        let applied: Bool = await waitUntil(timeout: 3) { () -> Bool in
+            store.refreshCount > refreshes
+        }
+        XCTAssertTrue(applied, "the store never applied the date change")
+        XCTAssertGreaterThan(store.revision, revision)
+        XCTAssertGreaterThan(store.photoRevision, photoRevision, "a moved photo must regroup the Library page")
+    }
+
+    // A favorite alone moves neither `revision` nor `photoRevision`.
+    func testFavoriteAloneLeavesPhotoRevisionAlone() async throws {
+        let setup = try makeTwentyPhotoStore()
+        let context: ModelContext = setup.context
+        let store: LibraryStore = setup.store
+        let photo: MediaItem = setup.first
+        let photoRevision: Int = store.photoRevision
+        let favoriteRevision: Int = store.favoriteRevision
+        let refreshes: Int = store.refreshCount
+
+        photo.setFavorite(true, context: context)
+        try context.save()
+
+        let applied: Bool = await waitUntil(timeout: 3) { () -> Bool in
+            store.refreshCount > refreshes
+        }
+        XCTAssertTrue(applied, "the store never applied the favorite save")
+        XCTAssertEqual(store.favoriteRevision, favoriteRevision + 1)
+        XCTAssertEqual(store.photoRevision, photoRevision, "a favorite alone must not regroup the Library page")
+    }
+
     // MARK: - Helpers
 
     // Typed once: the CI compilers are slow on tuple literals inside long calls.

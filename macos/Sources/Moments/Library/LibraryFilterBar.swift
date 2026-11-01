@@ -85,7 +85,7 @@ struct LibraryFilterChips: View {
 
     /// The same key the Library grid uses, so both share one build.
     private var optionsKey: Int {
-        LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips)
+        LibraryFilterOptionsCache.key(revision: store.photoRevision, trips: allTrips)
     }
 
     private func buildOptions() -> LibraryFilterOptionSet {
@@ -401,7 +401,9 @@ struct LibraryFilterPublisher: View {
         // Search and the memory filter read notes and trip names, which change
         // without touching the item; only read them when they matter.
         let readsText = !query.isEmpty || memoryFilterRaw != LibraryMemoryFilter.all.rawValue
-        hasher.combine(store.revision)
+        hasher.combine(store.photoRevision)
+        // Faces matter only to the person filter.
+        if !personFilterID.isEmpty { hasher.combine(store.revision) }
         // A favorite save leaves `revision` alone, so the Favorites filter
         // follows its own revision.
         if criteria.favoritesOnly { hasher.combine(store.favoriteRevision) }

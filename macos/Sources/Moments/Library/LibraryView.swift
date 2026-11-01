@@ -163,8 +163,10 @@ struct LibraryView: View {
         hasher.combine(query)
         hasher.combine(state.focusedMemoryItemID)
         hasher.combine(selection.libraryScope?.itemIDs)
-        // All photos, faces and places the pages group by, as one revision.
-        hasher.combine(store.revision)
+        // All photos and places the pages group by, as one revision.
+        hasher.combine(store.photoRevision)
+        // Faces matter only to the person filter.
+        if !personFilterID.isEmpty { hasher.combine(store.revision) }
         // A favorite save leaves `revision` alone, so the Favorites filter
         // (and the Favorites segment) follows its own revision.
         if criteria.favoritesOnly { hasher.combine(store.favoriteRevision) }
@@ -636,7 +638,7 @@ struct LibraryView: View {
         // trip whose photos disagree can otherwise depend on the order.
         cachedFilterOptions = LibraryFilterOptionsCache.options(
             for: store.items,
-            key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips)
+            key: LibraryFilterOptionsCache.key(revision: store.photoRevision, trips: allTrips)
         )
         // Day memories are matched per section; reading every photo's day in
         // the section's body repeated that pass on each render.

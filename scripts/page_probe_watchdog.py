@@ -19,6 +19,7 @@ files, a process list and (on a Mac) a screenshot of the synthetic library.
 from pathlib import Path
 import argparse
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -175,9 +176,64 @@ class Watchdog:
                     print(line[:240])
         sample = diag / 'sample.txt'
         if sample.exists():
-            print('-- sample (first 120 lines) --')
-            print('\n'.join(sample.read_text(errors='replace').splitlines()[:120]))
+            print('-- sample: each thread\'s heaviest stack, innermost frames last (full file in the artifact) --')
+            print(sample_digest(sample.read_text(errors='replace')))
         print('PROBE-WATCHDOG-END', flush=True)
+
+
+SAMPLE_LINE = re.compile(r'^(?P<lead>\s*[+!:| ]*)(?P<count>\d+) (?P<rest>.+)$')
+THREAD_LINE = re.compile(r'^\s*\d+ Thread_\d+')
+
+
+def frame_name(rest):
+    """`foo(bar)  (in Lib) + 12  [0x…]  File.swift:3` → `foo(bar)  (in Lib)`."""
+    rest = re.sub(r'\s+\[0x[0-9a-f]+(?:,0x[0-9a-f]+)*\].*$', '', rest)
+    rest = re.sub(r'\s+\+ \d+$', '', rest)
+    return rest.strip()
+
+
+def sample_digest(text, frames=30, max_threads=40):
+    """From macOS `sample` output: every thread's heaviest path (the first
+    branch printed at each level, since children are sorted by count), keeping
+    its innermost `frames`, then the busiest tops of stack."""
+    lines = text.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.startswith('Call graph:')) + 1
+    except StopIteration:
+        return 'no call graph in the sample'
+    out, threads, index = [], 0, start
+    while index < len(lines) and threads < max_threads:
+        line = lines[index]
+        if line.startswith(('Total number in stack', 'Sort by top of stack', 'Binary Images')):
+            break
+        if not THREAD_LINE.match(line):
+            index += 1
+            continue
+        threads += 1
+        header = line.strip()
+        path, depth = [], -1
+        index += 1
+        while index < len(lines) and lines[index].strip() and not THREAD_LINE.match(lines[index]):
+            match = SAMPLE_LINE.match(lines[index])
+            index += 1
+            if not match:
+                continue
+            column = len(match['lead'])
+            if column <= depth:
+                break  # a sibling or a return: the heaviest branch has ended
+            depth = column
+            path.append(f"{match['count']:>5} {frame_name(match['rest'])}")
+        while index < len(lines) and lines[index].strip() and not THREAD_LINE.match(lines[index]):
+            index += 1
+        out.append(header)
+        if len(path) > frames:
+            out.append(f'        … {len(path) - frames} outer frames')
+        out.extend('   ' + frame[:220] for frame in path[-frames:])
+    tops = [i for i, line in enumerate(lines) if line.startswith('Sort by top of stack')]
+    if tops:
+        out.append(lines[tops[0]])
+        out.extend(line.rstrip()[:200] for line in lines[tops[0] + 1:tops[0] + 26] if line.strip())
+    return '\n'.join(out)
 
 
 def run(command, output=None, timeout=30):

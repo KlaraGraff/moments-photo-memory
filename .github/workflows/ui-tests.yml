@@ -52,6 +52,10 @@ on:
         description: 'Page probe: photos in the synthetic library it imports'
         required: false
         default: '5000'
+      skip_pages:
+        description: 'Page probe, optional: phases to leave out, comma-separated, e.g. Map (a page that freezes the app hides every page after it)'
+        required: false
+        default: ''
       measure_ref:
         description: 'Page probe, optional: measure this branch or commit instead, with the probe files of the branch you run from laid over it (it must already have the probe hooks)'
         required: false
@@ -233,6 +237,7 @@ jobs:
         env:
           TEST_RUNNER_MOMENTS_PAGE_DIR: ${{ runner.temp }}/pages
           TEST_RUNNER_MOMENTS_PAGE_STRESS_COUNT: ${{ inputs.page_stress_count || '5000' }}
+          TEST_RUNNER_MOMENTS_PAGE_SKIP: ${{ inputs.skip_pages }}
         run: |
           # Ends the run with diagnostics when no heartbeat appears within
           # 10 minutes, the heartbeat stops for 3, the main thread leaves a

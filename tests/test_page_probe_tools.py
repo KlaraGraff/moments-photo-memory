@@ -141,6 +141,43 @@ class WatchdogCheckTests(unittest.TestCase):
             self.assertIn('no phase finished', reason)
 
 
+SAMPLE = """Analysis of sampling Moments (pid 1) every 1 millisecond
+Call graph:
+    812 Thread_1   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 812 start  (in dyld) + 6992  [0x18b5ac4e4]
+    +   812 NSApplicationMain  (in AppKit) + 880  [0x18fe357b0]
+    +     800 md::MapEngine::renderSceneSync(double)  (in VectorKit) + 40  [0x1]
+    +     ! 800 _dispatch_async_and_wait_f  (in libdispatch.dylib) + 12  [0x2]
+    +     ! : 800 _dispatch_kq_poll  (in libdispatch.dylib) + 8  [0x3]
+    +     12 CFRunLoopRun  (in CoreFoundation) + 1  [0x4]
+    812 Thread_2   DispatchQueue_77: com.apple.geo.TaskQueue  (serial)
+    + 812 _dispatch_worker_thread2  (in libdispatch.dylib) + 1  [0x5]
+    +   812 geo::TaskQueue::run()  (in VectorKit) + 1  [0x6]
+    +     700 md::LabelManager::layout()  (in VectorKit) + 1  [0x7]  Labels.cpp:12
+    +     112 md::Other()  (in VectorKit) + 1  [0x8]
+
+Total number in stack (recursive counted multiple times):
+Sort by top of stack, same collapsed (when >= 5):
+        _dispatch_kq_poll  (in libdispatch.dylib)        800
+        md::LabelManager::layout()  (in VectorKit)        700
+"""
+
+
+class SampleDigestTests(unittest.TestCase):
+    def test_each_thread_keeps_its_heaviest_branch_only(self):
+        digest = watchdog.sample_digest(SAMPLE)
+        lines = digest.splitlines()
+        self.assertIn('812 Thread_1   DispatchQueue_1: com.apple.main-thread  (serial)', lines)
+        self.assertIn('     800 _dispatch_kq_poll  (in libdispatch.dylib)', lines)
+        self.assertNotIn('CFRunLoopRun', digest)
+        self.assertIn('     700 md::LabelManager::layout()  (in VectorKit)', lines)
+        self.assertNotIn('md::Other', digest)
+        self.assertIn('Sort by top of stack, same collapsed (when >= 5):', digest)
+
+    def test_without_a_call_graph_it_says_so(self):
+        self.assertEqual(watchdog.sample_digest('nothing'), 'no call graph in the sample')
+
+
 class WatchdogRunTests(unittest.TestCase):
     def run_watchdog(self, folder, child, *limits):
         args = ['--page-dir', folder, '--diagnostics', str(Path(folder) / 'diag'), '--poll', '0.1',

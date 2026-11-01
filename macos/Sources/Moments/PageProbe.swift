@@ -39,6 +39,9 @@ enum PageProbe {
     private static var activeMetrics = Metrics()
     private static var nextPhaseToken: UInt64 = 0
     private static var started = false
+    /// Phases left out (`-MomentsUITestPageProbeSkip "Map,People"`): a page
+    /// that freezes the app would otherwise hide every page after it.
+    private static var skipped: Set<String> = []
     /// Read by the heartbeat thread.
     nonisolated private static let status = PageProbeStatus()
 
@@ -68,6 +71,9 @@ enum PageProbe {
         let url = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         folder = url
+        if let skip = arguments.firstIndex(of: "-MomentsUITestPageProbeSkip"), skip + 1 < arguments.count {
+            skipped = Set(arguments[skip + 1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+        }
         MainThreadSampler.prepareForStuckStacks()
         startHeartbeat(folder: url)
         let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { _, activity in
@@ -94,6 +100,7 @@ enum PageProbe {
         self.people = people
         self.stacks = stacks
         report = "page probe: \(ProcessInfo.processInfo.processorCount) cores, \(StressLibrary.requestedCount.map { "\($0) synthetic photos" } ?? "no stress library")\n"
+        if !skipped.isEmpty { report += "skipped: \(skipped.sorted().joined(separator: ", "))\n" }
         status.begin("waiting for the window")
         Task { await run() }
     }
@@ -185,6 +192,7 @@ enum PageProbe {
         until done: () -> Bool = { true },
         describe: () -> String = { "" }
     ) async {
+        guard !skipped.contains(name) else { return }
         // Let the previous step's last frames pass.
         try? await Task.sleep(for: .milliseconds(300))
         stretches.removeAll()

@@ -17,11 +17,14 @@ final class MomentsPageProbeUITests: XCTestCase {
             throw XCTSkip("MOMENTS_PAGE_DIR was not supplied")
         }
         let count = Int(environment["MOMENTS_PAGE_STRESS_COUNT"] ?? "") ?? 5_000
+        // Phases the run leaves out, e.g. "Map" while that page freezes the app.
+        let skipped = Set((environment["MOMENTS_PAGE_SKIP"] ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
         let folderURL = URL(fileURLWithPath: folder)
         try? FileManager.default.removeItem(at: folderURL)
         let app = XCUIApplication()
         app.launchArguments = [
-            "-MomentsUITesting", "-MomentsUITestPageProbe", folder, "-MomentsUITestStressLibrary", String(count)
+            "-MomentsUITesting", "-MomentsUITestPageProbe", folder, "-MomentsUITestStressLibrary", String(count),
+            "-MomentsUITestPageProbeSkip", skipped.sorted().joined(separator: ",")
         ]
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 60))
@@ -52,7 +55,7 @@ final class MomentsPageProbeUITests: XCTestCase {
             "viewer open", "viewer close", "Chapters again",
             "chapter with most photos", "back to chapters", "Timeline again",
             "Library again"
-        ]
+        ].filter { !skipped.contains($0) }
         for phase in phases {
             XCTAssertTrue(text.contains("page report (\(phase)):"), "Missing \(phase) report")
         }
@@ -70,9 +73,9 @@ final class MomentsPageProbeUITests: XCTestCase {
             "People", "Map", "Timeline", "Chapters", "Library", "viewer open",
             "Chapters again", "chapter with most photos", "back to chapters",
             "Timeline again", "Library again"
-        ]
+        ].filter { !skipped.contains($0) }
         let contentPhases = shellPhases
-        let pagePhases = phases.dropFirst(2)
+        let pagePhases = phases.filter { $0 != "first import" && !$0.hasPrefix("after import") }
         let pageReportLines = text
             .split(separator: "\n")
             .map(String.init)
@@ -89,10 +92,12 @@ final class MomentsPageProbeUITests: XCTestCase {
             XCTAssertNotNil(line)
             XCTAssertFalse(line?.contains("first-content not observed") == true, "\(phase) never reported its first useful content:\n\(text)")
         }
-        let viewerClose = pageReportLines.first { $0.hasPrefix("page report (viewer close):") }
-        XCTAssertNotNil(viewerClose)
-        XCTAssertTrue(viewerClose?.contains("selection-to-shell not observed") == true)
-        XCTAssertTrue(viewerClose?.contains("first-content not observed") == true)
+        if !skipped.contains("viewer close") {
+            let viewerClose = pageReportLines.first { $0.hasPrefix("page report (viewer close):") }
+            XCTAssertNotNil(viewerClose)
+            XCTAssertTrue(viewerClose?.contains("selection-to-shell not observed") == true)
+            XCTAssertTrue(viewerClose?.contains("first-content not observed") == true)
+        }
         // A phase that did not settle within its limit is a measurement, not
         // a probe failure: the report marks it "(timed out)" and the workflow
         // summary lists it. Thresholds for passing or failing pages belong to

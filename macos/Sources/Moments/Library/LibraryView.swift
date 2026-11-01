@@ -34,6 +34,11 @@ struct LibraryView: View {
     private var faceObservations: [FaceObservation] { store.faces }
     /// What someone changed about bursts: covers, unstacked, photos taken out.
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw == "stack" }) private var stackRecords: [UserGroup]
+    /// The place notes every section's photos show, queried once here
+    /// instead of by each section on screen.
+    @Query private var placeNotes: [PlaceNote]
+    /// Day and trip memories, shown under the sections that match them.
+    @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
     let state: LibraryViewState
     @Binding var firstLaunchCompleted: Bool
@@ -64,6 +69,12 @@ struct LibraryView: View {
     @State private var cachedFilterOptions = LibraryFilterOptionSet()
     /// Each section's day-memory keys, built once with the sections.
     @State private var cachedSectionDayKeys: [String: Set<String>] = [:]
+    /// Bumped when `regroup()` writes new day keys, so the section memories
+    /// are matched again after the view update.
+    @State private var dayKeysGeneration = 0
+    /// Each section's memories, worked out once per change of sections or
+    /// memories instead of by every section on each render.
+    @State private var cachedSectionMemories: [String: [CollectionMemory]] = [:]
 
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
@@ -182,6 +193,25 @@ struct LibraryView: View {
         return hasher.finalize()
     }
 
+    /// The sections and memories the section memories are worked out from,
+    /// so they are matched again only when one of them changed.
+    private var memoryKey: Int {
+        var hasher = Hasher()
+        for id in cachedSections.map(\.id) {
+            hasher.combine(id)
+        }
+        for memory in collectionMemories {
+            hasher.combine(memory.id)
+            hasher.combine(memory.scopeKey)
+            hasher.combine(memory.updatedAt)
+        }
+        // The memories are matched again when the day keys change, which
+        // regroup() writes after the view update; hashing store.revision here
+        // would rebuild them with the old keys and never again.
+        hasher.combine(dayKeysGeneration)
+        return hasher.finalize()
+    }
+
     var body: some View {
         Group {
             if LibraryLaunchState.shouldShowImportFlow(hasCompletedFirstLaunch: firstLaunchCompleted, itemCount: store.items.count) {
@@ -213,6 +243,13 @@ struct LibraryView: View {
             #if DEBUG
             PageProbe.contentReady(token: probeToken)
             #endif
+        }
+        .onChange(of: memoryKey, initial: true) { _, _ in
+            cachedSectionMemories = LibrarySectionMemories.make(
+                sections: cachedSections,
+                dayKeysBySection: cachedSectionDayKeys,
+                memories: collectionMemories
+            )
         }
         .sheet(isPresented: $showingReview) {
             ReviewSheet()
@@ -429,7 +466,8 @@ struct LibraryView: View {
                             groupItems: groupItems,
                             stackCounts: cachedStackCounts,
                             allItemIDs: cachedUnfoldedSectionItems[section.id] ?? section.itemIDs,
-                            dayKeys: cachedSectionDayKeys[section.id] ?? []
+                            memories: cachedSectionMemories[section.id] ?? [],
+                            placeNotes: placeNotes
                         )
                     }
                 }
@@ -602,7 +640,10 @@ struct LibraryView: View {
             let keys: Set<String> = Set(sectionItems.compactMap { PhotoNoteDay.key(for: $0) })
             sectionDayKeys[section.id] = keys
         }
-        cachedSectionDayKeys = sectionDayKeys
+        if sectionDayKeys != cachedSectionDayKeys {
+            cachedSectionDayKeys = sectionDayKeys
+            dayKeysGeneration &+= 1
+        }
         let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
         if selection.visibleItemIDs != publishedVisible { selection.visibleItemIDs = publishedVisible }
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
@@ -723,11 +764,10 @@ private struct LibrarySectionView: View {
     var stackCounts: [String: Int] = [:]
     /// The section's photos with each stack's shots, for "Show only these".
     var allItemIDs: [String]? = nil
-    /// The day-memory keys of the section's photos, built once by the page
-    /// that groups them instead of on each render.
-    var dayKeys: Set<String> = []
-    @Query private var placeNotes: [PlaceNote]
-    @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
+    /// The section's memories and the place notes its photos show, matched and
+    /// queried once by the page instead of by every section.
+    var memories: [CollectionMemory] = []
+    var placeNotes: [PlaceNote] = []
 
     /// Set by the scroll content (reportsLibraryGridColumns) from the chosen
     /// photos per row; the window's size changes it only when it is too
@@ -795,7 +835,7 @@ private struct LibrarySectionView: View {
                     .foregroundStyle(LibraryPalette.muted)
             }
 
-            CollectionMemoryLines(memories: sectionMemories)
+            CollectionMemoryLines(memories: memories)
         }
         .padding(.bottom, 13)
         .id(LibraryScrollTarget.section(section.id))
@@ -819,18 +859,6 @@ private struct LibrarySectionView: View {
 
     /// Space between one section's grid and the next heading.
     static let sectionSpacing: CGFloat = 34
-
-    /// Trip memories for a trip section, and day memories for the days its photos were taken.
-    private var sectionMemories: [CollectionMemory] {
-        guard !collectionMemories.isEmpty else { return [] }
-        let tripID = section.id.hasPrefix("trip:") ? String(section.id.dropFirst("trip:".count)) : nil
-        return collectionMemories.filter { memory in
-            switch memory.scope {
-            case .trip: return memory.scopeKey == tripID
-            case .day, .photo: return dayKeys.contains(memory.scopeKey)
-            }
-        }
-    }
 
     private var dateSpan: String {
         guard let start = section.startDate else { return String(localized: "Undated") }
@@ -1428,6 +1456,11 @@ struct GroupDetailView: View {
     @Query private var memoryRecords: [Memory]
     @Query private var mediaTags: [MediaTag]
     @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
+    /// The place notes every section's photos show, queried once here
+    /// instead of by each section on screen.
+    @Query private var placeNotes: [PlaceNote]
+    /// Day and trip memories, shown under the sections that match them.
+    @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
     private var faceObservations: [FaceObservation] { store.faces }
     @State private var showingEditor = false
     @State private var showingDeleteConfirmation = false
@@ -1436,6 +1469,9 @@ struct GroupDetailView: View {
     @State private var cachedPersonIndex: [String: Set<String>] = [:]
     /// Each section's day-memory keys, built once with the section list.
     @State private var cachedSectionDayKeys: [String: Set<String>] = [:]
+    /// Bumped when `refreshVisibleItems()` writes new day keys, so the
+    /// section memories are matched again.
+    @State private var dayKeysGeneration = 0
 
     init(groupID: String, state: LibraryViewState) {
         self.groupID = groupID
@@ -1512,7 +1548,10 @@ struct GroupDetailView: View {
             let keys: Set<String> = Set(sectionItems.compactMap { PhotoNoteDay.key(for: $0) })
             sectionDayKeys[section.id] = keys
         }
-        cachedSectionDayKeys = sectionDayKeys
+        if sectionDayKeys != cachedSectionDayKeys {
+            cachedSectionDayKeys = sectionDayKeys
+            dayKeysGeneration &+= 1
+        }
     }
 
     private var sections: [LibrarySection] {
@@ -1540,6 +1579,12 @@ struct GroupDetailView: View {
                         ScrollViewReader { proxy in
                             ScrollView {
                                 LazyVStack(alignment: .leading, spacing: 0) {
+                                    // Worked out once per body, not once per section.
+                                    let sectionMemories: [String: [CollectionMemory]] = LibrarySectionMemories.make(
+                                        sections: sections,
+                                        dayKeysBySection: cachedSectionDayKeys,
+                                        memories: collectionMemories
+                                    )
                                     ForEach(sections) { section in
                                         LibrarySectionView(
                                             section: section,
@@ -1548,7 +1593,8 @@ struct GroupDetailView: View {
                                             allGroups: groups.filter { $0.kindRaw != UserGroup.Kind.chapter.rawValue },
                                             groupItems: memberships,
                                             group: group,
-                                            dayKeys: cachedSectionDayKeys[section.id] ?? []
+                                            memories: sectionMemories[section.id] ?? [],
+                                            placeNotes: placeNotes
                                         )
                                     }
                                 }

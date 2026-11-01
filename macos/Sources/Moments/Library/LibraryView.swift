@@ -79,6 +79,8 @@ struct LibraryView: View {
     @State private var cachedFilterOptions = LibraryFilterOptionSet()
     /// Each section's day-memory keys, built once with the sections.
     @State private var cachedSectionDayKeys: [String: Set<String>] = [:]
+    /// Each section's photos, looked up once per regroup instead of on every redraw.
+    @State private var cachedSectionItems: [String: [MediaItem]] = [:]
     /// Each section's memories, worked out in `regroup()` with those day keys,
     /// and again only when the memories themselves change, instead of by every
     /// section on each render.
@@ -544,7 +546,10 @@ struct LibraryView: View {
         }
     }
 
+    @ViewBuilder
     private var results: some View {
+        // Read once per body: each read of the `@Query` property does work.
+        let memberships: [UserGroupItem] = groupItems
         ScrollViewReader { proxy in
             ScrollView {
                 // Headings and section grids space themselves (LibrarySectionView).
@@ -552,10 +557,10 @@ struct LibraryView: View {
                     ForEach(cachedSections) { section in
                         LibrarySectionView(
                             section: section,
-                            items: section.itemIDs.compactMap { cachedItemByID[$0] },
+                            items: cachedSectionItems[section.id] ?? section.itemIDs.compactMap { cachedItemByID[$0] },
                             state: state,
                             allGroups: allGroups,
-                            groupItems: groupItems,
+                            groupItems: memberships,
                             stackCounts: cachedStackCounts,
                             allItemIDs: cachedUnfoldedSectionItems[section.id] ?? section.itemIDs,
                             memories: cachedSectionMemories[section.id] ?? [],
@@ -734,11 +739,15 @@ struct LibraryView: View {
         // the section's body repeated that pass on each render.
         var sectionDayKeys: [String: Set<String>] = [:]
         sectionDayKeys.reserveCapacity(cachedSections.count)
+        var sectionItemsByID: [String: [MediaItem]] = [:]
+        sectionItemsByID.reserveCapacity(cachedSections.count)
         for section in cachedSections {
             let sectionItems: [MediaItem] = section.itemIDs.compactMap { cachedItemByID[$0] }
+            sectionItemsByID[section.id] = sectionItems
             let keys: Set<String> = Set(sectionItems.compactMap { PhotoNoteDay.key(for: $0) })
             sectionDayKeys[section.id] = keys
         }
+        cachedSectionItems = sectionItemsByID
         // Matched here, with the sections and their day keys, so both caches
         // land in this one update instead of the section list being built
         // again after an onChange sees the new day keys.

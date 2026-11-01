@@ -12,6 +12,9 @@ struct SavedChanges: Sendable {
     /// False when the notification did not list identifiers; then the store
     /// fetches everything again, as before.
     var isKnown = false
+    /// True when the save touched something the sidebar's group counts read,
+    /// even if the `trackedEntityNames` filter then drops that identifier.
+    var touchesGroupSources = false
 
     var isEmpty: Bool { inserted.isEmpty && updated.isEmpty && deleted.isEmpty }
     var identifierCount: Int { inserted.count + updated.count + deleted.count }
@@ -23,6 +26,7 @@ struct SavedChanges: Sendable {
         updated += other.updated
         deleted += other.deleted
         isKnown = isKnown && other.isKnown
+        touchesGroupSources = touchesGroupSources || other.touchesGroupSources
     }
 }
 
@@ -34,6 +38,22 @@ private let trackedEntityNames: Set<String> = [
     String(describing: PlaceOverride.self),
     String(describing: FaceObservation.self),
     String(describing: Place.self)
+]
+
+/// The entities the sidebar's group counts read besides the photos and faces
+/// above: the groups and their memberships, memories, media tags, the tags
+/// those media tags name and place overrides. A save of any of these can
+/// change a count, so it moves `groupSourcesRevision` even though the store
+/// itself lists none of them. Tags belong here because a smart group's tag
+/// rule matches a photo's tags by id, `normalizedName` or `displayName`, so
+/// renaming a tag can change a count without touching a photo or membership.
+private let groupSourceEntityNames: Set<String> = [
+    String(describing: UserGroup.self),
+    String(describing: UserGroupItem.self),
+    String(describing: Memory.self),
+    String(describing: MediaTag.self),
+    String(describing: Tag.self),
+    String(describing: PlaceOverride.self)
 ]
 
 /// The library's photos, faces and places, fetched once for every page
@@ -74,6 +94,10 @@ final class LibraryStore {
     private(set) var photoFaceRevision = 0
     /// Moves with `revision` when places moved (added, removed or renamed).
     private(set) var placeRevision = 0
+    /// Moves when a save touched groups, memberships, memories, media tags or
+    /// place overrides, or could not say what it touched. The sidebar's group
+    /// counts follow it instead of querying those five entities themselves.
+    private(set) var groupSourcesRevision = 0
     /// How many batches were applied and how many full fetches ran; for tests
     /// and the page probe. A batch applied from its own changes counts here
     /// but not in `fullFetchCount`.
@@ -179,6 +203,14 @@ final class LibraryStore {
     /// so only saves to this store's own container count.
     private func received(_ changes: SavedChanges, from savedContext: ModelContext?) {
         guard let context, let container else { return }
+        // The sidebar reads groups, memberships, memories, tags and overrides
+        // it is not told about by its own revisions, so any save that touched
+        // one of them (or could not say what it touched) moves theirs.
+        if changes.touchesGroupSources || !changes.isKnown {
+            if savedContext == nil || savedContext?.container === container {
+                groupSourcesRevision &+= 1
+            }
+        }
         // Autosave fires often with nothing this store lists.
         if changes.isKnown && changes.isEmpty { return }
         guard let savedContext else {
@@ -289,6 +321,11 @@ final class LibraryStore {
             if let array = value as? [PersistentIdentifier] { ids = array }
             else if let set = value as? Set<PersistentIdentifier> { ids = Array(set) }
             else { continue }
+            // Before the filter: a membership, memory, tag, override or group
+            // is not listed by the store, yet the sidebar counts it.
+            if ids.contains(where: { groupSourceEntityNames.contains($0.entityName) }) {
+                changes.touchesGroupSources = true
+            }
             let tracked = ids.filter { trackedEntityNames.contains($0.entityName) }
             if name.contains("insert") { changes.inserted += tracked; changes.isKnown = true }
             else if name.contains("delete") { changes.deleted += tracked; changes.isKnown = true }

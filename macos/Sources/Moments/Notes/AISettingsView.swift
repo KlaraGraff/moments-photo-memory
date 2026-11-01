@@ -1,4 +1,5 @@
 import SwiftUI
+import MomentsCore
 
 /// Settings › AI Model: which model organizes notes. The on-device Apple model
 /// is the default; a cloud model is optional and uses the person's own key.
@@ -106,10 +107,12 @@ struct AISettingsView: View {
                         .font(.caption)
                         .foregroundStyle(Paper.muted)
                 }
-                Text(String(localized: "Only the words you wrote, the photo's date and its place name are sent. Never the photo itself or GPS coordinates."))
+                Text(String(localized: "For notes, only the words you wrote, the photo's date and its place name are sent. Never the photo itself or GPS coordinates."))
                     .font(.caption)
                     .foregroundStyle(Paper.muted)
             }
+
+            ChapterAISettingsSection()
 
             Section {
                 Picker(String(localized: "When the on-device model can't run"), selection: $fallbackRaw) {

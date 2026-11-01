@@ -9,7 +9,20 @@ enum TripAssignmentLocks {
     /// Where locks and covers live. UI tests get their own suite, wiped at
     /// launch, so running them never touches this Mac's real choices.
     static let store: UserDefaults = {
-        guard ProcessInfo.processInfo.arguments.contains("-MomentsUITesting"),
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-MomentsChapterAIRun"),
+           let index = arguments.firstIndex(of: "-MomentsUITestStoreDirectory"), index + 1 < arguments.count,
+           // One suite per copy, so a fresh copy starts fresh.
+           let suite = UserDefaults(suiteName: "moments.chapterAI.eval" + arguments[index + 1].replacingOccurrences(of: "/", with: ".")) {
+            // A test run on a copied library starts from this Mac's choices
+            // but never writes back into them.
+            for key in [defaultsKey, TripCoverChoice.defaultsKey, EventSuggestions.suggestedDaysKey]
+            where suite.object(forKey: key) == nil {
+                suite.set(UserDefaults.standard.object(forKey: key), forKey: key)
+            }
+            return suite
+        }
+        guard arguments.contains("-MomentsUITesting"),
               let suite = UserDefaults(suiteName: "moments.uitesting.trips") else { return .standard }
         return suite
     }()

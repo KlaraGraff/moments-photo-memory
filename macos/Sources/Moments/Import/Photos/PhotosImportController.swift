@@ -192,7 +192,7 @@ public final class PhotosImportController {
                 summary = value
                 state = .finished
                 if ImportSettings.autoOrganize {
-                    EventSuggestions.suggest(in: container.mainContext)
+                    ChapterOrganizing.afterImport(in: container.mainContext)
                     NotificationCenter.default.post(name: .momentsPeopleScanRequested, object: nil)
                 }
             } catch is CancellationError {

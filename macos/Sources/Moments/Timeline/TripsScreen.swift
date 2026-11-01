@@ -205,6 +205,9 @@ struct TripsScreen: View {
                 TripNoticeBar(notice: notice, onUndo: { undo(notice) }, onAdopt: { adopt(notice) }, onClose: { self.notice = nil })
                     .padding(.bottom, 18)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                ChapterAIStatusBar()
+                    .padding(.bottom, 18)
             }
         }
         .animation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), value: notice?.id)
@@ -653,6 +656,9 @@ private struct TripShelfView: View {
             .navigationTitle(String(localized: "Chapters"))
             .navigationSubtitle(String(localized: "\(chapterCount) chapters"))
             .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    ChapterAIToolbarButton()
+                }
                 // On Chapters, + starts a chapter.
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: onNew) {

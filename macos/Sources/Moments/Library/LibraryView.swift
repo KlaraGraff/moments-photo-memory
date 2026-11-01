@@ -8,6 +8,16 @@ private enum LibraryScrollTarget {
     static func item(_ id: String) -> String { "item:\(id)" }
 }
 
+#if DEBUG
+/// The part names and values `groupingKey` was last built from, so the probe
+/// can say which input moved. Main-actor only: it is read and written from the
+/// library's `.task`.
+@MainActor
+private enum LibraryRegroupProbe {
+    static var last: [String: Int] = [:]
+}
+
+#endif
 struct LibraryView: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(ImportController.self) private var importController
@@ -194,6 +204,60 @@ struct LibraryView: View {
         return hasher.finalize()
     }
 
+    #if DEBUG
+    /// The same inputs `groupingKey` hashes, kept apart by where they come
+    /// from, so the page probe can name the one that moved.
+    private var groupingKeyParts: [(String, Int)] {
+        var filters = Hasher()
+        filters.combine(typeRaw)
+        filters.combine(groupingRaw)
+        filters.combine(fromDateInterval)
+        filters.combine(toDateInterval)
+        filters.combine(placeFilterID)
+        filters.combine(tripFilterKey)
+        filters.combine(memoryFilterRaw)
+        filters.combine(personFilterID)
+        filters.combine(query)
+        filters.combine(state.focusedMemoryItemID)
+        filters.combine(selection.libraryScope?.itemIDs)
+        var trips = Hasher()
+        for trip in allTrips {
+            trips.combine(trip.id)
+            trips.combine(trip.name)
+            trips.combine(trip.overrideName)
+        }
+        var overrides = Hasher()
+        for override in placeOverrides {
+            overrides.combine(override.id)
+            overrides.combine(override.mediaID)
+            overrides.combine(override.nameOverride)
+            overrides.combine(override.updatedAt)
+        }
+        var memories = Hasher()
+        for memory in memoryRecords {
+            memories.combine(memory.id)
+            memories.combine(memory.mediaID)
+            memories.combine(memory.updatedAt)
+            memories.combine(memory.revision)
+        }
+        var records = Hasher()
+        for record in stackRecords {
+            records.combine(record.id)
+            records.combine(record.rulesData)
+        }
+        let favoriteRevision: Int = criteria.favoritesOnly ? store.favoriteRevision : -1
+        return [
+            ("filters", filters.finalize()),
+            ("store.revision", store.revision),
+            ("favoriteRevision", favoriteRevision),
+            ("trips", trips.finalize()),
+            ("place overrides", overrides.finalize()),
+            ("memories", memories.finalize()),
+            ("stacks.generation", stacks.generation),
+            ("stack records", records.finalize())
+        ]
+    }
+    #endif
     /// The memories a section can show, so they are matched again when one is
     /// added, edited or removed outside `regroup()`. The sections and their day
     /// keys are not hashed: `regroup()` does that match itself, in the same
@@ -236,10 +300,23 @@ struct LibraryView: View {
         .task(id: groupingKey) {
             #if DEBUG
             let probeToken = PageProbe.phaseToken
+            let parts: [(String, Int)] = groupingKeyParts
+            let started: CFTimeInterval = CACurrentMediaTime()
             #endif
             regroup()
             #if DEBUG
             PageProbe.contentReady(token: probeToken)
+            let previous: [String: Int] = LibraryRegroupProbe.last
+            var changed: [String] = []
+            for part in parts where previous[part.0] != part.1 {
+                changed.append(part.0)
+            }
+            if previous.isEmpty { changed = ["first"] }
+            var current: [String: Int] = [:]
+            for part in parts { current[part.0] = part.1 }
+            LibraryRegroupProbe.last = current
+            let cause: String = changed.isEmpty ? "no part changed" : changed.joined(separator: " + ")
+            PageProbe.tally("library regroup: " + cause, seconds: CACurrentMediaTime() - started)
             #endif
         }
         .onChange(of: memoriesKey) { _, _ in

@@ -38,6 +38,8 @@ enum PageProbe {
     private static var activePhaseToken: UInt64?
     private static var activePhaseName: String?
     private static var activeMetrics = Metrics()
+    /// Events counted during the current phase, with their total time.
+    private static var tallies: [String: (count: Int, seconds: Double)] = [:]
     private static var nextPhaseToken: UInt64 = 0
     private static var started = false
     /// Phases left out (`-MomentsUITestPageProbeSkip "Map,People"`): a page
@@ -134,6 +136,14 @@ enum PageProbe {
         guard let name = activePhaseName, activePhaseStart != nil else { return }
         report += "note (\(name)): \(line)\n"
         write()
+    }
+
+    /// Counts an event in the current phase, with the time it took; printed when the phase ends, largest total
+    /// first. Ignored when no phase is active.
+    static func tally(_ key: String, seconds: Double = 0) {
+        guard activePhaseName != nil, activePhaseStart != nil else { return }
+        let old: (count: Int, seconds: Double) = tallies[key] ?? (count: 0, seconds: 0)
+        tallies[key] = (count: old.count + 1, seconds: old.seconds + seconds)
     }
 
     /// Called by a page task from its cancellation path. Projection saves do
@@ -255,6 +265,21 @@ enum PageProbe {
             mine.filter { $0.length > 0.1 }.count, busy,
             Double(memory) / 1_048_576, (Double(memory) - Double(phase.footprint)) / 1_048_576
         )
+        let tallyRows: [(key: String, count: Int, seconds: Double)] = tallies.map {
+            (key: String, value: (count: Int, seconds: Double)) -> (key: String, count: Int, seconds: Double) in
+            (key: key, count: value.count, seconds: value.seconds)
+        }
+        let tallyOrdered: [(key: String, count: Int, seconds: Double)] = tallyRows.sorted {
+            (left: (key: String, count: Int, seconds: Double), right: (key: String, count: Int, seconds: Double)) -> Bool in
+            if left.seconds != right.seconds { return left.seconds > right.seconds }
+            if left.count != right.count { return left.count > right.count }
+            return left.key < right.key
+        }
+        for row in tallyOrdered {
+            let milliseconds: Int = Int((row.seconds * 1000).rounded())
+            report += "tally (\(phase.name)): \(row.key) x\(row.count), \(milliseconds) ms\n"
+        }
+        tallies = [:]
         report += MainThreadSampler.stopAndReport(top: 25, ownTop: 30, selfTop: 12)
         status.finished(phase.name, timedOut: timedOut)
         activePhaseStart = nil
@@ -270,6 +295,7 @@ enum PageProbe {
         activePhaseToken = phase.token
         activePhaseName = phase.name
         activeMetrics = Metrics()
+        tallies = [:]
     }
 
     private static func mark(_ keyPath: WritableKeyPath<Metrics, CFTimeInterval?>, token: UInt64?) {

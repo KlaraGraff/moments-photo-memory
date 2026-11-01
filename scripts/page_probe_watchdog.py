@@ -294,7 +294,9 @@ def main(argv=None):
     try:
         while True:
             try:
-                return process.wait(timeout=args.poll)
+                code = process.wait(timeout=args.poll)
+                # Killed by a signal: report it the way a shell does.
+                return 128 - code if code < 0 else code
             except subprocess.TimeoutExpired:
                 pass
             watchdog.maybe_print()

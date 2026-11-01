@@ -61,7 +61,8 @@ final class MomentsPageProbeUITests: XCTestCase {
         }
         XCTAssertEqual(text.components(separatedBy: "longest stall").count - 1, phases.count, "Every phase must report a stall")
         XCTAssertEqual(text.components(separatedBy: "main thread samples:").count - 1, phases.count, "Every phase must report a stack sample")
-        XCTAssertEqual(text.components(separatedBy: "memory ").count - 1, phases.count, "Every phase must report memory")
+        let reportLines = text.split(separator: "\n").filter { $0.hasPrefix("page report (") }
+        XCTAssertEqual(reportLines.filter { $0.contains(", memory ") }.count, phases.count, "Every phase must report memory")
         XCTAssertEqual(text.components(separatedBy: "selection-to-shell ").count - 1, phases.count, "Every phase must report shell timing")
         XCTAssertEqual(text.components(separatedBy: "first-content ").count - 1, phases.count, "Every phase must report first-content timing")
         XCTAssertEqual(text.components(separatedBy: "first-thumbnail ").count - 1, phases.count, "Every phase must report thumbnail timing")

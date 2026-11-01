@@ -57,7 +57,7 @@ on:
         required: false
         default: ''
       measure_ref:
-        description: 'Page probe, optional: measure this branch or commit instead, with the probe files of the branch you run from laid over it (it must already have the probe hooks)'
+        description: 'Page probe, optional: measure this branch or commit instead, with the probe files of the branch you run from laid over it (a branch name or a full commit SHA; it must already have the probe hooks)'
         required: false
         default: ''
 

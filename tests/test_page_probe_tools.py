@@ -192,6 +192,11 @@ class WatchdogRunTests(unittest.TestCase):
             self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
             self.assertFalse((Path(folder) / 'diag').exists())
 
+    def test_a_command_killed_by_a_signal_exits_like_a_shell_reports_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            result = self.run_watchdog(folder, 'import os, signal; os.kill(os.getpid(), signal.SIGTERM)')
+            self.assertEqual(result.returncode, 128 + 15, result.stdout + result.stderr)
+
     def test_a_stuck_probe_is_ended_with_diagnostics(self):
         with tempfile.TemporaryDirectory() as folder:
             # The child plays an app whose main thread stopped answering.

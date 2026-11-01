@@ -19,6 +19,10 @@ enum MainThreadSampler {
     /// Stops the previous run's thread when a new run starts right away.
     private nonisolated(unsafe) static var generation = 0
     private nonisolated(unsafe) static var interval: UInt32 = 2_000
+    private nonisolated(unsafe) static var startedAt: UInt64 = 0
+    /// When the buffer filled up (uptime in ns, 0 if it did not); the report
+    /// says so. A plain clock read is safe inside the signal handler.
+    private nonisolated(unsafe) static var fullAt: UInt64 = 0
     /// One stack taken on request from another thread while the main thread
     /// does not answer (see `stuckStacks`), apart from the profile buffers.
     private static let stuckMaxDepth = 128
@@ -29,8 +33,11 @@ enum MainThreadSampler {
     /// Call on the main thread before `stuckStacks` may be used.
     static func prepareForStuckStacks() {
         mainThread = pthread_self()
-        // Allocate here: the signal handler must not malloc.
+        // Allocate and initialise here: the signal handler must not malloc
+        // or run a lazy initialiser.
         _ = stuckFrames
+        stuckDepth = 0
+        stuckWanted = false
         installHandlerIfNeeded()
     }
 
@@ -40,12 +47,16 @@ enum MainThreadSampler {
         signal(SIGUSR2) { _ in MainThreadSampler.record() }
     }
 
-    /// Call on the main thread. Every `interval` microseconds; 2 ms covers
-    /// 24 s before the buffer is full, longer intervals cover longer runs.
-    static func start(interval: UInt32 = 2_000) {
+    /// Call on the main thread. Every `interval` microseconds, or less often
+    /// when the buffer could not hold `covering` seconds at that rate: the
+    /// profile then spans the whole phase instead of only its start.
+    static func start(interval: UInt32 = 2_000, covering seconds: Double = 0) {
         mainThread = pthread_self()
         count = 0
-        self.interval = interval
+        startedAt = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        fullAt = 0
+        let needed = seconds * 1_000_000 / Double(maxSamples)
+        self.interval = max(interval, UInt32(min(needed.rounded(.up), 1_000_000)))
         // Allocate the buffers here: the signal handler must not malloc.
         _ = frames
         _ = depths
@@ -66,7 +77,11 @@ enum MainThreadSampler {
             stuckDepth = backtrace(stuckFrames, Int32(stuckMaxDepth))
             stuckWanted = false
         }
-        guard recording, count < maxSamples else { return }
+        guard recording else { return }
+        guard count < maxSamples else {
+            if fullAt == 0 { fullAt = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) }
+            return
+        }
         let depth = backtrace(frames + count * maxDepth, Int32(maxDepth))
         depths[count] = depth
         count += 1
@@ -110,7 +125,11 @@ enum MainThreadSampler {
                 if seen.insert(symbol).inserted { inclusive[symbol, default: 0] += 1 }
             }
         }
-        var text = "main thread samples: \(count) (every \(Double(interval) / 1_000) ms)\n"
+        var text = "main thread samples: \(count) (every \(Double(interval) / 1_000) ms)"
+        if fullAt > startedAt {
+            text += String(format: ", buffer full after %.1f s: the rest of the phase is not in this profile", Double(fullAt - startedAt) / 1e9)
+        }
+        text += "\n"
         text += "inclusive (on the stack):\n"
         for (symbol, hits) in inclusive.sorted(by: { $0.value > $1.value }).prefix(top) {
             text += String(format: "  %5.1f%% %@\n", Double(hits) * 100 / Double(max(count, 1)), String(symbol.prefix(200)))

@@ -199,7 +199,7 @@ enum PageProbe {
         nextPhaseToken &+= 1
         let phase = Phase(name: name, start: CACurrentMediaTime(), footprint: footprint(), token: nextPhaseToken)
         begin(phase)
-        MainThreadSampler.start(interval: sampleInterval)
+        MainThreadSampler.start(interval: sampleInterval, covering: timeout)
         action()
         var timedOut = false
         while true {

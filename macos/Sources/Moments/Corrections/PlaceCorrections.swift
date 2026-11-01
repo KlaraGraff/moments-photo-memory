@@ -84,6 +84,49 @@ enum PlaceNames {
         groups(for: items).map { LibraryPlaceOption(id: $0.id, name: $0.name) }
     }
 
+    /// `options(for:)` from what the photos are listed under, counted: how many
+    /// photos have each per-photo name, and how many have each place (and no
+    /// per-photo name). Only the places' names are read here, once per place.
+    static func options(
+        overrideCounts: [String: Int],
+        placeCounts: [PersistentIdentifier: (place: Place, count: Int)]
+    ) -> [LibraryPlaceOption] {
+        // The same two steps as `groups(for:)`: count each spelling per name,
+        // then pick the spelling that names the row.
+        var spellings: [String: [String: Int]] = [:]
+        for (name, count) in overrideCounts {
+            let key: String = Self.key(name)
+            guard !key.isEmpty else { continue }
+            spellings[key, default: [:]][name, default: 0] += count
+        }
+        for entry in placeCounts.values {
+            // The cached counts hold places across saves; reading a deleted
+            // one, or one no context owns any more, traps in SwiftData.
+            guard entry.place.modelContext != nil, !entry.place.isDeleted else { continue }
+            guard let name: String = PlaceDisplayName.resolvedName(of: entry.place) else { continue }
+            let key: String = Self.key(name)
+            guard !key.isEmpty else { continue }
+            spellings[key, default: [:]][name, default: 0] += entry.count
+        }
+        var names: [String: String] = [:]
+        for (key, counts) in spellings {
+            // The tie-break `groups(for:)` uses, spelled with named parts.
+            let best: (key: String, value: Int)? = counts.max {
+                (lhs: (key: String, value: Int), rhs: (key: String, value: Int)) -> Bool in
+                (lhs.value, rhs.key) < (rhs.value, lhs.key)
+            }
+            if let best { names[key] = best.key }
+        }
+        var options: [LibraryPlaceOption] = []
+        options.reserveCapacity(names.count)
+        for (key, name) in names {
+            options.append(LibraryPlaceOption(id: optionPrefix + key, name: name))
+        }
+        return options.sorted { (left: LibraryPlaceOption, right: LibraryPlaceOption) -> Bool in
+            left.name.localizedStandardCompare(right.name) == .orderedAscending
+        }
+    }
+
     /// True when the photo is listed under the name `key`: its own correction
     /// says so, or (without one) its place or a parent has that name.
     static func matches(_ item: MediaItem, key: String) -> Bool {

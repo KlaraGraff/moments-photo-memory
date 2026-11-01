@@ -24,7 +24,13 @@ final class TimelineBuilderEquivalenceTests: XCTestCase {
     }
 
     private static func library(count: Int, random: inout EquivalenceRandom) -> ([TimelineItemSnapshot], [TimelineSourceTrip]) {
-        let centres = (0..<6).map { _ in (random.unit() * 120 - 60, random.unit() * 340 - 170) }
+        // Typed step by step throughout: the CI compilers cannot type-check
+        // long literal arithmetic mixed with optionals in reasonable time.
+        let centres: [(Double, Double)] = (0..<6).map { (_: Int) -> (Double, Double) in
+            let latitude: Double = random.unit() * 120 - 60
+            let longitude: Double = random.unit() * 340 - 170
+            return (latitude, longitude)
+        }
         let origin = Date(timeIntervalSince1970: 1_700_000_000)
         let hints: [String?] = [nil, "", "Harbour", "Old Town", "Spot 7", nil, "Market"]
         var items: [TimelineItemSnapshot] = []
@@ -32,27 +38,58 @@ final class TimelineBuilderEquivalenceTests: XCTestCase {
             let centre = centres[Int(random.below(UInt64(centres.count)))]
             let located = random.unit() > 0.15
             let dated = random.unit() > 0.05
-            let date = dated ? origin.addingTimeInterval(Double(index) * 3_600 * (0.5 + random.unit())) : nil
+            // Same order of random draws as the one-expression form it replaces.
+            var date: Date?
+            if dated {
+                let seconds: Double = Double(index) * 3_600 * (0.5 + random.unit())
+                date = origin.addingTimeInterval(seconds)
+            }
             let tripRoll = random.below(10)
+            var latitude: Double?
+            var longitude: Double?
+            if located {
+                let latitudeJitter: Double = (random.unit() - 0.5) * 0.6
+                latitude = centre.0 + latitudeJitter
+                let longitudeJitter: Double = (random.unit() - 0.5) * 0.6
+                longitude = centre.1 + longitudeJitter
+            }
+            let isVideo = random.unit() < 0.1
+            let kindRaw: String = isVideo ? MediaKind.video.rawValue : MediaKind.photo.rawValue
+            let tripID: String?
+            if tripRoll < 3 {
+                tripID = "trip-\(tripRoll)"
+            } else if tripRoll == 3 {
+                tripID = "missing-trip"
+            } else {
+                tripID = nil
+            }
+            let placeHint: String? = hints[Int(random.below(UInt64(hints.count)))]
+            var dayKey: String?
+            if let date, random.unit() < 0.5 {
+                dayKey = PhotoNoteDay.key(for: date, calendar: Calendar(identifier: .gregorian))
+            }
             items.append(TimelineItemSnapshot(
                 id: "item-\(index)",
                 title: "Photo \(index)",
                 date: date,
-                latitude: located ? centre.0 + (random.unit() - 0.5) * 0.6 : nil,
-                longitude: located ? centre.1 + (random.unit() - 0.5) * 0.6 : nil,
-                kindRaw: random.unit() < 0.1 ? MediaKind.video.rawValue : MediaKind.photo.rawValue,
-                tripID: tripRoll < 3 ? "trip-\(tripRoll)" : (tripRoll == 3 ? "missing-trip" : nil),
-                placeHint: hints[Int(random.below(UInt64(hints.count)))],
-                dayKey: date != nil && random.unit() < 0.5 ? PhotoNoteDay.key(for: date!, calendar: .init(identifier: .gregorian)) : nil
+                latitude: latitude,
+                longitude: longitude,
+                kindRaw: kindRaw,
+                tripID: tripID,
+                placeHint: placeHint,
+                dayKey: dayKey
             ))
         }
-        let trips = (0..<3).map { trip in
-            TimelineSourceTrip(
+        let trips: [TimelineSourceTrip] = (0..<3).map { (trip: Int) -> TimelineSourceTrip in
+            let itemIDs: [String] = items.filter { _ in random.unit() < 0.1 }.map(\.id)
+            let startDate: Date? = trip == 0 ? origin : nil
+            let endDate: Date? = trip == 0 ? origin.addingTimeInterval(3 * 86_400) : nil
+            return TimelineSourceTrip(
                 id: "trip-\(trip)",
                 name: "Trip \(trip)",
-                itemIDs: items.filter { _ in random.unit() < 0.1 }.map(\.id),
-                startDate: trip == 0 ? origin : nil,
-                endDate: trip == 0 ? origin.addingTimeInterval(86_400 * 3) : nil
+                itemIDs: itemIDs,
+                startDate: startDate,
+                endDate: endDate
             )
         }
         return (items, trips)

@@ -8,7 +8,7 @@ Finish the current People, Map and 5k page-probe work on PR #103. Do not start t
 
 - Branch: `codex/performance-probe`
 - PR: https://github.com/KlaraGraff/moments-photo-memory/pull/103
-- Latest code commit: `8da9c30` (`People: batch scan progress updates`). The only current local change is this handoff update.
+- Latest implementation commit: `8da9c30` (`People: batch scan progress updates`); handoff update commit: `c5bee77`. The worktree is clean.
 - The PR is open and ready for review. Do not start the deferred 20k tuning in this work package.
 
 ## Current Status
@@ -18,6 +18,7 @@ Finish the current People, Map and 5k page-probe work on PR #103. Do not start t
 - UI run `41254824348` generated synthetic fixtures, then remained in its main UI test step for about 42 minutes without reaching any report phase. It was cancelled; no People result is available from this run.
 - Local verification on this head: `swift test --package-path macos/MomentsCore` passed 60/60; `python3 scripts/check_privacy.py` passed; `git diff --check` passed; the native app build succeeded. Xcode printed existing CoreSimulator-version and Swift concurrency/import warnings; the macOS build itself succeeded.
 - The localization check needs Xcode's exported `.xcloc` files, so it is verified by the hosted native workflow rather than by the local privacy script.
+- The docs-only push of `c5bee77` triggered Linux run `41258141503` (passed) plus native/UI runs `41258141504` and `41258141515`; the latter two were cancelled before reports because the code had already been checked on `8da9c30` and the workflow was still using the long combined smoke/probe job.
 
 ## Completed And Pushed
 

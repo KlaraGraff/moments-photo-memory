@@ -124,4 +124,73 @@ final class LibrarySectionMemoriesTests: XCTestCase {
         XCTAssertNil(result["month:2023-12"])
         XCTAssertEqual(result.count, 1)
     }
+
+    // MARK: 5
+
+    /// The page assigns a fresh match only when `sameIDs` says it differs, so
+    /// an unchanged match must not look different: a second match over the same
+    /// sections and memories, and a match whose memories are new objects with
+    /// the same ids, both compare equal. A changed day-key set, an added memory
+    /// or a different order per section must compare unequal.
+    func testSameIDsComparesTheMemoryIDsPerSection() {
+        let dayMemory = memory("memory-1", scope: .day, scopeKey: "2023-11-14", text: "Synthetic day memory")
+        let photoMemory = memory("memory-2", scope: .photo, scopeKey: "2023-11-15", text: "Synthetic photo memory")
+        let sections: [LibrarySection] = [
+            section("month:2023-11", itemIDs: ["photo-1", "photo-2"]),
+            section("month:2023-12", itemIDs: ["photo-3"]),
+        ]
+        let dayKeysBySection: [String: Set<String>] = [
+            "month:2023-11": ["2023-11-14", "2023-11-15"],
+            "month:2023-12": ["2023-12-02"],
+        ]
+        let first: [String: [CollectionMemory]] = LibrarySectionMemories.make(
+            sections: sections,
+            dayKeysBySection: dayKeysBySection,
+            memories: [dayMemory, photoMemory]
+        )
+        XCTAssertEqual(first["month:2023-11"]?.map(\.id), ["memory-1", "memory-2"])
+        XCTAssertEqual(first.count, 1)
+        let matchedAgain: [String: [CollectionMemory]] = LibrarySectionMemories.make(
+            sections: sections,
+            dayKeysBySection: dayKeysBySection,
+            memories: [dayMemory, photoMemory]
+        )
+        XCTAssertTrue(LibrarySectionMemories.sameIDs(first, matchedAgain))
+
+        let sameIDsOtherObjects: [String: [CollectionMemory]] = [
+            "month:2023-11": [
+                memory("memory-1", scope: .day, scopeKey: "2023-11-14", text: "Synthetic rewritten text"),
+                memory("memory-2", scope: .photo, scopeKey: "2023-11-15", text: "Synthetic rewritten text"),
+            ]
+        ]
+        XCTAssertTrue(LibrarySectionMemories.sameIDs(first, sameIDsOtherObjects))
+
+        // One of the section's days no longer matches the photo memory.
+        let dayKeysWithoutMatch: [String: Set<String>] = [
+            "month:2023-11": ["2023-11-14"],
+            "month:2023-12": ["2023-12-02"],
+        ]
+        let fewerMemories: [String: [CollectionMemory]] = LibrarySectionMemories.make(
+            sections: sections,
+            dayKeysBySection: dayKeysWithoutMatch,
+            memories: [dayMemory, photoMemory]
+        )
+        XCTAssertEqual(fewerMemories["month:2023-11"]?.map(\.id), ["memory-1"])
+        XCTAssertFalse(LibrarySectionMemories.sameIDs(first, fewerMemories))
+
+        // A memory added to a section.
+        let withExtraMemory: [String: [CollectionMemory]] = [
+            "month:2023-11": [dayMemory, photoMemory, memory("memory-3", scope: .day, scopeKey: "2023-11-14", text: "Synthetic extra")],
+        ]
+        XCTAssertFalse(LibrarySectionMemories.sameIDs(first, withExtraMemory))
+
+        // The same memories in a different order.
+        let reversed: [String: [CollectionMemory]] = ["month:2023-11": [photoMemory, dayMemory]]
+        XCTAssertFalse(LibrarySectionMemories.sameIDs(first, reversed))
+
+        // Empty against empty is the common first build.
+        let empty: [String: [CollectionMemory]] = [:]
+        XCTAssertTrue(LibrarySectionMemories.sameIDs(empty, empty))
+        XCTAssertFalse(LibrarySectionMemories.sameIDs(empty, first))
+    }
 }

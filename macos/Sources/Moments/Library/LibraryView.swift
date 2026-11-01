@@ -69,11 +69,9 @@ struct LibraryView: View {
     @State private var cachedFilterOptions = LibraryFilterOptionSet()
     /// Each section's day-memory keys, built once with the sections.
     @State private var cachedSectionDayKeys: [String: Set<String>] = [:]
-    /// Bumped when `regroup()` writes new day keys, so the section memories
-    /// are matched again after the view update.
-    @State private var dayKeysGeneration = 0
-    /// Each section's memories, worked out once per change of sections or
-    /// memories instead of by every section on each render.
+    /// Each section's memories, worked out in `regroup()` with those day keys,
+    /// and again only when the memories themselves change, instead of by every
+    /// section on each render.
     @State private var cachedSectionMemories: [String: [CollectionMemory]] = [:]
 
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
@@ -193,22 +191,19 @@ struct LibraryView: View {
         return hasher.finalize()
     }
 
-    /// The sections and memories the section memories are worked out from,
-    /// so they are matched again only when one of them changed.
-    private var memoryKey: Int {
+    /// The memories a section can show, so they are matched again when one is
+    /// added, edited or removed outside `regroup()`. The sections and their day
+    /// keys are not hashed: `regroup()` does that match itself, in the same
+    /// update as the sections, and hashing every section id here repeated that
+    /// work on every body evaluation.
+    private var memoriesKey: Int {
         var hasher = Hasher()
-        for id in cachedSections.map(\.id) {
-            hasher.combine(id)
-        }
+        hasher.combine(collectionMemories.count)
         for memory in collectionMemories {
             hasher.combine(memory.id)
             hasher.combine(memory.scopeKey)
             hasher.combine(memory.updatedAt)
         }
-        // The memories are matched again when the day keys change, which
-        // regroup() writes after the view update; hashing store.revision here
-        // would rebuild them with the old keys and never again.
-        hasher.combine(dayKeysGeneration)
         return hasher.finalize()
     }
 
@@ -244,12 +239,15 @@ struct LibraryView: View {
             PageProbe.contentReady(token: probeToken)
             #endif
         }
-        .onChange(of: memoryKey, initial: true) { _, _ in
-            cachedSectionMemories = LibrarySectionMemories.make(
+        .onChange(of: memoriesKey) { _, _ in
+            // A note can be added or edited without a regroup, so the match is
+            // redone here; the first build is covered by regroup() itself.
+            let memories: [String: [CollectionMemory]] = LibrarySectionMemories.make(
                 sections: cachedSections,
                 dayKeysBySection: cachedSectionDayKeys,
                 memories: collectionMemories
             )
+            applySectionMemories(memories)
         }
         .sheet(isPresented: $showingReview) {
             ReviewSheet()
@@ -640,10 +638,18 @@ struct LibraryView: View {
             let keys: Set<String> = Set(sectionItems.compactMap { PhotoNoteDay.key(for: $0) })
             sectionDayKeys[section.id] = keys
         }
+        // Matched here, with the sections and their day keys, so both caches
+        // land in this one update instead of the section list being built
+        // again after an onChange sees the new day keys.
+        let memories: [String: [CollectionMemory]] = LibrarySectionMemories.make(
+            sections: cachedSections,
+            dayKeysBySection: sectionDayKeys,
+            memories: collectionMemories
+        )
         if sectionDayKeys != cachedSectionDayKeys {
             cachedSectionDayKeys = sectionDayKeys
-            dayKeysGeneration &+= 1
         }
+        applySectionMemories(memories)
         let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
         if selection.visibleItemIDs != publishedVisible { selection.visibleItemIDs = publishedVisible }
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
@@ -652,6 +658,14 @@ struct LibraryView: View {
            !selection.shouldRevealSelectionInLibrary {
             selection.focusedItemID = selection.selectedItemIDs.first
         }
+    }
+
+    /// Writes newly matched section memories, but only when the ids a section
+    /// shows differ. A regroup that finds the same memories must not redraw the
+    /// section list, which at 20,000 photos is the whole page.
+    private func applySectionMemories(_ memories: [String: [CollectionMemory]]) {
+        guard !LibrarySectionMemories.sameIDs(cachedSectionMemories, memories) else { return }
+        cachedSectionMemories = memories
     }
 
     private func revealRequestedSelectionIfNeeded(in sections: [LibrarySection], using proxy: ScrollViewProxy) {

@@ -34,4 +34,22 @@ enum LibrarySectionMemories {
         }
         return result
     }
+
+    /// Whether two maps hold the same memory ids, in the same order, for every
+    /// section. The page assigns a freshly matched map only when this is false:
+    /// a section list rebuilt with unchanged memories must not redraw every
+    /// section. Only the ids are compared, because a memory's text is read from
+    /// the same model object either way.
+    static func sameIDs(
+        _ current: [String: [CollectionMemory]],
+        _ next: [String: [CollectionMemory]]
+    ) -> Bool {
+        let currentIDs: [String: [String]] = current.mapValues { (memories: [CollectionMemory]) -> [String] in
+            memories.map { (memory: CollectionMemory) -> String in memory.id }
+        }
+        let nextIDs: [String: [String]] = next.mapValues { (memories: [CollectionMemory]) -> [String] in
+            memories.map { (memory: CollectionMemory) -> String in memory.id }
+        }
+        return currentIDs == nextIDs
+    }
 }

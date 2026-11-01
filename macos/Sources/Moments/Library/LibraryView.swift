@@ -173,8 +173,12 @@ struct LibraryView: View {
         hasher.combine(query)
         hasher.combine(state.focusedMemoryItemID)
         hasher.combine(selection.libraryScope?.itemIDs)
-        // All photos, faces and places the pages group by, as one revision.
-        hasher.combine(store.revision)
+        // All photos and faces the pages group by, as one revision.
+        hasher.combine(store.photoFaceRevision)
+        // Sections read place names only when grouped by place, filtered by a
+        // place, or searched; a place-only save regroups only then.
+        let readsPlaceNames: Bool = groupingRaw == LibraryGrouping.place.rawValue || !placeFilterID.isEmpty || !query.isEmpty
+        if readsPlaceNames { hasher.combine(store.placeRevision) }
         // A favorite save leaves `revision` alone, so the Favorites filter
         // (and the Favorites segment) follows its own revision.
         if criteria.favoritesOnly { hasher.combine(store.favoriteRevision) }
@@ -246,9 +250,11 @@ struct LibraryView: View {
             records.combine(record.rulesData)
         }
         let favoriteRevision: Int = criteria.favoritesOnly ? store.favoriteRevision : -1
+        let readsPlaceNames: Bool = groupingRaw == LibraryGrouping.place.rawValue || !placeFilterID.isEmpty || !query.isEmpty
         return [
             ("filters", filters.finalize()),
-            ("store.revision", store.revision),
+            ("store.photoFaceRevision", store.photoFaceRevision),
+            ("store.placeRevision", readsPlaceNames ? store.placeRevision : -1),
             ("favoriteRevision", favoriteRevision),
             ("trips", trips.finalize()),
             ("place overrides", overrides.finalize()),
@@ -328,6 +334,13 @@ struct LibraryView: View {
                 memories: collectionMemories
             )
             applySectionMemories(memories)
+        }
+        // A place-only save may not regroup; the Place menu's names still follow it.
+        .onChange(of: store.placeRevision) { _, _ in
+            cachedFilterOptions = LibraryFilterOptionsCache.options(
+                for: store.items,
+                key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips)
+            )
         }
         .sheet(isPresented: $showingReview) {
             ReviewSheet()

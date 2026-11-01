@@ -906,6 +906,84 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(store.fullFetchCount, fullFetches, "a known big batch must not fetch the whole library")
     }
 
+    // MARK: - A place-only save moves only the place revision
+
+    // A rename of a place nobody's photos changed moves `placeRevision` alone.
+    func testPlaceRenameMovesOnlyThePlaceRevision() async throws {
+        let context: ModelContext = try makeContext()
+        let place: Place = Place(id: "place-1", name: "Synthetic Place One")
+        context.insert(place)
+        let first: MediaItem = MediaItem(
+            id: "photo-a",
+            captureDate: base.addingTimeInterval(60),
+            latitude: 0.5,
+            longitude: 0.5
+        )
+        let second: MediaItem = MediaItem(
+            id: "photo-b",
+            captureDate: base.addingTimeInterval(120),
+            latitude: 0.5,
+            longitude: 0.5
+        )
+        first.place = place
+        second.place = place
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        let store: LibraryStore = makeStore(context: context)
+        let revision: Int = store.revision
+        let placeRevision: Int = store.placeRevision
+        let photoFaceRevision: Int = store.photoFaceRevision
+
+        place.name = "Synthetic Place Renamed"
+        try context.save()
+
+        let moved: Bool = await waitUntil(timeout: 3) { store.revision > revision }
+        XCTAssertTrue(moved, "the store never applied the place rename")
+        XCTAssertGreaterThan(store.placeRevision, placeRevision, "a renamed place moves the place revision")
+        XCTAssertEqual(
+            store.photoFaceRevision,
+            photoFaceRevision,
+            "a place-only save leaves the photo and face revision alone"
+        )
+    }
+
+    // A date change alone moves `photoFaceRevision` and not `placeRevision`.
+    func testPhotoDateChangeMovesOnlyThePhotoFaceRevision() async throws {
+        let setup = try makeTwentyPhotoStore()
+        let context: ModelContext = setup.context
+        let store: LibraryStore = setup.store
+        let photo: MediaItem = setup.first
+        let photoFaceRevision: Int = store.photoFaceRevision
+        let placeRevision: Int = store.placeRevision
+        let refreshes: Int = store.refreshCount
+
+        photo.captureDate = base.addingTimeInterval(-3600)
+        try context.save()
+
+        let applied: Bool = await waitUntil(timeout: 3) { store.refreshCount > refreshes }
+        XCTAssertTrue(applied, "the store never applied the date change")
+        XCTAssertGreaterThan(
+            store.photoFaceRevision,
+            photoFaceRevision,
+            "a moved photo still regroups the library"
+        )
+        XCTAssertEqual(store.placeRevision, placeRevision, "a photo save leaves the place revision alone")
+    }
+
+    // The first fetch has no previous measures, so both new revisions move.
+    func testFirstFetchMovesBothNewRevisions() throws {
+        let context: ModelContext = try makeContext()
+        let photo: MediaItem = MediaItem(id: "photo-first", captureDate: base)
+        context.insert(photo)
+        try context.save()
+
+        let store: LibraryStore = makeStore(context: context)
+        XCTAssertGreaterThan(store.photoFaceRevision, 0, "the first fetch moves the photo and face revision")
+        XCTAssertGreaterThan(store.placeRevision, 0, "the first fetch moves the place revision")
+    }
+
     // MARK: - Helpers
 
     // Typed once: the CI compilers are slow on tuple literals inside long calls.

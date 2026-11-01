@@ -401,7 +401,9 @@ struct LibraryFilterPublisher: View {
         // Search and the memory filter read notes and trip names, which change
         // without touching the item; only read them when they matter.
         let readsText = !query.isEmpty || memoryFilterRaw != LibraryMemoryFilter.all.rawValue
-        hasher.combine(store.revision)
+        hasher.combine(store.photoFaceRevision)
+        // A place filter and search read place names.
+        if !placeFilterID.isEmpty || !query.isEmpty { hasher.combine(store.placeRevision) }
         // A favorite save leaves `revision` alone, so the Favorites filter
         // follows its own revision.
         if criteria.favoritesOnly { hasher.combine(store.favoriteRevision) }

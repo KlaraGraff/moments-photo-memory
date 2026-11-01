@@ -162,6 +162,8 @@ enum PageProbe {
         }
         if let photo = newestPhotoID() {
             await measure("viewer open") { selection?.openViewer(photo, in: [photo]) }
+            await measure("favorite on") { toggleFavorite(photo) }
+            await measure("favorite off") { toggleFavorite(photo) }
             await measure("viewer close") { selection?.viewerRequest = nil }
         }
         await measure("Chapters again") { selection?.requestedDestination = .trips }
@@ -275,6 +277,17 @@ enum PageProbe {
         )
         descriptor.fetchLimit = 1
         return try? context.fetch(descriptor).first?.id
+    }
+
+    /// The viewer's star button, pressed by the probe: the same model call and
+    /// the same save, on the main context.
+    private static func toggleFavorite(_ photoID: String) {
+        guard let context = container?.mainContext else { return }
+        var descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == photoID })
+        descriptor.fetchLimit = 1
+        guard let item = try? context.fetch(descriptor).first else { return }
+        item.setFavorite(!item.isFavorite, context: context)
+        try? context.save()
     }
 
     private static func largestTripID() -> String? {

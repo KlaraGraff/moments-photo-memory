@@ -9,10 +9,12 @@ struct LibraryFilterChips: View {
     var showsScope = false
 
     @Environment(SelectionModel.self) private var selection
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var allItems: [MediaItem]
+    @Environment(LibraryStore.self) private var store
     @Query(sort: \Person.name) private var people: [Person]
     @Query(sort: \Trip.id) private var allTrips: [Trip]
-    @Query(sort: \Place.id) private var allPlaces: [Place]
+
+    private var allItems: [MediaItem] { store.items }
+    private var allPlaces: [Place] { store.places }
 
     @AppStorage(LibraryFilterKeys.type) private var typeRaw = LibraryMediaTypeFilter.all.rawValue
     @AppStorage(LibraryFilterKeys.fromDate) private var fromDateInterval = 0.0
@@ -89,25 +91,11 @@ struct LibraryFilterChips: View {
 
     private var optionsKey: Int {
         var hasher = Hasher()
-        for item in allItems {
-            hasher.combine(item.id)
-            hasher.combine(item.tripID)
-            hasher.combine(item.place?.id)
-            hasher.combine(item.placeOverrideName)
-            hasher.combine(item.updatedAt)
-        }
+        hasher.combine(store.revision)
         for trip in allTrips {
             hasher.combine(trip.id)
             hasher.combine(trip.name)
             hasher.combine(trip.overrideName)
-        }
-        for place in allPlaces {
-            hasher.combine(place.id)
-            hasher.combine(place.name)
-            // A rename of the place lists it under its new name.
-            hasher.combine(place.correctedName)
-            // A spot is listed under the place that names it.
-            hasher.combine(place.parent?.id)
         }
         return hasher.finalize()
     }
@@ -398,8 +386,10 @@ enum LibraryFilterKeys {
 /// it is open). Put it in the background of a screen that reads them.
 struct LibraryFilterPublisher: View {
     @Environment(SelectionModel.self) private var selection
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
-    @Query private var faceObservations: [FaceObservation]
+    @Environment(LibraryStore.self) private var store
+
+    private var items: [MediaItem] { store.items }
+    private var faceObservations: [FaceObservation] { store.faces }
 
     @AppStorage(LibraryFilterKeys.type) private var typeRaw = LibraryMediaTypeFilter.all.rawValue
     @AppStorage(LibraryFilterKeys.fromDate) private var fromDateInterval = 0.0
@@ -436,17 +426,12 @@ struct LibraryFilterPublisher: View {
         // Search and the memory filter read notes and trip names, which change
         // without touching the item; only read them when they matter.
         let readsText = !query.isEmpty || memoryFilterRaw != LibraryMemoryFilter.all.rawValue
-        for item in items {
-            hasher.combine(item.id)
-            hasher.combine(item.updatedAt)
-            if readsText {
+        hasher.combine(store.revision)
+        if readsText {
+            for item in items {
                 hasher.combine(item.latestMemory?.text)
                 hasher.combine(item.trip?.effectiveName)
             }
-        }
-        for observation in faceObservations {
-            hasher.combine(observation.id)
-            hasher.combine(observation.personID)
         }
         return hasher.finalize()
     }

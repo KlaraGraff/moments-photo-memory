@@ -692,18 +692,37 @@ struct LibraryView: View {
     }
 
     private func regroup() {
+        #if DEBUG
+        var stepStarted: CFTimeInterval = CACurrentMediaTime()
+        let step: (String) -> Void = { (name: String) -> Void in
+            PageProbe.tally("regroup step: " + name, seconds: CACurrentMediaTime() - stepStarted)
+            stepStarted = CACurrentMediaTime()
+        }
+        #endif
         // `allItems` builds a new array each time it is read.
         let all = allItems
+        #if DEBUG
+        step("allItems")
+        #endif
         cachedReviewCount = all.reduce(into: 0) { count, item in
             if item.needsImportReview { count += 1 }
         }
+        #if DEBUG
+        step("review count")
+        #endif
         let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
         cachedPersonIndex = personIndex
+        #if DEBUG
+        step("person index")
+        #endif
         // A scope from another screen narrows the grid only; the published
         // ids below stay on the regular filters so the maps do not shrink.
         let scopedItems = selection.libraryScope.map { scope in
             items.filter { scope.itemIDs.contains($0.id) }
         } ?? items
+        #if DEBUG
+        step("scope")
+        #endif
         // One call for all three results, so each photo is tested once.
         let passes = LibraryFilterEngine.regroupPasses(
             scopedItems: scopedItems,
@@ -713,13 +732,28 @@ struct LibraryView: View {
             editingItemID: state.focusedMemoryItemID,
             personIDsByMediaID: personIndex
         )
+        #if DEBUG
+        step("filter passes")
+        #endif
         let filtered = passes.filtered
         let visible = passes.visible
         cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
+        #if DEBUG
+        step("item by id")
+        #endif
         // A burst is one cell showing its cover, and counts as one photo.
         let stackIndex = stacks.update(items: all, decisions: stackRecords)
+        #if DEBUG
+        step("stacks update")
+        #endif
         let unfolded = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
+        #if DEBUG
+        step("sections")
+        #endif
         let folded = LibraryFilterEngine.folding(unfolded, with: stackIndex)
+        #if DEBUG
+        step("folding")
+        #endif
         cachedSections = folded.sections
         cachedUnfoldedSectionItems = Dictionary(unfolded.map { ($0.id, $0.itemIDs) }, uniquingKeysWith: { first, _ in first })
         cachedStackCounts = folded.stackCounts
@@ -727,6 +761,9 @@ struct LibraryView: View {
         state.gridSections = cachedSections.map(\.itemIDs)
         state.viewerItemIDs = unfolded.flatMap(\.itemIDs)
         hasGrouped = true
+        #if DEBUG
+        step("publish sections")
+        #endif
         // The chips build from `store.items` too, so both callers hand the
         // cache the same photos in the same order: the trip name taken for a
         // trip whose photos disagree can otherwise depend on the order.
@@ -735,6 +772,9 @@ struct LibraryView: View {
             key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips),
             sourceKey: LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
         )
+        #if DEBUG
+        step("filter options")
+        #endif
         // Day memories are matched per section; reading every photo's day in
         // the section's body repeated that pass on each render.
         var sectionDayKeys: [String: Set<String>] = [:]
@@ -748,6 +788,9 @@ struct LibraryView: View {
             sectionDayKeys[section.id] = keys
         }
         cachedSectionItems = sectionItemsByID
+        #if DEBUG
+        step("section items + day keys")
+        #endif
         // Matched here, with the sections and their day keys, so both caches
         // land in this one update instead of the section list being built
         // again after an onChange sees the new day keys.
@@ -756,10 +799,16 @@ struct LibraryView: View {
             dayKeysBySection: sectionDayKeys,
             memories: collectionMemories
         )
+        #if DEBUG
+        step("memories match")
+        #endif
         if sectionDayKeys != cachedSectionDayKeys {
             cachedSectionDayKeys = sectionDayKeys
         }
         applySectionMemories(memories)
+        #if DEBUG
+        step("apply memories")
+        #endif
         let publishedVisible = passes.publishedIDs
         if selection.visibleItemIDs != publishedVisible { selection.visibleItemIDs = publishedVisible }
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
@@ -768,6 +817,9 @@ struct LibraryView: View {
            !selection.shouldRevealSelectionInLibrary {
             selection.focusedItemID = selection.selectedItemIDs.first
         }
+        #if DEBUG
+        step("selection")
+        #endif
     }
 
     /// Writes newly matched section memories, but only when the ids a section

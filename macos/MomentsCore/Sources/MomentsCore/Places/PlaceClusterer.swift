@@ -148,7 +148,10 @@ public struct PlaceClusterer: Sendable {
     private func boundedClusters(_ stops: [PhotoStop], level: PlaceLevel) -> [[PhotoStop]] {
         guard !stops.isEmpty else { return [] }
         let radius = radiusMeters(for: level)
-        let radiusDegrees = radius / 6_371_000 * 180 / .pi + 1e-9
+        // The cheap latitude check below needs a little slack: near opposite
+        // points the haversine distance can come out a few centimetres short.
+        let radiusDegrees = radius / 6_371_000 * 180 / .pi + 1e-6
+        let checksLatitude = radiusDegrees < 90
         var clusters: [RunningPlaceCluster] = []
         clusters.reserveCapacity(stops.count)
         // Indices of clusters that can still take a photo, in creation order.
@@ -170,9 +173,16 @@ public struct PlaceClusterer: Sendable {
             var nearestDistance = Double.greatestFiniteMagnitude
             for index in openIndices {
                 let cluster = clusters[index]
+                if level == .spot {
+                    // Also covers dates that are not finite, as before.
+                    let gap = abs(stop.date.timeIntervalSince(cluster.lastDate))
+                    guard gap <= maximumTimeGap else { continue }
+                }
                 // Latitude difference alone is a lower bound of great-circle
                 // distance, so this cheap check never rejects a real match.
-                guard abs(coordinate.latitude - cluster.center.latitude) <= radiusDegrees else { continue }
+                if checksLatitude {
+                    guard abs(coordinate.latitude - cluster.center.latitude) <= radiusDegrees else { continue }
+                }
 
                 let distance = coordinate.distance(to: cluster.center)
                 guard distance <= radius else { continue }

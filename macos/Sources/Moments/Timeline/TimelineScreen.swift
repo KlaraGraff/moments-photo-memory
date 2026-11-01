@@ -24,10 +24,11 @@ struct TimelineScreen: View {
     @State private var tripsByItemID: [String: TripLink] = [:]
     @State private var viewerOrder: [String] = []
     @State private var isBuilt = false
-    /// Builds started, and the newest one shown, so a late older build never
-    /// replaces a newer result.
-    @State private var buildsStarted = 0
-    @State private var newestAssignedBuild = 0
+    /// Moves each time `inputKey` changes.
+    @State private var wantedBuild = 0
+    /// The `wantedBuild` the shown result was built for.
+    @State private var shownBuild = -1
+    @State private var isBuilding = false
 
     private var visibleItems: [MediaItem] {
         items.filter { selection.isVisible($0.id) }
@@ -94,21 +95,9 @@ struct TimelineScreen: View {
             PageProbe.shellReady(token: PageProbe.phaseToken)
         }
         #endif
-        .task(id: inputKey) {
-            #if DEBUG
-            let probeToken = PageProbe.phaseToken
-            let assigned = await rebuild()
-            // A finished build is shown even when a newer input arrived
-            // meanwhile; the newer task replaces it when it finishes.
-            if assigned {
-                PageProbe.contentReady(token: probeToken)
-            }
-            if Task.isCancelled {
-                PageProbe.cancellationObserved(token: probeToken)
-            }
-            #else
-            _ = await rebuild()
-            #endif
+        .onChange(of: inputKey, initial: true) { _, _ in
+            wantedBuild &+= 1
+            startBuildingIfIdle()
         }
         .compactLibraryFilters()
     }
@@ -147,13 +136,33 @@ struct TimelineScreen: View {
         .background(Paper.canvas)
     }
 
-    /// Builds the page off the main thread and assigns it. Returns whether a
-    /// result was assigned: a finished build is kept even when a newer input
-    /// cancelled the task, since the next task replaces it when it finishes;
-    /// an older build that finishes after a newer one was shown is dropped.
-    private func rebuild() async -> Bool {
-        buildsStarted += 1
-        let build: Int = buildsStarted
+    /// Starts a build when none runs. At most one build runs on this page:
+    /// inputs that change meanwhile only move `wantedBuild`, so when the build
+    /// ends its result is shown, and then exactly one more build starts for
+    /// the newest inputs. A newer input therefore never abandons a running
+    /// build, and dozens of superseded builds never run at once.
+    private func startBuildingIfIdle() {
+        guard !isBuilding else { return }
+        isBuilding = true
+        Task { @MainActor in
+            while shownBuild != wantedBuild {
+                #if DEBUG
+                let probeToken = PageProbe.phaseToken
+                #endif
+                let target: Int = wantedBuild
+                await rebuild()
+                shownBuild = target
+                #if DEBUG
+                PageProbe.contentReady(token: probeToken)
+                #endif
+            }
+            isBuilding = false
+        }
+    }
+
+    /// Builds the page off the main thread and assigns it. Only one build runs
+    /// at a time, so no older result can arrive late and overwrite a newer one.
+    private func rebuild() async {
         // Everything read from SwiftData stays on the main actor; the build
         // below sees plain values only.
         let placeIndex = NearestPlaceIndex(places: places)
@@ -190,15 +199,12 @@ struct TimelineScreen: View {
             }
             return TimelineBuildResult(months: months, viewerOrder: viewerOrder)
         }.value
-        guard build > newestAssignedBuild else { return false }
-        newestAssignedBuild = build
         months = built.months
         viewerOrder = built.viewerOrder
         stacks.update(items: libraryItems, decisions: stackDecisions)
         itemByID = libraryItemByID
         tripsByItemID = tripLinksByItemID
         isBuilt = true
-        return true
     }
 
     /// The pages' grouped memories: every `Memory` once, under the photo its

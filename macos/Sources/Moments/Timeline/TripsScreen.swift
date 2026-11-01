@@ -43,10 +43,11 @@ struct TripsScreen: View {
     @State private var isCreatingTrip = false
     /// Chapters that are not trips, built like trips, by "chapter.<id>".
     @State private var chapterDocs: [String: TimelineTrip] = [:]
-    /// Builds started, and the newest one shown, so a late older build never
-    /// replaces a newer result.
-    @State private var buildsStarted = 0
-    @State private var newestAssignedBuild = 0
+    /// Moves each time `inputKey` changes.
+    @State private var wantedBuild = 0
+    /// The `wantedBuild` the shown result was built for.
+    @State private var shownBuild = -1
+    @State private var isBuilding = false
     /// The kind shown, or every kind when empty.
     @State private var filterRaw = ""
 
@@ -247,32 +248,40 @@ struct TripsScreen: View {
                 onCreate: createChapter
             )
         }
-        .task(id: inputKey) {
-            #if DEBUG
-            let probeToken = PageProbe.phaseToken
-            let assigned = await rebuild()
-            // A finished build is shown even when a newer input arrived
-            // meanwhile; the newer task replaces it when it finishes.
-            if assigned {
+        .onChange(of: inputKey, initial: true) { _, _ in
+            wantedBuild &+= 1
+            startBuildingIfIdle()
+        }
+    }
+
+    /// Starts a build when none runs. At most one build runs on this page:
+    /// inputs that change meanwhile only move `wantedBuild`, so when the build
+    /// ends its result is shown, and then exactly one more build starts for
+    /// the newest inputs. A newer input therefore never abandons a running
+    /// build, and dozens of superseded builds never run at once.
+    private func startBuildingIfIdle() {
+        guard !isBuilding else { return }
+        isBuilding = true
+        Task { @MainActor in
+            while shownBuild != wantedBuild {
+                #if DEBUG
+                let probeToken = PageProbe.phaseToken
+                #endif
+                let target: Int = wantedBuild
+                await rebuild()
+                shownBuild = target
+                #if DEBUG
                 PageProbe.contentReady(token: probeToken)
+                #endif
             }
-            if Task.isCancelled {
-                PageProbe.cancellationObserved(token: probeToken)
-            }
-            #else
-            _ = await rebuild()
-            #endif
+            isBuilding = false
         }
     }
 
     /// Reads everything SwiftData in one pass on the main actor, then builds
-    /// the shelf and every chapter off the main thread. Returns whether a
-    /// result was assigned: a finished build is kept even when a newer
-    /// `inputKey` cancelled the task, and the newer task replaces it; an older
-    /// build that finishes after a newer one was shown is dropped.
-    private func rebuild() async -> Bool {
-        buildsStarted += 1
-        let build: Int = buildsStarted
+    /// the shelf and every chapter off the main thread. Only one build runs at
+    /// a time, so no older result can arrive late and overwrite a newer one.
+    private func rebuild() async {
         let placeIndex = NearestPlaceIndex(places: places)
         let memoriesByPhotoID = TimelineScreen.memoriesByPhotoID(memoryRecords)
         let sourceItems = items.map { item in
@@ -300,13 +309,9 @@ struct TripsScreen: View {
             let chapterDocs = Self.buildChapters(sources: chapterSources, snapshots: byID, calendar: calendar)
             return ChaptersBuildResult(document: document, chapterDocs: chapterDocs)
         }.value
-        guard build > newestAssignedBuild else { return false }
-        newestAssignedBuild = build
-
         document = built.document
         chapterDocs = built.chapterDocs
         itemByID = libraryItemByID
-        return true
     }
 
     /// The chapters that are not trips, as plain values: their ids, names,

@@ -83,9 +83,7 @@ final class NearestPlaceIndexPlacesTests: XCTestCase {
         var random = SeededRandom(seed: 20_260_101)
         var places: [Place] = []
 
-        let centres: [(latitude: Double, longitude: Double)] = (0..<10).map { index in
-            (latitude: Double(index % 5) * 1.2 - 2.4, longitude: Double(index % 3) * 1.5 - 1.5)
-        }
+        let centres = syntheticCentres()
 
         var cities: [Place] = []
         for (index, centre) in centres.enumerated() {
@@ -147,9 +145,7 @@ final class NearestPlaceIndexPlacesTests: XCTestCase {
     /// without a coordinate.
     private func makeItems() -> [MediaItem] {
         var random = SeededRandom(seed: 500 + 300)
-        let centres: [(latitude: Double, longitude: Double)] = (0..<10).map { index in
-            (latitude: Double(index % 5) * 1.2 - 2.4, longitude: Double(index % 3) * 1.5 - 1.5)
-        }
+        let centres = syntheticCentres()
 
         return (0..<500).map { index in
             switch index % 20 {
@@ -174,6 +170,18 @@ final class NearestPlaceIndexPlacesTests: XCTestCase {
                 )
             }
         }
+    }
+
+    /// Ten made-up city centres, shared by the places and the photos. Typed
+    /// step by step: the CI compiler cannot type-check the one-line form in time.
+    private func syntheticCentres() -> [(latitude: Double, longitude: Double)] {
+        var centres: [(latitude: Double, longitude: Double)] = []
+        for index in 0..<10 {
+            let latitude: Double = Double(index % 5) * 1.2 - 2.4
+            let longitude: Double = Double(index % 3) * 1.5 - 1.5
+            centres.append((latitude: latitude, longitude: longitude))
+        }
+        return centres
     }
 
     // MARK: Brute force

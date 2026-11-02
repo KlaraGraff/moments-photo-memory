@@ -15,6 +15,9 @@ settings:
     CODE_SIGNING_ALLOWED: "NO"
     CODE_SIGNING_REQUIRED: "NO"
     CODE_SIGN_IDENTITY: ""
+    # Apple silicon only: the owner does not ship an Intel build.
+    ARCHS: arm64
+    EXCLUDED_ARCHS: x86_64
 
 packages:
   MomentsCore:

@@ -41,6 +41,12 @@ jobs:
         run: xcodebuild -project macos/Moments.xcodeproj -scheme Moments -destination 'platform=macOS' -derivedDataPath macos/.derivedData CODE_SIGNING_ALLOWED=NO build test
       - name: Check the app does not call Date >= or <=
         run: bash scripts/check_date_symbols.sh macos/.derivedData/Build/Products/Debug/Moments.app
+      - name: Build Release app
+        run: xcodebuild -project macos/Moments.xcodeproj -scheme Moments -configuration Release -destination 'generic/platform=macOS' -derivedDataPath macos/.derivedData CODE_SIGNING_ALLOWED=NO build
+      - name: Check the Release app is Apple silicon only
+        run: |
+          lipo -info macos/.derivedData/Build/Products/Release/Moments.app/Contents/MacOS/Moments
+          bash scripts/check_app_archs.sh macos/.derivedData/Build/Products/Release/Moments.app
       - name: Compile native UI smoke tests
         run: xcodebuild -project macos/Moments.xcodeproj -scheme MomentsUITests -destination 'platform=macOS' -derivedDataPath macos/.derivedData CODE_SIGNING_ALLOWED=NO build-for-testing
       - name: Test MomentsCore package on macOS

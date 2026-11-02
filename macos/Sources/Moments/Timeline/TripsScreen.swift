@@ -437,6 +437,79 @@ struct TripsScreen: View {
         )
     }
 
+    /// The same inputs as `buildInputs`, made for an app-level pre-build: the
+    /// snapshots are taken in slices with a yield between them, so a 20 000
+    /// photo library never means one long main-actor pass. A photo is only
+    /// touched while the photos and places it was read for still stand;
+    /// anything moving under the read returns nil.
+    @MainActor
+    static func buildInputsSliced(
+        key: Int,
+        store: LibraryStore,
+        trips: [Trip],
+        chapterGroups: [UserGroup],
+        groupItems: [UserGroupItem],
+        memories: [Memory],
+        calendar: Calendar
+    ) async -> ChaptersBuildInputs? {
+        // Taken before anything is read: this describes the library the
+        // snapshots below belong to.
+        let revisionAtStart: Int = store.photoPlaceRevision
+        let placeIndex = NearestPlaceIndex(places: store.places)
+        let memoriesByPhotoID = TimelineScreen.memoriesByPhotoID(memories)
+        let items: [MediaItem] = store.items
+        var sourceItems: [TimelineItemSnapshot] = []
+        sourceItems.reserveCapacity(items.count)
+        var start = 0
+        while start < items.count {
+            guard PagePrebuildSliceRule.readIsCurrent(
+                startedAtPhotoPlaceRevision: revisionAtStart,
+                photoPlaceRevision: store.photoPlaceRevision,
+                startedAtVisibleGeneration: nil,
+                visibleGeneration: nil,
+                isCancelled: Task.isCancelled
+            ) else { return nil }
+            let end = min(items.count, start + PagePrebuildSliceRule.sliceSize)
+            for index in start..<end {
+                let item: MediaItem = items[index]
+                sourceItems.append(
+                    TimelineItemSnapshot(
+                        item: item,
+                        placeHint: nil,
+                        memories: memoriesByPhotoID[item.persistentModelID] ?? []
+                    )
+                )
+            }
+            start = end
+            await Task.yield()
+            guard PagePrebuildSliceRule.readIsCurrent(
+                startedAtPhotoPlaceRevision: revisionAtStart,
+                photoPlaceRevision: store.photoPlaceRevision,
+                startedAtVisibleGeneration: nil,
+                visibleGeneration: nil,
+                isCancelled: Task.isCancelled
+            ) else { return nil }
+        }
+        let sourceTrips: [TimelineSourceTrip] = trips.map { (trip: Trip) -> TimelineSourceTrip in
+            TimelineSourceTrip(
+                id: trip.id,
+                name: trip.effectiveName,
+                itemIDs: trip.items.map(\.id),
+                startDate: trip.startDate,
+                endDate: trip.endDate
+            )
+        }
+        let chapterSources: [ChapterSource] = Self.chapterSources(groups: chapterGroups, members: groupItems)
+        return ChaptersBuildInputs(
+            key: key,
+            sourceItems: sourceItems,
+            sourceTrips: sourceTrips,
+            chapterSources: chapterSources,
+            placeIndex: placeIndex,
+            calendar: calendar
+        )
+    }
+
     /// The one Chapters build: place hints, then the shelf's document and
     /// every chapter. This is the body `rebuild()` ran in its detached task,
     /// unchanged, so an app-level pre-builder can run the same build.
@@ -491,7 +564,13 @@ struct TripsScreen: View {
             memories: memoryRecords,
             calendar: Calendar.autoupdatingCurrent
         )
-        let built = await Self.build(inputs)
+        let built: ChaptersBuildResult
+        if let joined = await PagePrebuilder.shared.joinChapters(key: cacheKey) {
+            built = joined
+        } else {
+            PagePrebuilder.shared.cancel()
+            built = await Self.build(inputs)
+        }
         document = built.document
         chapterDocs = built.chapterDocs
         itemByID = libraryItemByID

@@ -61,7 +61,7 @@ struct FolderImporter {
         geocoder: any ImportGeocoder = CoreLocationImportGeocoder(),
         geocodeCache: ImportGeocodeCache? = nil,
         geocodeDelay: @escaping @Sendable () async -> Void = {
-            try? await Task.sleep(nanoseconds: 100_000_000)
+            await ImportGeocodePacer.shared.wait()
         }
     ) {
         self.configuration = configuration

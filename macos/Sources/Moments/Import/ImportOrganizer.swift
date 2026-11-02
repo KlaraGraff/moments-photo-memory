@@ -109,6 +109,55 @@ extension ImportGeocodeGate {
     }
 }
 
+/// Spaces reverse-geocoding lookups under CLGeocoder's rate limit.
+/// CLGeocoder allows about 50 calls a minute and then throws throttling errors,
+/// which would trip the gate's three-failure stop and leave most places
+/// unnamed. Keeping an import with hundreds of distinct places under the limit
+/// names every place on the first import (the owner's rule), while the first 45
+/// lookups still go at the old 0.1 s pace. Shared, so every import in one app
+/// run draws on the same budget; `PlaceNameBackfill` keeps its own 1 s interval
+/// (not changed here), so the two do not add up to more than the limit.
+actor ImportGeocodePacer {
+    static let shared = ImportGeocodePacer()
+
+    private let limit: Int
+    private let window: Duration
+    private let spacing: Duration
+    private let clock = ContinuousClock()
+    /// Start times of the lookups inside the current window, oldest first.
+    private var calls: [ContinuousClock.Instant] = []
+
+    init(limit: Int = 45, window: Duration = .seconds(60), spacing: Duration = .milliseconds(100)) {
+        self.limit = limit
+        self.window = window
+        self.spacing = spacing
+    }
+
+    /// Returns once the caller may start one lookup. A cancelled wait returns
+    /// without recording a call, so a cancel never spins on the sleep.
+    func wait() async {
+        guard await sleep(spacing) else { return }
+        while true {
+            let now = clock.now
+            calls.removeAll { instant in instant.duration(to: now) >= window }
+            guard calls.count >= limit, let oldest = calls.first else { break }
+            let remaining = now.duration(to: oldest + window)
+            guard remaining > .zero else { break }
+            guard await sleep(remaining) else { return }
+        }
+        calls.append(clock.now)
+    }
+
+    private func sleep(_ duration: Duration) async -> Bool {
+        do {
+            try await clock.sleep(for: duration)
+            return true
+        } catch {
+            return false
+        }
+    }
+}
+
 /// Resumes a continuation exactly once, whichever side finishes first, and
 /// keeps an early result until the continuation is attached.
 final class ResumeOnce<Value: Sendable>: @unchecked Sendable {
@@ -210,7 +259,7 @@ struct ImportOrganizer {
         geocoder: any ImportGeocoder,
         geocodeCache: ImportGeocodeCache,
         geocodeDelay: @escaping @Sendable () async -> Void = {
-            try? await Task.sleep(nanoseconds: 100_000_000)
+            await ImportGeocodePacer.shared.wait()
         },
         geocodeGate: ImportGeocodeGate = ImportGeocodeGate(),
         geocodeProgress: @escaping @Sendable (Int, Int) -> Void = { _, _ in }

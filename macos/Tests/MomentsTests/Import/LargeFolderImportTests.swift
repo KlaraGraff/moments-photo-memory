@@ -235,6 +235,18 @@ final class LargeFolderImportTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 1.5)
     }
 
+    func testPacerKeepsCallsUnderTheLimit() async throws {
+        let pacer = ImportGeocodePacer(limit: 3, window: .milliseconds(300), spacing: .zero)
+        let clock = ContinuousClock()
+        let started = clock.now
+        for _ in 0..<7 {
+            await pacer.wait()
+        }
+        let elapsed: Duration = started.duration(to: clock.now)
+        XCTAssertGreaterThanOrEqual(elapsed, .milliseconds(550), "Seven calls at three per 300 ms need two window waits")
+        XCTAssertLessThan(elapsed, .seconds(3))
+    }
+
     func testNearestTimeZoneMatchesLinearSearch() {
         let base = Date(timeIntervalSince1970: 0)
         let sorted: [(date: Date, identifier: String)] = [

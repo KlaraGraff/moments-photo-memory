@@ -50,6 +50,10 @@ struct TripsScreen: View {
     @State private var isBuilding = false
     /// The kind shown, or every kind when empty.
     @State private var filterRaw = ""
+    /// The last finished build, kept across visits to the page: SwiftUI drops
+    /// the page's `@State` when it is left, but the built values stay valid
+    /// as long as the inputs key below is unchanged.
+    @MainActor private static var lastBuild: (key: Int, document: TimelineDocument, chapterDocs: [String: TimelineTrip])?
 
     private var inputKey: Int {
         var hasher = Hasher()
@@ -77,6 +81,17 @@ struct TripsScreen: View {
             hasher.combine(membership.id)
             hasher.combine(membership.excluded)
         }
+        return hasher.finalize()
+    }
+
+    /// The key the last finished build is stored under: the same `inputKey`
+    /// that decides whether the open page rebuilds, plus the calendar the
+    /// build groups by, so a different calendar never shows the old result.
+    private var buildCacheKey: Int {
+        var hasher = Hasher()
+        hasher.combine(inputKey)
+        hasher.combine(Calendar.autoupdatingCurrent.identifier)
+        hasher.combine(Calendar.autoupdatingCurrent.timeZone.identifier)
         return hasher.finalize()
     }
 
@@ -282,6 +297,20 @@ struct TripsScreen: View {
     /// the shelf and every chapter off the main thread. Only one build runs at
     /// a time, so no older result can arrive late and overwrite a newer one.
     private func rebuild() async {
+        // Taken before anything is read: these are the inputs this build uses,
+        // and a change during the build must not be stored under a newer key.
+        let cacheKey = buildCacheKey
+        if let cached = Self.lastBuild, cached.key == cacheKey {
+            // Nothing changed since the last finished build: show it at once,
+            // without the snapshots, place hints or builder.
+            document = cached.document
+            chapterDocs = cached.chapterDocs
+            itemByID = store.itemsByID
+            #if DEBUG
+            PageProbe.tally("chapters last build reused", seconds: 0)
+            #endif
+            return
+        }
         let placeIndex = NearestPlaceIndex(places: places)
         let memoriesByPhotoID = TimelineScreen.memoriesByPhotoID(memoryRecords)
         let sourceItems = items.map { item in
@@ -312,6 +341,7 @@ struct TripsScreen: View {
         document = built.document
         chapterDocs = built.chapterDocs
         itemByID = libraryItemByID
+        Self.lastBuild = (key: cacheKey, document: built.document, chapterDocs: built.chapterDocs)
     }
 
     /// The chapters that are not trips, as plain values: their ids, names,

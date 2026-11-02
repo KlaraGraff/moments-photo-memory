@@ -39,7 +39,7 @@ for i, (mid, emb, qual, conf, src) in enumerate(rows):
     X.append(v); q.append(qual or 0.0); media.append(mids.setdefault(mid, len(mids)))
     d = dates.get(mid)
     if d is None:
-        tm.append(-1e6 - i); ev.append(-1 - i)          # no date: never shares an outing or a year
+        tm.append(-1e9 * (i + 1)); ev.append(-1 - i)    # no date: never shares an outing or a year bucket
     else:
         day = d / 86400.0                                # Core Data seconds since 2001 -> days
         tm.append(day); ev.append(int(np.floor(day)))     # outing = calendar day (UTC)

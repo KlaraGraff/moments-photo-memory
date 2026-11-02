@@ -4,7 +4,9 @@ import SwiftData
 
 /// Regroups a library imported before trips meant time away from the usual
 /// places (`TripSegmenter`): imports then put every photo in a trip, so daily
-/// life became hundreds of small chapters. Runs once per Mac.
+/// life became hundreds of small chapters. Runs once per rules version
+/// (`TripSegmenter.rulesVersion`), not once per Mac, so a later rule change
+/// reaches a library grouped by older rules.
 ///
 /// Only photos still in a trip the import suggested and nobody touched are
 /// grouped again. A trip that was renamed, confirmed, edited, merged, split,
@@ -16,7 +18,7 @@ import SwiftData
 /// never races an import or an edit.
 enum TripRegrouping {
     static let versionKey = "moments.trip.groupingVersion"
-    static let currentVersion = 2
+    static let currentVersion = TripSegmenter.rulesVersion
 
     struct Outcome: Equatable {
         var trips = 0
@@ -24,7 +26,7 @@ enum TripRegrouping {
         var leftTrips = 0
     }
 
-    /// Regroups once; later calls do nothing.
+    /// Regroups once per rules version; later calls with the same version do nothing.
     @MainActor
     @discardableResult
     static func runOnce(context: ModelContext, defaults: UserDefaults = TripAssignmentLocks.store) throws -> Outcome? {
@@ -64,7 +66,13 @@ enum TripRegrouping {
             guard let tripID = item.trip?.id ?? item.tripID else { return false }
             return !kept.contains(tripID) && tripIDs.contains(tripID)
         }
-        guard !free.isEmpty else { return Outcome() }
+        guard !free.isEmpty else {
+            // Nothing moves, but a trip left without photos still goes away.
+            var outcome = Outcome()
+            outcome.removed = removeTripsWithoutPhotos(trips, remembered: remembered, covered: covered, locked: locked, context: context)
+            try context.save()
+            return outcome
+        }
         let freeIDs = Set(free.map(\.id))
 
         var segmenter = TripSegmenter()
@@ -119,7 +127,9 @@ enum TripRegrouping {
         }
         // Saved before the deletes, so they cannot take photos along.
         try context.save()
+        var replaced = Set<String>()
         for trip in replaceable.values where !reused.contains(trip.id) {
+            replaced.insert(trip.id)
             // What is left is in Recently Deleted or dated by file only.
             let left = trip.items
             if left.allSatisfy({ $0.deletedAt != nil }) {
@@ -135,8 +145,51 @@ enum TripRegrouping {
                 trip.endDate = dates.max()
             }
         }
+        // A trip nothing is left in goes, whatever its status says.
+        let remaining = trips.filter { !replaced.contains($0.id) && !reused.contains($0.id) }
+        outcome.removed += removeTripsWithoutPhotos(remaining, remembered: remembered, covered: covered, locked: locked, context: context)
         try context.save()
         return outcome
+    }
+
+    /// Deletes a trip only when no person touched it and it has no photo left
+    /// outside Recently Deleted. Only trips with no hand edits are removed:
+    /// status `nil`, `""` or `"suggestion"`, `updatedBy == nil`,
+    /// `confirmedAt == nil`, no `overrideName`, no trip memory, no cover and no
+    /// locked photo. A trip a person made or confirmed stays even when it is
+    /// empty, and its Recently Deleted photos keep pointing at it, so Recover
+    /// puts them back in their trips. The sweep only clears leftovers no person
+    /// touched: empty suggestions and trips left by an old import. When such a
+    /// leftover goes, its Recently Deleted photos lose the trip first.
+    private static func removeTripsWithoutPhotos(
+        _ trips: [Trip],
+        remembered: Set<String>,
+        covered: Set<String>,
+        locked: Set<String>,
+        context: ModelContext
+    ) -> Int {
+        var removed = 0
+        for trip in trips where !trip.isDeleted {
+            let status: String? = trip.suggestionStatusRaw
+            let untouchedStatus: Bool = status == nil || status == "" || status == "suggestion"
+            let hasLockedPhoto: Bool = trip.items.contains { (item: MediaItem) -> Bool in locked.contains(item.id) }
+            let onlyDeletedPhotos: Bool = trip.items.allSatisfy { (item: MediaItem) -> Bool in item.deletedAt != nil }
+            guard untouchedStatus,
+                  trip.updatedBy == nil,
+                  trip.confirmedAt == nil,
+                  trip.overrideName == nil,
+                  !remembered.contains(trip.id),
+                  !covered.contains(trip.id),
+                  !hasLockedPhoto,
+                  onlyDeletedPhotos else { continue }
+            for item in trip.items {
+                item.trip = nil
+                item.tripID = nil
+            }
+            context.delete(trip)
+            removed += 1
+        }
+        return removed
     }
 
     /// Place and month for up to three named cities. A longer trip, or one

@@ -51,6 +51,12 @@ public struct TripSegmenter: Sendable {
     /// A place the person set; it replaces the detected ones everywhere.
     public var fixedUsualPlace: GeoPoint?
 
+    /// Raise this whenever a change moves photos between trips and daily life,
+    /// so libraries grouped by older rules are grouped again (`TripRegrouping`).
+    /// 2: trips are time away from usual places (#99). 3: a trip stays together
+    /// across quiet days far from home (#111).
+    public static let rulesVersion = 3
+
     public init() {}
 
     /// `stops` are the photos to place. `context` adds photos already in the

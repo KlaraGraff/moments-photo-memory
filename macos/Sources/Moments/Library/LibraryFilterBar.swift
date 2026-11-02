@@ -369,6 +369,9 @@ struct LibraryFilterPublisher: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(LibraryStore.self) private var store
 
+    /// The view is dropped when the page is left, so keep the last result across visits.
+    @MainActor private static var lastPublished: (key: Int, visible: Set<String>)?
+
     private var items: [MediaItem] { store.items }
     private var faceObservations: [FaceObservation] { store.faces }
 
@@ -426,9 +429,24 @@ struct LibraryFilterPublisher: View {
         Color.clear
             .accessibilityHidden(true)
             .task(id: key) {
+                // Taken before anything is read: these are the inputs this run
+                // uses, and a change during the work must not be stored under
+                // a newer key.
+                let taskKey: Int = key
+                if let cached = Self.lastPublished, cached.key == taskKey {
+                    if selection.visibleItemIDs != cached.visible { selection.visibleItemIDs = cached.visible }
+                    #if DEBUG
+                    PageProbe.tally("filter publisher reused last result")
+                    #endif
+                    return
+                }
                 let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
                 let visible = Set(LibraryFilterEngine.publishedItems(items, by: criteria, personIDsByMediaID: personIndex).map(\.id))
                 if selection.visibleItemIDs != visible { selection.visibleItemIDs = visible }
+                Self.lastPublished = (taskKey, visible)
+                #if DEBUG
+                PageProbe.tally("filter publisher filtered")
+                #endif
             }
     }
 }

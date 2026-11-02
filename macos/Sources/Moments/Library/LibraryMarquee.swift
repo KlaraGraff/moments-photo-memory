@@ -171,6 +171,18 @@ final class LibraryMarquee {
         let eventFlags: NSEvent.ModifierFlags? = isMouse ? event?.modifierFlags : nil
         let flags: NSEvent.ModifierFlags = eventFlags ?? NSEvent.modifierFlags
         let mode: Mode = flags.contains(.command) ? .toggle : flags.contains(.shift) ? .add : .replace
+        #if DEBUG
+        // Says whether this press reached `begin`, which flags its event
+        // carried and which mode it chose; a press no line mentions never
+        // got here at all.
+        let eventType: String = event.map { String(describing: $0.type) } ?? "none"
+        MarqueeProbe.pressBegan(
+            eventType: eventType,
+            eventFlags: MarqueeProbe.modifierNames(eventFlags),
+            keyboardFlags: MarqueeProbe.modifierNames(NSEvent.modifierFlags),
+            mode: String(describing: mode)
+        )
+        #endif
         let windowPoint = isMouse ? event?.locationInWindow : anchorView?.window?.mouseLocationOutsideOfEventStream
         scrollView = windowPoint.flatMap { findScrollView(at: $0) }
         var offset: CGVector?
@@ -521,6 +533,9 @@ enum MarqueeProbe {
     private static var intervals: [CFTimeInterval] = []
     private static var selectionChanges = 0
     private static var reports = 0
+    /// One line per press that reached `begin`, so a drag that never ends
+    /// still says what the press saw and which mode it chose.
+    private static var pressLines: [String] = []
     /// Where the last autoscroll step left the view, and how often the view
     /// was somewhere else by the next frame (something scrolled it back).
     private static var autoscrolledTo: CGFloat?
@@ -559,6 +574,30 @@ enum MarqueeProbe {
         selectionChanges += 1
     }
 
+    /// The modifier keys held, as short names; "none" when there is no mouse
+    /// event at all.
+    static func modifierNames(_ flags: NSEvent.ModifierFlags?) -> String {
+        guard let flags else { return "none" }
+        var names: [String] = []
+        if flags.contains(.command) { names.append("command") }
+        if flags.contains(.shift) { names.append("shift") }
+        if flags.contains(.option) { names.append("option") }
+        if flags.contains(.control) { names.append("control") }
+        return "[" + names.joined(separator: "+") + "]"
+    }
+
+    /// Records how one press of the marquee decided its mode. The lines so
+    /// far are rewritten at once, so a press whose drag never reaches
+    /// `finish` still leaves a trace in `marquee-presses.txt`.
+    static func pressBegan(eventType: String, eventFlags: String, keyboardFlags: String, mode: String) {
+        guard let folder else { return }
+        let number = pressLines.count + 1
+        let line = "press \(number): event \(eventType), event flags \(eventFlags), keyboard flags \(keyboardFlags), mode \(mode)"
+        pressLines.append(line)
+        let text = pressLines.joined(separator: "\n") + "\n"
+        try? text.write(to: folder.appending(path: "marquee-presses.txt"), atomically: true, encoding: .utf8)
+    }
+
     static func dragEnded(selected: Int, scrolledTo offset: CGFloat, uncounted: [String]) {
         guard let folder else { return }
         reports += 1
@@ -579,6 +618,10 @@ enum MarqueeProbe {
         text += String(format: "  selected %d photos, %d selection changes, scrolled to %.0f pt\n", selected, selectionChanges, offset)
         text += String(format: "  scrolled back by something else: %d times, worst %.0f pt\n", snapBacks, worstSnapBack)
         text += "  inside the rectangle but not counted: \(uncounted.count)\(uncounted.isEmpty ? "" : " " + uncounted.joined(separator: ", "))\n"
+        for line in pressLines {
+            text += "\(line)\n"
+        }
+        pressLines = []
         text += MainThreadSampler.stopAndReport()
         try? text.write(to: folder.appending(path: "marquee-report-\(reports).txt"), atomically: true, encoding: .utf8)
     }

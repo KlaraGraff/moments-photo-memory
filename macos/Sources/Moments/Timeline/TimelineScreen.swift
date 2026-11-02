@@ -219,8 +219,9 @@ struct TimelineScreen: View {
             timings["queue wait"] = startedAt - queuedAt
             #endif
             // The place lookup is per photo and pure, so it runs here too.
-            let hinted = sourceItems.map { snapshot in
-                snapshot.withPlaceHint(Self.placeHint(for: snapshot, index: placeIndex))
+            let hints: [String?] = await Self.placeHints(for: sourceItems, index: placeIndex)
+            let hinted: [TimelineItemSnapshot] = zip(sourceItems, hints).map { (pair: (TimelineItemSnapshot, String?)) -> TimelineItemSnapshot in
+                pair.0.withPlaceHint(pair.1)
             }
             #if DEBUG
             timings["place hints"] = CACurrentMediaTime() - startedAt
@@ -304,6 +305,86 @@ struct TimelineScreen: View {
     ) -> String? {
         guard let latitude = snapshot.latitude, let longitude = snapshot.longitude else { return nil }
         return index.nearestName(to: GeoPoint(latitude: latitude, longitude: longitude), within: 100_000)
+    }
+
+    /// The place hints for a whole page, in the snapshots' order. The lookup is
+    /// pure and depends only on a photo's coordinate, so the photos are split
+    /// into chunks that run at the same time; each chunk remembers the answer
+    /// for a coordinate it already looked up, since many photos share one.
+    nonisolated static func placeHints(
+        for snapshots: [TimelineItemSnapshot],
+        index: NearestPlaceIndex
+    ) async -> [String?] {
+        guard !snapshots.isEmpty else { return [] }
+
+        let photoCount = snapshots.count
+        let chunkCount = min(photoCount, Self.placeHintChunkCount(for: photoCount))
+        let chunkSize = (photoCount + chunkCount - 1) / chunkCount
+        // A chunk index per chunk, so the parts can come back in any order.
+        let bounds: [(index: Int, start: Int, end: Int)] = (0..<chunkCount).map { (chunk: Int) -> (index: Int, start: Int, end: Int) in
+            let start = chunk * chunkSize
+            let end = min(photoCount, start + chunkSize)
+            return (index: chunk, start: start, end: end)
+        }
+
+        let parts: [Int: [String?]] = await withTaskGroup(of: (Int, [String?]).self) { (group: inout TaskGroup<(Int, [String?])>) in
+            for bound in bounds {
+                let slice = Array(snapshots[bound.start..<bound.end])
+                group.addTask {
+                    (bound.index, Self.placeHintsInOneChunk(for: slice, index: index))
+                }
+            }
+            var collected: [Int: [String?]] = [:]
+            for await part in group {
+                collected[part.0] = part.1
+            }
+            return collected
+        }
+
+        var hints: [String?] = []
+        hints.reserveCapacity(photoCount)
+        for bound in bounds {
+            hints.append(contentsOf: parts[bound.index] ?? [])
+        }
+        return hints
+    }
+
+    /// The chunks of about 500 photos the place hints are split into, one per
+    /// core at most.
+    nonisolated private static func placeHintChunkCount(for photoCount: Int) -> Int {
+        let cores = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        let smallestChunk = 500
+        let byCores = (photoCount + smallestChunk - 1) / smallestChunk
+        return max(1, min(cores, byCores))
+    }
+
+    /// One chunk of place hints: every photo in order, with a local memo so a
+    /// coordinate shared by several photos is looked up only once.
+    nonisolated private static func placeHintsInOneChunk(
+        for snapshots: [TimelineItemSnapshot],
+        index: NearestPlaceIndex
+    ) -> [String?] {
+        var memo: [GeoPoint: String?] = [:]
+        var hints: [String?] = []
+        hints.reserveCapacity(snapshots.count)
+        for snapshot in snapshots {
+            // A photo without a coordinate gets no hint, exactly as before.
+            guard let latitude = snapshot.latitude, let longitude = snapshot.longitude else {
+                hints.append(nil)
+                continue
+            }
+            let point = GeoPoint(latitude: latitude, longitude: longitude)
+            // A remembered "no place nearby" counts too: a stored nil is a hit,
+            // only a coordinate missing from the memo is looked up.
+            if let entry = memo.index(forKey: point) {
+                hints.append(memo[entry].value)
+                continue
+            }
+            let hint: String? = Self.placeHint(for: snapshot, index: index)
+            memo[point] = hint
+            hints.append(hint)
+        }
+        return hints
     }
 
     /// The trips a day's photos belong to, in the order they first appear.

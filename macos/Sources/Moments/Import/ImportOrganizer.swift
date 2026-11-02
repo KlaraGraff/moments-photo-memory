@@ -43,13 +43,13 @@ public actor ImportGeocodeCache {
 }
 
 /// Spaces reverse-geocoding during one import. CLGeocoder is rate-limited
-/// (roughly one request a second, then throttling errors), so lookups still run
-/// one at a time, each with `timeout`, spaced by `geocodeDelay()`, and stop
-/// after `maxConsecutiveFailures` failures in a row. There is deliberately no
-/// per-import lookup budget: the owner wants every place named on the first
-/// import, however many distinct places it holds. Pacing and the failure stop
-/// protect CLGeocoder; places left unnamed while offline are named later by
-/// `PlaceNameBackfill`.
+/// (roughly one request a second, then throttling errors), so lookups run one at
+/// a time, each with `timeout`, and stop after `maxConsecutiveFailures`
+/// failures in a row. `geocodeDelay()` decides whether a lookup may happen now;
+/// when it says no, the gate is `deferred` and the rest of the places are named
+/// later by `PlaceNameBackfill`. There is deliberately no per-import lookup
+/// budget: the owner wants every place named on the first import, however many
+/// distinct places it holds.
 actor ImportGeocodeGate {
     enum Purpose { case timeZone, placeName }
 
@@ -60,6 +60,12 @@ actor ImportGeocodeGate {
     /// progress callback shows it as the total. Only ever raised.
     private(set) var planned = 0
     private var consecutiveFailures = 0
+    /// True once the pacer had no room for another lookup. Deliberately not a
+    /// failure: the three-failure stop must not trip, and every later lookup in
+    /// this import returns nil at once instead of waiting for the rate window.
+    /// The progress total also stops growing: those places belong to the
+    /// background backfill, so the import does not promise to name them.
+    private(set) var isDeferred = false
 
     init(maxConsecutiveFailures: Int = 3, timeout: Duration = .seconds(10)) {
         self.maxConsecutiveFailures = maxConsecutiveFailures
@@ -73,13 +79,27 @@ actor ImportGeocodeGate {
         return true
     }
 
+    /// True when this import will make no further lookup: the pacer had no
+    /// room (`isDeferred`) or the failure stop was reached. Later places then
+    /// return nil at once instead of paying the pacer's spacing per place.
+    var isFinishedLookingUp: Bool {
+        isDeferred || consecutiveFailures >= maxConsecutiveFailures
+    }
+
     /// The organizer knows how many lookups a pass holds before it starts.
+    /// Once no further lookup will happen, nothing more is planned: lookups
+    /// left to the background backfill must not inflate the progress total.
     func plan(_ count: Int) {
+        guard !isFinishedLookingUp else { return }
         planned = max(planned, lookups) + max(0, count)
     }
 
     func recordSuccess() { consecutiveFailures = 0 }
     func recordFailure() { consecutiveFailures += 1 }
+
+    /// The pacer is out of room for now; this import leaves the rest to the
+    /// background backfill. Not a failure, so the failure stop stays clear.
+    func markDeferred() { isDeferred = true }
 }
 
 extension ImportGeocodeGate {
@@ -112,11 +132,12 @@ extension ImportGeocodeGate {
 /// Spaces reverse-geocoding lookups under CLGeocoder's rate limit.
 /// CLGeocoder allows about 50 calls a minute and then throws throttling errors,
 /// which would trip the gate's three-failure stop and leave most places
-/// unnamed. Keeping an import with hundreds of distinct places under the limit
-/// names every place on the first import (the owner's rule), while the first 45
-/// lookups still go at the old 0.1 s pace. Shared, so every import in one app
-/// run draws on the same budget; `PlaceNameBackfill` keeps its own 1 s interval
-/// (not changed here), so the two do not add up to more than the limit.
+/// unnamed. Keeping every lookup under the limit is what lets the import and
+/// the background backfill name every place (the owner's rule). `wait()` is for
+/// work that can wait for room; `startIfRoom()` is for the import, which must
+/// finish without waiting: it takes the lookups that fit now and leaves the rest
+/// to `PlaceNameBackfill`. Shared, so import and backfill draw on the same
+/// budget instead of adding up past the limit.
 actor ImportGeocodePacer {
     static let shared = ImportGeocodePacer()
 
@@ -131,6 +152,19 @@ actor ImportGeocodePacer {
         self.limit = limit
         self.window = window
         self.spacing = spacing
+    }
+
+    /// Starts one lookup now if the window has room, without waiting for room.
+    /// Sleeps `spacing` first (false if cancelled), drops calls older than
+    /// `window`, and returns false *without recording* when `limit` calls are
+    /// already inside it. The caller then leaves the place to the backfill.
+    func startIfRoom() async -> Bool {
+        guard await sleep(spacing) else { return false }
+        let now = clock.now
+        calls.removeAll { instant in instant.duration(to: now) >= window }
+        guard calls.count < limit else { return false }
+        calls.append(clock.now)
+        return true
     }
 
     /// Returns once the caller may start one lookup. A cancelled wait returns
@@ -248,7 +282,9 @@ struct ImportOrganizer {
     let configuration: ImportConfiguration
     let geocoder: any ImportGeocoder
     let geocodeCache: ImportGeocodeCache
-    let geocodeDelay: @Sendable () async -> Void
+    /// Decides whether a lookup may happen now: true: look up now; false:
+    /// leave the place to the background backfill.
+    let geocodeDelay: @Sendable () async -> Bool
     let geocodeGate: ImportGeocodeGate
     /// Reports (lookups made, lookups planned) so the UI shows progress while
     /// places are looked up.
@@ -258,8 +294,8 @@ struct ImportOrganizer {
         configuration: ImportConfiguration,
         geocoder: any ImportGeocoder,
         geocodeCache: ImportGeocodeCache,
-        geocodeDelay: @escaping @Sendable () async -> Void = {
-            await ImportGeocodePacer.shared.wait()
+        geocodeDelay: @escaping @Sendable () async -> Bool = {
+            await ImportGeocodePacer.shared.startIfRoom()
         },
         geocodeGate: ImportGeocodeGate = ImportGeocodeGate(),
         geocodeProgress: @escaping @Sendable (Int, Int) -> Void = { _, _ in }
@@ -614,11 +650,21 @@ struct ImportOrganizer {
 
     private func lookupGeocode(coordinate: GeoPoint, for purpose: ImportGeocodeGate.Purpose) async throws -> ImportGeocodeResult? {
         if let cached = await geocodeCache.result(for: coordinate) { return cached }
+        // Once the pacer had no room, the rest of the import belongs to the
+        // background backfill: return at once instead of spacing every
+        // remaining place through another rate-window wait. The same goes for
+        // places after the three-failure stop, which no lookup can serve.
+        if await geocodeGate.isFinishedLookingUp { return nil }
+        guard await geocodeDelay() else {
+            // A cancelled lookup is not a full rate window.
+            try Task.checkCancellation()
+            await geocodeGate.markDeferred()
+            return nil
+        }
         guard await geocodeGate.reserve(for: purpose) else { return nil }
         let lookups = await geocodeGate.lookups
         let planned = await geocodeGate.planned
         geocodeProgress(lookups, planned)
-        await geocodeDelay()
         do {
             let geocoder = self.geocoder
             let result = try await ImportGeocodeGate.firstResult(within: geocodeGate.timeout) {

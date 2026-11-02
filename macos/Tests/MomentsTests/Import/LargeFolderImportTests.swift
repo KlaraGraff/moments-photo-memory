@@ -34,6 +34,17 @@ private actor NamingGeocoder: ImportGeocoder {
     }
 }
 
+/// Says "look up now" for the first `allowed` calls and "leave it to the
+/// backfill" after, like a pacer whose rate window is full.
+private actor DelayCallCounter {
+    private(set) var calls = 0
+
+    func shouldLookUpNow(allowed: Int) -> Bool {
+        calls += 1
+        return calls <= allowed
+    }
+}
+
 /// Never finishes in time and ignores cancellation, like a stuck CLGeocoder.
 private struct StuckGeocoder: ImportGeocoder {
     func reverseGeocode(coordinate: GeoPoint) async throws -> ImportGeocodeResult {
@@ -70,7 +81,7 @@ final class LargeFolderImportTests: XCTestCase {
         let folder = try writeFolder(count: 1_200)
         defer { SyntheticMediaFixture.removeFolder(folder) }
         let geocoder = CountingSlowGeocoder(delayMilliseconds: 50)
-        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: {})
+        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: { true })
         let container = try MomentsPersistence.makeContainer(inMemory: true)
 
         let started = Date()
@@ -87,7 +98,7 @@ final class LargeFolderImportTests: XCTestCase {
         let folder = try writeFolder(count: 300)
         defer { SyntheticMediaFixture.removeFolder(folder) }
         let geocoder = CountingSlowGeocoder(delayMilliseconds: 50, fails: true)
-        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: {})
+        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: { true })
         let container = try MomentsPersistence.makeContainer(inMemory: true)
 
         let summary = try await importer.importFolder(folder, container: container)
@@ -132,7 +143,7 @@ final class LargeFolderImportTests: XCTestCase {
         defer { SyntheticMediaFixture.removeFolder(folder) }
         let geocoder = NamingGeocoder()
         let cache = ImportGeocodeCache()
-        let importer = FolderImporter(geocoder: geocoder, geocodeCache: cache, geocodeDelay: {})
+        let importer = FolderImporter(geocoder: geocoder, geocodeCache: cache, geocodeDelay: { true })
         let container = try MomentsPersistence.makeContainer(inMemory: true)
 
         let started = Date()
@@ -150,7 +161,7 @@ final class LargeFolderImportTests: XCTestCase {
         )
         XCTAssertEqual(try retryFlagCount(in: container), 0)
 
-        let named = try await PlaceNameBackfill(geocoder: geocoder, geocodeCache: cache, interval: .zero).run(container: container)
+        let named = try await PlaceNameBackfill(geocoder: geocoder, geocodeCache: cache, pace: {}).run(container: container)
         XCTAssertEqual(named, 0, "Nothing should be left for the backfill")
     }
 
@@ -161,7 +172,7 @@ final class LargeFolderImportTests: XCTestCase {
         // Offline during the import: the time-zone pass and the place pass each
         // stop after a few failures, so places stay unnamed.
         await geocoder.setFails(true)
-        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: {})
+        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: { true })
         let container = try MomentsPersistence.makeContainer(inMemory: true)
         _ = try await importer.importFolder(folder, container: container)
         let importCalls = await geocoder.calls
@@ -174,7 +185,7 @@ final class LargeFolderImportTests: XCTestCase {
         // Offline: three failures in a row end the run, nothing is lost.
         await geocoder.setFails(true)
         let callsBefore = await geocoder.calls
-        let offline = try await PlaceNameBackfill(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), interval: .zero).run(container: container)
+        let offline = try await PlaceNameBackfill(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), pace: {}).run(container: container)
         let offlineCalls = await geocoder.calls - callsBefore
         XCTAssertEqual(offline, 0)
         XCTAssertEqual(offlineCalls, 3)
@@ -182,9 +193,117 @@ final class LargeFolderImportTests: XCTestCase {
 
         // A later run (a new launch, fresh memory) finds the same work in the store.
         await geocoder.setFails(false)
-        let online = try await PlaceNameBackfill(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), interval: .zero).run(container: container)
+        let online = try await PlaceNameBackfill(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), pace: {}).run(container: container)
         XCTAssertEqual(online, unnamed)
         XCTAssertTrue(try cityNames(in: container).allSatisfy { !$0.isEmpty })
+    }
+
+    /// Sixty far-apart places, one photo each, with an EXIF offset so no
+    /// time-zone lookups come on top: every lookup here is a city lookup.
+    private func writeSixtyPlacesWithOffsets() throws -> URL {
+        let folder = try SyntheticMediaFixture.makeFolder()
+        let start = Date(timeIntervalSince1970: 1_767_225_600)
+        for index in 0..<60 {
+            try SyntheticMediaFixture.writeJPEG(
+                at: folder.appendingPathComponent("offset-place-\(index).jpg"),
+                date: start.addingTimeInterval(Double(index) * 86_400 * 3),
+                offset: "+00:00",
+                latitude: Double(index) - 30,
+                longitude: 20,
+                marker: index
+            )
+        }
+        return folder
+    }
+
+    /// A full rate window must end the import's lookups, not hold the import:
+    /// the rest is the background backfill's work, and nothing is capped.
+    func testImportLeavesPlacesToTheBackfillWhenTheRateWindowIsFull() async throws {
+        let folder = try writeSixtyPlacesWithOffsets()
+        defer { SyntheticMediaFixture.removeFolder(folder) }
+        let geocoder = NamingGeocoder()
+        let cache = ImportGeocodeCache()
+        let counter = DelayCallCounter()
+        let delay: @Sendable () async -> Bool = {
+            await counter.shouldLookUpNow(allowed: 10)
+        }
+        let importer = FolderImporter(geocoder: geocoder, geocodeCache: cache, geocodeDelay: delay)
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+
+        let started = Date()
+        let summary = try await importer.importFolder(folder, container: container)
+        let elapsed = Date().timeIntervalSince(started)
+        XCTAssertEqual(summary.importedCount, 60)
+        XCTAssertLessThan(elapsed, 30, "The import must finish instead of waiting for the rate window")
+
+        let afterImport = try cityNames(in: container)
+        XCTAssertEqual(afterImport.count, 60)
+        XCTAssertEqual(afterImport.filter { $0.hasPrefix("City ") }.count, 10, "Ten lookups fit the window: \(afterImport)")
+        XCTAssertEqual(afterImport.filter(\.isEmpty).count, 50, "The rest waits for the backfill")
+        let delayCalls = await counter.calls
+        XCTAssertEqual(delayCalls, 11, "Once deferred, no later lookup may ask the closure again")
+
+        let named = try await PlaceNameBackfill(geocoder: geocoder, geocodeCache: cache, pace: {}).run(container: container)
+        XCTAssertEqual(named, 50)
+        XCTAssertEqual(try cityNames(in: container).filter(\.isEmpty).count, 0, "Nothing may be capped: the backfill names every place")
+    }
+
+    /// A trip renamed while one of its cities is unnamed would keep a
+    /// half-finished name forever, so the mid-run rename waits for all of them.
+    func testTripWaitsForAllItsCitiesBeforeItIsRenamed() async throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let firstCity = Place(id: "trip-city-a", name: "Synthetic City A", kind: .city, latitude: 10, longitude: 20)
+        let secondCity = Place(id: "trip-city-b", name: "", kind: .city, latitude: 11, longitude: 21)
+        let start = Date(timeIntervalSince1970: 1_767_225_600)
+        let trip = Trip(id: "trip-two-cities", name: "Trip 2026-08-20", startDate: start)
+        let first = MediaItem(id: "trip-item-a", captureDate: start, place: firstCity, trip: trip)
+        let second = MediaItem(id: "trip-item-b", captureDate: start.addingTimeInterval(86_400), place: secondCity, trip: trip)
+        context.insert(trip)
+        context.insert(firstCity)
+        context.insert(secondCity)
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+        let geocoder = NamingGeocoder()
+        let cache = ImportGeocodeCache()
+
+        let early = try await TripNameBackfill(geocoder: geocoder, geocodeCache: cache, pace: {})
+            .run(container: container, onlyFullyNamed: true)
+        XCTAssertEqual(early, 0, "One city is still unnamed")
+        XCTAssertEqual(Self.tripName("trip-two-cities", in: container), "Trip 2026-08-20")
+
+        secondCity.name = "Synthetic City B"
+        try context.save()
+        let late = try await TripNameBackfill(geocoder: geocoder, geocodeCache: cache, pace: {})
+            .run(container: container, onlyFullyNamed: true)
+        XCTAssertEqual(late, 1)
+        let renamed = try XCTUnwrap(Self.tripName("trip-two-cities", in: container))
+        XCTAssertTrue(renamed.contains("Synthetic City A"), renamed)
+        XCTAssertTrue(renamed.contains("Synthetic City B"), renamed)
+        XCTAssertNotEqual(renamed, "Trip 2026-08-20")
+    }
+
+    /// The stored name, read from a fresh context so the backfill's own
+    /// context cannot leave the test looking at a stale object.
+    private static func tripName(_ id: String, in container: ModelContainer) -> String? {
+        let context = ModelContext(container)
+        let trips = try? context.fetch(FetchDescriptor<Trip>())
+        return trips?.first { $0.id == id }?.name
+    }
+
+    func testPacerStartIfRoomRefusesWithoutWaiting() async throws {
+        let pacer = ImportGeocodePacer(limit: 2, window: .seconds(60), spacing: .zero)
+        let first = await pacer.startIfRoom()
+        let second = await pacer.startIfRoom()
+        let clock = ContinuousClock()
+        let started = clock.now
+        let third = await pacer.startIfRoom()
+        let elapsed: Duration = started.duration(to: clock.now)
+        XCTAssertTrue(first)
+        XCTAssertTrue(second)
+        XCTAssertFalse(third, "Two calls already fill the window")
+        XCTAssertLessThan(elapsed, .seconds(0.5), "A full window must refuse at once, not wait for room")
     }
 
     /// Forty photos in two trips ten days apart, all within one kilometre of
@@ -211,7 +330,7 @@ final class LargeFolderImportTests: XCTestCase {
         let folder = try writeTwoTripsInOneCity()
         defer { SyntheticMediaFixture.removeFolder(folder) }
         let geocoder = NamingGeocoder()
-        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: {})
+        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: { true })
         let container = try MomentsPersistence.makeContainer(inMemory: true)
 
         let summary = try await importer.importFolder(folder, container: container)

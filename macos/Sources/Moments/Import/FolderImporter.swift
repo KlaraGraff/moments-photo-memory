@@ -54,14 +54,15 @@ struct FolderImporter {
     let configuration: ImportConfiguration
     let geocoder: any ImportGeocoder
     let geocodeCache: ImportGeocodeCache
-    let geocodeDelay: @Sendable () async -> Void
+    /// true: look up now; false: leave the place to the background backfill.
+    let geocodeDelay: @Sendable () async -> Bool
 
     init(
         configuration: ImportConfiguration = ImportConfiguration(),
         geocoder: any ImportGeocoder = CoreLocationImportGeocoder(),
         geocodeCache: ImportGeocodeCache? = nil,
-        geocodeDelay: @escaping @Sendable () async -> Void = {
-            await ImportGeocodePacer.shared.wait()
+        geocodeDelay: @escaping @Sendable () async -> Bool = {
+            await ImportGeocodePacer.shared.startIfRoom()
         }
     ) {
         self.configuration = configuration

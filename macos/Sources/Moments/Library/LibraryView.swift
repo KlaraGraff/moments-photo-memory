@@ -89,6 +89,30 @@ struct LibraryView: View {
     /// section on each render.
     @State private var cachedSectionMemories: [String: [CollectionMemory]] = [:]
 
+    /// What one full `regroup()` computes from its inputs, as plain values, so
+    /// a later visit can show the same result without walking the photos again.
+    private struct LibraryRegroupResult {
+        let reviewCount: Int
+        let personIndex: [String: Set<String>]
+        let itemByID: [String: MediaItem]
+        let sections: [LibrarySection]
+        let unfoldedSectionItems: [String: [String]]
+        let stackCounts: [String: Int]
+        let visibleCount: Int
+        let gridSections: [[String]]
+        let viewerItemIDs: [String]
+        let sectionItems: [String: [MediaItem]]
+        let sectionDayKeys: [String: Set<String>]
+        let publishedIDs: Set<String>
+        /// The ids of `filtered`, for the focused-id check on the hit path.
+        let filteredIDs: Set<String>
+    }
+
+    /// The last finished regroup, kept across visits to the page: SwiftUI drops
+    /// the page's `@State` when it is left, but what it built stays valid as
+    /// long as `groupingKey` is unchanged.
+    @MainActor private static var lastRegroup: (key: Int, result: LibraryRegroupResult)?
+
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
         self._firstLaunchCompleted = firstLaunchCompleted
@@ -700,6 +724,9 @@ struct LibraryView: View {
     }
 
     private func regroup() {
+        // Taken before anything is read: these are the inputs this pass uses,
+        // and a change during it must not be stored under a newer key.
+        let key = groupingKey
         #if DEBUG
         var stepStarted: CFTimeInterval = CACurrentMediaTime()
         let step: (String) -> Void = { (name: String) -> Void in
@@ -707,6 +734,53 @@ struct LibraryView: View {
             stepStarted = CACurrentMediaTime()
         }
         #endif
+        if let cached = Self.lastRegroup, cached.key == key {
+            // Nothing changed since the last finished regroup: show it at
+            // once, without the filter passes or the sections. What does not
+            // come from the cache is rebuilt exactly as the full path does.
+            let result = cached.result
+            cachedReviewCount = result.reviewCount
+            cachedPersonIndex = result.personIndex
+            cachedItemByID = result.itemByID
+            cachedSections = result.sections
+            cachedUnfoldedSectionItems = result.unfoldedSectionItems
+            cachedStackCounts = result.stackCounts
+            cachedVisibleCount = result.visibleCount
+            state.gridSections = result.gridSections
+            state.viewerItemIDs = result.viewerItemIDs
+            hasGrouped = true
+            // The stack model is shared with the other pages, so it is handed
+            // the photos again; it does nothing when nothing changed.
+            stacks.update(items: allItems, decisions: stackRecords)
+            // The menus build from the whole store and have their own cache.
+            cachedFilterOptions = LibraryFilterOptionsCache.options(
+                for: store.items,
+                key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips),
+                sourceKey: LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
+            )
+            cachedSectionItems = result.sectionItems
+            if result.sectionDayKeys != cachedSectionDayKeys {
+                cachedSectionDayKeys = result.sectionDayKeys
+            }
+            // Memories are not in the key, so they are matched again.
+            let memories: [String: [CollectionMemory]] = LibrarySectionMemories.make(
+                sections: result.sections,
+                dayKeysBySection: result.sectionDayKeys,
+                memories: collectionMemories
+            )
+            applySectionMemories(memories)
+            if selection.visibleItemIDs != result.publishedIDs { selection.visibleItemIDs = result.publishedIDs }
+            selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
+            if let focus = selection.focusedItemID,
+               !result.filteredIDs.contains(focus),
+               !selection.shouldRevealSelectionInLibrary {
+                selection.focusedItemID = selection.selectedItemIDs.first
+            }
+            #if DEBUG
+            PageProbe.tally("regroup step: reused last regroup", seconds: 0)
+            #endif
+            return
+        }
         // `allItems` builds a new array each time it is read.
         let all = allItems
         #if DEBUG
@@ -828,6 +902,24 @@ struct LibraryView: View {
         #if DEBUG
         step("selection")
         #endif
+        // Stored last, under the key taken before anything was read, so only a
+        // finished regroup is ever reused.
+        let result = LibraryRegroupResult(
+            reviewCount: cachedReviewCount,
+            personIndex: personIndex,
+            itemByID: cachedItemByID,
+            sections: cachedSections,
+            unfoldedSectionItems: cachedUnfoldedSectionItems,
+            stackCounts: cachedStackCounts,
+            visibleCount: cachedVisibleCount,
+            gridSections: cachedSections.map(\.itemIDs),
+            viewerItemIDs: unfolded.flatMap(\.itemIDs),
+            sectionItems: sectionItemsByID,
+            sectionDayKeys: sectionDayKeys,
+            publishedIDs: passes.publishedIDs,
+            filteredIDs: Set(filtered.map(\.id))
+        )
+        Self.lastRegroup = (key: key, result: result)
     }
 
     /// Fetches the group memberships the sections hand to the photo menus.

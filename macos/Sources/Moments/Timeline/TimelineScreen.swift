@@ -29,6 +29,10 @@ struct TimelineScreen: View {
     /// The `wantedBuild` the shown result was built for.
     @State private var shownBuild = -1
     @State private var isBuilding = false
+    /// The last finished build, kept across visits to the page: SwiftUI drops
+    /// the page's `@State` when it is left, but the built values stay valid
+    /// as long as the inputs key below is unchanged.
+    @MainActor private static var lastBuild: (key: Int, months: [TimelineMonth], viewerOrder: [String])?
 
     private var visibleItems: [MediaItem] {
         items.filter { selection.isVisible($0.id) }
@@ -53,6 +57,17 @@ struct TimelineScreen: View {
             hasher.combine(record.id)
             hasher.combine(record.rulesData)
         }
+        return hasher.finalize()
+    }
+
+    /// The key the last finished build is stored under: the same `inputKey`
+    /// that decides whether the open page rebuilds, plus the calendar the
+    /// build groups by, so a different calendar never shows the old result.
+    private var buildCacheKey: Int {
+        var hasher = Hasher()
+        hasher.combine(inputKey)
+        hasher.combine(Calendar.autoupdatingCurrent.identifier)
+        hasher.combine(Calendar.autoupdatingCurrent.timeZone.identifier)
         return hasher.finalize()
     }
 
@@ -172,6 +187,28 @@ struct TimelineScreen: View {
     /// Builds the page off the main thread and assigns it. Only one build runs
     /// at a time, so no older result can arrive late and overwrite a newer one.
     private func rebuild() async {
+        // Taken before anything is read: these are the inputs this build uses,
+        // and a change during the build must not be stored under a newer key.
+        let cacheKey = buildCacheKey
+        if let cached = Self.lastBuild, cached.key == cacheKey {
+            // Nothing changed since the last finished build: show it at once,
+            // without the snapshots, place hints or builder.
+            months = cached.months
+            viewerOrder = cached.viewerOrder
+            stacks.update(items: items, decisions: stackRecords)
+            itemByID = store.itemsByID
+            var cachedLinksByItemID: [String: TripLink] = [:]
+            for trip in trips {
+                let link = TripLink(id: trip.id, name: trip.effectiveName)
+                for item in trip.items { cachedLinksByItemID[item.id] = link }
+            }
+            tripsByItemID = cachedLinksByItemID
+            isBuilt = true
+            #if DEBUG
+            PageProbe.tally("timeline last build reused", seconds: 0)
+            #endif
+            return
+        }
         // Everything read from SwiftData stays on the main actor; the build
         // below sees plain values only.
         #if DEBUG
@@ -272,6 +309,7 @@ struct TimelineScreen: View {
         #if DEBUG
         tail("assign months")
         #endif
+        Self.lastBuild = (key: cacheKey, months: built.months, viewerOrder: built.viewerOrder)
         stacks.update(items: libraryItems, decisions: stackDecisions)
         #if DEBUG
         tail("stacks update")

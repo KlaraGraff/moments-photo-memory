@@ -1,4 +1,5 @@
 import Foundation
+import MomentsCore
 import SwiftData
 import XCTest
 @testable import Moments
@@ -140,5 +141,54 @@ final class TripRegroupingTests: XCTestCase {
 
         XCTAssertNotNil(try TripRegrouping.runOnce(context: context, defaults: defaults))
         XCTAssertNil(try TripRegrouping.runOnce(context: context, defaults: defaults))
+    }
+
+    func testRunsAgainWhenTheRulesChange() throws {
+        let suite = "TripRegroupingTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let context = try makeContext()
+        seedOldImport(in: context)
+        try context.save()
+        // A library grouped by the rules before the last rule change.
+        defaults.set(2, forKey: TripRegrouping.versionKey)
+
+        XCTAssertNotNil(try TripRegrouping.runOnce(context: context, defaults: defaults))
+        XCTAssertEqual(defaults.integer(forKey: TripRegrouping.versionKey), TripSegmenter.rulesVersion)
+        XCTAssertNil(try TripRegrouping.runOnce(context: context, defaults: defaults))
+    }
+
+    func testEmptyTripsGoAwayWhateverTheirStatus() throws {
+        let context = try makeContext()
+        seedOldImport(in: context)
+        let suggested = Trip(id: "empty-suggested", name: "", suggestionStatusRaw: "suggestion")
+        context.insert(suggested)
+        let blank = Trip(id: "empty-blank", name: "", suggestionStatusRaw: "")
+        context.insert(blank)
+        let named = Trip(id: "empty-named", name: "", overrideName: "Kept", suggestionStatusRaw: "")
+        context.insert(named)
+        try context.save()
+
+        let outcome = try TripRegrouping.regroup(context: context, locked: [], calendar: utc)
+
+        let trips: [Trip] = try context.fetch(FetchDescriptor<Trip>())
+        let ids: Set<String> = Set(trips.map { (trip: Trip) -> String in trip.id })
+        XCTAssertFalse(ids.contains("empty-suggested"), "a suggested trip with no photos goes away")
+        XCTAssertFalse(ids.contains("empty-blank"), "a trip with no photos goes away even when its status is empty")
+        XCTAssertTrue(ids.contains("empty-named"), "a trip named by hand stays")
+        XCTAssertEqual(outcome.removed, 2)
+    }
+
+    func testEmptyTripsGoAwayWhenNothingElseMoves() throws {
+        let context = try makeContext()
+        let empty = Trip(id: "empty-only", name: "", suggestionStatusRaw: "suggestion")
+        context.insert(empty)
+        try context.save()
+
+        let outcome = try TripRegrouping.regroup(context: context, locked: [], calendar: utc)
+
+        let trips: [Trip] = try context.fetch(FetchDescriptor<Trip>())
+        XCTAssertTrue(trips.isEmpty, "nothing moves, yet the trip with no photos goes away")
+        XCTAssertEqual(outcome.removed, 1)
     }
 }

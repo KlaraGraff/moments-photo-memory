@@ -328,7 +328,7 @@ struct TimelineScreen: View {
             for bound in bounds {
                 let slice = Array(snapshots[bound.start..<bound.end])
                 group.addTask {
-                    (bound.index, Self.placeHints(for: slice, index: index))
+                    (bound.index, Self.placeHintsInOneChunk(for: slice, index: index))
                 }
             }
             var collected: [Int: [String?]] = [:]
@@ -357,7 +357,7 @@ struct TimelineScreen: View {
 
     /// One chunk of place hints: every photo in order, with a local memo so a
     /// coordinate shared by several photos is looked up only once.
-    nonisolated private static func placeHints(
+    nonisolated private static func placeHintsInOneChunk(
         for snapshots: [TimelineItemSnapshot],
         index: NearestPlaceIndex
     ) -> [String?] {

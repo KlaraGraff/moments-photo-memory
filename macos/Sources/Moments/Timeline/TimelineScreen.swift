@@ -40,7 +40,10 @@ struct TimelineScreen: View {
 
     private var inputKey: Int {
         var hasher = Hasher()
-        hasher.combine(store.revision)
+        // Photos and places, but not faces: the page groups days by photos,
+        // places, trips, memories and groups and never reads faces, so a
+        // save that changed nothing but faces does not rebuild it.
+        hasher.combine(store.photoPlaceRevision)
         hasher.combine(selection.visibleGeneration)
         for memory in memoryRecords {
             hasher.combine(memory.id)

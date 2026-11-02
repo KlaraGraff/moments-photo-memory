@@ -94,6 +94,11 @@ final class LibraryStore {
     private(set) var photoFaceRevision = 0
     /// Moves with `revision` when places moved (added, removed or renamed).
     private(set) var placeRevision = 0
+    /// Moves with `revision` when photos or places moved, but not when a save
+    /// changed faces alone. Pages that group photos, places, trips, memories
+    /// and groups, and never read faces, follow it instead of `revision`, so a
+    /// background face-analysis batch does not rebuild them.
+    private(set) var photoPlaceRevision = 0
     /// Moves when a save touched groups, memberships, memories, media tags or
     /// place overrides, or could not say what it touched. The sidebar's group
     /// counts follow it instead of querying those five entities themselves.
@@ -1129,6 +1134,7 @@ final class LibraryStore {
             let placesMoved: Bool = next.placeSum != previous?.placeSum || next.placeCount != previous?.placeCount
             if previous == nil || photosMoved || facesMoved { photoFaceRevision &+= 1 }
             if previous == nil || placesMoved { placeRevision &+= 1 }
+            if previous == nil || photosMoved || placesMoved { photoPlaceRevision &+= 1 }
             applied = next
             revision &+= 1
         }

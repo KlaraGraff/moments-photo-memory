@@ -57,8 +57,10 @@ struct TripsScreen: View {
 
     private var inputKey: Int {
         var hasher = Hasher()
-        // All photos, faces and places the page groups by, as one revision.
-        hasher.combine(store.revision)
+        // All photos and places the page groups by, as one revision. Faces
+        // are left out because the page does not read them, so a save that
+        // changed nothing but faces does not rebuild the chapters.
+        hasher.combine(store.photoPlaceRevision)
         for memory in memoryRecords {
             hasher.combine(memory.id)
             hasher.combine(memory.mediaID)

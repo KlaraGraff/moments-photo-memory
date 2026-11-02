@@ -2,6 +2,22 @@ import SwiftUI
 import SwiftData
 import MomentsCore
 
+/// What one Chapters build works from: everything the main actor reads, as
+/// plain values, so the build can run off the main thread and an app-level
+/// pre-builder can hand the page the same thing.
+struct ChaptersBuildInputs: Sendable {
+    /// The key the result is looked up and stored under.
+    let key: Int
+    /// Every photo in store order, before place hints.
+    let sourceItems: [TimelineItemSnapshot]
+    /// The trips in store order, as plain values.
+    let sourceTrips: [TimelineSourceTrip]
+    /// The chapters that are not trips, as plain values.
+    let chapterSources: [TripsScreen.ChapterSource]
+    let placeIndex: NearestPlaceIndex
+    let calendar: Calendar
+}
+
 /// Chapters: one cover card per stretch of life — trips, events,
 /// celebrations, stretches of time and custom kinds. Opening one shows it
 /// day by day and place by place, with its own and each day's memories
@@ -23,7 +39,6 @@ struct TripsScreen: View {
     @Query private var trips: [Trip]
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw == "chapter" }) private var chapterGroups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
-    private var places: [Place] { store.places }
     @Query(sort: \CollectionMemory.createdAt) private var memories: [CollectionMemory]
     @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
     @Environment(SelectionModel.self) private var selection
@@ -53,47 +68,123 @@ struct TripsScreen: View {
     /// The last finished build, kept across visits to the page: SwiftUI drops
     /// the page's `@State` when it is left, but the built values stay valid
     /// as long as the inputs key below is unchanged.
-    @MainActor private static var lastBuild: (key: Int, document: TimelineDocument, chapterDocs: [String: TimelineTrip])?
+    @MainActor private static var lastBuild: (key: Int, result: ChaptersBuildResult)?
 
+    /// Moves when anything the page builds from changes. `.onChange` follows
+    /// it; the calendar is left out on purpose, as it always was.
     private var inputKey: Int {
-        var hasher = Hasher()
-        // All photos and places the page groups by, as one revision. Faces
-        // are left out because the page does not read them, so a save that
-        // changed nothing but faces does not rebuild the chapters.
-        hasher.combine(store.photoPlaceRevision)
-        for memory in memoryRecords {
-            hasher.combine(memory.id)
-            hasher.combine(memory.mediaID)
-            hasher.combine(memory.updatedAt)
-            hasher.combine(memory.revision)
-        }
-        for trip in trips {
-            hasher.combine(trip.id)
-            hasher.combine(trip.effectiveName)
-            hasher.combine(trip.items.count)
-            hasher.combine(trip.startDate)
-            hasher.combine(trip.endDate)
-        }
-        for group in chapterGroups {
-            hasher.combine(group.id)
-            hasher.combine(group.name)
-            hasher.combine(group.rulesData)
-        }
-        for membership in groupItems {
-            hasher.combine(membership.id)
-            hasher.combine(membership.excluded)
-        }
-        return hasher.finalize()
+        Self.inputKey(
+            store: store,
+            memories: memoryRecords,
+            trips: trips,
+            chapterGroups: chapterGroups,
+            groupItems: groupItems
+        )
     }
 
     /// The key the last finished build is stored under: the same `inputKey`
     /// that decides whether the open page rebuilds, plus the calendar the
     /// build groups by, so a different calendar never shows the old result.
     private var buildCacheKey: Int {
+        Self.buildKey(
+            store: store,
+            memories: memoryRecords,
+            trips: trips,
+            chapterGroups: chapterGroups,
+            groupItems: groupItems,
+            calendar: Calendar.autoupdatingCurrent
+        )
+    }
+
+    /// The fields `inputKey` hashes, with each row array reduced to its count
+    /// and the sum of its own row hashes. Summing does not depend on the order
+    /// a fetch returns the rows in, and every field is read once, so this stays
+    /// O(n) on every body evaluation.
+    @MainActor
+    private static func inputKey(
+        store: LibraryStore,
+        memories: [Memory],
+        trips: [Trip],
+        chapterGroups: [UserGroup],
+        groupItems: [UserGroupItem]
+    ) -> Int {
         var hasher = Hasher()
-        hasher.combine(inputKey)
-        hasher.combine(Calendar.autoupdatingCurrent.identifier)
-        hasher.combine(Calendar.autoupdatingCurrent.timeZone.identifier)
+        // All photos and places the page groups by, as one revision. Faces
+        // are left out because the page does not read them, so a save that
+        // changed nothing but faces does not rebuild the chapters.
+        hasher.combine(store.photoPlaceRevision)
+
+        var memoriesSum: Int = 0
+        for memory in memories {
+            var row: Hasher = Hasher()
+            row.combine(memory.id)
+            row.combine(memory.mediaID)
+            row.combine(memory.updatedAt)
+            row.combine(memory.revision)
+            memoriesSum = memoriesSum &+ row.finalize()
+        }
+        hasher.combine(memories.count)
+        hasher.combine(memoriesSum)
+
+        var tripsSum: Int = 0
+        for trip in trips {
+            var row: Hasher = Hasher()
+            row.combine(trip.id)
+            row.combine(trip.effectiveName)
+            row.combine(trip.items.count)
+            row.combine(trip.startDate)
+            row.combine(trip.endDate)
+            tripsSum = tripsSum &+ row.finalize()
+        }
+        hasher.combine(trips.count)
+        hasher.combine(tripsSum)
+
+        var chapterGroupsSum: Int = 0
+        for group in chapterGroups {
+            var row: Hasher = Hasher()
+            row.combine(group.id)
+            row.combine(group.name)
+            row.combine(group.rulesData)
+            chapterGroupsSum = chapterGroupsSum &+ row.finalize()
+        }
+        hasher.combine(chapterGroups.count)
+        hasher.combine(chapterGroupsSum)
+
+        var groupItemsSum: Int = 0
+        for membership in groupItems {
+            var row: Hasher = Hasher()
+            row.combine(membership.id)
+            row.combine(membership.excluded)
+            groupItemsSum = groupItemsSum &+ row.finalize()
+        }
+        hasher.combine(groupItems.count)
+        hasher.combine(groupItemsSum)
+
+        return hasher.finalize()
+    }
+
+    /// The one key for a Chapters build: the `inputKey` above, then the
+    /// calendar the build groups by, so a different calendar never shows the
+    /// old result. A later pre-builder fetches its own rows and calls this.
+    @MainActor
+    static func buildKey(
+        store: LibraryStore,
+        memories: [Memory],
+        trips: [Trip],
+        chapterGroups: [UserGroup],
+        groupItems: [UserGroupItem],
+        calendar: Calendar
+    ) -> Int {
+        var hasher = Hasher()
+        hasher.combine(Self.inputKey(
+            store: store,
+            memories: memories,
+            trips: trips,
+            chapterGroups: chapterGroups,
+            groupItems: groupItems
+        ))
+        hasher.combine(calendar.identifier)
+        hasher.combine(calendar.timeZone.identifier)
         return hasher.finalize()
     }
 
@@ -295,6 +386,81 @@ struct TripsScreen: View {
         }
     }
 
+    /// The last finished build for a key, if it is still the one asked for.
+    @MainActor
+    static func cachedBuild(key: Int) -> ChaptersBuildResult? {
+        guard let lastBuild, lastBuild.key == key else { return nil }
+        return lastBuild.result
+    }
+
+    /// Remembers a finished build under the key it was built for.
+    @MainActor
+    static func storeBuild(_ result: ChaptersBuildResult, key: Int) {
+        lastBuild = (key: key, result: result)
+    }
+
+    /// Everything the build reads from SwiftData, in one main-actor pass, as
+    /// plain values only: the place index, memories by photo, the snapshots,
+    /// the source trips and the chapter sources, all in store order.
+    @MainActor
+    static func buildInputs(
+        key: Int,
+        store: LibraryStore,
+        trips: [Trip],
+        chapterGroups: [UserGroup],
+        groupItems: [UserGroupItem],
+        memories: [Memory],
+        calendar: Calendar
+    ) -> ChaptersBuildInputs {
+        let placeIndex = NearestPlaceIndex(places: store.places)
+        let memoriesByPhotoID = TimelineScreen.memoriesByPhotoID(memories)
+        let sourceItems: [TimelineItemSnapshot] = store.items.map { (item: MediaItem) -> TimelineItemSnapshot in
+            TimelineItemSnapshot(item: item, placeHint: nil, memories: memoriesByPhotoID[item.persistentModelID] ?? [])
+        }
+        let sourceTrips: [TimelineSourceTrip] = trips.map { (trip: Trip) -> TimelineSourceTrip in
+            TimelineSourceTrip(
+                id: trip.id,
+                name: trip.effectiveName,
+                itemIDs: trip.items.map(\.id),
+                startDate: trip.startDate,
+                endDate: trip.endDate
+            )
+        }
+        let chapterSources: [ChapterSource] = Self.chapterSources(groups: chapterGroups, members: groupItems)
+        return ChaptersBuildInputs(
+            key: key,
+            sourceItems: sourceItems,
+            sourceTrips: sourceTrips,
+            chapterSources: chapterSources,
+            placeIndex: placeIndex,
+            calendar: calendar
+        )
+    }
+
+    /// The one Chapters build: place hints, then the shelf's document and
+    /// every chapter. This is the body `rebuild()` ran in its detached task,
+    /// unchanged, so an app-level pre-builder can run the same build.
+    nonisolated static func build(
+        _ inputs: ChaptersBuildInputs,
+        priority: TaskPriority = .userInitiated
+    ) async -> ChaptersBuildResult {
+        let sourceItems: [TimelineItemSnapshot] = inputs.sourceItems
+        let sourceTrips: [TimelineSourceTrip] = inputs.sourceTrips
+        let chapterSources: [ChapterSource] = inputs.chapterSources
+        let placeIndex: NearestPlaceIndex = inputs.placeIndex
+        let calendar: Calendar = inputs.calendar
+        let built = await Task.detached(priority: priority) { () -> ChaptersBuildResult in
+            let hinted = sourceItems.map { snapshot in
+                snapshot.withPlaceHint(Self.placeHint(for: snapshot, index: placeIndex))
+            }
+            let byID = Dictionary(hinted.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let document = Self.buildDocument(hinted, sourceTrips: sourceTrips, calendar: calendar)
+            let chapterDocs = Self.buildChapters(sources: chapterSources, snapshots: byID, calendar: calendar)
+            return ChaptersBuildResult(document: document, chapterDocs: chapterDocs)
+        }.value
+        return built
+    }
+
     /// Reads everything SwiftData in one pass on the main actor, then builds
     /// the shelf and every chapter off the main thread. Only one build runs at
     /// a time, so no older result can arrive late and overwrite a newer one.
@@ -302,7 +468,7 @@ struct TripsScreen: View {
         // Taken before anything is read: these are the inputs this build uses,
         // and a change during the build must not be stored under a newer key.
         let cacheKey = buildCacheKey
-        if let cached = Self.lastBuild, cached.key == cacheKey {
+        if let cached = Self.cachedBuild(key: cacheKey) {
             // Nothing changed since the last finished build: show it at once,
             // without the snapshots, place hints or builder.
             document = cached.document
@@ -313,37 +479,23 @@ struct TripsScreen: View {
             #endif
             return
         }
-        let placeIndex = NearestPlaceIndex(places: places)
-        let memoriesByPhotoID = TimelineScreen.memoriesByPhotoID(memoryRecords)
-        let sourceItems = items.map { item in
-            TimelineItemSnapshot(item: item, placeHint: nil, memories: memoriesByPhotoID[item.persistentModelID] ?? [])
-        }
-        let sourceTrips = trips.map { trip in
-            TimelineSourceTrip(
-                id: trip.id,
-                name: trip.effectiveName,
-                itemIDs: trip.items.map(\.id),
-                startDate: trip.startDate,
-                endDate: trip.endDate
-            )
-        }
-        let chapterSources = Self.chapterSources(groups: chapterGroups, members: groupItems)
         let libraryItemByID = store.itemsByID
-        let calendar = Calendar.autoupdatingCurrent
-
-        let built = await Task.detached(priority: .userInitiated) { () -> ChaptersBuildResult in
-            let hinted = sourceItems.map { snapshot in
-                snapshot.withPlaceHint(Self.placeHint(for: snapshot, index: placeIndex))
-            }
-            let byID = Dictionary(hinted.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            let document = Self.buildDocument(hinted, sourceTrips: sourceTrips, calendar: calendar)
-            let chapterDocs = Self.buildChapters(sources: chapterSources, snapshots: byID, calendar: calendar)
-            return ChaptersBuildResult(document: document, chapterDocs: chapterDocs)
-        }.value
+        // Everything the build reads stays on the main actor and becomes one
+        // inputs value; the build below sees plain values only.
+        let inputs = Self.buildInputs(
+            key: cacheKey,
+            store: store,
+            trips: trips,
+            chapterGroups: chapterGroups,
+            groupItems: groupItems,
+            memories: memoryRecords,
+            calendar: Calendar.autoupdatingCurrent
+        )
+        let built = await Self.build(inputs)
         document = built.document
         chapterDocs = built.chapterDocs
         itemByID = libraryItemByID
-        Self.lastBuild = (key: cacheKey, document: built.document, chapterDocs: built.chapterDocs)
+        Self.storeBuild(built, key: cacheKey)
     }
 
     /// The chapters that are not trips, as plain values: their ids, names,

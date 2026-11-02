@@ -1,6 +1,7 @@
 import Foundation
 import QuartzCore
 import SwiftData
+import SwiftUI
 
 /// Builds the Timeline and Chapters pages ahead of time, while the app is
 /// quiet, so the first visit takes the page's existing cached path instead of
@@ -402,5 +403,46 @@ enum PagePrebuildSliceRule {
         guard startedAtPhotoPlaceRevision == photoPlaceRevision else { return false }
         guard startedAtVisibleGeneration == visibleGeneration else { return false }
         return true
+    }
+}
+
+/// The app-level pre-build trigger, in its own tiny view so the App body does
+/// not read values that change on every import save. Only this view is
+/// re-evaluated when the library, the selection or a running job moves.
+struct PagePrebuildDriver: View {
+    let container: ModelContainer
+    let store: LibraryStore
+    let selection: SelectionModel
+    let stacks: PhotoStackModel
+    let importController: ImportController
+    let photosImportController: PhotosImportController
+    let stackAnalyzer: PhotoStackAnalyzer
+
+    private var trigger: PagePrebuildTrigger {
+        PagePrebuildTrigger(
+            photoPlaceRevision: store.photoPlaceRevision,
+            visibleGeneration: selection.visibleGeneration,
+            stackGeneration: stacks.generation,
+            isImporting: importController.isRunning,
+            isImportingPhotos: photosImportController.isRunning,
+            isAnalyzingStacks: stackAnalyzer.isRunning
+        )
+    }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .task(id: trigger) {
+                guard !trigger.isBusy else { return }
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                await PagePrebuilder.shared.prebuild(
+                    context: container.mainContext,
+                    store: store,
+                    selection: selection,
+                    stacks: stacks
+                )
+            }
     }
 }

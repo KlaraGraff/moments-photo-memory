@@ -161,20 +161,6 @@ struct MomentsApp: App {
         try MomentsPersistence.openWithRecovery().container
     }
 
-    /// Everything that makes the app "not quiet" for the ahead-of-time page
-    /// builds, as one value a `.task(id:)` can follow. A change restarts the
-    /// quiet window; a running pre-build is cancelled with it.
-    private var prebuildTrigger: PagePrebuildTrigger {
-        PagePrebuildTrigger(
-            photoPlaceRevision: libraryStore.photoPlaceRevision,
-            visibleGeneration: selection.visibleGeneration,
-            stackGeneration: photoStacks.generation,
-            isImporting: importController.isRunning,
-            isImportingPhotos: photosImportController.isRunning,
-            isAnalyzingStacks: stackAnalyzer.isRunning
-        )
-    }
-
     @ViewBuilder
     private var appContent: some View {
         // The B1 paper design is light only; sheets inherit the window's appearance.
@@ -216,17 +202,18 @@ struct MomentsApp: App {
                     }
                     // Builds the Timeline and then Chapters ahead of time
                     // while the app is quiet, so their first visit reuses a
-                    // finished build. Any input change cancels the wait or
-                    // the running pre-build and starts the quiet window over.
-                    .task(id: prebuildTrigger) {
-                        guard !prebuildTrigger.isBusy else { return }
-                        try? await Task.sleep(for: .seconds(2))
-                        guard !Task.isCancelled else { return }
-                        await PagePrebuilder.shared.prebuild(
-                            context: modelContainer.mainContext,
+                    // finished build. The trigger lives in its own tiny view,
+                    // so values that move on every import save re-evaluate
+                    // only that view, not this whole root view.
+                    .background {
+                        PagePrebuildDriver(
+                            container: modelContainer,
                             store: libraryStore,
                             selection: selection,
-                            stacks: photoStacks
+                            stacks: photoStacks,
+                            importController: importController,
+                            photosImportController: photosImportController,
+                            stackAnalyzer: stackAnalyzer
                         )
                     }
                     .sheet(isPresented: $showingPhotosImport) {

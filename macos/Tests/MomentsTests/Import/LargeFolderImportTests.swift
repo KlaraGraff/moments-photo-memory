@@ -127,7 +127,7 @@ final class LargeFolderImportTests: XCTestCase {
             .count
     }
 
-    func testBackfillNamesPlacesTheImportBudgetSkipped() async throws {
+    func testImportNamesEveryPlaceWithoutABudget() async throws {
         let folder = try writeSixtyPlaces()
         defer { SyntheticMediaFixture.removeFolder(folder) }
         let geocoder = NamingGeocoder()
@@ -142,27 +142,34 @@ final class LargeFolderImportTests: XCTestCase {
 
         let afterImport = try cityNames(in: container)
         XCTAssertEqual(afterImport.count, 60)
-        // Time zones get at most 10 of the 40 lookups, so places get the rest.
-        XCTAssertGreaterThanOrEqual(afterImport.filter { !$0.isEmpty }.count, 30)
-        XCTAssertGreaterThan(afterImport.filter(\.isEmpty).count, 0, "The test needs places past the budget")
-        XCTAssertGreaterThan(try retryFlagCount(in: container), 0)
+        // No budget: every one of the sixty places is named by the import itself.
+        XCTAssertEqual(afterImport.filter(\.isEmpty).count, 0, "Unnamed: \(afterImport.filter(\.isEmpty).count)")
+        XCTAssertTrue(
+            afterImport.allSatisfy { $0.hasPrefix("City ") },
+            "Unnamed: \(afterImport.filter { !$0.hasPrefix("City ") })"
+        )
+        XCTAssertEqual(try retryFlagCount(in: container), 0)
 
         let named = try await PlaceNameBackfill(geocoder: geocoder, geocodeCache: cache, interval: .zero).run(container: container)
-
-        let afterBackfill = try cityNames(in: container)
-        XCTAssertEqual(named, afterImport.filter(\.isEmpty).count)
-        XCTAssertTrue(afterBackfill.allSatisfy { $0.hasPrefix("City ") }, "Unnamed: \(afterBackfill.filter { !$0.hasPrefix("City ") })")
-        XCTAssertEqual(try retryFlagCount(in: container), 0)
+        XCTAssertEqual(named, 0, "Nothing should be left for the backfill")
     }
 
     func testBackfillStopsOnFailuresAndResumesFromStoredState() async throws {
         let folder = try writeSixtyPlaces()
         defer { SyntheticMediaFixture.removeFolder(folder) }
         let geocoder = NamingGeocoder()
+        // Offline during the import: the time-zone pass and the place pass each
+        // stop after a few failures, so places stay unnamed.
+        await geocoder.setFails(true)
         let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: {})
         let container = try MomentsPersistence.makeContainer(inMemory: true)
         _ = try await importer.importFolder(folder, container: container)
+        let importCalls = await geocoder.calls
+        let gate = ImportGeocodeGate()
+        let maxFailures = await gate.maxConsecutiveFailures
+        XCTAssertLessThanOrEqual(importCalls, maxFailures + 10, "Each pass must stop after a few failures")
         let unnamed = try cityNames(in: container).filter(\.isEmpty).count
+        XCTAssertEqual(unnamed, 60, "The test needs places the failed import left unnamed")
 
         // Offline: three failures in a row end the run, nothing is lost.
         await geocoder.setFails(true)
@@ -178,6 +185,44 @@ final class LargeFolderImportTests: XCTestCase {
         let online = try await PlaceNameBackfill(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), interval: .zero).run(container: container)
         XCTAssertEqual(online, unnamed)
         XCTAssertTrue(try cityNames(in: container).allSatisfy { !$0.isEmpty })
+    }
+
+    /// Forty photos in two trips ten days apart, all within one kilometre of
+    /// (30, 20): the same city, looked up once.
+    private func writeTwoTripsInOneCity() throws -> URL {
+        let folder = try SyntheticMediaFixture.makeFolder()
+        let start = Date(timeIntervalSince1970: 1_767_225_600)
+        for index in 0..<40 {
+            let trip = index / 20
+            let position = Double(index % 20) * 0.0002
+            try SyntheticMediaFixture.writeJPEG(
+                at: folder.appendingPathComponent("city-\(index).jpg"),
+                date: start.addingTimeInterval(Double(trip) * 10 * 86_400 + Double(index % 20) * 600),
+                offset: nil,
+                latitude: 30 + position,
+                longitude: 20 + position,
+                marker: index
+            )
+        }
+        return folder
+    }
+
+    func testPlacesInTheSameCityAreLookedUpOnce() async throws {
+        let folder = try writeTwoTripsInOneCity()
+        defer { SyntheticMediaFixture.removeFolder(folder) }
+        let geocoder = NamingGeocoder()
+        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: {})
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+
+        let summary = try await importer.importFolder(folder, container: container)
+        XCTAssertEqual(summary.importedCount, 40)
+        let calls = await geocoder.calls
+        // One time-zone cell lookup may come on top of at most three place lookups.
+        XCTAssertLessThanOrEqual(calls, 4, "Two nearby trips in one city cost \(calls) calls")
+
+        let cities = try cityNames(in: container)
+        XCTAssertFalse(cities.isEmpty, "The import must name the city it looked up")
+        XCTAssertTrue(cities.allSatisfy { $0 == "City 30" }, "Names: \(cities)")
     }
 
     func testLookupTimeoutDoesNotWaitForAStuckGeocoder() async throws {

@@ -42,41 +42,40 @@ public actor ImportGeocodeCache {
     }
 }
 
-/// Limits reverse-geocoding during one import. CLGeocoder is rate-limited
-/// (roughly one request a second, then throttling errors), so an import makes
-/// at most `maxLookups` calls, gives each `timeout`, and stops after
-/// `maxConsecutiveFailures` failures in a row. Cities it skips keep an empty
-/// name and are named later by `PlaceNameBackfill`.
+/// Spaces reverse-geocoding during one import. CLGeocoder is rate-limited
+/// (roughly one request a second, then throttling errors), so lookups still run
+/// one at a time, each with `timeout`, spaced by `geocodeDelay()`, and stop
+/// after `maxConsecutiveFailures` failures in a row. There is deliberately no
+/// per-import lookup budget: the owner wants every place named on the first
+/// import, however many distinct places it holds. Pacing and the failure stop
+/// protect CLGeocoder; places left unnamed while offline are named later by
+/// `PlaceNameBackfill`.
 actor ImportGeocodeGate {
     enum Purpose { case timeZone, placeName }
 
-    let maxLookups: Int
-    /// Time-zone lookups run first, so they get a smaller share and leave
-    /// most of the budget for naming places.
-    let maxTimeZoneLookups: Int
     let maxConsecutiveFailures: Int
     let timeout: Duration
     private(set) var lookups = 0
-    private var timeZoneLookups = 0
+    /// How many lookups the organizer plans for the passes it runs; the
+    /// progress callback shows it as the total. Only ever raised.
+    private(set) var planned = 0
     private var consecutiveFailures = 0
 
-    init(maxLookups: Int = 40, maxTimeZoneLookups: Int = 10, maxConsecutiveFailures: Int = 3, timeout: Duration = .seconds(10)) {
-        self.maxLookups = maxLookups
-        self.maxTimeZoneLookups = maxTimeZoneLookups
+    init(maxConsecutiveFailures: Int = 3, timeout: Duration = .seconds(10)) {
         self.maxConsecutiveFailures = maxConsecutiveFailures
         self.timeout = timeout
     }
 
-    /// Reserves one lookup, or returns false when the budget is spent or
-    /// the service keeps failing.
-    func reserve(for purpose: Purpose) -> Bool {
-        guard lookups < maxLookups, consecutiveFailures < maxConsecutiveFailures else { return false }
-        if purpose == .timeZone {
-            guard timeZoneLookups < maxTimeZoneLookups else { return false }
-            timeZoneLookups += 1
-        }
+    /// Reserves one lookup, or returns false while the service keeps failing.
+    func reserve(for _: Purpose) -> Bool {
+        guard consecutiveFailures < maxConsecutiveFailures else { return false }
         lookups += 1
         return true
+    }
+
+    /// The organizer knows how many lookups a pass holds before it starts.
+    func plan(_ count: Int) {
+        planned = max(planned, lookups) + max(0, count)
     }
 
     func recordSuccess() { consecutiveFailures = 0 }
@@ -202,7 +201,7 @@ struct ImportOrganizer {
     let geocodeCache: ImportGeocodeCache
     let geocodeDelay: @Sendable () async -> Void
     let geocodeGate: ImportGeocodeGate
-    /// Reports (lookups made, lookup budget) so the UI shows progress while
+    /// Reports (lookups made, lookups planned) so the UI shows progress while
     /// places are looked up.
     let geocodeProgress: @Sendable (Int, Int) -> Void
 
@@ -264,6 +263,7 @@ struct ImportOrganizer {
         // Daily life at the usual places goes through the same place and review steps as
         // one group, without a trip.
         let groups = tripGroups.map { (items: $0, isTrip: true) } + (usualPlaceGroup.isEmpty ? [] : [(items: usualPlaceGroup, isTrip: false)])
+        try await prefetchCityNames(groups: groups)
         for (index, (group, isTrip)) in groups.enumerated() {
             try Task.checkCancellation()
             let tripID = isTrip ? stableID(prefix: "trip", ids: group.map(\.id)) : nil
@@ -483,6 +483,7 @@ struct ImportOrganizer {
             let point = coordinate(for: item)!
             return "\((point.latitude * 2).rounded()),\((point.longitude * 2).rounded())"
         }
+        await geocodeGate.plan(cells.count)
         for (_, members) in cells.sorted(by: { $0.key < $1.key }) {
             try Task.checkCancellation()
             guard let representative = members.first.flatMap(coordinate(for:)),
@@ -565,7 +566,9 @@ struct ImportOrganizer {
     private func lookupGeocode(coordinate: GeoPoint, for purpose: ImportGeocodeGate.Purpose) async throws -> ImportGeocodeResult? {
         if let cached = await geocodeCache.result(for: coordinate) { return cached }
         guard await geocodeGate.reserve(for: purpose) else { return nil }
-        geocodeProgress(await geocodeGate.lookups, geocodeGate.maxLookups)
+        let lookups = await geocodeGate.lookups
+        let planned = await geocodeGate.planned
+        geocodeProgress(lookups, planned)
         await geocodeDelay()
         do {
             let geocoder = self.geocoder
@@ -682,6 +685,61 @@ struct ImportOrganizer {
         }
         let components = calendar.dateComponents([.year, .month, .day], from: item.captureDate)
         return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
+    }
+
+    /// Looks up every distinct city centre the import needs before the groups
+    /// are built, so a first import names all its places instead of stopping at
+    /// a budget. Centres within 3 km of a kept centre share its result, and
+    /// centres already in the cache need no call.
+    private func prefetchCityNames(groups: [(items: [ImportedMediaMetadata], isTrip: Bool)]) async throws {
+        var centres: [(coordinate: GeoPoint, firstDate: Date)] = []
+        for group in groups {
+            let stops = group.items.compactMap { item -> PhotoStop? in
+                guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
+                return PhotoStop(id: item.id, date: item.captureDate, coordinate: GeoPoint(latitude: latitude, longitude: longitude))
+            }
+            let clusterer = PlaceClusterer(maximumTimeGap: configuration.maximumTimeGap)
+            for cluster in clusterer.clusters(for: stops, level: .city) {
+                guard let center = cluster.center else { continue }
+                centres.append((center, cluster.firstDate))
+            }
+        }
+        centres.sort { lhs, rhs in
+            if lhs.firstDate != rhs.firstDate { return lhs.firstDate < rhs.firstDate }
+            if lhs.coordinate.latitude != rhs.coordinate.latitude { return lhs.coordinate.latitude < rhs.coordinate.latitude }
+            return lhs.coordinate.longitude < rhs.coordinate.longitude
+        }
+
+        var kept: [GeoPoint] = []
+        var skipped: [(coordinate: GeoPoint, kept: GeoPoint)] = []
+        var pending: [GeoPoint] = []
+        for centre in centres {
+            // 0.03° of latitude is about 3.3 km, so a centre further away in
+            // latitude cannot be within 3 km; the cheap test saves the trig.
+            if let near = kept.first(where: { point in
+                abs(point.latitude - centre.coordinate.latitude) <= 0.03
+                    && point.distance(to: centre.coordinate) <= 3_000
+            }) {
+                skipped.append((centre.coordinate, near))
+                continue
+            }
+            kept.append(centre.coordinate)
+            if await geocodeCache.result(for: centre.coordinate) == nil {
+                pending.append(centre.coordinate)
+            }
+        }
+
+        await geocodeGate.plan(pending.count)
+        for coordinate in pending {
+            try Task.checkCancellation()
+            _ = try await lookupGeocode(coordinate: coordinate, for: .placeName)
+        }
+        for (coordinate, source) in skipped {
+            // A nearby centre already in the cache keeps its own result.
+            guard await geocodeCache.result(for: coordinate) == nil,
+                  let result = await geocodeCache.result(for: source) else { continue }
+            await geocodeCache.insert(result, for: coordinate)
+        }
     }
 
     private func cityNames(for clusters: [PlaceCluster]) async throws -> (values: [String: ImportGeocodeResult], failed: Set<String>) {

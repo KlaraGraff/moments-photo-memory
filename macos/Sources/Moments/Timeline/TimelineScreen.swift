@@ -257,6 +257,9 @@ struct TimelineScreen: View {
         for (name, seconds) in built.timings {
             PageProbe.tally("timeline bg: " + name, seconds: seconds)
         }
+        for (name, seconds) in TimelineBuilderTimings.shared.take() {
+            PageProbe.tally("timeline builder: " + name, seconds: seconds)
+        }
         var tailStarted: CFTimeInterval = CACurrentMediaTime()
         let tail: (String) -> Void = { (name: String) -> Void in
             PageProbe.tally("timeline step: " + name, seconds: CACurrentMediaTime() - tailStarted)

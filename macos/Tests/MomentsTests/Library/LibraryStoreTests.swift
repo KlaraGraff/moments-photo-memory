@@ -972,6 +972,104 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(store.placeRevision, placeRevision, "a photo save leaves the place revision alone")
     }
 
+    // MARK: - Timeline and Chapters follow the photo-and-place revision
+
+    // A face assignment moves `revision` and `photoFaceRevision`, but not the
+    // revision Timeline and Chapters keys on: neither page reads faces.
+    func testFaceOnlySaveLeavesThePhotoPlaceRevision() async throws {
+        let context: ModelContext = try makeContext()
+        let photo: MediaItem = MediaItem(id: "photo", captureDate: base)
+        context.insert(photo)
+        let face: FaceObservation = FaceObservation(
+            id: "face-1",
+            mediaID: "photo",
+            rect: Self.faceRect,
+            embedding: Data(),
+            cropData: Data([1]),
+            quality: 0.8,
+            clusterID: "pending-f"
+        )
+        context.insert(face)
+        try context.save()
+
+        let store: LibraryStore = makeStore(context: context)
+        let revision: Int = store.revision
+        let photoFaceRevision: Int = store.photoFaceRevision
+        let photoPlaceRevision: Int = store.photoPlaceRevision
+
+        let other: ModelContext = ModelContext(try XCTUnwrap(container))
+        let faces: [FaceObservation] = try other.fetch(FetchDescriptor<FaceObservation>())
+        let stored: FaceObservation = try XCTUnwrap(faces.first { $0.id == "face-1" })
+        stored.personID = "person-1"
+        try other.save()
+
+        let arrived: Bool = await waitUntil(timeout: 3) { store.revision > revision }
+        XCTAssertTrue(arrived, "the store never saw the face assignment")
+        XCTAssertGreaterThan(store.revision, revision, "a face change still moves the revision")
+        XCTAssertGreaterThan(
+            store.photoFaceRevision,
+            photoFaceRevision,
+            "a face change moves the photo and face revision"
+        )
+        XCTAssertEqual(
+            store.photoPlaceRevision,
+            photoPlaceRevision,
+            "a face-only save leaves the photo and place revision alone"
+        )
+    }
+
+    // A renamed place moves the revision Timeline and Chapters key on.
+    func testPlaceRenameMovesThePhotoPlaceRevision() async throws {
+        let context: ModelContext = try makeContext()
+        let place: Place = Place(id: "place-1", name: "Synthetic Place One")
+        context.insert(place)
+        let photo: MediaItem = MediaItem(
+            id: "photo-a",
+            captureDate: base.addingTimeInterval(60),
+            latitude: 0.5,
+            longitude: 0.5
+        )
+        photo.place = place
+        context.insert(photo)
+        try context.save()
+
+        let store: LibraryStore = makeStore(context: context)
+        let revision: Int = store.revision
+        let photoPlaceRevision: Int = store.photoPlaceRevision
+
+        place.name = "Synthetic Place Renamed"
+        try context.save()
+
+        let moved: Bool = await waitUntil(timeout: 3) { store.revision > revision }
+        XCTAssertTrue(moved, "the store never applied the place rename")
+        XCTAssertGreaterThan(
+            store.photoPlaceRevision,
+            photoPlaceRevision,
+            "a renamed place moves the photo and place revision"
+        )
+    }
+
+    // A moved photo moves the revision Timeline and Chapters key on.
+    func testPhotoDateChangeMovesThePhotoPlaceRevision() async throws {
+        let setup = try makeTwentyPhotoStore()
+        let context: ModelContext = setup.context
+        let store: LibraryStore = setup.store
+        let photo: MediaItem = setup.first
+        let photoPlaceRevision: Int = store.photoPlaceRevision
+        let refreshes: Int = store.refreshCount
+
+        photo.captureDate = base.addingTimeInterval(-3600)
+        try context.save()
+
+        let applied: Bool = await waitUntil(timeout: 3) { store.refreshCount > refreshes }
+        XCTAssertTrue(applied, "the store never applied the date change")
+        XCTAssertGreaterThan(
+            store.photoPlaceRevision,
+            photoPlaceRevision,
+            "a moved photo moves the photo and place revision"
+        )
+    }
+
     // The first fetch has no previous measures, so both new revisions move.
     func testFirstFetchMovesBothNewRevisions() throws {
         let context: ModelContext = try makeContext()

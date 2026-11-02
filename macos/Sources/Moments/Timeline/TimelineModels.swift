@@ -280,6 +280,10 @@ struct TimelineBuildResult: Sendable {
     let months: [TimelineMonth]
     /// Every photo in day and place order, the order the viewer pages through.
     let viewerOrder: [String]
+    #if DEBUG
+    /// Seconds per build step, filled in off the main thread and tallied by the page.
+    var timings: [String: Double] = [:]
+    #endif
 }
 
 /// What the Chapters build hands back: the shelf's document and one built

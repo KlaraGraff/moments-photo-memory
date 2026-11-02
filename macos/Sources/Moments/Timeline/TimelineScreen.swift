@@ -150,12 +150,21 @@ struct TimelineScreen: View {
                 let probeToken = PageProbe.phaseToken
                 #endif
                 let target: Int = wantedBuild
+                #if DEBUG
+                let rebuildStarted = CACurrentMediaTime()
+                #endif
                 await rebuild()
+                #if DEBUG
+                PageProbe.tally("timeline rebuild", seconds: CACurrentMediaTime() - rebuildStarted)
+                #endif
                 shownBuild = target
                 #if DEBUG
                 PageProbe.contentReady(token: probeToken)
                 #endif
             }
+            #if DEBUG
+            PageProbe.tally("timeline builds in one go", seconds: 0)
+            #endif
             isBuilding = false
         }
     }
@@ -165,11 +174,27 @@ struct TimelineScreen: View {
     private func rebuild() async {
         // Everything read from SwiftData stays on the main actor; the build
         // below sees plain values only.
+        #if DEBUG
+        var stepStarted: CFTimeInterval = CACurrentMediaTime()
+        let step: (String) -> Void = { (name: String) -> Void in
+            PageProbe.tally("timeline step: " + name, seconds: CACurrentMediaTime() - stepStarted)
+            stepStarted = CACurrentMediaTime()
+        }
+        #endif
         let placeIndex = NearestPlaceIndex(places: places)
+        #if DEBUG
+        step("place index")
+        #endif
         let memoriesByPhotoID = Self.memoriesByPhotoID(memoryRecords)
+        #if DEBUG
+        step("memories by photo")
+        #endif
         let sourceItems = visibleItems.map { item in
             TimelineItemSnapshot(item: item, placeHint: nil, memories: memoriesByPhotoID[item.persistentModelID] ?? [])
         }
+        #if DEBUG
+        step("snapshots")
+        #endif
         let libraryItems = items
         let libraryItemByID = store.itemsByID
         let stackDecisions = stackRecords
@@ -178,33 +203,81 @@ struct TimelineScreen: View {
             let link = TripLink(id: trip.id, name: trip.effectiveName)
             for item in trip.items { linksByItemID[item.id] = link }
         }
+        #if DEBUG
+        step("trip links")
+        #endif
         let tripLinksByItemID = linksByItemID
         let calendar = Calendar.autoupdatingCurrent
+        #if DEBUG
+        let queuedAt = CACurrentMediaTime()
+        #endif
 
         let built = await Task.detached(priority: .userInitiated) { () -> TimelineBuildResult in
+            #if DEBUG
+            let startedAt: CFTimeInterval = CACurrentMediaTime()
+            var timings: [String: Double] = [:]
+            timings["queue wait"] = startedAt - queuedAt
+            #endif
             // The place lookup is per photo and pure, so it runs here too.
             let hinted = sourceItems.map { snapshot in
                 snapshot.withPlaceHint(Self.placeHint(for: snapshot, index: placeIndex))
             }
+            #if DEBUG
+            timings["place hints"] = CACurrentMediaTime() - startedAt
+            #endif
             // No trips given: every photo lands in one stream, grouped by day and place.
             let document = TimelineBuilder(calendar: calendar).build(items: hinted, trips: [])
+            #if DEBUG
+            timings["builder"] = CACurrentMediaTime() - startedAt
+            #endif
             let days = document.trips.flatMap(\.days)
             let dated = days.filter { $0.date != nil }.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
             let undated = days.filter { $0.date == nil }
+            #if DEBUG
+            timings["days"] = CACurrentMediaTime() - startedAt
+            #endif
             let months = TimelineMonth.group(dated, calendar: calendar)
                 + (undated.isEmpty ? [] : [TimelineMonth(id: "undated", date: nil, days: undated)])
+            #if DEBUG
+            timings["months"] = CACurrentMediaTime() - startedAt
+            #endif
             // Every shot goes to the viewer, which folds bursts as the grid does.
             let viewerOrder = months.flatMap { month in
                 month.days.flatMap { day in day.places.flatMap(\.itemIDs) }
             }
+            #if DEBUG
+            timings["viewer order"] = CACurrentMediaTime() - startedAt
+            var result = TimelineBuildResult(months: months, viewerOrder: viewerOrder)
+            result.timings = timings
+            return result
+            #endif
             return TimelineBuildResult(months: months, viewerOrder: viewerOrder)
         }.value
+        #if DEBUG
+        for (name, seconds) in built.timings {
+            PageProbe.tally("timeline bg: " + name, seconds: seconds)
+        }
+        var tailStarted: CFTimeInterval = CACurrentMediaTime()
+        let tail: (String) -> Void = { (name: String) -> Void in
+            PageProbe.tally("timeline step: " + name, seconds: CACurrentMediaTime() - tailStarted)
+            tailStarted = CACurrentMediaTime()
+        }
+        #endif
         months = built.months
         viewerOrder = built.viewerOrder
+        #if DEBUG
+        tail("assign months")
+        #endif
         stacks.update(items: libraryItems, decisions: stackDecisions)
+        #if DEBUG
+        tail("stacks update")
+        #endif
         itemByID = libraryItemByID
         tripsByItemID = tripLinksByItemID
         isBuilt = true
+        #if DEBUG
+        tail("finish")
+        #endif
     }
 
     /// The pages' grouped memories: every `Memory` once, under the photo its

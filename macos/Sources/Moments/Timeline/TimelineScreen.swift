@@ -38,6 +38,17 @@ struct TimelineScreen: View {
         items.filter { selection.isVisible($0.id) }
     }
 
+    /// What the stack model is handed, without hashing each photo: the
+    /// store's per-photo sum, how many photos this page passes, and a name
+    /// for this page (two pages may pass different subsets).
+    private var stackSourceKey: Int {
+        var hasher = Hasher()
+        hasher.combine(store.stackFieldsKey)
+        hasher.combine(store.items.count)
+        hasher.combine("timeline")
+        return hasher.finalize()
+    }
+
     private var inputKey: Int {
         var hasher = Hasher()
         // Photos and places, but not faces: the page groups days by photos,
@@ -198,7 +209,7 @@ struct TimelineScreen: View {
             // without the snapshots, place hints or builder.
             months = cached.months
             viewerOrder = cached.viewerOrder
-            stacks.update(items: items, decisions: stackRecords)
+            stacks.update(items: items, decisions: stackRecords, sourceKey: stackSourceKey)
             itemByID = store.itemsByID
             var cachedLinksByItemID: [String: TripLink] = [:]
             for trip in trips {
@@ -236,6 +247,7 @@ struct TimelineScreen: View {
         step("snapshots")
         #endif
         let libraryItems = items
+        let stackKey: Int = stackSourceKey // taken with the photos it describes, before the build awaits
         let libraryItemByID = store.itemsByID
         let stackDecisions = stackRecords
         var linksByItemID: [String: TripLink] = [:]
@@ -313,7 +325,7 @@ struct TimelineScreen: View {
         tail("assign months")
         #endif
         Self.lastBuild = (key: cacheKey, months: built.months, viewerOrder: built.viewerOrder)
-        stacks.update(items: libraryItems, decisions: stackDecisions)
+        stacks.update(items: libraryItems, decisions: stackDecisions, sourceKey: stackKey)
         #if DEBUG
         tail("stacks update")
         #endif

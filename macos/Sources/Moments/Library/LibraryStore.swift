@@ -149,6 +149,12 @@ final class LibraryStore {
     /// leaves this sum alone, which is how such a save skips the full bump.
     @ObservationIgnored private var layoutHash: [PersistentIdentifier: Int] = [:]
     @ObservationIgnored private var layoutSum = 0
+    /// Per-photo hash of the fields the stack model folds photos by. The
+    /// stacks read `perceptualHash`, which no other sum covers, so a page can
+    /// ask whether folding has to be looked at again without hashing every
+    /// photo itself. A favorite or a rename leaves it alone.
+    @ObservationIgnored private var stackHash: [PersistentIdentifier: Int] = [:]
+    @ObservationIgnored private var stackSum = 0
     /// Sort keys kept beside each photo, so rebuilding a list never reads a
     /// SwiftData property inside a comparator.
     @ObservationIgnored private var itemKeys: [PersistentIdentifier: PhotoKeys] = [:]
@@ -271,19 +277,24 @@ final class LibraryStore {
         itemByPID = [:]
         itemHash = [:]
         layoutHash = [:]
+        stackHash = [:]
         itemKeys = [:]
         itemSum = 0
         layoutSum = 0
+        stackSum = 0
         for item in live + deleted {
             let id = item.persistentModelID
             let hash = Self.hash(of: item)
             let layout = Self.layoutHash(of: item)
+            let stack = Self.stackFieldsHash(of: item)
             itemByPID[id] = item
             itemHash[id] = hash
             layoutHash[id] = layout
+            stackHash[id] = stack
             itemKeys[id] = PhotoKeys(item: item)
             itemSum &+= hash
             layoutSum &+= layout
+            stackSum &+= stack
         }
 
         faceByPID = [:]
@@ -700,12 +711,16 @@ final class LibraryStore {
     private func upsertPhoto(_ id: PersistentIdentifier, model: MediaItem, touched: inout Touched) {
         if let old = itemHash[id] { itemSum &-= old }
         if let old = layoutHash[id] { layoutSum &-= old }
+        if let old = stackHash[id] { stackSum &-= old }
         let hash = Self.hash(of: model)
         let layout = Self.layoutHash(of: model)
+        let stack = Self.stackFieldsHash(of: model)
         itemHash[id] = hash
         layoutHash[id] = layout
+        stackHash[id] = stack
         itemSum &+= hash
         layoutSum &+= layout
+        stackSum &+= stack
 
         let existed = itemByPID[id] != nil
         itemByPID[id] = model
@@ -721,6 +736,7 @@ final class LibraryStore {
     private func removePhoto(_ id: PersistentIdentifier, touched: inout Touched) {
         if let old = itemHash.removeValue(forKey: id) { itemSum &-= old }
         if let old = layoutHash.removeValue(forKey: id) { layoutSum &-= old }
+        if let old = stackHash.removeValue(forKey: id) { stackSum &-= old }
         itemKeys[id] = nil
         if itemByPID.removeValue(forKey: id) != nil { touched.photoLists = true }
     }
@@ -1115,6 +1131,18 @@ final class LibraryStore {
         )
     }
 
+    /// What the stack model would see in its photo list: the same sum the
+    /// full fetch and every applied batch keep, over exactly the fields
+    /// `PhotoStackModel.key(of:)` combines. A page passes this to
+    /// `PhotoStackModel.update(items:decisions:sourceKey:)`, so a visit that
+    /// changed nothing skips hashing every photo.
+    var stackFieldsKey: Int {
+        var hasher = Hasher()
+        hasher.combine(stackSum)
+        hasher.combine(itemByPID.count)
+        return hasher.finalize()
+    }
+
     private func bumpRevisionIfNeeded() {
         let next = measures
         let layout = layoutSum
@@ -1201,6 +1229,21 @@ final class LibraryStore {
         hasher.combine(item.longitude)
         hasher.combine(item.tripID)
         hasher.combine(item.place?.id)
+        hasher.combine(item.kindRaw)
+        hasher.combine(item.isScreenshot)
+        hasher.combine(item.deletedAt)
+        return hasher.finalize()
+    }
+
+    /// The fields `PhotoStackModel.key(of:)` combines, so a page can tell
+    /// whether the stacks would detect the same thing without walking the
+    /// library. `perceptualHash` is the field no other sum here covers: it
+    /// arrives after import, and a burst only folds once it is there.
+    static func stackFieldsHash(of item: MediaItem) -> Int {
+        var hasher = Hasher()
+        hasher.combine(item.id)
+        hasher.combine(item.effectiveCaptureDate)
+        hasher.combine(item.perceptualHash)
         hasher.combine(item.kindRaw)
         hasher.combine(item.isScreenshot)
         hasher.combine(item.deletedAt)

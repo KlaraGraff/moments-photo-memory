@@ -33,6 +33,12 @@ final class PhotoStackModel {
     /// background refresh never puts older ones back.
     @ObservationIgnored private var photosVersion = 0
     @ObservationIgnored private var decisionsVersion = 0
+    /// The photos key a screen's source key last stood for, so a visit that
+    /// passes the same source key skips hashing every photo. Cleared when it
+    /// would grow past `memoLimit`.
+    @ObservationIgnored private var photosKeyBySource: [Int: Int] = [:]
+    /// How many source keys are remembered; a handful of screens is all there is.
+    private static let memoLimit = 8
 
     struct Change: Equatable {
         enum Kind: Equatable { case cover, unstack, remove }
@@ -66,9 +72,28 @@ final class PhotoStackModel {
     /// decisions and analysis are unchanged. The first detection runs at once,
     /// so the first grid is already folded; later ones run in the background
     /// and screens regroup when `generation` moves.
+    ///
+    /// With a `sourceKey` the screen has already hashed what the photos are
+    /// made of (the store's per-photo sum, the count and the screen's name), so
+    /// a visit that passes a key seen before reuses the photos key from then
+    /// instead of hashing every photo again.
     @discardableResult
-    func update(items: [MediaItem], decisions records: [UserGroup], waits: Bool = false) -> PhotoStackIndex {
-        let photosKey = Self.key(of: items)
+    func update(
+        items: [MediaItem],
+        decisions records: [UserGroup],
+        waits: Bool = false,
+        sourceKey: Int? = nil
+    ) -> PhotoStackIndex {
+        let photosKey: Int
+        if let sourceKey, let known = photosKeyBySource[sourceKey] {
+            photosKey = known
+        } else {
+            photosKey = Self.key(of: items)
+            if let sourceKey {
+                if photosKeyBySource.count >= Self.memoLimit { photosKeyBySource.removeAll(keepingCapacity: true) }
+                photosKeyBySource[sourceKey] = photosKey
+            }
+        }
         let decisionsKey = Self.key(of: records)
         guard photosKey != self.photosKey || decisionsKey != self.decisionsKey || analysis.revision != detectedRevision else {
             return index

@@ -32,9 +32,12 @@ public struct TripSegmenter: Sendable {
     /// never a usual place.
     public var minimumUsualPlaceMonths: Int = 3
     /// Away photos further apart than this start a new trip when they are
-    /// also more than `maximumTripDistanceMeters` apart.
+    /// also more than `maximumTripDistanceMeters` apart, and that move is
+    /// more than `homeDetourRatio` of the way home.
     public var maximumTimeGap: TimeInterval = 36 * 60 * 60
     public var maximumTripDistanceMeters: Double = 300_000
+    /// A move longer than this share of the way home counts as having gone home in between.
+    public var homeDetourRatio: Double = 0.5
     /// Away photos further apart than this always start a new trip.
     public var maximumQuietGap: TimeInterval = 4 * 24 * 60 * 60
     public var locationlessMatchWindow: TimeInterval = 12 * 60 * 60
@@ -47,6 +50,12 @@ public struct TripSegmenter: Sendable {
     public var minimumTripItems: Int = 5
     /// A place the person set; it replaces the detected ones everywhere.
     public var fixedUsualPlace: GeoPoint?
+
+    /// Raise this whenever a change moves photos between trips and daily life,
+    /// so libraries grouped by older rules are grouped again (`TripRegrouping`).
+    /// 2: trips are time away from usual places (#99). 3: a trip stays together
+    /// across quiet days far from home (#111).
+    public static let rulesVersion = 3
 
     public init() {}
 
@@ -61,6 +70,22 @@ public struct TripSegmenter: Sendable {
             usual.places(at: date).allSatisfy { coordinate.distance(to: $0) > awayRadiusMeters }
         }
         func usualPlaceKnown(at date: Date) -> Bool { !usual.places(at: date).isEmpty }
+        func distanceToNearestUsualPlace(_ coordinate: GeoPoint, at date: Date) -> Double? {
+            usual.places(at: date).map { coordinate.distance(to: $0) }.min()
+        }
+        /// A move between two away photos is far enough to end the trip only
+        /// when it is also long compared with the way home from both ends: a
+        /// short hop between two places far from home is not a trip home.
+        func isFarMove(from last: GeoPoint?, at lastDate: Date?, to stop: PhotoStop) -> Bool {
+            guard let last, let next = stop.coordinate else { return false }
+            let move = last.distance(to: next)
+            guard move > maximumTripDistanceMeters else { return false }
+            guard let lastDate,
+                  let homeFromLast = distanceToNearestUsualPlace(last, at: lastDate),
+                  let homeFromNext = distanceToNearestUsualPlace(next, at: stop.date)
+            else { return true }
+            return move > homeDetourRatio * min(homeFromLast, homeFromNext)
+        }
 
         let located = (ordered + context)
             .compactMap { stop in stop.coordinate.map { (date: stop.date, away: isAway($0, at: stop.date)) } }
@@ -84,18 +109,16 @@ public struct TripSegmenter: Sendable {
 
         var runs: [[PhotoStop]] = []
         var current: [PhotoStop] = []
-        var lastCoordinate: GeoPoint?
+        var lastPosition: (coordinate: GeoPoint, date: Date)?
         for (index, stop) in ordered.enumerated() {
             guard away[index] else {
                 if !current.isEmpty { runs.append(current); current = [] }
-                lastCoordinate = nil
+                lastPosition = nil
                 continue
             }
             if let previous = current.last {
                 let gap = stop.date.timeIntervalSince(previous.date)
-                let far = lastCoordinate.flatMap { last in
-                    stop.coordinate.map { last.distance(to: $0) > maximumTripDistanceMeters }
-                } ?? false
+                let far = isFarMove(from: lastPosition?.coordinate, at: lastPosition?.date, to: stop)
                 // Without a usual place, a quiet day and a half ends a trip as before.
                 if gap > maximumQuietGap || (gap > maximumTimeGap && (far || !usualPlaceKnown(at: stop.date))) {
                     runs.append(current)
@@ -103,7 +126,7 @@ public struct TripSegmenter: Sendable {
                 }
             }
             current.append(stop)
-            if let coordinate = stop.coordinate { lastCoordinate = coordinate }
+            if let coordinate = stop.coordinate { lastPosition = (coordinate, stop.date) }
         }
         if !current.isEmpty { runs.append(current) }
 

@@ -16,12 +16,16 @@ import MomentsCore
 /// `UserGroup`s of kind `.chapter`, so a photo can be in a trip and in a
 /// birthday at once. Their cards and pages use the id "chapter.<group id>".
 struct TripsScreen: View {
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
+    @Environment(LibraryStore.self) private var store
+    // The library's photos and places come from the shared store, which
+    // fetches them once for every page.
+    private var items: [MediaItem] { store.items }
     @Query private var trips: [Trip]
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw == "chapter" }) private var chapterGroups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
-    @Query private var places: [Place]
+    private var places: [Place] { store.places }
     @Query(sort: \CollectionMemory.createdAt) private var memories: [CollectionMemory]
+    @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
     @Environment(SelectionModel.self) private var selection
     @Environment(\.modelContext) private var modelContext
     @Environment(\.undoManager) private var undoManager
@@ -39,22 +43,29 @@ struct TripsScreen: View {
     @State private var isCreatingTrip = false
     /// Chapters that are not trips, built like trips, by "chapter.<id>".
     @State private var chapterDocs: [String: TimelineTrip] = [:]
+    /// Moves each time `inputKey` changes.
+    @State private var wantedBuild = 0
+    /// The `wantedBuild` the shown result was built for.
+    @State private var shownBuild = -1
+    @State private var isBuilding = false
     /// The kind shown, or every kind when empty.
     @State private var filterRaw = ""
+    /// The last finished build, kept across visits to the page: SwiftUI drops
+    /// the page's `@State` when it is left, but the built values stay valid
+    /// as long as the inputs key below is unchanged.
+    @MainActor private static var lastBuild: (key: Int, document: TimelineDocument, chapterDocs: [String: TimelineTrip])?
 
     private var inputKey: Int {
         var hasher = Hasher()
-        for item in items {
-            hasher.combine(item.id)
-            hasher.combine(item.effectiveCaptureDate)
-            hasher.combine(item.localDayKey)
-            hasher.combine(item.latitude)
-            hasher.combine(item.longitude)
-            hasher.combine(item.tripID)
-            for memory in item.memories {
-                hasher.combine(memory.text)
-                hasher.combine(memory.updatedAt)
-            }
+        // All photos and places the page groups by, as one revision. Faces
+        // are left out because the page does not read them, so a save that
+        // changed nothing but faces does not rebuild the chapters.
+        hasher.combine(store.photoPlaceRevision)
+        for memory in memoryRecords {
+            hasher.combine(memory.id)
+            hasher.combine(memory.mediaID)
+            hasher.combine(memory.updatedAt)
+            hasher.combine(memory.revision)
         }
         for trip in trips {
             hasher.combine(trip.id)
@@ -62,10 +73,6 @@ struct TripsScreen: View {
             hasher.combine(trip.items.count)
             hasher.combine(trip.startDate)
             hasher.combine(trip.endDate)
-        }
-        for place in places {
-            hasher.combine(place.id)
-            hasher.combine(PlaceDisplayName.resolvedName(of: place))
         }
         for group in chapterGroups {
             hasher.combine(group.id)
@@ -79,37 +86,65 @@ struct TripsScreen: View {
         return hasher.finalize()
     }
 
-    static func chapterID(_ group: UserGroup) -> String { "chapter." + group.id }
+    /// The key the last finished build is stored under: the same `inputKey`
+    /// that decides whether the open page rebuilds, plus the calendar the
+    /// build groups by, so a different calendar never shows the old result.
+    private var buildCacheKey: Int {
+        var hasher = Hasher()
+        hasher.combine(inputKey)
+        hasher.combine(Calendar.autoupdatingCurrent.identifier)
+        hasher.combine(Calendar.autoupdatingCurrent.timeZone.identifier)
+        return hasher.finalize()
+    }
+
+    nonisolated static func chapterID(_ group: UserGroup) -> String { "chapter." + group.id }
+
+    /// One chapter that is not a trip, as plain values: the main actor reads
+    /// the group, its dates and its member photo ids; the build then runs off it.
+    struct ChapterSource: Sendable {
+        let id: String
+        let name: String
+        let mediaIDs: [String]
+        let startDate: Date?
+        let endDate: Date?
+    }
 
     /// Each chapter that is not a trip, built from its own photos only, so
     /// photos it shares with a trip appear in both.
-    private func buildChapters(snapshots: [String: TimelineItemSnapshot]) -> [String: TimelineTrip] {
-        let membersByGroup = Dictionary(grouping: groupItems.filter { !$0.excluded }, by: \.groupID)
+    nonisolated private static func buildChapters(
+        sources: [ChapterSource],
+        snapshots: [String: TimelineItemSnapshot],
+        calendar: Calendar
+    ) -> [String: TimelineTrip] {
         var result: [String: TimelineTrip] = [:]
-        let builder = TimelineBuilder(calendar: Calendar.autoupdatingCurrent)
-        for group in chapterGroups {
-            let id = Self.chapterID(group)
-            let ids = Array(Set((membersByGroup[group.id] ?? []).map(\.mediaID)))
-            let members = ids.compactMap { snapshots[$0] }
-            let info = group.chapterInfo
-            let source = TimelineSourceTrip(id: id, name: group.name, itemIDs: ids, startDate: info.startDate, endDate: info.endDate)
-            let built = builder.build(items: members, trips: [source]).trips.first { $0.id == id }
-            result[id] = built ?? TimelineTrip(id: id, name: group.name, days: [], startDate: info.startDate, plannedEndDate: info.endDate)
+        let builder = TimelineBuilder(calendar: calendar)
+        for source in sources {
+            let members = source.mediaIDs.compactMap { snapshots[$0] }
+            let trips = [TimelineSourceTrip(
+                id: source.id,
+                name: source.name,
+                itemIDs: source.mediaIDs,
+                startDate: source.startDate,
+                endDate: source.endDate
+            )]
+            let built = builder.build(items: members, trips: trips).trips.first { $0.id == source.id }
+            result[source.id] = built ?? TimelineTrip(
+                id: source.id,
+                name: source.name,
+                days: [],
+                startDate: source.startDate,
+                plannedEndDate: source.endDate
+            )
         }
         return result
     }
 
-    private func buildDocument(_ sourceItems: [TimelineItemSnapshot]) -> TimelineDocument {
-        let sourceTrips = trips.map { trip in
-            TimelineSourceTrip(
-                id: trip.id,
-                name: trip.effectiveName,
-                itemIDs: trip.items.map(\.id),
-                startDate: trip.startDate,
-                endDate: trip.endDate
-            )
-        }
-        return TimelineBuilder(calendar: Calendar.autoupdatingCurrent).build(
+    nonisolated private static func buildDocument(
+        _ sourceItems: [TimelineItemSnapshot],
+        sourceTrips: [TimelineSourceTrip],
+        calendar: Calendar
+    ) -> TimelineDocument {
+        TimelineBuilder(calendar: calendar).build(
             items: sourceItems,
             trips: sourceTrips
         )
@@ -212,6 +247,11 @@ struct TripsScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { _ in
             notice = nil
         }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
         .task(id: notice?.id) {
             // A note without a question goes away by itself.
             guard let notice, notice.offer == nil else { return }
@@ -225,14 +265,116 @@ struct TripsScreen: View {
                 onCreate: createChapter
             )
         }
-        .task(id: inputKey) {
-            let snapshots = items.map { item in
-                TimelineItemSnapshot(item: item, placeHint: nearestPlaceName(for: item))
-            }
-            document = buildDocument(snapshots)
-            chapterDocs = buildChapters(snapshots: Dictionary(snapshots.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }))
-            itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        .onChange(of: inputKey, initial: true) { _, _ in
+            wantedBuild &+= 1
+            startBuildingIfIdle()
         }
+    }
+
+    /// Starts a build when none runs. At most one build runs on this page:
+    /// inputs that change meanwhile only move `wantedBuild`, so when the build
+    /// ends its result is shown, and then exactly one more build starts for
+    /// the newest inputs. A newer input therefore never abandons a running
+    /// build, and dozens of superseded builds never run at once.
+    private func startBuildingIfIdle() {
+        guard !isBuilding else { return }
+        isBuilding = true
+        Task { @MainActor in
+            while shownBuild != wantedBuild {
+                #if DEBUG
+                let probeToken = PageProbe.phaseToken
+                #endif
+                let target: Int = wantedBuild
+                await rebuild()
+                shownBuild = target
+                #if DEBUG
+                PageProbe.contentReady(token: probeToken)
+                #endif
+            }
+            isBuilding = false
+        }
+    }
+
+    /// Reads everything SwiftData in one pass on the main actor, then builds
+    /// the shelf and every chapter off the main thread. Only one build runs at
+    /// a time, so no older result can arrive late and overwrite a newer one.
+    private func rebuild() async {
+        // Taken before anything is read: these are the inputs this build uses,
+        // and a change during the build must not be stored under a newer key.
+        let cacheKey = buildCacheKey
+        if let cached = Self.lastBuild, cached.key == cacheKey {
+            // Nothing changed since the last finished build: show it at once,
+            // without the snapshots, place hints or builder.
+            document = cached.document
+            chapterDocs = cached.chapterDocs
+            itemByID = store.itemsByID
+            #if DEBUG
+            PageProbe.tally("chapters last build reused", seconds: 0)
+            #endif
+            return
+        }
+        let placeIndex = NearestPlaceIndex(places: places)
+        let memoriesByPhotoID = TimelineScreen.memoriesByPhotoID(memoryRecords)
+        let sourceItems = items.map { item in
+            TimelineItemSnapshot(item: item, placeHint: nil, memories: memoriesByPhotoID[item.persistentModelID] ?? [])
+        }
+        let sourceTrips = trips.map { trip in
+            TimelineSourceTrip(
+                id: trip.id,
+                name: trip.effectiveName,
+                itemIDs: trip.items.map(\.id),
+                startDate: trip.startDate,
+                endDate: trip.endDate
+            )
+        }
+        let chapterSources = Self.chapterSources(groups: chapterGroups, members: groupItems)
+        let libraryItemByID = store.itemsByID
+        let calendar = Calendar.autoupdatingCurrent
+
+        let built = await Task.detached(priority: .userInitiated) { () -> ChaptersBuildResult in
+            let hinted = sourceItems.map { snapshot in
+                snapshot.withPlaceHint(Self.placeHint(for: snapshot, index: placeIndex))
+            }
+            let byID = Dictionary(hinted.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let document = Self.buildDocument(hinted, sourceTrips: sourceTrips, calendar: calendar)
+            let chapterDocs = Self.buildChapters(sources: chapterSources, snapshots: byID, calendar: calendar)
+            return ChaptersBuildResult(document: document, chapterDocs: chapterDocs)
+        }.value
+        document = built.document
+        chapterDocs = built.chapterDocs
+        itemByID = libraryItemByID
+        Self.lastBuild = (key: cacheKey, document: built.document, chapterDocs: built.chapterDocs)
+    }
+
+    /// The chapters that are not trips, as plain values: their ids, names,
+    /// own dates, and the photo ids of their members (`excluded` left out).
+    private static func chapterSources(
+        groups: [UserGroup],
+        members: [UserGroupItem]
+    ) -> [ChapterSource] {
+        let membersByGroup = Dictionary(grouping: members.filter { !$0.excluded }, by: \.groupID)
+        return groups.map { group in
+            let mediaIDs = Array(Set((membersByGroup[group.id] ?? []).map(\.mediaID)))
+            let info = group.chapterInfo
+            return ChapterSource(
+                id: chapterID(group),
+                name: group.name,
+                mediaIDs: mediaIDs,
+                startDate: info.startDate,
+                endDate: info.endDate
+            )
+        }
+    }
+
+    /// The place name a snapshot's photo would have been labelled with, from
+    /// its raw latitude and longitude: the same rule `nearestPlaceName(for:)`
+    /// applies, kept here so it can run off the main actor.
+    nonisolated private static func placeHint(
+        for snapshot: TimelineItemSnapshot,
+        index: NearestPlaceIndex
+    ) -> String? {
+        guard let latitude = snapshot.latitude, let longitude = snapshot.longitude else { return nil }
+        return index.nearestName(to: GeoPoint(latitude: latitude, longitude: longitude), within: 100_000)
     }
 
     private func open(_ trip: TimelineTrip) {
@@ -444,27 +586,13 @@ struct TripsScreen: View {
         let isTrip = tripByID[trip.id] != nil
         let inside = Set(trip.orderedItems.map(\.id))
         for item in items where isTrip ? (item.trip == nil && item.tripID == nil) : !inside.contains(item.id) {
-            guard let date = item.effectiveCaptureDate, date >= from, date < to, date < first || date > last else { continue }
+            guard let date = item.effectiveCaptureDate, date.isOnOrAfter(from), date < to, date < first || date > last else { continue }
             byDay[calendar.startOfDay(for: date), default: []].append(item)
         }
         return byDay.keys.sorted().map { day in
             let photos = byDay[day, default: []].sorted { ($0.effectiveCaptureDate ?? .distantPast) < ($1.effectiveCaptureDate ?? .distantPast) }
             return TripNearbyDay(date: day, isBefore: day < first, itemIDs: photos.map(\.id))
         }
-    }
-
-    private func nearestPlaceName(for item: MediaItem) -> String? {
-        guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
-        let coordinate = GeoPoint(latitude: latitude, longitude: longitude)
-        let nearest = places.compactMap { place -> (name: String, distance: Double)? in
-            guard let placeLatitude = place.latitude, let placeLongitude = place.longitude,
-                  let name = PlaceDisplayName.resolvedName(of: place) else { return nil }
-            let distance = coordinate.distance(to: GeoPoint(latitude: placeLatitude, longitude: placeLongitude))
-            return (name, distance)
-        }
-        .min { $0.distance < $1.distance }
-        guard let nearest, nearest.distance <= 100_000 else { return nil }
-        return nearest.name
     }
 }
 
@@ -664,6 +792,12 @@ private struct TripShelfView: View {
             }
             .onAppear {
                 if let returnTripID { proxy.scrollTo(returnTripID, anchor: .center) }
+                #if DEBUG
+                // The shelf only shows once its cards are built, so coming
+                // back from a chapter shows content as soon as it appears.
+                PageProbe.shellReady(token: PageProbe.phaseToken)
+                PageProbe.contentReady(token: PageProbe.phaseToken)
+                #endif
             }
         }
     }
@@ -1010,6 +1144,9 @@ private struct TripDetailView: View {
                     Text(TripText.summary(trip))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(Paper.muted)
+                        #if DEBUG
+                        .onAppear { PageProbe.contentReady(token: PageProbe.phaseToken) }
+                        #endif
                     if !trip.cityNames.isEmpty {
                         Text(trip.cityNames.joined(separator: " → "))
                             .font(.callout)
@@ -1099,6 +1236,11 @@ private struct TripDetailView: View {
                 }
             }
         }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
     }
 
     private func dayActions(for day: TimelineDay) -> TripDayActions? {

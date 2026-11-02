@@ -56,6 +56,8 @@ struct PeopleStoreAssignmentSnapshot: Sendable {
 private struct PeopleClusterSnapshot: Identifiable {
     let id: String
     let faces: [FaceObservation]
+    /// Worked out once when the snapshot is built, not on every redraw.
+    let cover: FaceObservation?
 }
 
 /// A face's state before ✓ or ✗, so the change can be taken back.
@@ -296,7 +298,8 @@ final class PeopleScanController {
     nonisolated static func makeAssignmentsResult(
         faces: [PeopleFaceSnapshot],
         people: [PeoplePersonSnapshot],
-        shouldStop: (@Sendable () -> Bool)? = nil
+        shouldStop: (@Sendable () -> Bool)? = nil,
+        chunkSize: Int = 3_000
     ) -> PeopleAssignmentResult {
         let confirmed = people.compactMap { person -> (id: String, centroid: [Float])? in
             let vectors = faces.filter { $0.personID == person.id && $0.confirmed && $0.assignmentSource == "user" }.compactMap { decode($0.embedding) }
@@ -357,24 +360,100 @@ final class PeopleScanController {
                 clusteringIndices.append(index)
             }
         }
-        let limitedIndices = Array(clusteringIndices.prefix(3_000))
-        let vectors = limitedIndices.compactMap { decode(faces[$0].embedding) }
-        guard vectors.count == limitedIndices.count else {
-            separateSamePhotoFaces(&assignments, faces: faces)
-            return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false)
-        }
-        let result = FaceClustering.averageLinkResult(vectors, shouldStop: stop)
-        if result.stopped {
-            return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
-        }
-        for cluster in result.clusters {
-            guard let first = cluster.first else { continue }
-            let firstIndex = limitedIndices[first]
-            let clusterID = "cluster-\(assignments[firstIndex].id)"
-            for member in cluster { assignments[limitedIndices[member]].clusterID = clusterID }
+        // Group the faces nobody has named yet in rounds of at most `chunkSize`
+        // (about 18 MB of distance matrix at 3,000 faces). Each round clusters
+        // its chunk, then pulls close faces of the later chunks into the new
+        // groups, so a whole import is grouped in one pass and the leftover
+        // faces shrink round by round. With at most one chunk left this is
+        // exactly the single pass it used to be.
+        let roundSize = max(chunkSize, 1)
+        while !clusteringIndices.isEmpty {
+            let chunk = Array(clusteringIndices.prefix(roundSize))
+            let vectors = chunk.compactMap { decode(faces[$0].embedding) }
+            guard vectors.count == chunk.count else {
+                separateSamePhotoFaces(&assignments, faces: faces)
+                return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false)
+            }
+            let result = FaceClustering.averageLinkResult(vectors, shouldStop: stop)
+            if result.stopped {
+                return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
+            }
+            var newClusterMeans: [(id: String, mean: [Float])] = []
+            for cluster in result.clusters {
+                guard let first = cluster.first else { continue }
+                let firstIndex = chunk[first]
+                let clusterID = "cluster-\(assignments[firstIndex].id)"
+                for member in cluster { assignments[chunk[member]].clusterID = clusterID }
+                if let mean = meanOfUnitVectors(cluster.map { vectors[$0] }) {
+                    newClusterMeans.append((clusterID, mean))
+                }
+            }
+            let rest = Array(clusteringIndices.dropFirst(chunk.count))
+            guard !rest.isEmpty else { break }
+            let next = assignToNearestNewCluster(&assignments, faces: faces, indices: rest, clusterMeans: newClusterMeans, stop: stop)
+            if next.stopped {
+                return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
+            }
+            clusteringIndices = next.left
         }
         separateSamePhotoFaces(&assignments, faces: faces)
         return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false)
+    }
+
+    nonisolated private static func unitVector(_ vector: [Float]) -> [Float] {
+        let norm = sqrt(vector.reduce(Float.zero) { $0 + $1 * $1 })
+        return norm > 0 ? vector.map { $0 / norm } : vector
+    }
+
+    /// Mean of the unit vectors, the same averaging the existing unnamed groups
+    /// get above: unit vectors added up and divided by their count.
+    nonisolated private static func meanOfUnitVectors(_ vectors: [[Float]]) -> [Float]? {
+        let unitVectors = vectors.map(unitVector)
+        guard let dimension = unitVectors.first?.count else { return nil }
+        var sum = [Float](repeating: 0, count: dimension)
+        var count = 0
+        for vector in unitVectors where vector.count == dimension {
+            for d in 0..<dimension { sum[d] += vector[d] }
+            count += 1
+        }
+        guard count > 0 else { return nil }
+        return sum.map { $0 / Float(count) }
+    }
+
+    /// The rule the first step above already applies to existing groups: a face
+    /// joins the nearest of this round's new groups when its cosine distance to
+    /// that group's mean is below the threshold. Faces that stay on their own
+    /// come back in their order for the next round.
+    nonisolated private static func assignToNearestNewCluster(
+        _ assignments: inout [PeopleFaceAssignment],
+        faces: [PeopleFaceSnapshot],
+        indices: [Int],
+        clusterMeans: [(id: String, mean: [Float])],
+        stop: @Sendable () -> Bool
+    ) -> (left: [Int], stopped: Bool) {
+        var left: [Int] = []
+        for (position, index) in indices.enumerated() {
+            if position % 64 == 0, stop() { return (left, true) }
+            guard let vector = decode(faces[index].embedding).map(unitVector) else {
+                left.append(index)
+                continue
+            }
+            var best: (id: String, distance: Float)?
+            for cluster in clusterMeans where cluster.mean.count == vector.count {
+                var dot: Float = 0
+                for d in 0..<vector.count { dot += vector[d] * cluster.mean[d] }
+                let distance: Float = 1 - dot
+                if distance < FaceClustering.defaultThreshold, distance < (best?.distance ?? .infinity) {
+                    best = (cluster.id, distance)
+                }
+            }
+            if let best {
+                assignments[index].clusterID = best.id
+            } else {
+                left.append(index)
+            }
+        }
+        return (left, false)
     }
 
     /// One person appears at most once in a photo, so two faces from the same
@@ -790,7 +869,7 @@ enum PeopleImageLoader {
     static func load(
         _ descriptor: PeopleMediaDescriptor,
         allowDownload: Bool,
-        photoSource: any PhotosAssetSource = PhotoKitAssetSource()
+        photoSource: any PhotosAssetSource = PhotoKitAssetSource.shared
     ) async -> CGImage? {
         if let localIdentifier = descriptor.photosLocalIdentifier,
            let image = await photoSource.thumbnailImage(forLocalIdentifier: localIdentifier, targetSize: CGSize(width: 2_000, height: 2_000), networkAccessAllowed: allowDownload) {
@@ -812,16 +891,18 @@ enum PeopleImageLoader {
 
 struct PeopleScreen: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(LibraryStore.self) private var store
     @Environment(PeopleScanController.self) private var scanner
     @Query(sort: \Person.name) private var people: [Person]
-    @Query private var observations: [FaceObservation]
+    private var observations: [FaceObservation] { store.faces }
     /// Faces in Recently Deleted photos stay stored but are not shown.
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt != nil }) private var deletedItems: [MediaItem]
+    private var deletedItems: [MediaItem] { store.deletedItems }
     @State private var clusterNames: [String: String] = [:]
     @State private var mergeSource: String?
     @State private var mergeTarget: String?
     @State private var pendingNameMerge: PendingNameMerge?
     @State private var cachedFacesByPerson: [String: [FaceObservation]] = [:]
+    @State private var cachedCardSummaries: [String: PeopleCardSummary] = [:]
     @State private var cachedUnnamedClusters: [PeopleClusterSnapshot] = []
     @State private var lastFaceChange: FaceUndoSnapshot?
     @State private var renamingPersonID: String?
@@ -829,8 +910,6 @@ struct PeopleScreen: View {
     @State private var pendingRename: PendingRename?
     /// The person whose key-photo picker is open.
     @State private var keyPhotoPersonID: String?
-    /// Bumped when a key photo changes; UserDefaults alone does not redraw.
-    @State private var keyPhotoRevision = 0
     @State private var addingPerson = false
     @State private var addPersonName = ""
     /// The unnamed groups picked in the Add person sheet.
@@ -846,16 +925,10 @@ struct PeopleScreen: View {
 
     private var observationsKey: Int {
         var hasher = Hasher()
-        for observation in observations {
-            hasher.combine(observation.id)
-            hasher.combine(observation.mediaID)
-            hasher.combine(observation.personID)
-            hasher.combine(observation.clusterID)
-            hasher.combine(observation.confirmed)
-            hasher.combine(observation.assignmentSource)
-            hasher.combine(observation.updatedAt)
-        }
-        for item in deletedItems { hasher.combine(item.id) }
+        hasher.combine(store.revision)
+        // A face edit can change only `updatedAt`, which is not in the
+        // store's signature, so a refresh must still rebuild the page caches.
+        hasher.combine(store.refreshCount)
         return hasher.finalize()
     }
 
@@ -863,8 +936,16 @@ struct PeopleScreen: View {
         let deletedIDs = Set(deletedItems.map(\.id))
         let shown = deletedIDs.isEmpty ? observations : observations.filter { !deletedIDs.contains($0.mediaID) }
         cachedFacesByPerson = Dictionary(grouping: shown.compactMap { $0.personID == nil ? nil : $0 }, by: { $0.personID! })
+        cachedCardSummaries = PeopleCardSummaries.make(
+            facesByPerson: cachedFacesByPerson,
+            keyFaceID: { (personID: String) -> String? in PeopleStoreActions.keyFaceID(for: personID) }
+        )
         let grouped = Dictionary(grouping: shown.filter { $0.personID == nil && $0.clusterID != nil }, by: { $0.clusterID! })
-        cachedUnnamedClusters = grouped.map { PeopleClusterSnapshot(id: $0.key, faces: $0.value.sorted { $0.createdAt < $1.createdAt }) }.sorted { $0.id < $1.id }
+        cachedUnnamedClusters = grouped.map { group -> PeopleClusterSnapshot in
+            let sortedFaces: [FaceObservation] = group.value.sorted { $0.createdAt < $1.createdAt }
+            let cover: FaceObservation? = PeopleFacePicker.cover(sortedFaces)
+            return PeopleClusterSnapshot(id: group.key, faces: sortedFaces, cover: cover)
+        }.sorted { $0.id < $1.id }
     }
 
     var body: some View {
@@ -874,20 +955,8 @@ struct PeopleScreen: View {
                     Text(String(localized: "People scanning is unavailable on this device."))
                         .font(.callout)
                         .foregroundStyle(Paper.muted)
-                } else if scanner.isScanning || scanner.progress.total > 0 && scanner.progress.completed < scanner.progress.total {
-                    HStack(spacing: 9) {
-                        if scanner.progress.isPaused { ProgressView().controlSize(.small) } else { ProgressView(value: Double(scanner.progress.completed), total: Double(max(scanner.progress.total, 1))).frame(width: 130) }
-                        Text(String(format: String(localized: "Finding faces progress"), scanner.progress.completed, scanner.progress.total))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(Paper.muted)
-                        if scanner.progress.skippedUnavailable > 0 {
-                            Text(String(format: String(localized: "Skipped unavailable"), scanner.progress.skippedUnavailable))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(Paper.muted)
-                        }
-                        if scanner.progress.isPaused { Text(String(localized: "Paused to save battery")).font(.caption).foregroundStyle(Paper.muted) }
-                        Button(String(localized: "Cancel")) { scanner.cancel() }.buttonStyle(.borderless)
-                    }
+                } else {
+                    PeopleScanProgressRow()
                 }
 
                 if !scanner.isAvailable {
@@ -944,8 +1013,16 @@ struct PeopleScreen: View {
         .onAppear {
             mergeSameNamedPeople()
             scanner.scanIfNeeded()
+            #if DEBUG
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+            #endif
         }
-        .onChange(of: observationsKey, initial: true) { _, _ in refreshFaceCaches() }
+        .onChange(of: observationsKey, initial: true) { _, _ in
+            refreshFaceCaches()
+            #if DEBUG
+            PageProbe.contentReady(token: PageProbe.phaseToken)
+            #endif
+        }
         .onChange(of: people.map(\.id), initial: true) { _, ids in
             if !personFilterIsValid(ids: ids) { UserDefaults.standard.removeObject(forKey: "moments.library.person") }
         }
@@ -1008,7 +1085,7 @@ struct PeopleScreen: View {
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 10)], spacing: 10) {
                             ForEach(unnamedClusters) { cluster in
-                                if let face = PeopleFacePicker.cover(cluster.faces) {
+                                if let face = cluster.cover {
                                     let picked = addPersonClusters.contains(cluster.id)
                                     Button {
                                         if picked { addPersonClusters.remove(cluster.id) } else { addPersonClusters.insert(cluster.id) }
@@ -1119,14 +1196,14 @@ struct PeopleScreen: View {
 
     private func namedCard(_ person: Person) -> some View {
         let faces = cachedFacesByPerson[person.id] ?? []
-        let photoCount = Set(faces.map(\.mediaID)).count
+        let photoCount = cachedCardSummaries[person.id]?.photoCount ?? 0
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 // Like Photos: the big face picks the key photo, the name
                 // opens this person's photos.
                 if let cover = coverFace(of: person) {
                     Button { keyPhotoPersonID = person.id } label: {
-                        FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72)
+                        FaceCropView(data: cover.cropData, cacheKey: cover.id, size: 72, probeToken: pageProbePhaseToken)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -1168,7 +1245,7 @@ struct PeopleScreen: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 6) {
                         ForEach(faces, id: \.id) { face in
-                            FaceCropView(data: face.cropData, cacheKey: face.id, size: 56)
+                            FaceCropView(data: face.cropData, cacheKey: face.id, size: 56, probeToken: pageProbePhaseToken)
                                 .contextMenu {
                                     Button(String(localized: "Make Key Photo")) { setKeyPhoto(face, for: person) }
                                     Divider()
@@ -1207,16 +1284,16 @@ struct PeopleScreen: View {
     }
 
     private func coverFace(of person: Person) -> FaceObservation? {
-        _ = keyPhotoRevision
-        return PeopleFacePicker.cover(
-            cachedFacesByPerson[person.id] ?? [],
-            keyFaceID: PeopleStoreActions.keyFaceID(for: person.id)
-        )
+        cachedCardSummaries[person.id]?.cover
     }
 
     private func setKeyPhoto(_ face: FaceObservation, for person: Person) {
         PeopleStoreActions.setKeyFace(face.id, for: person.id)
-        keyPhotoRevision += 1
+        // Only this person's cover changed: rebuild that one summary instead of
+        // every card. `face` is the key face just chosen, and it belongs to them.
+        let photoCount = cachedCardSummaries[person.id]?.photoCount
+            ?? Set((cachedFacesByPerson[person.id] ?? []).map { (face: FaceObservation) -> String in face.mediaID }).count
+        cachedCardSummaries[person.id] = PeopleCardSummary(cover: face, photoCount: photoCount)
         keyPhotoPersonID = nil
     }
 
@@ -1265,7 +1342,7 @@ struct PeopleScreen: View {
             Text(String(localized: "Is this the same person?")).font(.system(.title3, design: .serif).weight(.medium)).foregroundStyle(Paper.ink)
             ForEach(unnamedClusters) { cluster in
                 HStack(alignment: .top, spacing: 14) {
-                    if let cover = PeopleFacePicker.cover(cluster.faces) {
+                    if let cover = cluster.cover {
                         FaceInPhotoView(
                             faceID: cover.id,
                             faceRect: CGRect(x: cover.rectX, y: cover.rectY, width: cover.rectWidth, height: cover.rectHeight),
@@ -1285,7 +1362,7 @@ struct PeopleScreen: View {
                             LazyHStack(spacing: 10) {
                                 ForEach(cluster.faces, id: \.id) { face in
                                     VStack(spacing: 4) {
-                                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 64)
+                                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 64, probeToken: pageProbePhaseToken)
                                             .contextMenu { faceCorrectionMenu(face, current: nil) }
                                         HStack(spacing: 4) {
                                             Button { confirm(face) } label: {
@@ -1485,6 +1562,8 @@ struct FaceCropView: View {
     /// person's face in another person's slot.
     let cacheKey: String
     let size: CGFloat
+    /// The page probe phase this crop was built in (DEBUG only).
+    var probeToken: UInt64? = nil
     @State private var image: NSImage?
 
     var body: some View {
@@ -1502,6 +1581,9 @@ struct FaceCropView: View {
             let key = cacheKey as NSString
             if let cached = Self.cache.object(forKey: key) {
                 image = cached
+                #if DEBUG
+                if let probeToken { PageProbe.thumbnailReady(token: probeToken) }
+                #endif
                 return
             }
             let decodeTask = Task.detached(priority: .utility) { () -> Data? in
@@ -1516,6 +1598,9 @@ struct FaceCropView: View {
             guard let decoded = decodedData.flatMap(NSImage.init(data:)) else { return }
             Self.cache.setObject(decoded, forKey: key)
             image = decoded
+            #if DEBUG
+            if let probeToken { PageProbe.thumbnailReady(token: probeToken) }
+            #endif
         }
     }
 }

@@ -2,15 +2,30 @@ import SwiftUI
 import SwiftData
 import MomentsCore
 
+/// What one Timeline build works from: everything the main actor reads,
+/// as plain values, so the build can run off the main thread and an
+/// app-level pre-builder can hand the page the same thing.
+struct TimelineBuildInputs: Sendable {
+    /// The key the result is looked up and stored under.
+    let key: Int
+    /// The visible photos in store order, before place hints.
+    let sourceItems: [TimelineItemSnapshot]
+    let placeIndex: NearestPlaceIndex
+    let calendar: Calendar
+}
+
 /// Every photo by day, newest first, trips or not: everyday moments sit
 /// next to travel. Each day has its memory line and its places, the same
 /// as a day inside a trip, plus a link to the trip it belongs to. Follows
 /// the Library filters, like the maps.
 struct TimelineScreen: View {
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
+    @Environment(LibraryStore.self) private var store
+    // The library's photos and places come from the shared store, which
+    // fetches them once for every page.
+    private var items: [MediaItem] { store.items }
     @Query private var trips: [Trip]
-    @Query private var places: [Place]
     @Query(sort: \CollectionMemory.createdAt) private var memories: [CollectionMemory]
+    @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw == "stack" }) private var stackRecords: [UserGroup]
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks
@@ -20,38 +35,132 @@ struct TimelineScreen: View {
     @State private var tripsByItemID: [String: TripLink] = [:]
     @State private var viewerOrder: [String] = []
     @State private var isBuilt = false
+    /// Moves each time `inputKey` changes.
+    @State private var wantedBuild = 0
+    /// The `wantedBuild` the shown result was built for.
+    @State private var shownBuild = -1
+    @State private var isBuilding = false
+    /// The last finished build, kept across visits to the page: SwiftUI drops
+    /// the page's `@State` when it is left, but the built values stay valid
+    /// as long as the inputs key below is unchanged.
+    @MainActor private static var lastBuild: (key: Int, result: TimelineBuildResult)?
 
-    private var visibleItems: [MediaItem] {
-        items.filter { selection.isVisible($0.id) }
+    /// What the stack model is handed, without hashing each photo: the
+    /// store's per-photo sum, how many photos this page passes, and a name
+    /// for this page (two pages may pass different subsets).
+    private var stackSourceKey: Int {
+        var hasher = Hasher()
+        hasher.combine(store.stackFieldsKey)
+        hasher.combine(store.items.count)
+        hasher.combine("timeline")
+        return hasher.finalize()
     }
 
+    /// Moves when anything the page builds from changes. `.onChange` follows
+    /// it; the calendar is left out on purpose, as it always was.
     private var inputKey: Int {
+        Self.inputKey(
+            store: store,
+            selection: selection,
+            memories: memoryRecords,
+            trips: trips,
+            stacks: stacks,
+            stackRecords: stackRecords
+        )
+    }
+
+    /// The key the last finished build is stored under: the same `inputKey`
+    /// that decides whether the open page rebuilds, plus the calendar the
+    /// build groups by, so a different calendar never shows the old result.
+    private var buildCacheKey: Int {
+        Self.buildKey(
+            store: store,
+            selection: selection,
+            memories: memoryRecords,
+            trips: trips,
+            stacks: stacks,
+            stackRecords: stackRecords,
+            calendar: Calendar.autoupdatingCurrent
+        )
+    }
+
+    /// The one key for a Timeline build: what `inputKey` and `buildCacheKey`
+    /// combine together today, with each row of the `trips`, `memories` and
+    /// `stackRecords` arrays hashed on its own and the row hashes summed.
+    /// A fetch from another `ModelContext` may return the same rows in a
+    /// different order and `Hasher` is order sensitive, but a sum does not
+    /// care in which order the rows come in.
+    @MainActor
+    static func buildKey(
+        store: LibraryStore,
+        selection: SelectionModel,
+        memories: [Memory],
+        trips: [Trip],
+        stacks: PhotoStackModel,
+        stackRecords: [UserGroup],
+        calendar: Calendar
+    ) -> Int {
         var hasher = Hasher()
-        for item in visibleItems {
-            hasher.combine(item.id)
-            hasher.combine(item.effectiveCaptureDate)
-            hasher.combine(item.localDayKey)
-            hasher.combine(item.latitude)
-            hasher.combine(item.longitude)
-            for memory in item.memories {
-                hasher.combine(memory.text)
-                hasher.combine(memory.updatedAt)
-            }
+        hasher.combine(Self.inputKey(
+            store: store,
+            selection: selection,
+            memories: memories,
+            trips: trips,
+            stacks: stacks,
+            stackRecords: stackRecords
+        ))
+        hasher.combine(calendar.identifier)
+        hasher.combine(calendar.timeZone.identifier)
+        return hasher.finalize()
+    }
+
+    /// The fields `inputKey` hashed before the calendar was added: photos and
+    /// places, the visible set, memories, trips, stacks and stack records.
+    @MainActor
+    private static func inputKey(
+        store: LibraryStore,
+        selection: SelectionModel,
+        memories: [Memory],
+        trips: [Trip],
+        stacks: PhotoStackModel,
+        stackRecords: [UserGroup]
+    ) -> Int {
+        var hasher = Hasher()
+        // Photos and places, but not faces: the page groups days by photos,
+        // places, trips, memories and groups and never reads faces, so a
+        // save that changed nothing but faces does not rebuild it.
+        hasher.combine(store.photoPlaceRevision)
+        hasher.combine(selection.visibleGeneration)
+        var memoriesSum: Int = 0
+        for memory in memories {
+            var row: Hasher = Hasher()
+            row.combine(memory.id)
+            row.combine(memory.mediaID)
+            row.combine(memory.updatedAt)
+            memoriesSum = memoriesSum &+ row.finalize()
         }
+        hasher.combine(memories.count)
+        hasher.combine(memoriesSum)
+        var tripsSum: Int = 0
         for trip in trips {
-            hasher.combine(trip.id)
-            hasher.combine(trip.effectiveName)
-            hasher.combine(trip.items.count)
+            var row: Hasher = Hasher()
+            row.combine(trip.id)
+            row.combine(trip.effectiveName)
+            row.combine(trip.items.count)
+            tripsSum = tripsSum &+ row.finalize()
         }
-        for place in places {
-            hasher.combine(place.id)
-            hasher.combine(PlaceDisplayName.resolvedName(of: place))
-        }
+        hasher.combine(trips.count)
+        hasher.combine(tripsSum)
         hasher.combine(stacks.generation)
+        var stackRecordsSum: Int = 0
         for record in stackRecords {
-            hasher.combine(record.id)
-            hasher.combine(record.rulesData)
+            var row: Hasher = Hasher()
+            row.combine(record.id)
+            row.combine(record.rulesData)
+            stackRecordsSum = stackRecordsSum &+ row.finalize()
         }
+        hasher.combine(stackRecords.count)
+        hasher.combine(stackRecordsSum)
         return hasher.finalize()
     }
 
@@ -68,7 +177,7 @@ struct TimelineScreen: View {
             } else if !isBuilt {
                 // Built on appear; until then show the bare page.
                 Paper.canvas
-            } else if visibleItems.isEmpty {
+            } else if !items.contains(where: { selection.isVisible($0.id) }) {
                 ContentUnavailableView {
                     Label("No photos match these filters", systemImage: "line.3.horizontal.decrease.circle")
                 } description: {
@@ -89,7 +198,15 @@ struct TimelineScreen: View {
         // The page's name lives in the window's title bar, not in the page.
         .navigationTitle(String(localized: "Timeline"))
         .navigationSubtitle(isBuilt && dayCount > 0 ? String(localized: "\(dayCount) days") : "")
-        .task(id: inputKey) { rebuild() }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
+        .onChange(of: inputKey, initial: true) { _, _ in
+            wantedBuild &+= 1
+            startBuildingIfIdle()
+        }
         .compactLibraryFilters()
     }
 
@@ -127,28 +244,336 @@ struct TimelineScreen: View {
         .background(Paper.canvas)
     }
 
-    private func rebuild() {
-        let snapshots = visibleItems.map { item in
-            TimelineItemSnapshot(item: item, placeHint: nearestPlaceName(for: item))
+    /// Starts a build when none runs. At most one build runs on this page:
+    /// inputs that change meanwhile only move `wantedBuild`, so when the build
+    /// ends its result is shown, and then exactly one more build starts for
+    /// the newest inputs. A newer input therefore never abandons a running
+    /// build, and dozens of superseded builds never run at once.
+    private func startBuildingIfIdle() {
+        guard !isBuilding else { return }
+        isBuilding = true
+        Task { @MainActor in
+            while shownBuild != wantedBuild {
+                #if DEBUG
+                let probeToken = PageProbe.phaseToken
+                #endif
+                let target: Int = wantedBuild
+                #if DEBUG
+                let rebuildStarted = CACurrentMediaTime()
+                #endif
+                await rebuild()
+                #if DEBUG
+                PageProbe.tally("timeline rebuild", seconds: CACurrentMediaTime() - rebuildStarted)
+                #endif
+                shownBuild = target
+                #if DEBUG
+                PageProbe.contentReady(token: probeToken)
+                #endif
+            }
+            #if DEBUG
+            PageProbe.tally("timeline builds in one go", seconds: 0)
+            #endif
+            isBuilding = false
         }
-        // No trips given: every photo lands in one stream, grouped by day and place.
-        let document = TimelineBuilder(calendar: Calendar.autoupdatingCurrent).build(items: snapshots, trips: [])
-        let days = document.trips.flatMap(\.days)
-        let dated = days.filter { $0.date != nil }.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
-        let undated = days.filter { $0.date == nil }
-        months = TimelineMonth.group(dated, calendar: .autoupdatingCurrent)
-            + (undated.isEmpty ? [] : [TimelineMonth(id: "undated", date: nil, days: undated)])
-        // Every shot goes to the viewer, which folds bursts as the grid does.
-        stacks.update(items: items, decisions: stackRecords)
-        viewerOrder = months.flatMap { $0.days.flatMap { $0.places.flatMap(\.itemIDs) } }
-        itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var links: [String: TripLink] = [:]
+    }
+
+    /// The last finished build for a key, if it is still the one asked for.
+    @MainActor
+    static func cachedBuild(key: Int) -> TimelineBuildResult? {
+        guard let lastBuild, lastBuild.key == key else { return nil }
+        return lastBuild.result
+    }
+
+    /// Remembers a finished build under the key it was built for.
+    @MainActor
+    static func storeBuild(_ result: TimelineBuildResult, key: Int) {
+        lastBuild = (key: key, result: result)
+    }
+
+    /// Everything the build reads from SwiftData, in one main-actor pass, as
+    /// plain values only.
+    @MainActor
+    static func buildInputs(
+        key: Int,
+        store: LibraryStore,
+        selection: SelectionModel,
+        memories: [Memory],
+        calendar: Calendar
+    ) -> TimelineBuildInputs {
+        #if DEBUG
+        var stepStarted: CFTimeInterval = CACurrentMediaTime()
+        let step: (String) -> Void = { (name: String) -> Void in
+            PageProbe.tally("timeline step: " + name, seconds: CACurrentMediaTime() - stepStarted)
+            stepStarted = CACurrentMediaTime()
+        }
+        #endif
+        let placeIndex = NearestPlaceIndex(places: store.places)
+        #if DEBUG
+        step("place index")
+        #endif
+        let memoriesByPhotoID = Self.memoriesByPhotoID(memories)
+        #if DEBUG
+        step("memories by photo")
+        #endif
+        let sourceItems: [TimelineItemSnapshot] = store.items
+            .filter { (item: MediaItem) -> Bool in selection.isVisible(item.id) }
+            .map { (item: MediaItem) -> TimelineItemSnapshot in
+                TimelineItemSnapshot(item: item, placeHint: nil, memories: memoriesByPhotoID[item.persistentModelID] ?? [])
+            }
+        #if DEBUG
+        step("snapshots")
+        #endif
+        return TimelineBuildInputs(key: key, sourceItems: sourceItems, placeIndex: placeIndex, calendar: calendar)
+    }
+
+    /// The one Timeline build: place hints, then the builder, the months and
+    /// the viewer order. This is the body `rebuild()` ran in its detached
+    /// task, unchanged, so an app-level pre-builder can run the same build.
+    nonisolated static func build(
+        _ inputs: TimelineBuildInputs,
+        priority: TaskPriority = .userInitiated
+    ) async -> TimelineBuildResult {
+        let sourceItems: [TimelineItemSnapshot] = inputs.sourceItems
+        let placeIndex: NearestPlaceIndex = inputs.placeIndex
+        let calendar: Calendar = inputs.calendar
+        #if DEBUG
+        let queuedAt = CACurrentMediaTime()
+        #endif
+        let built = await Task.detached(priority: priority) { () -> TimelineBuildResult in
+            #if DEBUG
+            let startedAt: CFTimeInterval = CACurrentMediaTime()
+            var timings: [String: Double] = [:]
+            timings["queue wait"] = startedAt - queuedAt
+            #endif
+            // The place lookup is per photo and pure, so it runs here too.
+            let hints: [String?] = await Self.placeHints(for: sourceItems, index: placeIndex)
+            let hinted: [TimelineItemSnapshot] = zip(sourceItems, hints).map { (pair: (TimelineItemSnapshot, String?)) -> TimelineItemSnapshot in
+                pair.0.withPlaceHint(pair.1)
+            }
+            #if DEBUG
+            timings["place hints"] = CACurrentMediaTime() - startedAt
+            #endif
+            // No trips given: every photo lands in one stream, grouped by day and place.
+            let document = TimelineBuilder(calendar: calendar).build(items: hinted, trips: [])
+            #if DEBUG
+            timings["builder"] = CACurrentMediaTime() - startedAt
+            #endif
+            let days = document.trips.flatMap(\.days)
+            let dated = days.filter { $0.date != nil }.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+            let undated = days.filter { $0.date == nil }
+            #if DEBUG
+            timings["days"] = CACurrentMediaTime() - startedAt
+            #endif
+            let months = TimelineMonth.group(dated, calendar: calendar)
+                + (undated.isEmpty ? [] : [TimelineMonth(id: "undated", date: nil, days: undated)])
+            #if DEBUG
+            timings["months"] = CACurrentMediaTime() - startedAt
+            #endif
+            // Every shot goes to the viewer, which folds bursts as the grid does.
+            let viewerOrder = months.flatMap { month in
+                month.days.flatMap { day in day.places.flatMap(\.itemIDs) }
+            }
+            #if DEBUG
+            timings["viewer order"] = CACurrentMediaTime() - startedAt
+            var result = TimelineBuildResult(months: months, viewerOrder: viewerOrder)
+            result.timings = timings
+            return result
+            #endif
+            return TimelineBuildResult(months: months, viewerOrder: viewerOrder)
+        }.value
+        return built
+    }
+
+    /// Builds the page off the main thread and assigns it. Only one build runs
+    /// at a time, so no older result can arrive late and overwrite a newer one.
+    private func rebuild() async {
+        // Taken before anything is read: these are the inputs this build uses,
+        // and a change during the build must not be stored under a newer key.
+        let cacheKey = buildCacheKey
+        if let cached = Self.cachedBuild(key: cacheKey) {
+            // Nothing changed since the last finished build: show it at once,
+            // without the snapshots, place hints or builder.
+            months = cached.months
+            viewerOrder = cached.viewerOrder
+            stacks.update(items: items, decisions: stackRecords, sourceKey: stackSourceKey)
+            itemByID = store.itemsByID
+            var cachedLinksByItemID: [String: TripLink] = [:]
+            for trip in trips {
+                let link = TripLink(id: trip.id, name: trip.effectiveName)
+                for item in trip.items { cachedLinksByItemID[item.id] = link }
+            }
+            tripsByItemID = cachedLinksByItemID
+            isBuilt = true
+            #if DEBUG
+            PageProbe.tally("timeline last build reused", seconds: 0)
+            #endif
+            return
+        }
+        // Everything the build reads stays on the main actor and becomes one
+        // inputs value; the build below sees plain values only.
+        let inputs = Self.buildInputs(
+            key: cacheKey,
+            store: store,
+            selection: selection,
+            memories: memoryRecords,
+            calendar: Calendar.autoupdatingCurrent
+        )
+        #if DEBUG
+        var stepStarted: CFTimeInterval = CACurrentMediaTime()
+        let step: (String) -> Void = { (name: String) -> Void in
+            PageProbe.tally("timeline step: " + name, seconds: CACurrentMediaTime() - stepStarted)
+            stepStarted = CACurrentMediaTime()
+        }
+        #endif
+        // What assigning the result needs, read before the build awaits so a
+        // change during it never mixes two states.
+        let libraryItems = items
+        let stackKey: Int = stackSourceKey // taken with the photos it describes, before the build awaits
+        let libraryItemByID = store.itemsByID
+        let stackDecisions = stackRecords
+        var linksByItemID: [String: TripLink] = [:]
         for trip in trips {
             let link = TripLink(id: trip.id, name: trip.effectiveName)
-            for item in trip.items { links[item.id] = link }
+            for item in trip.items { linksByItemID[item.id] = link }
         }
-        tripsByItemID = links
+        #if DEBUG
+        step("trip links")
+        #endif
+        let tripLinksByItemID = linksByItemID
+
+        let built = await Self.build(inputs)
+        #if DEBUG
+        for (name, seconds) in built.timings {
+            PageProbe.tally("timeline bg: " + name, seconds: seconds)
+        }
+        for (name, seconds) in TimelineBuilderTimings.shared.take() {
+            PageProbe.tally("timeline builder: " + name, seconds: seconds)
+        }
+        var tailStarted: CFTimeInterval = CACurrentMediaTime()
+        let tail: (String) -> Void = { (name: String) -> Void in
+            PageProbe.tally("timeline step: " + name, seconds: CACurrentMediaTime() - tailStarted)
+            tailStarted = CACurrentMediaTime()
+        }
+        #endif
+        months = built.months
+        viewerOrder = built.viewerOrder
+        #if DEBUG
+        tail("assign months")
+        #endif
+        Self.storeBuild(built, key: cacheKey)
+        stacks.update(items: libraryItems, decisions: stackDecisions, sourceKey: stackKey)
+        #if DEBUG
+        tail("stacks update")
+        #endif
+        itemByID = libraryItemByID
+        tripsByItemID = tripLinksByItemID
         isBuilt = true
+        #if DEBUG
+        tail("finish")
+        #endif
+    }
+
+    /// The pages' grouped memories: every `Memory` once, under the photo its
+    /// own inverse relationship names. A memory without a photo is left out,
+    /// exactly as `item.memories` never showed it.
+    static func memoriesByPhotoID(_ records: [Memory]) -> [PersistentIdentifier: [Memory]] {
+        var grouped: [PersistentIdentifier: [Memory]] = [:]
+        for memory in records {
+            guard let photo = memory.mediaItem else { continue }
+            grouped[photo.persistentModelID, default: []].append(memory)
+        }
+        return grouped
+    }
+
+    /// The place name a snapshot's photo would have been labelled with, from
+    /// its raw latitude and longitude: the same rule `nearestPlaceName(for:)`
+    /// applies, kept here so it can run off the main actor.
+    nonisolated private static func placeHint(
+        for snapshot: TimelineItemSnapshot,
+        index: NearestPlaceIndex
+    ) -> String? {
+        guard let latitude = snapshot.latitude, let longitude = snapshot.longitude else { return nil }
+        return index.nearestName(to: GeoPoint(latitude: latitude, longitude: longitude), within: 100_000)
+    }
+
+    /// The place hints for a whole page, in the snapshots' order. The lookup is
+    /// pure and depends only on a photo's coordinate, so the photos are split
+    /// into chunks that run at the same time; each chunk remembers the answer
+    /// for a coordinate it already looked up, since many photos share one.
+    nonisolated static func placeHints(
+        for snapshots: [TimelineItemSnapshot],
+        index: NearestPlaceIndex
+    ) async -> [String?] {
+        guard !snapshots.isEmpty else { return [] }
+
+        let photoCount = snapshots.count
+        let chunkCount = min(photoCount, Self.placeHintChunkCount(for: photoCount))
+        let chunkSize = (photoCount + chunkCount - 1) / chunkCount
+        // A chunk index per chunk, so the parts can come back in any order.
+        let bounds: [(index: Int, start: Int, end: Int)] = (0..<chunkCount).map { (chunk: Int) -> (index: Int, start: Int, end: Int) in
+            let start = chunk * chunkSize
+            let end = min(photoCount, start + chunkSize)
+            return (index: chunk, start: start, end: end)
+        }
+
+        let parts: [Int: [String?]] = await withTaskGroup(of: (Int, [String?]).self) { (group: inout TaskGroup<(Int, [String?])>) in
+            for bound in bounds {
+                let slice = Array(snapshots[bound.start..<bound.end])
+                group.addTask {
+                    (bound.index, Self.placeHintsInOneChunk(for: slice, index: index))
+                }
+            }
+            var collected: [Int: [String?]] = [:]
+            for await part in group {
+                collected[part.0] = part.1
+            }
+            return collected
+        }
+
+        var hints: [String?] = []
+        hints.reserveCapacity(photoCount)
+        for bound in bounds {
+            hints.append(contentsOf: parts[bound.index] ?? [])
+        }
+        return hints
+    }
+
+    /// The chunks of about 500 photos the place hints are split into, one per
+    /// core at most.
+    nonisolated private static func placeHintChunkCount(for photoCount: Int) -> Int {
+        let cores = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        let smallestChunk = 500
+        let byCores = (photoCount + smallestChunk - 1) / smallestChunk
+        return max(1, min(cores, byCores))
+    }
+
+    /// One chunk of place hints: every photo in order, with a local memo so a
+    /// coordinate shared by several photos is looked up only once.
+    nonisolated private static func placeHintsInOneChunk(
+        for snapshots: [TimelineItemSnapshot],
+        index: NearestPlaceIndex
+    ) -> [String?] {
+        var memo: [GeoPoint: String?] = [:]
+        var hints: [String?] = []
+        hints.reserveCapacity(snapshots.count)
+        for snapshot in snapshots {
+            // A photo without a coordinate gets no hint, exactly as before.
+            guard let latitude = snapshot.latitude, let longitude = snapshot.longitude else {
+                hints.append(nil)
+                continue
+            }
+            let point = GeoPoint(latitude: latitude, longitude: longitude)
+            // A remembered "no place nearby" counts too: a stored nil is a hit,
+            // only a coordinate missing from the memo is looked up.
+            if let entry = memo.index(forKey: point) {
+                hints.append(memo[entry].value)
+                continue
+            }
+            let hint: String? = Self.placeHint(for: snapshot, index: index)
+            memo[point] = hint
+            hints.append(hint)
+        }
+        return hints
     }
 
     /// The trips a day's photos belong to, in the order they first appear.
@@ -167,24 +592,10 @@ struct TimelineScreen: View {
         selection.openTripID = tripID
         selection.requestedDestination = .trips
     }
-
-    private func nearestPlaceName(for item: MediaItem) -> String? {
-        guard let latitude = item.latitude, let longitude = item.longitude else { return nil }
-        let coordinate = GeoPoint(latitude: latitude, longitude: longitude)
-        let nearest = places.compactMap { place -> (name: String, distance: Double)? in
-            guard let placeLatitude = place.latitude, let placeLongitude = place.longitude,
-                  let name = PlaceDisplayName.resolvedName(of: place) else { return nil }
-            let distance = coordinate.distance(to: GeoPoint(latitude: placeLatitude, longitude: placeLongitude))
-            return (name, distance)
-        }
-        .min { $0.distance < $1.distance }
-        guard let nearest, nearest.distance <= 100_000 else { return nil }
-        return nearest.name
-    }
 }
 
 /// The days of one calendar month, newest first.
-struct TimelineMonth: Identifiable {
+struct TimelineMonth: Identifiable, Sendable {
     let id: String
     /// Any moment in the month; `nil` for photos without a date.
     let date: Date?

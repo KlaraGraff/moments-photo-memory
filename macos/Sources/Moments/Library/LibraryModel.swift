@@ -282,7 +282,7 @@ enum LibraryFilterEngine {
         }
         if criteria.screenshotFilter == .possibleOnly && !isPossibleScreenshot(item) { return false }
         if let from = criteria.fromDate.map(calendar.startOfDay(for:)) {
-            guard let captureDate = item.effectiveCaptureDate, captureDate >= from else { return false }
+            guard let captureDate = item.effectiveCaptureDate, captureDate.isOnOrAfter(from) else { return false }
         }
         if let to = criteria.toDate,
            let toExclusive = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: to)) {
@@ -373,6 +373,56 @@ enum LibraryFilterEngine {
         return filteredItems(items, by: withoutScreenshotSegment, personIDsByMediaID: personIDsByMediaID)
     }
 
+    /// What `regroup` reads from the filters: the grid's photos before and
+    /// after keeping the one being edited, and the ids the maps show.
+    struct RegroupPasses {
+        let filtered: [MediaItem]
+        let visible: [MediaItem]
+        let publishedIDs: Set<String>
+    }
+
+    /// What `regroup` needs from the filters, with each photo tested once
+    /// in the usual case. Same results as calling `filteredItems` (both
+    /// overloads) and `publishedItems` one after another.
+    static func regroupPasses(
+        scopedItems: [MediaItem],
+        allItems: [MediaItem],
+        hasScope: Bool,
+        criteria: LibraryFilterCriteria,
+        editingItemID: String?,
+        personIDsByMediaID: [String: Set<String>]
+    ) -> RegroupPasses {
+        let filtered = filteredItems(scopedItems, by: criteria, personIDsByMediaID: personIDsByMediaID)
+
+        // Keeping a photo that the memory filter drops is the rare case: only
+        // while someone edits that photo's memory.
+        var keepsEditingItem = true
+        if criteria.memoryFilter != .all, let editingItemID {
+            keepsEditingItem = filtered.contains(where: { $0.id == editingItemID })
+        }
+        let visible: [MediaItem]
+        if keepsEditingItem {
+            visible = filtered
+        } else {
+            visible = filteredItems(
+                scopedItems,
+                by: criteria,
+                preservingEditingItemID: editingItemID,
+                personIDsByMediaID: personIDsByMediaID
+            )
+        }
+
+        // The maps show the regular filters, so a scope from another screen
+        // does not shrink them. `filtered` holds the same photos then.
+        let publishedIDs: Set<String>
+        if !hasScope && criteria.mediaType != .screenshot {
+            publishedIDs = Set(filtered.map(\.id))
+        } else {
+            publishedIDs = Set(publishedItems(allItems, by: criteria, personIDsByMediaID: personIDsByMediaID).map(\.id))
+        }
+        return RegroupPasses(filtered: filtered, visible: visible, publishedIDs: publishedIDs)
+    }
+
     static func filteredItems(
         _ items: [MediaItem],
         by criteria: LibraryFilterCriteria,
@@ -419,22 +469,40 @@ enum LibraryFilterEngine {
         by grouping: LibraryGrouping,
         sortOrder: LibrarySortOrder = .newestFirst
     ) -> [LibrarySection] {
-        var buckets: [String: (title: String, items: [MediaItem])] = [:]
+        // Every model property read below is a SwiftData read, so each photo is
+        // read once here: its id and effective date, and its title only when it
+        // is the first photo of a new section, which is the only title kept.
+        var bucketIndexByKey: [String: Int] = [:]
+        var buckets: [(key: String, title: String, entries: [SectionEntry])] = []
+        bucketIndexByKey.reserveCapacity(min(visible.count, 64))
+        buckets.reserveCapacity(min(visible.count, 64))
 
         for item in visible {
             let key = groupKey(for: item, grouping: grouping)
-            let title = groupTitle(for: item, grouping: grouping)
-            buckets[key, default: (title: title, items: [])].items.append(item)
+            let entry = SectionEntry(id: item.id, date: item.effectiveCaptureDate)
+            if let bucketIndex = bucketIndexByKey[key] {
+                buckets[bucketIndex].entries.append(entry)
+            } else {
+                bucketIndexByKey[key] = buckets.count
+                buckets.append((key: key, title: groupTitle(for: item, grouping: grouping), entries: [entry]))
+            }
         }
 
-        let sections = buckets.map { key, bucket in
-            let ordered = bucket.items.sorted(by: canonicalOrder)
+        let sections = buckets.map { bucket -> LibrarySection in
+            let ordered = bucket.entries.sorted(by: sectionEntryOrder)
+            var startDate: Date?
+            var endDate: Date?
+            for entry in ordered {
+                guard let date = entry.date else { continue }
+                if startDate == nil || date < startDate! { startDate = date }
+                if endDate == nil || date > endDate! { endDate = date }
+            }
             return LibrarySection(
-                id: key,
+                id: bucket.key,
                 title: bucket.title,
                 itemIDs: ordered.map(\.id),
-                startDate: ordered.compactMap(\.effectiveCaptureDate).min(),
-                endDate: ordered.compactMap(\.effectiveCaptureDate).max()
+                startDate: startDate,
+                endDate: endDate
             )
         }
 
@@ -448,6 +516,29 @@ enum LibraryFilterEngine {
 
     private static func canonicalOrder(_ lhs: MediaItem, _ rhs: MediaItem) -> Bool {
         switch (lhs.effectiveCaptureDate, rhs.effectiveCaptureDate) {
+        case let (left?, right?) where left != right:
+            return left < right
+        case (nil, .some):
+            return false
+        case (.some, nil):
+            return true
+        default:
+            return lhs.id < rhs.id
+        }
+    }
+
+    /// One photo of a section, with the SwiftData values read once so sorting
+    /// and the date span compare cached values instead of model properties.
+    private struct SectionEntry {
+        let id: String
+        let date: Date?
+    }
+
+    /// The exact order of `canonicalOrder`, on the cached dates: earlier first
+    /// when both dates differ, a nil date after a date, and the id as the tie
+    /// breaker for equal or both-missing dates.
+    private static func sectionEntryOrder(_ lhs: SectionEntry, _ rhs: SectionEntry) -> Bool {
+        switch (lhs.date, rhs.date) {
         case let (left?, right?) where left != right:
             return left < right
         case (nil, .some):

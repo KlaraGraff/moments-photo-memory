@@ -30,17 +30,14 @@ struct ContentView: View {
     @Environment(SelectionModel.self) private var shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(ImportController.self) private var importController
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
+    /// The shared library lists; fetched once for every page instead of once
+    /// per page, and refreshed when something the sidebar groups by changes.
+    @Environment(LibraryStore.self) private var store
     /// "My groups" only; chapters live on the Chapters page, and stack
     /// records are not groups anyone made.
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" }, sort: \UserGroup.name)
     private var groups: [UserGroup]
     @Query private var groupItems: [UserGroupItem]
-    @Query private var faceObservations: [FaceObservation]
-    @Query(sort: \Memory.updatedAt) private var memoryRecords: [Memory]
-    @Query private var mediaTags: [MediaTag]
-    @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt != nil }) private var deletedItems: [MediaItem]
     @AppStorage(LibraryLaunchState.appStorageKey) private var firstLaunchCompleted = false
     @State private var groupEditorKind: GroupEditorKind?
     @State private var groupToEdit: UserGroup?
@@ -262,6 +259,7 @@ struct ContentView: View {
             }
             switch destination {
             case .library: selection = .library
+            case .people: selection = .people
             case .map: selection = .map
             case .timeline: selection = .timeline
             case .trips: selection = .trips
@@ -275,9 +273,9 @@ struct ContentView: View {
             DeleteShortcutMonitor.install()
             TitleBarDoubleClick.install()
         }
-        .onChange(of: groupCountsKey, initial: true) { _, _ in
-            refreshGroupCounts()
-        }
+        // The key and the recount live in a small child view with their own
+        // queries, so they run when those change, not on every redraw here.
+        .background { SidebarGroupCounts(counts: $cachedGroupCounts) }
         .sheet(item: $groupEditorKind) { kind in
             GroupEditorSheet(kind: kind, group: groupToEdit, onDismiss: { groupToEdit = nil })
         }
@@ -307,71 +305,11 @@ struct ContentView: View {
         cachedGroupCounts[group.id] ?? 0
     }
 
-    private var groupCountsKey: Int {
-        #if DEBUG
-        ScrollProbe.count("sidebar.groupCountsKey")
-        #endif
-        var hasher = Hasher()
-        for item in items {
-            hasher.combine(item.id)
-            hasher.combine(item.updatedAt)
-            hasher.combine(item.captureDate)
-            hasher.combine(item.kindRaw)
-            hasher.combine(item.isScreenshot)
-            hasher.combine(item.tripID)
-            hasher.combine(item.place?.id)
-        }
-        // Place renames reach rules through overrides.
-        for override in placeOverrides {
-            hasher.combine(override.id)
-            hasher.combine(override.nameOverride)
-        }
-        for group in groups {
-            hasher.combine(group.id)
-            hasher.combine(group.kind.rawValue)
-            hasher.combine(group.updatedAt)
-            hasher.combine(group.rules.mode.rawValue)
-            for rule in group.rules.rules {
-                hasher.combine(rule.field.rawValue)
-                hasher.combine(rule.op.rawValue)
-                hasher.combine(rule.value)
-                hasher.combine(rule.secondaryValue)
-            }
-        }
-        for membership in groupItems {
-            hasher.combine(membership.groupID)
-            hasher.combine(membership.mediaID)
-            hasher.combine(membership.excluded)
-        }
-        for observation in faceObservations {
-            hasher.combine(observation.id)
-            hasher.combine(observation.mediaID)
-            hasher.combine(observation.personID)
-            hasher.combine(observation.confirmed)
-        }
-        for memory in memoryRecords {
-            hasher.combine(memory.id)
-            hasher.combine(memory.mediaID)
-            hasher.combine(memory.updatedAt)
-            hasher.combine(memory.revision)
-        }
-        for mediaTag in mediaTags {
-            hasher.combine(mediaTag.id)
-            hasher.combine(mediaTag.mediaID)
-            hasher.combine(mediaTag.tagID)
-            hasher.combine(mediaTag.updatedAt)
-        }
-        return hasher.finalize()
-    }
+    /// The shared library's live photos, not fetched again per sidebar page.
+    private var items: [MediaItem] { store.items }
 
-    private func refreshGroupCounts() {
-        var counts: [String: Int] = [:]
-        let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
-        for group in groups {
-            counts[group.id] = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: groupItems, observations: faceObservations, personIDsByMediaID: personIndex).count
-        }
-        cachedGroupCounts = counts
-    }
+    /// Photos in Recently Deleted, most recently deleted first.
+    private var deletedItems: [MediaItem] { store.deletedItems }
 
     private func receiveDrop(_ providers: [NSItemProvider], into group: UserGroup) -> Bool {
         for provider in providers {
@@ -396,6 +334,79 @@ struct ContentView: View {
         Label(title, systemImage: icon)
             .tag(section)
             .accessibilityIdentifier(identifier)
+    }
+}
+
+/// Works out the sidebar's group counts, in its own view: the key hashes only
+/// the store's revisions, so SwiftUI re-runs it when one of them moves instead
+/// of on every ContentView redraw. The five group-source entities (groups,
+/// memberships, memories, media tags, place overrides) reach the key through
+/// `LibraryStore.groupSourcesRevision`, which moves on every save of one of
+/// them, so the view no longer queries them: it fetches groups and memberships
+/// itself, and only when it recounts.
+private struct SidebarGroupCounts: View {
+    @Binding var counts: [String: Int]
+    @Environment(LibraryStore.self) private var store
+    @Environment(\.modelContext) private var modelContext
+    /// Whether any group's rules read place names; a place-only save changes a
+    /// count only then, so only then does the key follow `placeRevision`.
+    @State private var rulesReadPlaces = false
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .onChange(of: key, initial: true) { _, _ in refresh() }
+    }
+
+    private var key: Int {
+        #if DEBUG
+        ScrollProbe.count("sidebar.groupCountsKey")
+        let started: CFTimeInterval = CACurrentMediaTime()
+        defer {
+            PageProbe.tally("sidebar group key", seconds: CACurrentMediaTime() - started)
+        }
+        #endif
+        var hasher = Hasher()
+        hasher.combine(store.photoFaceRevision)
+        // A favorite save leaves `revision` alone; smart groups can have a
+        // favorite rule, so their counts follow this one too.
+        hasher.combine(store.favoriteRevision)
+        // Groups, memberships, memories, media tags and place overrides all
+        // arrive through this one revision, so the key reads none of them.
+        hasher.combine(store.groupSourcesRevision)
+        // Smart groups read place names only through a place rule; a save that
+        // changed only places recounts them only then.
+        if rulesReadPlaces { hasher.combine(store.placeRevision) }
+        return hasher.finalize()
+    }
+
+    private func refresh() {
+        #if DEBUG
+        let started: CFTimeInterval = CACurrentMediaTime()
+        #endif
+        // The same predicate and sort the removed query had: "My groups" only;
+        // chapters live on the Chapters page, and stack records are not groups
+        // anyone made.
+        let descriptor: FetchDescriptor<UserGroup> = FetchDescriptor<UserGroup>(
+            predicate: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" },
+            sortBy: [SortDescriptor<UserGroup>(\.name)]
+        )
+        let groups: [UserGroup] = (try? modelContext.fetch(descriptor)) ?? []
+        let groupItems: [UserGroupItem] = (try? modelContext.fetch(FetchDescriptor<UserGroupItem>())) ?? []
+        var counts: [String: Int] = [:]
+        let personIndex: [String: Set<String>] = UserGroupRuleEngine.makePersonIndex(store.faces)
+        for group in groups {
+            counts[group.id] = UserGroupRuleEngine.visibleItems(for: group, from: store.items, memberships: groupItems, observations: store.faces, personIDsByMediaID: personIndex).count
+        }
+        self.counts = counts
+        let readsPlaces: Bool = groups.contains { (group: UserGroup) -> Bool in
+            UserGroupRule.anyReadsPlaces(group.rules.rules)
+        }
+        self.rulesReadPlaces = readsPlaces
+        #if DEBUG
+        PageProbe.tally("sidebar group counts", seconds: CACurrentMediaTime() - started)
+        #endif
     }
 }
 

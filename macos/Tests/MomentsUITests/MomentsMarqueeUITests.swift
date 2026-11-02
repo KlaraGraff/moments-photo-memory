@@ -198,17 +198,21 @@ final class MomentsMarqueeUITests: XCTestCase {
 
         // Command-drag over the first photo alone flips just that one.
         let firstCentre = point(app, x: first.frame.midX, y: first.frame.midY)
+        // Far enough after the drag above that this press is not read as a
+        // second click of it.
+        pauseLongerThanADoubleClick()
         XCUIElement.perform(withKeyModifiers: .command) {
             start.click(forDuration: 0.05, thenDragTo: firstCentre)
         }
-        XCTAssertEqual(first.element.value as? String, "Not selected", "Command-drag did not flip the photo")
-        XCTAssertEqual(target.element.value as? String, "Selected", "Command-drag dropped a photo it did not touch")
+        XCTAssertEqual(value(of: first.element, becomes: "Not selected"), "Not selected", "Command-drag did not flip the photo")
+        XCTAssertEqual(value(of: target.element, becomes: "Selected"), "Selected", "Command-drag dropped a photo it did not touch")
 
         // Shift-drag adds it back and keeps the rest.
+        pauseLongerThanADoubleClick()
         XCUIElement.perform(withKeyModifiers: .shift) {
             start.click(forDuration: 0.05, thenDragTo: firstCentre)
         }
-        XCTAssertEqual(first.element.value as? String, "Selected", "Shift-drag did not add the photo")
+        XCTAssertEqual(value(of: first.element, becomes: "Selected"), "Selected", "Shift-drag did not add the photo")
         XCTAssertEqual(selectionCount(app), String(expected.count))
 
         // Esc clears.
@@ -273,6 +277,18 @@ final class MomentsMarqueeUITests: XCTestCase {
 
     private func pauseLongerThanADoubleClick() {
         RunLoop.current.run(until: Date().addingTimeInterval(NSEvent.doubleClickInterval + 0.3))
+    }
+
+    /// Waits up to `timeout` for the element's value, so a value the grid sets a
+    /// moment after the drag is not read stale. Returns the last value seen.
+    private func value(of element: XCUIElement, becomes expected: String, timeout: TimeInterval = 2) -> String? {
+        let deadline: Date = Date().addingTimeInterval(timeout)
+        var current: String? = element.value as? String
+        while current != expected, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            current = element.value as? String
+        }
+        return current
     }
 
     /// `photosPerRow` comes in as a launch argument, so it neither depends on

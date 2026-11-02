@@ -4,6 +4,7 @@ import Observation
 /// Sidebar destinations other screens can ask the window to switch to.
 enum SidebarDestination: Hashable {
     case library
+    case people
     case map
     case timeline
     case trips
@@ -38,7 +39,12 @@ final class SelectionModel {
     /// The item to bring into view; `nil` means keep the current viewport.
     var focusedItemID: String?
     /// Ids that pass the Library filters; `nil` means no filter is active.
-    var visibleItemIDs: Set<String>?
+    var visibleItemIDs: Set<String>? {
+        didSet { visibleGeneration &+= 1 }
+    }
+    /// Changes each time `visibleItemIDs` is assigned. Pages hash this
+    /// instead of the whole set.
+    private(set) var visibleGeneration = 0
     /// A screen asks to switch the sidebar; the window clears it after switching.
     /// Opening Library is a reveal request because it is used by Timeline's
     /// place jump action.

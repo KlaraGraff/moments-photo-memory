@@ -3,7 +3,7 @@ import MomentsCore
 
 /// A value snapshot used by the timeline builder. Keeping SwiftData out of the
 /// grouping layer makes the date and place rules deterministic in tests.
-struct TimelineItemSnapshot: Identifiable, Equatable {
+struct TimelineItemSnapshot: Identifiable, Equatable, Sendable {
     let id: String
     let title: String
     let date: Date?
@@ -41,6 +41,13 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
     }
 
     init(item: MediaItem, placeHint: String? = nil) {
+        self.init(item: item, placeHint: placeHint, memories: item.memories)
+    }
+
+    /// The same snapshot, with the photo's memories handed in: the pages group
+    /// every `Memory` into one dictionary off the photo's own relationship,
+    /// so a rebuild does not read one to-many relationship per photo.
+    init(item: MediaItem, placeHint: String?, memories: [Memory]) {
         self.init(
             id: item.id,
             title: item.title,
@@ -50,17 +57,38 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
             kindRaw: item.kind.rawValue,
             tripID: item.tripID,
             placeHint: placeHint,
-            memories: item.memories
-                .sorted { ($0.createdAt, $0.text) < ($1.createdAt, $1.text) }
-                .enumerated()
-                .map { index, memory in
-                    TimelineMemorySnippet(
-                        id: "\(item.id)-memory-\(index)",
-                        text: memory.text,
-                        authorRaw: memory.authorRaw
-                    )
-                },
+            memories: Self.snippets(for: item.id, memories: memories),
             dayKey: PhotoNoteDay.key(for: item)
+        )
+    }
+
+    /// The memory lines under one photo, oldest first, as they have always
+    /// been built. Their ids carry the photo's id and their place in the list.
+    private static func snippets(for itemID: String, memories: [Memory]) -> [TimelineMemorySnippet] {
+        let sorted = memories.sorted { ($0.createdAt, $0.text) < ($1.createdAt, $1.text) }
+        return sorted.enumerated().map { index, memory in
+            TimelineMemorySnippet(
+                id: "\(itemID)-memory-\(index)",
+                text: memory.text,
+                authorRaw: memory.authorRaw
+            )
+        }
+    }
+
+    /// The same snapshot with a place label filled in, so the label can be
+    /// looked up off the main actor while the snapshot stays a plain value.
+    func withPlaceHint(_ placeHint: String?) -> TimelineItemSnapshot {
+        TimelineItemSnapshot(
+            id: id,
+            title: title,
+            date: date,
+            latitude: latitude,
+            longitude: longitude,
+            kindRaw: kindRaw,
+            tripID: tripID,
+            placeHint: placeHint,
+            memories: memories,
+            dayKey: dayKey
         )
     }
 
@@ -76,13 +104,13 @@ struct TimelineItemSnapshot: Identifiable, Equatable {
     }
 }
 
-struct TimelineMemorySnippet: Identifiable, Equatable {
+struct TimelineMemorySnippet: Identifiable, Equatable, Sendable {
     let id: String
     let text: String
     let authorRaw: String
 }
 
-struct TimelineSourceTrip: Identifiable, Equatable {
+struct TimelineSourceTrip: Identifiable, Equatable, Sendable {
     let id: String
     let name: String
     let itemIDs: [String]
@@ -104,13 +132,13 @@ struct TimelineSourceTrip: Identifiable, Equatable {
     }
 }
 
-struct TimelineDocument {
+struct TimelineDocument: Sendable {
     let trips: [TimelineTrip]
 
     var isEmpty: Bool { trips.allSatisfy { $0.days.isEmpty } }
 }
 
-struct TimelineTrip: Identifiable {
+struct TimelineTrip: Identifiable, Sendable {
     let id: String
     let name: String
     let days: [TimelineDay]
@@ -191,7 +219,7 @@ struct TimelineTrip: Identifiable {
     }
 }
 
-struct TimelineDay: Identifiable {
+struct TimelineDay: Identifiable, Sendable {
     let id: String
     let date: Date?
     let events: [TimelineEvent]
@@ -206,7 +234,7 @@ struct TimelineDay: Identifiable {
     }
 }
 
-enum TimelineEvent: Identifiable {
+enum TimelineEvent: Identifiable, Sendable {
     case place(TimelinePlace)
     case travel(TimelineTravel)
 
@@ -218,7 +246,7 @@ enum TimelineEvent: Identifiable {
     }
 }
 
-struct TimelinePlace: Identifiable {
+struct TimelinePlace: Identifiable, Sendable {
     let id: String
     let date: Date?
     let name: String?
@@ -230,7 +258,7 @@ struct TimelinePlace: Identifiable {
     var memoryCount: Int { items.reduce(0) { $0 + $1.memories.count } }
 }
 
-struct TimelineTravel: Identifiable {
+struct TimelineTravel: Identifiable, Sendable {
     let id: String
     let date: Date?
     let fromName: String?
@@ -240,8 +268,27 @@ struct TimelineTravel: Identifiable {
     let toStopID: String?
 }
 
-struct TripRouteStop: Equatable {
+struct TripRouteStop: Equatable, Sendable {
     let name: String
     let latitude: Double
     let longitude: Double
+}
+
+/// What the Timeline's detached build hands back to the main actor: plain
+/// values only, so nothing built off the main thread is a SwiftData model.
+struct TimelineBuildResult: Sendable {
+    let months: [TimelineMonth]
+    /// Every photo in day and place order, the order the viewer pages through.
+    let viewerOrder: [String]
+    #if DEBUG
+    /// Seconds per build step, filled in off the main thread and tallied by the page.
+    var timings: [String: Double] = [:]
+    #endif
+}
+
+/// What the Chapters build hands back: the shelf's document and one built
+/// entry per chapter.
+struct ChaptersBuildResult: Sendable {
+    let document: TimelineDocument
+    let chapterDocs: [String: TimelineTrip]
 }

@@ -9,10 +9,12 @@ struct LibraryFilterChips: View {
     var showsScope = false
 
     @Environment(SelectionModel.self) private var selection
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var allItems: [MediaItem]
+    @Environment(LibraryStore.self) private var store
     @Query(sort: \Person.name) private var people: [Person]
     @Query(sort: \Trip.id) private var allTrips: [Trip]
-    @Query(sort: \Place.id) private var allPlaces: [Place]
+
+    private var allItems: [MediaItem] { store.items }
+    private var allPlaces: [Place] { store.places }
 
     @AppStorage(LibraryFilterKeys.type) private var typeRaw = LibraryMediaTypeFilter.all.rawValue
     @AppStorage(LibraryFilterKeys.fromDate) private var fromDateInterval = 0.0
@@ -25,13 +27,7 @@ struct LibraryFilterChips: View {
     @State private var showingDatePicker = false
     /// The menus' options, rebuilt only when items, trips or places change:
     /// this view's body runs on every Library update, including scrolling.
-    @State private var options = Options()
-
-    private struct Options {
-        var places: [LibraryPlaceOption] = []
-        var trips: [String] = []
-        var tripNames: [String: String] = [:]
-    }
+    @State private var options = LibraryFilterOptionSet()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -87,46 +83,19 @@ struct LibraryFilterChips: View {
     private var places: [LibraryPlaceOption] { options.places }
     private var trips: [String] { options.trips }
 
+    /// The same key the Library grid uses, so both share one build.
     private var optionsKey: Int {
-        var hasher = Hasher()
-        for item in allItems {
-            hasher.combine(item.id)
-            hasher.combine(item.tripID)
-            hasher.combine(item.place?.id)
-            hasher.combine(item.placeOverrideName)
-            hasher.combine(item.updatedAt)
-        }
-        for trip in allTrips {
-            hasher.combine(trip.id)
-            hasher.combine(trip.name)
-            hasher.combine(trip.overrideName)
-        }
-        for place in allPlaces {
-            hasher.combine(place.id)
-            hasher.combine(place.name)
-            // A rename of the place lists it under its new name.
-            hasher.combine(place.correctedName)
-            // A spot is listed under the place that names it.
-            hasher.combine(place.parent?.id)
-        }
-        return hasher.finalize()
+        LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips)
     }
 
-    private func buildOptions() -> Options {
-        var tripNames: [String: String] = [:]
-        for item in allItems {
-            if let tripID = item.tripID, tripNames[tripID] == nil {
-                tripNames[tripID] = item.trip?.effectiveName ?? tripID
-            }
-        }
-        return Options(
-            // One row per name: unnamed spots are listed under the area or
-            // city that names them, places with the same name are one row,
-            // and the filter matches all of them.
-            places: PlaceNames.options(for: allItems),
-            trips: tripNames.keys.sorted(),
-            tripNames: tripNames
-        )
+    /// The photos' key: a place-only save leaves it alone, so the options are
+    /// rebuilt from the cached counts instead of reading every photo again.
+    private var sourceKey: Int {
+        LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
+    }
+
+    private func buildOptions() -> LibraryFilterOptionSet {
+        LibraryFilterOptionsCache.options(for: allItems, key: optionsKey, sourceKey: sourceKey)
     }
 
     private var selectedPlaceName: String? {
@@ -398,8 +367,13 @@ enum LibraryFilterKeys {
 /// it is open). Put it in the background of a screen that reads them.
 struct LibraryFilterPublisher: View {
     @Environment(SelectionModel.self) private var selection
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
-    @Query private var faceObservations: [FaceObservation]
+    @Environment(LibraryStore.self) private var store
+
+    /// The view is dropped when the page is left, so keep the last result across visits.
+    @MainActor private static var lastPublished: (key: Int, visible: Set<String>)?
+
+    private var items: [MediaItem] { store.items }
+    private var faceObservations: [FaceObservation] { store.faces }
 
     @AppStorage(LibraryFilterKeys.type) private var typeRaw = LibraryMediaTypeFilter.all.rawValue
     @AppStorage(LibraryFilterKeys.fromDate) private var fromDateInterval = 0.0
@@ -436,17 +410,17 @@ struct LibraryFilterPublisher: View {
         // Search and the memory filter read notes and trip names, which change
         // without touching the item; only read them when they matter.
         let readsText = !query.isEmpty || memoryFilterRaw != LibraryMemoryFilter.all.rawValue
-        for item in items {
-            hasher.combine(item.id)
-            hasher.combine(item.updatedAt)
-            if readsText {
+        hasher.combine(store.photoFaceRevision)
+        // A place filter and search read place names.
+        if !placeFilterID.isEmpty || !query.isEmpty { hasher.combine(store.placeRevision) }
+        // A favorite save leaves `revision` alone, so the Favorites filter
+        // follows its own revision.
+        if criteria.favoritesOnly { hasher.combine(store.favoriteRevision) }
+        if readsText {
+            for item in items {
                 hasher.combine(item.latestMemory?.text)
                 hasher.combine(item.trip?.effectiveName)
             }
-        }
-        for observation in faceObservations {
-            hasher.combine(observation.id)
-            hasher.combine(observation.personID)
         }
         return hasher.finalize()
     }
@@ -455,9 +429,24 @@ struct LibraryFilterPublisher: View {
         Color.clear
             .accessibilityHidden(true)
             .task(id: key) {
+                // Taken before anything is read: these are the inputs this run
+                // uses, and a change during the work must not be stored under
+                // a newer key.
+                let taskKey: Int = key
+                if let cached = Self.lastPublished, cached.key == taskKey {
+                    if selection.visibleItemIDs != cached.visible { selection.visibleItemIDs = cached.visible }
+                    #if DEBUG
+                    PageProbe.tally("filter publisher reused last result")
+                    #endif
+                    return
+                }
                 let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
                 let visible = Set(LibraryFilterEngine.publishedItems(items, by: criteria, personIDsByMediaID: personIndex).map(\.id))
                 if selection.visibleItemIDs != visible { selection.visibleItemIDs = visible }
+                Self.lastPublished = (taskKey, visible)
+                #if DEBUG
+                PageProbe.tally("filter publisher filtered")
+                #endif
             }
     }
 }

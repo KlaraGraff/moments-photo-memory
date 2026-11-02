@@ -15,6 +15,7 @@ struct MomentsApp: App {
     @State private var peopleController = PeopleScanController()
     @State private var photoStacks = PhotoStackModel()
     @State private var stackAnalyzer = PhotoStackAnalyzer()
+    @State private var libraryStore = LibraryStore()
     @State private var photosImportController = PhotosImportController(importer: PhotosImporter(source: PhotoKitAssetSource()))
     @State private var showingPhotosImport = false
 
@@ -82,6 +83,8 @@ struct MomentsApp: App {
         FlashProbe.startIfRequested()
         ScrollProbe.startIfRequested()
         ResizeProbe.startIfRequested()
+        PageProbe.startIfRequested()
+        StressLibrary.prepareIfRequested()
         #endif
         do {
             #if DEBUG
@@ -128,6 +131,20 @@ struct MomentsApp: App {
             }
             #endif
             modelContainer = container
+            // The store is ready before the first page body runs, so no page
+            // sees an empty library (which would flash the import screen and
+            // clear a selection the Library publishes on its first regroup).
+            let store = LibraryStore()
+            #if DEBUG
+            // The unit-test host shows no page, so nothing reads the store
+            // there; tests start stores of their own.
+            if !UnitTestHostDelegate.isUnitTestHost {
+                store.start(context: container.mainContext)
+            }
+            #else
+            store.start(context: container.mainContext)
+            #endif
+            _libraryStore = State(initialValue: store)
             storeError = nil
         } catch let error as MomentsStoreError {
             modelContainer = nil
@@ -155,6 +172,7 @@ struct MomentsApp: App {
                     .environment(noteService)
                     .environment(peopleController)
                     .environment(photoStacks)
+                    .environment(libraryStore)
                     .modelContainer(modelContainer)
                     .onAppear {
                         importController.configure(container: modelContainer)
@@ -163,6 +181,10 @@ struct MomentsApp: App {
                         stackAnalyzer.configure(container: modelContainer)
                         stackAnalyzer.analyzeIfNeeded()
                         photoStacks.refresh(container: modelContainer)
+                        #if DEBUG
+                        PageProbe.attach(container: modelContainer, selection: selection, people: peopleController, stacks: stackAnalyzer)
+                        StressLibrary.startIfRequested(container: modelContainer)
+                        #endif
                     }
                     // Map and Chapters only read the stacks, so new results
                     // are folded in here, whichever screen is showing.

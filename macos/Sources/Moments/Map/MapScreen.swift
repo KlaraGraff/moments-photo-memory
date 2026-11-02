@@ -11,11 +11,14 @@ import MomentsCore
 /// is a globe with the visited countries; zoomed in it shows places and the
 /// routes between them. Pins are the photos themselves, like Apple Photos.
 struct MapScreen: View {
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }, sort: \MediaItem.captureDate) private var items: [MediaItem]
-    @Query private var places: [Place]
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks
+    @Environment(LibraryStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    // The map's photos and places come from the shared store, which fetches
+    // them once for every page.
+    private var items: [MediaItem] { store.items }
+    private var places: [Place] { store.places }
 
     @State private var cameraPosition = MapCameraPosition.camera(
         MapCamera(
@@ -45,6 +48,26 @@ struct MapScreen: View {
     /// Clustering and routes are rebuilt only when items, the Library filter
     /// or the zoom level change, not on every render or selection change.
     @State private var cachedSnapshot: PlacesViewModel.Snapshot?
+    /// Pin labels, worked out once per snapshot instead of on every render.
+    @State private var clusterNames: [String: String] = [:]
+    /// Photo counts per pin (a burst counts once), also once per snapshot.
+    @State private var pinCounts: [String: Int] = [:]
+    /// On the globe, pins that would overlap are drawn as one.
+    @State private var worldClusters: [PlaceCluster] = []
+    @State private var worldCellDegrees = 0.0
+    /// The globe's routes, capped: a close view's snapshot keeps every segment,
+    /// so the globe must never hand that whole list to MapKit.
+    @State private var globeSegments: [RouteSegment] = []
+    /// Below the globe, only the pins and routes the camera can see.
+    @State private var viewport: MapViewport?
+    @State private var visibleClusters: [PlaceCluster] = []
+    @State private var visibleSegments: [RouteSegment] = []
+    /// Name and photo count of every merged pin, keyed "world|id" or
+    /// "near|id" so the two lists never overwrite each other's entries.
+    @State private var mergedNames: [String: String] = [:]
+    @State private var mergedCounts: [String: Int] = [:]
+    /// The visited-countries input, rebuilt with the snapshot, not in `body`.
+    @State private var worldInput: FootprintsInput?
     @State private var itemsByID: [String: MediaItem] = [:]
     @State private var world = MapWorldState()
     /// Created once per screen; it reads its cache file from disk.
@@ -64,19 +87,12 @@ struct MapScreen: View {
 
     private var snapshotKey: Int {
         var hasher = Hasher()
-        for item in items {
-            hasher.combine(item.id)
-            hasher.combine(item.effectiveCaptureDate)
-            hasher.combine(item.latitude)
-            hasher.combine(item.longitude)
-        }
-        hasher.combine(selection.visibleItemIDs)
+        // The store bumps `revision` when anything the pins are built from
+        // changes: a photo's time or place, a place's name or its rename.
+        hasher.combine(store.revision)
+        hasher.combine(selection.visibleGeneration)
         hasher.combine(viewModel.level(for: latitudeDelta))
         return hasher.finalize()
-    }
-
-    private var worldInput: FootprintsInput {
-        FootprintsCalculator.input(from: items, visibleItemIDs: selection.visibleItemIDs)
     }
 
     private var selectedCluster: PlaceCluster? {
@@ -108,28 +124,57 @@ struct MapScreen: View {
     }
 
     var body: some View {
-        let currentWorldInput = worldInput
         // The Library's filters, kept in step with it, behind a search field
         // and a Filter button: pick a person to see only the places you
         // were with them.
         mapArea
         .compactLibraryFilters()
         .navigationTitle("Map")
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
         .task(id: snapshotKey) {
-            itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            cachedSnapshot = viewModel.snapshot(
-                items: items,
-                visibleItemIDs: selection.visibleItemIDs,
-                latitudeDelta: latitudeDelta
-            )
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            #endif
+            let stops = viewModel.photoStops(from: items, visibleItemIDs: selection.visibleItemIDs)
+            let delta = latitudeDelta
+            let model = viewModel
+            let entries = NearestPlaceIndex(places: places)
+            let built = await Task.detached(priority: .userInitiated) {
+                let snapshot = model.snapshot(stops: stops, latitudeDelta: delta)
+                var names: [String: String] = [:]
+                for cluster in snapshot.clusters {
+                    names[cluster.id] = Self.displayName(of: cluster, index: entries)
+                }
+                return (snapshot: snapshot, names: names)
+            }.value
+            guard !Task.isCancelled else { return }
+            itemsByID = store.itemsByID
+            clusterNames = built.names
+            cachedSnapshot = built.snapshot
+            keepSelectedCluster(in: built.snapshot)
+            // Also clears the world grid and rebuilds both pin layers.
+            refreshPinCounts()
+            let input = FootprintsCalculator.input(from: items, visibleItemIDs: selection.visibleItemIDs)
+            if worldInput?.signature != input.signature { worldInput = input }
+            #if DEBUG
+            let segmentCount: Int = isWorldView ? globeSegments.count : visibleSegments.count
+            let clusterCount: Int = isWorldView ? worldClusters.count : visibleClusters.count
+            PageProbe.note("routes \(segmentCount), pins \(clusterCount), world view \(isWorldView)")
+            PageProbe.contentReady(token: probeToken)
+            #endif
             // "Show on Map" from another screen: fly there once the pins exist.
             if let requested = selection.mapFocusRequest {
                 selection.mapFocusRequest = nil
                 focus(on: requested)
             }
         }
-        .task(id: currentWorldInput.signature) {
-            await refreshWorld(for: currentWorldInput)
+        .task(id: worldInput?.signature) {
+            guard let worldInput else { return }
+            await refreshWorld(for: worldInput)
         }
         .onChange(of: selection.focusedItemID) { _, focusedItemID in
             focus(on: focusedItemID)
@@ -147,7 +192,7 @@ struct MapScreen: View {
                 self.selectedClusterID = nil
             }
         }
-        .onChange(of: selection.visibleItemIDs) { _, _ in
+        .onChange(of: selection.visibleGeneration) { _, _ in
             selectedClusterID = nil
         }
         .onChange(of: latitudeDelta) { _, _ in
@@ -155,6 +200,16 @@ struct MapScreen: View {
                !snapshot.clusters.contains(where: { $0.id == selectedClusterID }) {
                 self.selectedClusterID = nil
             }
+        }
+        // Stack detection finishes after the snapshot, and a person can unstack
+        // a burst: every pin's count has to follow.
+        .onChange(of: stacks.generation) { _, _ in
+            refreshPinCounts()
+        }
+        // The selected place is drawn on its own, so it can sit just outside
+        // the visible pins until the camera reports again.
+        .onChange(of: selectedClusterID) { _, _ in
+            updateVisibleClusters()
         }
     }
 
@@ -190,15 +245,17 @@ struct MapScreen: View {
     // MARK: Map
 
     private var mapView: some View {
-        Map(position: $cameraPosition, interactionModes: [.pan, .zoom, .rotate, .pitch]) {
-            ForEach(snapshot.routeSegments) { segment in
+        // Worked out once per render instead of inside every pin.
+        let selectedID = selectedCluster?.id
+        return Map(position: $cameraPosition, interactionModes: [.pan, .zoom, .rotate, .pitch]) {
+            ForEach(isWorldView ? globeSegments : visibleSegments) { segment in
                 if let from = segment.from.center, let to = segment.to.center {
                     let coordinates = [from.coordinate, to.coordinate]
                     MapPolyline(MKGeodesicPolyline(coordinates: coordinates, count: coordinates.count))
                         .stroke(Paper.accent.opacity(0.8), lineWidth: isWorldView ? 2.5 : 3)
                         .mapOverlayLevel(level: .aboveRoads)
 
-                    if !isWorldView {
+                    if !isWorldView, !snapshot.twoWayRouteIDs.contains(segment.id) {
                         Annotation(coordinate: midpoint(from, to), anchor: .center) {
                             Image(systemName: "arrowtriangle.right.fill")
                                 .font(.caption2)
@@ -212,10 +269,10 @@ struct MapScreen: View {
                 }
             }
 
-            ForEach(snapshot.clusters) { cluster in
+            ForEach(isWorldView ? worldClusters : visibleClusters) { cluster in
                 if let center = cluster.center {
                     Annotation(coordinate: center.coordinate, anchor: .bottom) {
-                        photoPin(cluster)
+                        photoPin(cluster, selectedID: selectedID)
                     } label: {
                         Text(clusterDisplayName(cluster))
                     }
@@ -231,6 +288,16 @@ struct MapScreen: View {
         .accessibilityIdentifier("map.view")
         .accessibilityLabel(Text("Map"))
         .onMapCameraChange(frequency: .onEnd) { context in
+            defer {
+                updateWorldClusters()
+                updateVisibleClusters()
+            }
+            viewport = MapViewport(
+                centerLatitude: context.region.center.latitude,
+                centerLongitude: context.region.center.longitude,
+                latitudeDelta: context.region.span.latitudeDelta,
+                longitudeDelta: context.region.span.longitudeDelta
+            )
             latitudeDelta = context.region.span.latitudeDelta
             cameraDistance = context.camera.distance
             // Down among the places the camera is the person's, whatever
@@ -259,12 +326,14 @@ struct MapScreen: View {
 
     /// A photo standing on the map: the place's first photo in a white frame,
     /// with the number of photos there when there is more than one.
-    private func photoPin(_ cluster: PlaceCluster) -> some View {
-        let isSelected = selectedCluster?.id == cluster.id
+    private func photoPin(_ cluster: PlaceCluster, selectedID: String?) -> some View {
+        let isSelected = cluster.id == selectedID
         let side: CGFloat = isWorldView ? 34 : 46
         let cover = cluster.stopIDs.lazy.compactMap { itemsByID[$0] }.first
-        // A burst counts once.
-        let photoCount = stacks.foldedCount(cluster.stopIDs)
+        // A burst counts once; a merged pin counts all the photos it stands for.
+        let photoCount = mergedCounts[mergedKey(cluster.id)]
+            ?? pinCounts[cluster.id]
+            ?? cluster.stopIDs.count
         return Button {
             pinClicked(cluster)
         } label: {
@@ -653,31 +722,149 @@ struct MapScreen: View {
 
     // MARK: Behaviour
 
-    private func clusterDisplayName(_ cluster: PlaceCluster) -> String {
-        if let name = cluster.name, !name.isEmpty {
-            return name
+    /// Ids of pins that stand for several places start with this.
+    private static let mergedPinPrefix = "grid-"
+    /// Keys of the globe's merged-pin entries and of the visible ones.
+    private static let worldKeyPrefix = "world|"
+    private static let nearKeyPrefix = "near|"
+
+    /// Cell size for merging globe pins: bigger cells the farther the camera.
+    private var worldCellSize: Double {
+        switch cameraDistance {
+        case ..<6_000_000: return 2
+        case ..<12_000_000: return 4
+        default: return 8
         }
-        if let center = cluster.center {
-            let nearest = places
-                .compactMap { place -> (Place, Double)? in
-                    guard let latitude = place.latitude, let longitude = place.longitude else { return nil }
-                    return (place, center.distance(to: GeoPoint(latitude: latitude, longitude: longitude)))
-                }
-                .min { $0.1 < $1.1 }
-            if let nearest, nearest.1 <= 1_500, let name = PlaceDisplayName.resolvedName(of: nearest.0) {
-                return name
-            }
+    }
+
+    /// Photo counts per pin, rebuilt when stacks change: a burst counts once,
+    /// and unstaking one brings its photos back into the count.
+    private func refreshPinCounts() {
+        pinCounts = Dictionary(
+            snapshot.clusters.map { ($0.id, stacks.foldedCount($0.stopIDs)) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        // The globe's lines are rebuilt with its pins. A close view's snapshot
+        // keeps every segment (`limit: .max`), so the globe gets at most 400 of
+        // them and never draws a close-up route list.
+        let worldSegments = MapRoutes.longest(snapshot.routeSegments, limit: 400)
+        if worldSegments != globeSegments { globeSegments = worldSegments }
+        worldCellDegrees = 0
+        updateWorldClusters()
+        updateVisibleClusters()
+    }
+
+    /// Recomputed only when the snapshot or the cell size changes.
+    private func updateWorldClusters() {
+        let size = worldCellSize
+        guard size != worldCellDegrees else { return }
+        worldCellDegrees = size
+        let merged = MapPinGrid.merge(snapshot.clusters, cellDegrees: size)
+        // A merged id can repeat at another cell size with other members, so its
+        // name and count are rebuilt from scratch, never kept from last time.
+        updateMergedEntries(for: merged, members: snapshot.clusters, prefix: Self.worldKeyPrefix)
+        worldClusters = merged
+    }
+
+    /// Below the globe: the pins and routes the camera can see, so MapKit never
+    /// has to draw thousands of annotations and polylines at once.
+    private func updateVisibleClusters() {
+        guard !isWorldView, let viewport else {
+            clearMergedEntries(withPrefix: Self.nearKeyPrefix)
+            if !visibleClusters.isEmpty { visibleClusters = [] }
+            if !visibleSegments.isEmpty { visibleSegments = [] }
+            return
         }
+
+        var kept = viewport.clusters(snapshot.clusters)
+        if let selectedClusterID {
+            kept.removeAll { $0.id == selectedClusterID }
+        }
+        // Taken before merging: a merged pin is named after its first member.
+        let members = kept
+        if kept.count > 150 {
+            kept = MapPinGrid.merge(kept, cellDegrees: max(viewport.latitudeDelta / 8, 0.0005))
+        }
+        // The selected place is drawn on its own, even when it sits just outside
+        // the visible pins.
+        if let selectedClusterID,
+           let selected = snapshot.clusters.first(where: { $0.id == selectedClusterID }) {
+            kept.append(selected)
+        }
+        updateMergedEntries(for: kept, members: members, prefix: Self.nearKeyPrefix)
+
+        // A cluster keeps its id when its first photo stays, and a route keeps
+        // "from->to", so ids alone miss a moved centre, new members or new
+        // endpoints. Compare the values so the map never draws stale geometry.
+        if kept != visibleClusters {
+            visibleClusters = kept
+        }
+        let segments = MapRoutes.longest(viewport.segments(snapshot.routeSegments), limit: 400)
+        if segments != visibleSegments {
+            visibleSegments = segments
+        }
+    }
+
+    /// Rebuilds one view's merged-pin names and counts from scratch: a merged
+    /// pin takes its first member's name and counts all its photos.
+    private func updateMergedEntries(for pins: [PlaceCluster], members: [PlaceCluster], prefix: String) {
+        let clusterByFirstStop = Dictionary(
+            members.compactMap { cluster in cluster.stopIDs.first.map { ($0, cluster.id) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var names = mergedNames.filter { !$0.key.hasPrefix(prefix) }
+        var counts = mergedCounts.filter { !$0.key.hasPrefix(prefix) }
+        for cluster in pins where cluster.id.hasPrefix(Self.mergedPinPrefix) {
+            let firstMember = cluster.stopIDs.first.flatMap { clusterByFirstStop[$0] }
+            names[prefix + cluster.id] = firstMember.flatMap { clusterNames[$0] }
+                ?? String(localized: "Unknown place")
+            counts[prefix + cluster.id] = stacks.foldedCount(cluster.stopIDs)
+        }
+        if names != mergedNames { mergedNames = names }
+        if counts != mergedCounts { mergedCounts = counts }
+    }
+
+    private func clearMergedEntries(withPrefix prefix: String) {
+        if mergedNames.contains(where: { $0.key.hasPrefix(prefix) }) {
+            mergedNames = mergedNames.filter { !$0.key.hasPrefix(prefix) }
+        }
+        if mergedCounts.contains(where: { $0.key.hasPrefix(prefix) }) {
+            mergedCounts = mergedCounts.filter { !$0.key.hasPrefix(prefix) }
+        }
+    }
+
+    /// The merged-pin key of the view a pin is drawn in: the globe's pins and
+    /// the visible pins keep separate entries.
+    private func mergedKey(_ id: String) -> String {
+        (isWorldView ? Self.worldKeyPrefix : Self.nearKeyPrefix) + id
+    }
+
+    /// A pin's name: its own name, else the nearest named place within 1.5 km
+    /// of its centre, else "Unknown place".
+    nonisolated private static func displayName(of cluster: PlaceCluster, index: NearestPlaceIndex) -> String {
+        if let name = cluster.name, !name.isEmpty { return name }
+        if let center = cluster.center, let name = index.nearestName(to: center, within: 1_500) { return name }
         return String(localized: "Unknown place")
     }
 
+    private func clusterDisplayName(_ cluster: PlaceCluster) -> String {
+        mergedNames[mergedKey(cluster.id)]
+            ?? clusterNames[cluster.id]
+            ?? String(localized: "Unknown place")
+    }
+
     /// On the globe a pin flies down to its city; closer in it opens the
-    /// place's photos along the bottom.
+    /// place's photos along the bottom. A merged pin below the globe first
+    /// zooms in on the places it stands for.
     private func pinClicked(_ cluster: PlaceCluster) {
         lastMarkerSelection = Date()
         if isWorldView {
             guard let center = cluster.center else { return }
             flyTo(center, latitudeDelta: viewModel.thresholds.city * 0.9)
+            return
+        }
+        if cluster.id.hasPrefix(Self.mergedPinPrefix), let center = cluster.center {
+            flyTo(center, latitudeDelta: max((viewport?.latitudeDelta ?? 1) / 4, 0.002))
             return
         }
         selectedClusterID = cluster.id
@@ -696,6 +883,25 @@ struct MapScreen: View {
         lastMarkerSelection = Date()
         selection.select([itemID], focus: itemID)
         selection.openViewer(itemID, in: selectedClusterItems.map(\.id))
+    }
+
+    /// A cluster id names its zoom level and its first photo, so the same
+    /// place gets another id in a snapshot built at another level. When that
+    /// happens, keep the strip open on the selected photos' new cluster.
+    private func keepSelectedCluster(in newSnapshot: PlacesViewModel.Snapshot) {
+        guard let selectedClusterID else { return }
+        let isStillThere: Bool = newSnapshot.clusters.contains { cluster in
+            cluster.id == selectedClusterID
+        }
+        guard !isStillThere else { return }
+        let focusedID: String? = selection.focusedItemID
+        let selectedID: String? = selection.selectedItemIDs.sorted().first { itemID in
+            newSnapshot.coordinateByID[itemID] != nil
+        }
+        let anchor: String? = focusedID ?? selectedID
+        self.selectedClusterID = anchor.flatMap { itemID in
+            newSnapshot.cluster(containing: itemID)?.id
+        }
     }
 
     private func focus(on itemID: String?) {
@@ -751,7 +957,11 @@ struct MapScreen: View {
 
     @MainActor
     private func refreshWorld(for input: FootprintsInput) async {
-        let snapshot = FootprintsCalculator.snapshot(for: input)
+        // A full city-level clustering plus a route pass: never on the main thread.
+        let snapshot = await Task.detached(priority: .userInitiated) {
+            FootprintsCalculator.snapshot(for: input)
+        }.value
+        guard !Task.isCancelled else { return }
         let previousTarget = world.snapshot.cameraTarget
         world = MapWorldState(
             snapshot: snapshot,

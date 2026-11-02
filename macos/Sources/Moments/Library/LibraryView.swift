@@ -3,46 +3,55 @@ import Foundation
 import SwiftUI
 import SwiftData
 
-private struct LibraryFilterOptions {
-    var places: [LibraryPlaceOption] = []
-    var trips: [String] = []
-    var tripNames: [String: String] = [:]
-}
-
 private enum LibraryScrollTarget {
     static func section(_ id: String) -> String { "section:\(id)" }
     static func item(_ id: String) -> String { "item:\(id)" }
 }
 
+#if DEBUG
+/// The part names and values `groupingKey` was last built from, so the probe
+/// can say which input moved. Main-actor only: it is read and written from the
+/// library's `.task`.
+@MainActor
+private enum LibraryRegroupProbe {
+    static var last: [String: Int] = [:]
+}
+
+#endif
 struct LibraryView: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(ImportController.self) private var importController
     @Environment(PhotoStackModel.self) private var stacks
+    @Environment(LibraryStore.self) private var store
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    // Keep the common Library query free of explicit screenshots in SwiftData.
-    // The screenshot segment switches to the second descriptor without making
-    // the normal 5k-item browsing path carry those models through filtering.
-    @Query(filter: #Predicate<MediaItem> { $0.isScreenshot == false && $0.deletedAt == nil }, sort: \MediaItem.captureDate)
-    private var regularItems: [MediaItem]
-    @Query(filter: #Predicate<MediaItem> { $0.isScreenshot == true && $0.deletedAt == nil }, sort: \MediaItem.captureDate)
-    private var screenshotItems: [MediaItem]
+    // The library's photos, screenshots, faces and places come from the shared
+    // store, which fetches them once for every page.
+    private var regularItems: [MediaItem] { store.regularItems }
+    private var screenshotItems: [MediaItem] { store.screenshotItems }
     @Query(sort: \Memory.updatedAt)
     private var memoryRecords: [Memory]
     @Query(sort: \Trip.id)
     private var allTrips: [Trip]
-    @Query(sort: \Place.id)
-    private var allPlaces: [Place]
+    private var allPlaces: [Place] { store.places }
     @Query(sort: \PlaceOverride.id)
     private var placeOverrides: [PlaceOverride]
     /// "My groups" only; chapters live on the Chapters page, and stack
     /// records are not groups anyone made.
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" }, sort: \UserGroup.name)
     private var allGroups: [UserGroup]
-    @Query private var groupItems: [UserGroupItem]
+    /// Group memberships, fetched when the store's `groupSourcesRevision`
+    /// moves, instead of a query SwiftData refreshes on every save.
+    @State private var cachedGroupItems: [UserGroupItem] = []
     @Query(sort: \Person.name) private var people: [Person]
-    @Query private var faceObservations: [FaceObservation]
+    private var faceObservations: [FaceObservation] { store.faces }
     /// What someone changed about bursts: covers, unstacked, photos taken out.
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw == "stack" }) private var stackRecords: [UserGroup]
+    /// The place notes every section's photos show, queried once here
+    /// instead of by each section on screen.
+    @Query private var placeNotes: [PlaceNote]
+    /// Day and trip memories, shown under the sections that match them.
+    @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
 
     let state: LibraryViewState
     @Binding var firstLaunchCompleted: Bool
@@ -70,7 +79,39 @@ struct LibraryView: View {
     /// Photos the import flagged for a look; shown as a banner, not a sidebar row.
     @State private var cachedReviewCount = 0
     @State private var showingReview = false
-    @State private var cachedFilterOptions = LibraryFilterOptions()
+    @State private var cachedFilterOptions = LibraryFilterOptionSet()
+    /// Each section's day-memory keys, built once with the sections.
+    @State private var cachedSectionDayKeys: [String: Set<String>] = [:]
+    /// Each section's photos, looked up once per regroup instead of on every redraw.
+    @State private var cachedSectionItems: [String: [MediaItem]] = [:]
+    /// Each section's memories, worked out in `regroup()` with those day keys,
+    /// and again only when the memories themselves change, instead of by every
+    /// section on each render.
+    @State private var cachedSectionMemories: [String: [CollectionMemory]] = [:]
+
+    /// What one full `regroup()` computes from its inputs, as plain values, so
+    /// a later visit can show the same result without walking the photos again.
+    private struct LibraryRegroupResult {
+        let reviewCount: Int
+        let personIndex: [String: Set<String>]
+        let itemByID: [String: MediaItem]
+        let sections: [LibrarySection]
+        let unfoldedSectionItems: [String: [String]]
+        let stackCounts: [String: Int]
+        let visibleCount: Int
+        let gridSections: [[String]]
+        let viewerItemIDs: [String]
+        let sectionItems: [String: [MediaItem]]
+        let sectionDayKeys: [String: Set<String>]
+        let publishedIDs: Set<String>
+        /// The ids of `filtered`, for the focused-id check on the hit path.
+        let filteredIDs: Set<String>
+    }
+
+    /// The last finished regroup, kept across visits to the page: SwiftUI drops
+    /// the page's `@State` when it is left, but what it built stays valid as
+    /// long as `groupingKey` is unchanged.
+    @MainActor private static var lastRegroup: (key: Int, result: LibraryRegroupResult)?
 
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
@@ -98,6 +139,17 @@ struct LibraryView: View {
         regularItems + screenshotItems
     }
 
+    /// What the stack model is handed, without hashing each photo: the
+    /// store's per-photo sum, how many photos this page passes, and a name
+    /// for this page (two pages may pass different subsets).
+    private var stackSourceKey: Int {
+        var hasher = Hasher()
+        hasher.combine(store.stackFieldsKey)
+        hasher.combine(regularItems.count + screenshotItems.count)
+        hasher.combine("library")
+        return hasher.finalize()
+    }
+
     private var grouping: LibraryGrouping {
         LibraryGrouping(rawValue: groupingRaw) ?? .trip
     }
@@ -118,23 +170,6 @@ struct LibraryView: View {
     private var places: [LibraryPlaceOption] { cachedFilterOptions.places }
 
     private var trips: [String] { cachedFilterOptions.trips }
-
-    private static func filterOptions(for items: [MediaItem]) -> LibraryFilterOptions {
-        var tripNames: [String: String] = [:]
-        for item in items {
-            if let tripID = item.tripID, tripNames[tripID] == nil {
-                tripNames[tripID] = item.trip?.effectiveName ?? tripID
-            }
-        }
-        return LibraryFilterOptions(
-            // One row per name: unnamed spots are listed under the area or
-            // city that names them, places with the same name are one row,
-            // and the filter matches all of them.
-            places: PlaceNames.options(for: items),
-            trips: tripNames.keys.sorted(),
-            tripNames: tripNames
-        )
-    }
 
     private var selectedPlaceName: String? {
         places.first(where: { $0.id == placeFilterID })?.name
@@ -178,28 +213,19 @@ struct LibraryView: View {
         hasher.combine(query)
         hasher.combine(state.focusedMemoryItemID)
         hasher.combine(selection.libraryScope?.itemIDs)
-        // All items, not just the visible type: the Place and Trip menus
-        // are built from both.
-        for item in allItems {
-            hasher.combine(item.id)
-            hasher.combine(item.captureDate)
-            hasher.combine(item.userCorrectedCaptureDateUTC)
-            hasher.combine(item.isScreenshot)
-            // Only read the stars while Favorites is shown; it faults a relation.
-            if typeRaw == LibraryMediaTypeFilter.favorite.rawValue { hasher.combine(item.isFavorite) }
-            hasher.combine(item.kindRaw)
-            hasher.combine(item.tripID)
-            hasher.combine(item.place?.id)
-            hasher.combine(item.updatedAt)
-        }
+        // All photos and faces the pages group by, as one revision.
+        hasher.combine(store.photoFaceRevision)
+        // Sections read place names only when grouped by place, filtered by a
+        // place, or searched; a place-only save regroups only then.
+        let readsPlaceNames: Bool = groupingRaw == LibraryGrouping.place.rawValue || !placeFilterID.isEmpty || !query.isEmpty
+        if readsPlaceNames { hasher.combine(store.placeRevision) }
+        // A favorite save leaves `revision` alone, so the Favorites filter
+        // (and the Favorites segment) follows its own revision.
+        if criteria.favoritesOnly { hasher.combine(store.favoriteRevision) }
         for trip in allTrips {
             hasher.combine(trip.id)
             hasher.combine(trip.name)
             hasher.combine(trip.overrideName)
-        }
-        for place in allPlaces {
-            hasher.combine(place.id)
-            hasher.combine(place.name)
         }
         for override in placeOverrides {
             hasher.combine(override.id)
@@ -213,13 +239,6 @@ struct LibraryView: View {
             hasher.combine(memory.updatedAt)
             hasher.combine(memory.revision)
         }
-        for observation in faceObservations {
-            hasher.combine(observation.id)
-            hasher.combine(observation.mediaID)
-            hasher.combine(observation.personID)
-            hasher.combine(observation.confirmed)
-            hasher.combine(observation.assignmentSource)
-        }
         // Bursts regroup when someone changes a stack or new analysis arrives.
         hasher.combine(stacks.generation)
         for record in stackRecords {
@@ -229,9 +248,81 @@ struct LibraryView: View {
         return hasher.finalize()
     }
 
+    #if DEBUG
+    /// The same inputs `groupingKey` hashes, kept apart by where they come
+    /// from, so the page probe can name the one that moved.
+    private var groupingKeyParts: [(String, Int)] {
+        var filters = Hasher()
+        filters.combine(typeRaw)
+        filters.combine(groupingRaw)
+        filters.combine(fromDateInterval)
+        filters.combine(toDateInterval)
+        filters.combine(placeFilterID)
+        filters.combine(tripFilterKey)
+        filters.combine(memoryFilterRaw)
+        filters.combine(personFilterID)
+        filters.combine(query)
+        filters.combine(state.focusedMemoryItemID)
+        filters.combine(selection.libraryScope?.itemIDs)
+        var trips = Hasher()
+        for trip in allTrips {
+            trips.combine(trip.id)
+            trips.combine(trip.name)
+            trips.combine(trip.overrideName)
+        }
+        var overrides = Hasher()
+        for override in placeOverrides {
+            overrides.combine(override.id)
+            overrides.combine(override.mediaID)
+            overrides.combine(override.nameOverride)
+            overrides.combine(override.updatedAt)
+        }
+        var memories = Hasher()
+        for memory in memoryRecords {
+            memories.combine(memory.id)
+            memories.combine(memory.mediaID)
+            memories.combine(memory.updatedAt)
+            memories.combine(memory.revision)
+        }
+        var records = Hasher()
+        for record in stackRecords {
+            records.combine(record.id)
+            records.combine(record.rulesData)
+        }
+        let favoriteRevision: Int = criteria.favoritesOnly ? store.favoriteRevision : -1
+        let readsPlaceNames: Bool = groupingRaw == LibraryGrouping.place.rawValue || !placeFilterID.isEmpty || !query.isEmpty
+        return [
+            ("filters", filters.finalize()),
+            ("store.photoFaceRevision", store.photoFaceRevision),
+            ("store.placeRevision", readsPlaceNames ? store.placeRevision : -1),
+            ("favoriteRevision", favoriteRevision),
+            ("trips", trips.finalize()),
+            ("place overrides", overrides.finalize()),
+            ("memories", memories.finalize()),
+            ("stacks.generation", stacks.generation),
+            ("stack records", records.finalize())
+        ]
+    }
+    #endif
+    /// The memories a section can show, so they are matched again when one is
+    /// added, edited or removed outside `regroup()`. The sections and their day
+    /// keys are not hashed: `regroup()` does that match itself, in the same
+    /// update as the sections, and hashing every section id here repeated that
+    /// work on every body evaluation.
+    private var memoriesKey: Int {
+        var hasher = Hasher()
+        hasher.combine(collectionMemories.count)
+        for memory in collectionMemories {
+            hasher.combine(memory.id)
+            hasher.combine(memory.scopeKey)
+            hasher.combine(memory.updatedAt)
+        }
+        return hasher.finalize()
+    }
+
     var body: some View {
         Group {
-            if LibraryLaunchState.shouldShowImportFlow(hasCompletedFirstLaunch: firstLaunchCompleted, itemCount: allItems.count) {
+            if LibraryLaunchState.shouldShowImportFlow(hasCompletedFirstLaunch: firstLaunchCompleted, itemCount: store.items.count) {
                 FirstLaunchImportView {
                     importController.chooseFolder()
                 }
@@ -241,13 +332,62 @@ struct LibraryView: View {
         }
         .background(LibraryPalette.content)
         .endsTextEditingOnOutsideClick()
-        .onChange(of: allItems.count, initial: true) { _, count in
+        .onChange(of: store.items.count, initial: true) { _, count in
             if count > 0 { firstLaunchCompleted = true }
         }
         .onChange(of: people.map(\.id), initial: true) { _, ids in
             if !personFilterID.isEmpty && !ids.contains(personFilterID) { personFilterID = "" }
         }
-        .task(id: groupingKey) { regroup() }
+        #if DEBUG
+        .onAppear {
+            PageProbe.shellReady(token: PageProbe.phaseToken)
+        }
+        #endif
+        .task(id: groupingKey) {
+            #if DEBUG
+            let probeToken = PageProbe.phaseToken
+            let parts: [(String, Int)] = groupingKeyParts
+            let started: CFTimeInterval = CACurrentMediaTime()
+            #endif
+            regroup()
+            #if DEBUG
+            PageProbe.contentReady(token: probeToken)
+            let previous: [String: Int] = LibraryRegroupProbe.last
+            var changed: [String] = []
+            for part in parts where previous[part.0] != part.1 {
+                changed.append(part.0)
+            }
+            if previous.isEmpty { changed = ["first"] }
+            var current: [String: Int] = [:]
+            for part in parts { current[part.0] = part.1 }
+            LibraryRegroupProbe.last = current
+            let cause: String = changed.isEmpty ? "no part changed" : changed.joined(separator: " + ")
+            PageProbe.tally("library regroup: " + cause, seconds: CACurrentMediaTime() - started)
+            #endif
+        }
+        .onChange(of: memoriesKey) { _, _ in
+            // A note can be added or edited without a regroup, so the match is
+            // redone here; the first build is covered by regroup() itself.
+            let memories: [String: [CollectionMemory]] = LibrarySectionMemories.make(
+                sections: cachedSections,
+                dayKeysBySection: cachedSectionDayKeys,
+                memories: collectionMemories
+            )
+            applySectionMemories(memories)
+        }
+        // A place-only save may not regroup; the Place menu's names still follow it.
+        .onChange(of: store.placeRevision) { _, _ in
+            cachedFilterOptions = LibraryFilterOptionsCache.options(
+                for: store.items,
+                key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips),
+                sourceKey: LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
+            )
+        }
+        // Memberships are fetched when a save touched a group source, not by a
+        // query SwiftData refreshes on every save.
+        .onChange(of: store.groupSourcesRevision, initial: true) { _, _ in
+            refreshGroupItems()
+        }
         .sheet(isPresented: $showingReview) {
             ReviewSheet()
         }
@@ -449,7 +589,10 @@ struct LibraryView: View {
         }
     }
 
+    @ViewBuilder
     private var results: some View {
+        // The memberships cached by `refreshGroupItems()`, read once per body.
+        let memberships: [UserGroupItem] = cachedGroupItems
         ScrollViewReader { proxy in
             ScrollView {
                 // Headings and section grids space themselves (LibrarySectionView).
@@ -457,12 +600,14 @@ struct LibraryView: View {
                     ForEach(cachedSections) { section in
                         LibrarySectionView(
                             section: section,
-                            items: section.itemIDs.compactMap { cachedItemByID[$0] },
+                            items: cachedSectionItems[section.id] ?? section.itemIDs.compactMap { cachedItemByID[$0] },
                             state: state,
                             allGroups: allGroups,
-                            groupItems: groupItems,
+                            groupItems: memberships,
                             stackCounts: cachedStackCounts,
-                            allItemIDs: cachedUnfoldedSectionItems[section.id] ?? section.itemIDs
+                            allItemIDs: cachedUnfoldedSectionItems[section.id] ?? section.itemIDs,
+                            memories: cachedSectionMemories[section.id] ?? [],
+                            placeNotes: placeNotes
                         )
                     }
                 }
@@ -590,28 +735,118 @@ struct LibraryView: View {
     }
 
     private func regroup() {
-        cachedReviewCount = allItems.reduce(into: 0) { count, item in
+        // Taken before anything is read: these are the inputs this pass uses,
+        // and a change during it must not be stored under a newer key.
+        let key = groupingKey
+        #if DEBUG
+        var stepStarted: CFTimeInterval = CACurrentMediaTime()
+        let step: (String) -> Void = { (name: String) -> Void in
+            PageProbe.tally("regroup step: " + name, seconds: CACurrentMediaTime() - stepStarted)
+            stepStarted = CACurrentMediaTime()
+        }
+        #endif
+        if let cached = Self.lastRegroup, cached.key == key {
+            // Nothing changed since the last finished regroup: show it at
+            // once, without the filter passes or the sections. What does not
+            // come from the cache is rebuilt exactly as the full path does.
+            let result = cached.result
+            cachedReviewCount = result.reviewCount
+            cachedPersonIndex = result.personIndex
+            cachedItemByID = result.itemByID
+            cachedSections = result.sections
+            cachedUnfoldedSectionItems = result.unfoldedSectionItems
+            cachedStackCounts = result.stackCounts
+            cachedVisibleCount = result.visibleCount
+            state.gridSections = result.gridSections
+            state.viewerItemIDs = result.viewerItemIDs
+            hasGrouped = true
+            // The stack model is shared with the other pages, so it is handed
+            // the photos again; it does nothing when nothing changed.
+            stacks.update(items: allItems, decisions: stackRecords, sourceKey: stackSourceKey)
+            // The menus build from the whole store and have their own cache.
+            cachedFilterOptions = LibraryFilterOptionsCache.options(
+                for: store.items,
+                key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips),
+                sourceKey: LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
+            )
+            cachedSectionItems = result.sectionItems
+            if result.sectionDayKeys != cachedSectionDayKeys {
+                cachedSectionDayKeys = result.sectionDayKeys
+            }
+            // Memories are not in the key, so they are matched again.
+            let memories: [String: [CollectionMemory]] = LibrarySectionMemories.make(
+                sections: result.sections,
+                dayKeysBySection: result.sectionDayKeys,
+                memories: collectionMemories
+            )
+            applySectionMemories(memories)
+            if selection.visibleItemIDs != result.publishedIDs { selection.visibleItemIDs = result.publishedIDs }
+            selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
+            if let focus = selection.focusedItemID,
+               !result.filteredIDs.contains(focus),
+               !selection.shouldRevealSelectionInLibrary {
+                selection.focusedItemID = selection.selectedItemIDs.first
+            }
+            #if DEBUG
+            PageProbe.tally("regroup step: reused last regroup", seconds: 0)
+            #endif
+            return
+        }
+        // `allItems` builds a new array each time it is read.
+        let all = allItems
+        #if DEBUG
+        step("allItems")
+        #endif
+        cachedReviewCount = all.reduce(into: 0) { count, item in
             if item.needsImportReview { count += 1 }
         }
+        #if DEBUG
+        step("review count")
+        #endif
         let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
         cachedPersonIndex = personIndex
+        #if DEBUG
+        step("person index")
+        #endif
         // A scope from another screen narrows the grid only; the published
         // ids below stay on the regular filters so the maps do not shrink.
         let scopedItems = selection.libraryScope.map { scope in
             items.filter { scope.itemIDs.contains($0.id) }
         } ?? items
-        let filtered = LibraryFilterEngine.filteredItems(scopedItems, by: criteria, personIDsByMediaID: personIndex)
-        let visible = LibraryFilterEngine.filteredItems(
-            scopedItems,
-            by: criteria,
-            preservingEditingItemID: state.focusedMemoryItemID,
+        #if DEBUG
+        step("scope")
+        #endif
+        // One call for all three results, so each photo is tested once.
+        let passes = LibraryFilterEngine.regroupPasses(
+            scopedItems: scopedItems,
+            allItems: all,
+            hasScope: selection.libraryScope != nil,
+            criteria: criteria,
+            editingItemID: state.focusedMemoryItemID,
             personIDsByMediaID: personIndex
         )
+        #if DEBUG
+        step("filter passes")
+        #endif
+        let filtered = passes.filtered
+        let visible = passes.visible
         cachedItemByID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
+        #if DEBUG
+        step("item by id")
+        #endif
         // A burst is one cell showing its cover, and counts as one photo.
-        let stackIndex = stacks.update(items: allItems, decisions: stackRecords)
+        let stackIndex = stacks.update(items: all, decisions: stackRecords, sourceKey: stackSourceKey)
+        #if DEBUG
+        step("stacks update")
+        #endif
         let unfolded = LibraryFilterEngine.sections(forVisibleItems: visible, by: grouping, sortOrder: .newestFirst)
+        #if DEBUG
+        step("sections")
+        #endif
         let folded = LibraryFilterEngine.folding(unfolded, with: stackIndex)
+        #if DEBUG
+        step("folding")
+        #endif
         cachedSections = folded.sections
         cachedUnfoldedSectionItems = Dictionary(unfolded.map { ($0.id, $0.itemIDs) }, uniquingKeysWith: { first, _ in first })
         cachedStackCounts = folded.stackCounts
@@ -619,15 +854,104 @@ struct LibraryView: View {
         state.gridSections = cachedSections.map(\.itemIDs)
         state.viewerItemIDs = unfolded.flatMap(\.itemIDs)
         hasGrouped = true
-        cachedFilterOptions = Self.filterOptions(for: allItems)
-        let publishedVisible = Set(LibraryFilterEngine.publishedItems(allItems, by: criteria, personIDsByMediaID: personIndex).map(\.id))
-        selection.visibleItemIDs = publishedVisible
+        #if DEBUG
+        step("publish sections")
+        #endif
+        // The chips build from `store.items` too, so both callers hand the
+        // cache the same photos in the same order: the trip name taken for a
+        // trip whose photos disagree can otherwise depend on the order.
+        cachedFilterOptions = LibraryFilterOptionsCache.options(
+            for: store.items,
+            key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips),
+            sourceKey: LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
+        )
+        #if DEBUG
+        step("filter options")
+        #endif
+        // Day memories are matched per section; reading every photo's day in
+        // the section's body repeated that pass on each render.
+        var sectionDayKeys: [String: Set<String>] = [:]
+        sectionDayKeys.reserveCapacity(cachedSections.count)
+        var sectionItemsByID: [String: [MediaItem]] = [:]
+        sectionItemsByID.reserveCapacity(cachedSections.count)
+        for section in cachedSections {
+            let sectionItems: [MediaItem] = section.itemIDs.compactMap { cachedItemByID[$0] }
+            sectionItemsByID[section.id] = sectionItems
+            let keys: Set<String> = Set(sectionItems.compactMap { PhotoNoteDay.key(for: $0) })
+            sectionDayKeys[section.id] = keys
+        }
+        cachedSectionItems = sectionItemsByID
+        #if DEBUG
+        step("section items + day keys")
+        #endif
+        // Matched here, with the sections and their day keys, so both caches
+        // land in this one update instead of the section list being built
+        // again after an onChange sees the new day keys.
+        let memories: [String: [CollectionMemory]] = LibrarySectionMemories.make(
+            sections: cachedSections,
+            dayKeysBySection: sectionDayKeys,
+            memories: collectionMemories
+        )
+        #if DEBUG
+        step("memories match")
+        #endif
+        if sectionDayKeys != cachedSectionDayKeys {
+            cachedSectionDayKeys = sectionDayKeys
+        }
+        applySectionMemories(memories)
+        #if DEBUG
+        step("apply memories")
+        #endif
+        let publishedVisible = passes.publishedIDs
+        if selection.visibleItemIDs != publishedVisible { selection.visibleItemIDs = publishedVisible }
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
         if let focus = selection.focusedItemID,
            !filtered.contains(where: { $0.id == focus }),
            !selection.shouldRevealSelectionInLibrary {
             selection.focusedItemID = selection.selectedItemIDs.first
         }
+        #if DEBUG
+        step("selection")
+        #endif
+        // Stored last, under the key taken before anything was read, so only a
+        // finished regroup is ever reused.
+        let result = LibraryRegroupResult(
+            reviewCount: cachedReviewCount,
+            personIndex: personIndex,
+            itemByID: cachedItemByID,
+            sections: cachedSections,
+            unfoldedSectionItems: cachedUnfoldedSectionItems,
+            stackCounts: cachedStackCounts,
+            visibleCount: cachedVisibleCount,
+            gridSections: cachedSections.map(\.itemIDs),
+            viewerItemIDs: unfolded.flatMap(\.itemIDs),
+            sectionItems: sectionItemsByID,
+            sectionDayKeys: sectionDayKeys,
+            publishedIDs: passes.publishedIDs,
+            filteredIDs: Set(filtered.map(\.id))
+        )
+        Self.lastRegroup = (key: key, result: result)
+    }
+
+    /// Fetches the group memberships the sections hand to the photo menus.
+    /// Runs when `groupSourcesRevision` moves, so a save of anything else
+    /// leaves them alone.
+    private func refreshGroupItems() {
+        #if DEBUG
+        let started: CFTimeInterval = CACurrentMediaTime()
+        #endif
+        cachedGroupItems = (try? modelContext.fetch(FetchDescriptor<UserGroupItem>())) ?? []
+        #if DEBUG
+        PageProbe.tally("library memberships fetch", seconds: CACurrentMediaTime() - started)
+        #endif
+    }
+
+    /// Writes newly matched section memories, but only when the ids a section
+    /// shows differ. A regroup that finds the same memories must not redraw the
+    /// section list, which at 20,000 photos is the whole page.
+    private func applySectionMemories(_ memories: [String: [CollectionMemory]]) {
+        guard !LibrarySectionMemories.sameIDs(cachedSectionMemories, memories) else { return }
+        cachedSectionMemories = memories
     }
 
     private func revealRequestedSelectionIfNeeded(in sections: [LibrarySection], using proxy: ScrollViewProxy) {
@@ -740,8 +1064,10 @@ private struct LibrarySectionView: View {
     var stackCounts: [String: Int] = [:]
     /// The section's photos with each stack's shots, for "Show only these".
     var allItemIDs: [String]? = nil
-    @Query private var placeNotes: [PlaceNote]
-    @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
+    /// The section's memories and the place notes its photos show, matched and
+    /// queried once by the page instead of by every section.
+    var memories: [CollectionMemory] = []
+    var placeNotes: [PlaceNote] = []
 
     /// Set by the scroll content (reportsLibraryGridColumns) from the chosen
     /// photos per row; the window's size changes it only when it is too
@@ -809,7 +1135,7 @@ private struct LibrarySectionView: View {
                     .foregroundStyle(LibraryPalette.muted)
             }
 
-            CollectionMemoryLines(memories: sectionMemories)
+            CollectionMemoryLines(memories: memories)
         }
         .padding(.bottom, 13)
         .id(LibraryScrollTarget.section(section.id))
@@ -819,7 +1145,7 @@ private struct LibrarySectionView: View {
 
         LazyVGrid(columns: gridColumns, alignment: .leading, spacing: size.rowSpacing) {
             ForEach(items, id: \.id) { item in
-                LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact, stackCount: stackCounts[item.id] ?? 1)
+                LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact, stackCount: stackCounts[item.id] ?? 1, probeToken: pageProbePhaseToken)
             }
         }
         .padding(.bottom, LibrarySectionView.sectionSpacing)
@@ -833,19 +1159,6 @@ private struct LibrarySectionView: View {
 
     /// Space between one section's grid and the next heading.
     static let sectionSpacing: CGFloat = 34
-
-    /// Trip memories for a trip section, and day memories for the days its photos were taken.
-    private var sectionMemories: [CollectionMemory] {
-        guard !collectionMemories.isEmpty else { return [] }
-        let tripID = section.id.hasPrefix("trip:") ? String(section.id.dropFirst("trip:".count)) : nil
-        let dayKeys = Set(items.compactMap { PhotoNoteDay.key(for: $0) })
-        return collectionMemories.filter { memory in
-            switch memory.scope {
-            case .trip: return memory.scopeKey == tripID
-            case .day, .photo: return dayKeys.contains(memory.scopeKey)
-            }
-        }
-    }
 
     private var dateSpan: String {
         guard let start = section.startDate else { return String(localized: "Undated") }
@@ -875,6 +1188,8 @@ private struct LibraryPhotoCell: View {
     var isCompact = false
     /// More than one: the cell is a burst, shown as a stack with its cover.
     var stackCount = 1
+    /// The page probe phase this cell was built in (DEBUG only).
+    var probeToken: UInt64? = nil
     @State private var isHovering = false
 
     private var showsMemoryEditor: Bool {
@@ -897,12 +1212,12 @@ private struct LibraryPhotoCell: View {
                     click()
                 } label: {
                     if isCompact {
-                        ThumbnailView(item: item, width: 280, height: 280)
+                        ThumbnailView(item: item, width: 280, height: 280, probeToken: probeToken)
                             .aspectRatio(1, contentMode: .fit)
                             .stackedPaper(stackCount, isCompact: true, cornerRadius: 10)
                             .overlay { LibraryPhotoSelectionFrame(itemID: item.id, cornerRadius: 10) }
                     } else {
-                        ThumbnailView(item: item, width: 560, height: 420)
+                        ThumbnailView(item: item, width: 560, height: 420, probeToken: probeToken)
                             .aspectRatio(1.33, contentMode: .fit)
                             .padding(5)
                             // A print's white mat, lifted by a warm two-layer shadow.
@@ -1324,9 +1639,10 @@ struct ReviewSheet: View {
 }
 
 struct ReviewListView: View {
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
     @Environment(\.modelContext) private var modelContext
     @Environment(SelectionModel.self) private var selection
+    @Environment(LibraryStore.self) private var store
+    private var items: [MediaItem] { store.items }
     /// The last confirmation, so it can be taken back.
     @State private var lastConfirmed: [(id: String, decision: ImportReviewDecision)] = []
 
@@ -1433,18 +1749,29 @@ struct GroupDetailView: View {
     @Environment(SelectionModel.self) private var selection
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(LibraryStore.self) private var store
     @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "stack" }) private var groups: [UserGroup]
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
+    private var items: [MediaItem] { store.items }
     @Query private var memberships: [UserGroupItem]
     @Query private var memoryRecords: [Memory]
     @Query private var mediaTags: [MediaTag]
     @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
-    @Query private var faceObservations: [FaceObservation]
+    /// The place notes every section's photos show, queried once here
+    /// instead of by each section on screen.
+    @Query private var placeNotes: [PlaceNote]
+    /// Day and trip memories, shown under the sections that match them.
+    @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
+    private var faceObservations: [FaceObservation] { store.faces }
     @State private var showingEditor = false
     @State private var showingDeleteConfirmation = false
     @State private var cachedVisibleItemIDs: [String] = []
     @State private var cachedVisibleItemsByID: [String: MediaItem] = [:]
     @State private var cachedPersonIndex: [String: Set<String>] = [:]
+    /// Each section's day-memory keys, built once with the section list.
+    @State private var cachedSectionDayKeys: [String: Set<String>] = [:]
+    /// Bumped when `refreshVisibleItems()` writes new day keys, so the
+    /// section memories are matched again.
+    @State private var dayKeysGeneration = 0
 
     init(groupID: String, state: LibraryViewState) {
         self.groupID = groupID
@@ -1471,15 +1798,8 @@ struct GroupDetailView: View {
                 hasher.combine(rule.secondaryValue)
             }
         }
-        for item in items {
-            hasher.combine(item.id)
-            hasher.combine(item.updatedAt)
-            hasher.combine(item.captureDate)
-            hasher.combine(item.kindRaw)
-            hasher.combine(item.isScreenshot)
-            hasher.combine(item.tripID)
-            hasher.combine(item.place?.id)
-        }
+        // Photos, faces and places, as one revision.
+        hasher.combine(store.revision)
         // Place renames reach rules through overrides.
         for override in placeOverrides {
             hasher.combine(override.id)
@@ -1489,12 +1809,6 @@ struct GroupDetailView: View {
             hasher.combine(membership.groupID)
             hasher.combine(membership.mediaID)
             hasher.combine(membership.excluded)
-        }
-        for observation in faceObservations {
-            hasher.combine(observation.id)
-            hasher.combine(observation.mediaID)
-            hasher.combine(observation.personID)
-            hasher.combine(observation.confirmed)
         }
         for memory in memoryRecords {
             hasher.combine(memory.id)
@@ -1523,7 +1837,21 @@ struct GroupDetailView: View {
             .sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) > ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
         cachedVisibleItemIDs = sorted.map(\.id)
         cachedVisibleItemsByID = Dictionary(uniqueKeysWithValues: sorted.map { ($0.id, $0) })
-        state.gridSections = sections.map(\.itemIDs)
+        let nextSections = sections
+        state.gridSections = nextSections.map(\.itemIDs)
+        // GroupDetailView has no regroup() of its own; its section list is
+        // rebuilt here, so its day-memory keys are built here too.
+        var sectionDayKeys: [String: Set<String>] = [:]
+        sectionDayKeys.reserveCapacity(nextSections.count)
+        for section in nextSections {
+            let sectionItems: [MediaItem] = section.itemIDs.compactMap { cachedVisibleItemsByID[$0] }
+            let keys: Set<String> = Set(sectionItems.compactMap { PhotoNoteDay.key(for: $0) })
+            sectionDayKeys[section.id] = keys
+        }
+        if sectionDayKeys != cachedSectionDayKeys {
+            cachedSectionDayKeys = sectionDayKeys
+            dayKeysGeneration &+= 1
+        }
     }
 
     private var sections: [LibrarySection] {
@@ -1551,6 +1879,12 @@ struct GroupDetailView: View {
                         ScrollViewReader { proxy in
                             ScrollView {
                                 LazyVStack(alignment: .leading, spacing: 0) {
+                                    // Worked out once per body, not once per section.
+                                    let sectionMemories: [String: [CollectionMemory]] = LibrarySectionMemories.make(
+                                        sections: sections,
+                                        dayKeysBySection: cachedSectionDayKeys,
+                                        memories: collectionMemories
+                                    )
                                     ForEach(sections) { section in
                                         LibrarySectionView(
                                             section: section,
@@ -1558,7 +1892,9 @@ struct GroupDetailView: View {
                                             state: state,
                                             allGroups: groups.filter { $0.kindRaw != UserGroup.Kind.chapter.rawValue },
                                             groupItems: memberships,
-                                            group: group
+                                            group: group,
+                                            memories: sectionMemories[section.id] ?? [],
+                                            placeNotes: placeNotes
                                         )
                                     }
                                 }
@@ -1627,9 +1963,10 @@ struct GroupEditorSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query(filter: #Predicate<MediaItem> { $0.deletedAt == nil }) private var items: [MediaItem]
+    @Environment(LibraryStore.self) private var store
+    private var items: [MediaItem] { store.items }
     @Query(sort: \Person.name) private var people: [Person]
-    @Query private var faceObservations: [FaceObservation]
+    private var faceObservations: [FaceObservation] { store.faces }
     @Query(sort: \Trip.id) private var trips: [Trip]
     @Query(sort: \Tag.displayName) private var tags: [Tag]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

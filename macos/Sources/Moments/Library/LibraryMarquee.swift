@@ -155,14 +155,22 @@ final class LibraryMarquee {
         rect = nil
         self.selection = selection
         self.order = order
-        let flags = NSEvent.modifierFlags
-        let mode: Mode = flags.contains(.command) ? .toggle : flags.contains(.shift) ? .add : .replace
         // A press between photos ends note editing, as a click on a photo does.
         if NSApp.keyWindow?.firstResponder is NSTextView {
             NSApp.keyWindow?.makeFirstResponder(nil)
         }
         let event = NSApp.currentEvent
         let isMouse = event?.type == .leftMouseDown || event?.type == .leftMouseDragged
+        // The flags of the press's own event, as clicks read them. Not
+        // `NSEvent.modifierFlags`: that is the keyboard state when this
+        // callback happens to run, and a gesture that starts right after a
+        // key goes down can deliver its first update before that key is in
+        // it, which made a Command-drag select like a plain one. Without a
+        // mouse event (a keyboard press of a button) the keyboard state is
+        // all there is.
+        let eventFlags: NSEvent.ModifierFlags? = isMouse ? event?.modifierFlags : nil
+        let flags: NSEvent.ModifierFlags = eventFlags ?? NSEvent.modifierFlags
+        let mode: Mode = flags.contains(.command) ? .toggle : flags.contains(.shift) ? .add : .replace
         let windowPoint = isMouse ? event?.locationInWindow : anchorView?.window?.mouseLocationOutsideOfEventStream
         scrollView = windowPoint.flatMap { findScrollView(at: $0) }
         var offset: CGVector?

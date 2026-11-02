@@ -253,3 +253,11 @@ extension UserGroupRuleSet {
         return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
     }
 }
+
+extension UserGroupRule {
+    /// True when any of these rules reads place names, so a save that changed
+    /// only places can change what the rules match.
+    static func anyReadsPlaces(_ rules: [UserGroupRule]) -> Bool {
+        rules.contains { (rule: UserGroupRule) -> Bool in rule.field == .place }
+    }
+}

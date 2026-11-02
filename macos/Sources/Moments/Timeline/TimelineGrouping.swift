@@ -1,5 +1,8 @@
 import Foundation
 import MomentsCore
+#if DEBUG
+import QuartzCore
+#endif
 
 /// Builds the stable trip → day → place hierarchy and inserts major city
 /// moves immediately before the place where the move ends.
@@ -15,7 +18,14 @@ struct TimelineBuilder {
     }
 
     func build(items: [TimelineItemSnapshot], trips: [TimelineSourceTrip]) -> TimelineDocument {
+        #if DEBUG
+        var buildStepStart: CFTimeInterval = CACurrentMediaTime()
+        #endif
         let uniqueItems = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        #if DEBUG
+        TimelineBuilderTimings.shared.add("build: unique items", CACurrentMediaTime() - buildStepStart)
+        buildStepStart = CACurrentMediaTime()
+        #endif
         var itemTripIDs: [String: String] = [:]
         for trip in trips {
             for itemID in trip.itemIDs where uniqueItems[itemID] != nil {
@@ -36,6 +46,12 @@ struct TimelineBuilder {
         if itemsByTrip[Self.unassignedTripID] != nil, !knownTripIDs.contains(Self.unassignedTripID) {
             definitions.append(TimelineSourceTrip(id: Self.unassignedTripID, name: "Unsorted memories"))
         }
+        #if DEBUG
+        TimelineBuilderTimings.shared.add("build: trip definitions", CACurrentMediaTime() - buildStepStart)
+        buildStepStart = CACurrentMediaTime()
+        let tripsStartedAt = buildStepStart
+        let makeTripsBefore = TimelineBuilderTimings.shared.total("build: make trips")
+        #endif
 
         let builtTrips = definitions.map { definition in
             makeTrip(
@@ -44,26 +60,77 @@ struct TimelineBuilder {
             )
         }
         .sorted(by: tripOrder)
+        #if DEBUG
+        let tripsWhole = CACurrentMediaTime() - tripsStartedAt
+        let makeTripsSpent = TimelineBuilderTimings.shared.total("build: make trips") - makeTripsBefore
+        TimelineBuilderTimings.shared.add("build: sort trips", tripsWhole - makeTripsSpent)
+        #endif
 
         return TimelineDocument(trips: builtTrips)
     }
 
     private func makeTrip(definition: TimelineSourceTrip, items: [TimelineItemSnapshot]) -> TimelineTrip {
+        #if DEBUG
+        var stepStart: CFTimeInterval = CACurrentMediaTime()
+        let tripStartedAt = stepStart
+        defer {
+            TimelineBuilderTimings.shared.add("trip: finish", CACurrentMediaTime() - stepStart)
+            TimelineBuilderTimings.shared.add("build: make trips", CACurrentMediaTime() - tripStartedAt)
+        }
+        #endif
         let orderedItems = items.sorted(by: itemOrder)
+        #if DEBUG
+        TimelineBuilderTimings.shared.add("trip: sort items", CACurrentMediaTime() - stepStart)
+        stepStart = CACurrentMediaTime()
+        #endif
+        let itemByID = Dictionary(orderedItems.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        #if DEBUG
+        TimelineBuilderTimings.shared.add("trip: item by id", CACurrentMediaTime() - stepStart)
+        stepStart = CACurrentMediaTime()
+        #endif
         let stops = orderedItems.compactMap(\.photoStop)
+        #if DEBUG
+        TimelineBuilderTimings.shared.add("trip: stops", CACurrentMediaTime() - stepStart)
+        stepStart = CACurrentMediaTime()
+        #endif
         let spotClusters = clusterer.clusters(for: stops, level: .spot)
+        #if DEBUG
+        TimelineBuilderTimings.shared.add("trip: spot clusters", CACurrentMediaTime() - stepStart)
+        stepStart = CACurrentMediaTime()
+        #endif
         let cityClusters = clusterer.clusters(for: stops, level: .city)
+        #if DEBUG
+        TimelineBuilderTimings.shared.add("trip: city clusters", CACurrentMediaTime() - stepStart)
+        stepStart = CACurrentMediaTime()
+        #endif
         let spotByItemID = clusterMap(spotClusters)
         let cityByItemID = clusterMap(cityClusters)
+        #if DEBUG
+        TimelineBuilderTimings.shared.add("trip: cluster maps", CACurrentMediaTime() - stepStart)
+        stepStart = CACurrentMediaTime()
+        #endif
+
+        // Each cluster's name is the same for every photo in it, so work it out once.
+        var nameCache: [String: String?] = [:]
+        func name(of cluster: PlaceCluster) -> String? {
+            let key = "\(cluster.level.rawValue)|\(cluster.id)|\(cluster.stopIDs.count)|\(cluster.stopIDs.first ?? "")"
+            if let cached = nameCache[key] { return cached }
+            let value = clusterName(cluster, itemByID: itemByID)
+            nameCache[key] = value
+            return value
+        }
 
         var dayGroups: [DayKey: [PlaceGroup]] = [:]
+        #if DEBUG
+        stepStart = CACurrentMediaTime()
+        #endif
         for item in orderedItems {
             let dayKey = makeDayKey(for: item)
             let spot = item.photoStop.flatMap { spotByItemID[$0.id] }
             let placeKey = spot?.id ?? fallbackPlaceKey(for: item)
             let city = item.photoStop.flatMap { cityByItemID[$0.id] }
-            let cityName = city.flatMap { clusterName($0, items: orderedItems) }
-            let placeName = spot.flatMap { clusterName($0, items: orderedItems) }
+            let cityName = city.flatMap { name(of: $0) }
+            let placeName = spot.flatMap { name(of: $0) }
 
             if let index = dayGroups[dayKey]?.firstIndex(where: { $0.key == placeKey }) {
                 dayGroups[dayKey]?[index].items.append(item)
@@ -85,28 +152,49 @@ struct TimelineBuilder {
                 )
             }
         }
+        #if DEBUG
+        TimelineBuilderTimings.shared.add("trip: day groups", CACurrentMediaTime() - stepStart)
+        stepStart = CACurrentMediaTime()
+        #endif
 
-        let places = dayGroups.flatMap { dayKey, groups in
-            groups.map { (dayKey, $0) }
-        }.map { dayKey, group in
-            TimelinePlace(
-                id: placeID(tripID: definition.id, dayKey: dayKey, placeKey: group.key),
-                date: group.items.min(by: itemOrder)?.date,
-                name: group.name,
-                cityName: group.cityName,
-                items: group.items.sorted(by: itemOrder)
-            )
+        var placesByDay: [DayKey: [TimelinePlace]] = [:]
+        var placeByItemID: [String: TimelinePlace] = [:]
+        #if DEBUG
+        stepStart = CACurrentMediaTime()
+        #endif
+        for (dayKey, groups) in dayGroups {
+            for group in groups {
+                let place = TimelinePlace(
+                    id: placeID(tripID: definition.id, dayKey: dayKey, placeKey: group.key),
+                    date: group.items.min(by: itemOrder)?.date,
+                    name: group.name,
+                    cityName: group.cityName,
+                    items: group.items.sorted(by: itemOrder)
+                )
+                placesByDay[dayKey, default: []].append(place)
+                for itemID in place.itemIDs {
+                    placeByItemID[itemID] = place
+                }
+            }
         }
+        #if DEBUG
+        TimelineBuilderTimings.shared.add("trip: places", CACurrentMediaTime() - stepStart)
+        stepStart = CACurrentMediaTime()
+        #endif
 
         let routes = RouteBuilder(stops: stops, clusterer: clusterer).overview()
+        #if DEBUG
+        TimelineBuilderTimings.shared.add("trip: routes", CACurrentMediaTime() - stepStart)
+        stepStart = CACurrentMediaTime()
+        #endif
         let travelByPlaceID = routes.reduce(into: [String: [TimelineTravel]]()) { result, segment in
             guard let targetID = segment.toStopID,
-                  let target = places.first(where: { $0.itemIDs.contains(targetID) }) else { return }
-            let fromName = clusterName(segment.from, items: orderedItems)
-            let toName = clusterName(segment.to, items: orderedItems)
+                  let target = placeByItemID[targetID] else { return }
+            let fromName = name(of: segment.from)
+            let toName = name(of: segment.to)
             let travel = TimelineTravel(
                 id: "\(definition.id)|travel|\(segment.id)|\(target.id)",
-                date: orderedItems.first(where: { $0.id == targetID })?.date,
+                date: itemByID[targetID]?.date,
                 fromName: fromName,
                 toName: toName,
                 distanceMeters: segment.distanceMeters,
@@ -115,15 +203,13 @@ struct TimelineBuilder {
             )
             result[target.id, default: []].append(travel)
         }
+        #if DEBUG
+        TimelineBuilderTimings.shared.add("trip: travel", CACurrentMediaTime() - stepStart)
+        stepStart = CACurrentMediaTime()
+        #endif
 
         let dayValues = dayGroups.keys.sorted(by: dayOrder).map { dayKey in
-            let dayPlaces = places
-                .filter { place in
-                    dayGroups[dayKey]?.contains(where: {
-                        placeID(tripID: definition.id, dayKey: dayKey, placeKey: $0.key) == place.id
-                    }) ?? false
-                }
-                .sorted(by: placeOrder)
+            let dayPlaces = (placesByDay[dayKey] ?? []).sorted(by: placeOrder)
             var events: [TimelineEvent] = []
             for place in dayPlaces {
                 let travel = (travelByPlaceID[place.id] ?? []).sorted { travelOrder($0, $1) }
@@ -137,6 +223,10 @@ struct TimelineBuilder {
                 memoryKey: dayKey.key
             )
         }
+        #if DEBUG
+        TimelineBuilderTimings.shared.add("trip: days", CACurrentMediaTime() - stepStart)
+        stepStart = CACurrentMediaTime()
+        #endif
 
         return TimelineTrip(
             id: definition.id,
@@ -175,11 +265,13 @@ struct TimelineBuilder {
         }
     }
 
-    private func clusterName(_ cluster: PlaceCluster, items: [TimelineItemSnapshot]) -> String? {
+    private func clusterName(_ cluster: PlaceCluster, itemByID: [String: TimelineItemSnapshot]) -> String? {
         if let name = cluster.name, !name.isEmpty { return name }
-        return cluster.stopIDs
-            .compactMap { stopID in items.first(where: { $0.id == stopID })?.placeHint }
-            .first(where: { !$0.isEmpty })
+        for stopID in cluster.stopIDs {
+            guard let hint = itemByID[stopID]?.placeHint, !hint.isEmpty else { continue }
+            return hint
+        }
+        return nil
     }
 
     private func fallbackPlaceKey(for item: TimelineItemSnapshot) -> String {
@@ -250,3 +342,36 @@ private struct PlaceGroup {
     var cityName: String?
     var items: [TimelineItemSnapshot]
 }
+
+#if DEBUG
+/// Per-step timings from timeline builds running off the main thread, drained
+/// into `PageProbe` on the main actor by the timeline screen.
+final class TimelineBuilderTimings: @unchecked Sendable {
+    static let shared = TimelineBuilderTimings()
+
+    private let lock = NSLock()
+    private var seconds: [String: Double] = [:]
+
+    func add(_ name: String, _ value: Double) {
+        lock.lock()
+        defer { lock.unlock() }
+        seconds[name, default: 0] += value
+    }
+
+    /// One running total without clearing, so `build` can subtract the
+    /// `makeTrip` time from the whole map-and-sort stage.
+    func total(_ name: String) -> Double {
+        lock.lock()
+        defer { lock.unlock() }
+        return seconds[name] ?? 0
+    }
+
+    func take() -> [String: Double] {
+        lock.lock()
+        defer { lock.unlock() }
+        let result = seconds
+        seconds = [:]
+        return result
+    }
+}
+#endif

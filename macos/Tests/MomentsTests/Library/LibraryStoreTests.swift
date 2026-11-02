@@ -1396,6 +1396,59 @@ final class LibraryStoreTests: XCTestCase {
         }
         XCTAssertTrue(moved, "a tag rename must move the group sources revision")
     }
+
+    // MARK: - The stacks' source key
+
+    // The stack model folds on `perceptualHash`, which no other sum covers:
+    // a perceptual hash arriving after import has to move the key, or the
+    // burst around it would never fold.
+    func testStackFieldsKeyMovesForAPerceptualHashChange() async throws {
+        let context: ModelContext = try makeContext()
+        let photo: MediaItem = MediaItem(
+            id: "photo-stack-hash",
+            captureDate: base.addingTimeInterval(20),
+            perceptualHash: "0000000000000000"
+        )
+        context.insert(photo)
+        try context.save()
+        let store: LibraryStore = makeStore(context: context)
+        let key: Int = store.stackFieldsKey
+        let refreshes: Int = store.refreshCount
+
+        photo.perceptualHash = "FFFFFFFFFFFFFFFF"
+        try context.save()
+
+        let applied: Bool = await waitUntil(timeout: 3) { () -> Bool in
+            store.refreshCount > refreshes
+        }
+        XCTAssertTrue(applied, "the store never applied the perceptual hash save")
+        XCTAssertNotEqual(store.stackFieldsKey, key, "a perceptual hash must move the stack fields key")
+    }
+
+    // A favorite changes `updatedAt` and adds a Favorite row; neither is a
+    // field the stacks fold by, so their key must stay put.
+    func testStackFieldsKeyStaysForAFavorite() async throws {
+        let context: ModelContext = try makeContext()
+        let photo: MediaItem = MediaItem(
+            id: "photo-stack-favorite",
+            captureDate: base.addingTimeInterval(21),
+            perceptualHash: "0F0F0F0F0F0F0F0F"
+        )
+        context.insert(photo)
+        try context.save()
+        let store: LibraryStore = makeStore(context: context)
+        let key: Int = store.stackFieldsKey
+        let refreshes: Int = store.refreshCount
+
+        photo.setFavorite(true, context: context)
+        try context.save()
+
+        let applied: Bool = await waitUntil(timeout: 3) { () -> Bool in
+            store.refreshCount > refreshes
+        }
+        XCTAssertTrue(applied, "the store never applied the favorite save")
+        XCTAssertEqual(store.stackFieldsKey, key, "a favorite must not move the stack fields key")
+    }
 }
 
 /// A small deterministic generator for the random-walk test; `SystemRandom`

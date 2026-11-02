@@ -44,6 +44,54 @@ final class PhotoStackModelTests: XCTestCase {
         XCTAssertNil(index.stack(containing: "later"))
     }
 
+    // A screen that passes the same source key twice does not get its photos
+    // hashed again: the memo hands back the photos key of the first call, so
+    // the second call returns the index it already had and detects nothing.
+    func testSameSourceKeySkipsRehashing() throws {
+        let (container, items) = try makeLibrary()
+        let stacks: PhotoStackModel = model()
+        let sourceKey: Int = 41
+        let first: PhotoStackIndex = stacks.update(items: items, decisions: [], sourceKey: sourceKey)
+        let generation: Int = stacks.generation
+        XCTAssertEqual(first.stacks.count, 1)
+
+        // A different list under the same source key. Were it hashed, the
+        // burst would be gone; a memo hit keeps the photos of the first call.
+        let others: [MediaItem] = items.filter { (item: MediaItem) -> Bool in
+            item.id == "later"
+        }
+        let second: PhotoStackIndex = stacks.update(items: others, decisions: [], sourceKey: sourceKey)
+        withExtendedLifetime(container) {}
+        XCTAssertEqual(second, first, "the same source key must reuse the photos key")
+        XCTAssertEqual(stacks.generation, generation, "the same source key must not detect again")
+        XCTAssertEqual(second.stack(containing: "shot-0")?.memberIDs.count, 4)
+    }
+
+    // A new source key hashes the photos it is handed, so a list that folds
+    // differently is detected.
+    func testNewSourceKeyRehashes() throws {
+        let (container, items) = try makeLibrary()
+        let stacks: PhotoStackModel = model()
+        let first: PhotoStackIndex = stacks.update(items: items, decisions: [], sourceKey: 41)
+        let generation: Int = stacks.generation
+        XCTAssertEqual(first.stacks.count, 1)
+
+        // The same photos without the burst: hashed again, nothing folds.
+        let others: [MediaItem] = items.filter { (item: MediaItem) -> Bool in
+            item.id == "later" || item.id == "clip"
+        }
+        let second: PhotoStackIndex = stacks.update(
+            items: others,
+            decisions: [],
+            waits: true,
+            sourceKey: 42
+        )
+        withExtendedLifetime(container) {}
+        XCTAssertTrue(second.isEmpty, "a new source key must hash the photos passed")
+        XCTAssertNil(second.stack(containing: "shot-0"))
+        XCTAssertGreaterThan(stacks.generation, generation, "the new list must be detected")
+    }
+
     func testSetCoverIsStoredAndUndone() throws {
         let (container, items) = try makeLibrary()
         let context = container.mainContext

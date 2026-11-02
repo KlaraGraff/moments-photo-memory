@@ -139,6 +139,17 @@ struct LibraryView: View {
         regularItems + screenshotItems
     }
 
+    /// What the stack model is handed, without hashing each photo: the
+    /// store's per-photo sum, how many photos this page passes, and a name
+    /// for this page (two pages may pass different subsets).
+    private var stackSourceKey: Int {
+        var hasher = Hasher()
+        hasher.combine(store.stackFieldsKey)
+        hasher.combine(regularItems.count + screenshotItems.count)
+        hasher.combine("library")
+        return hasher.finalize()
+    }
+
     private var grouping: LibraryGrouping {
         LibraryGrouping(rawValue: groupingRaw) ?? .trip
     }
@@ -751,7 +762,7 @@ struct LibraryView: View {
             hasGrouped = true
             // The stack model is shared with the other pages, so it is handed
             // the photos again; it does nothing when nothing changed.
-            stacks.update(items: allItems, decisions: stackRecords)
+            stacks.update(items: allItems, decisions: stackRecords, sourceKey: stackSourceKey)
             // The menus build from the whole store and have their own cache.
             cachedFilterOptions = LibraryFilterOptionsCache.options(
                 for: store.items,
@@ -824,7 +835,7 @@ struct LibraryView: View {
         step("item by id")
         #endif
         // A burst is one cell showing its cover, and counts as one photo.
-        let stackIndex = stacks.update(items: all, decisions: stackRecords)
+        let stackIndex = stacks.update(items: all, decisions: stackRecords, sourceKey: stackSourceKey)
         #if DEBUG
         step("stacks update")
         #endif

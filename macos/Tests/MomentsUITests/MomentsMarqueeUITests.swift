@@ -11,13 +11,17 @@ final class MomentsMarqueeUITests: XCTestCase {
     }
 
     func testDragBetweenPhotosSelectsLikePhotos() {
-        exerciseMarquee(launch(), prefix: "marquee-large")
+        let folder: String? = marqueeFolder()
+        let arguments: [String] = folder.map { (folder: String) -> [String] in ["-MomentsUITestMarqueeProbe", folder] } ?? []
+        exerciseMarquee(launch(extraArguments: arguments), prefix: "marquee-large", folder: folder)
     }
 
     /// The small window shows about one row of prints, so this one runs on
     /// the dense grid.
     func testDragBetweenPhotosSelectsLikePhotosInASmallWindow() {
-        exerciseMarquee(launch(smallWindow: true, photosPerRow: 8), prefix: "marquee-small")
+        let folder: String? = marqueeFolder()
+        let arguments: [String] = folder.map { (folder: String) -> [String] in ["-MomentsUITestMarqueeProbe", folder] } ?? []
+        exerciseMarquee(launch(smallWindow: true, photosPerRow: 8, extraArguments: arguments), prefix: "marquee-small", folder: folder)
     }
 
     /// Held at the bottom edge, the Library keeps scrolling and the
@@ -170,7 +174,7 @@ final class MomentsMarqueeUITests: XCTestCase {
         XCTAssertTrue(missed.isEmpty, "After \(drag), inside the rectangle but not selected (\(missed.count) of \(onScreen.count) on screen, \(count) selected): \(missed)")
     }
 
-    private func exerciseMarquee(_ app: XCUIApplication, prefix: String) {
+    private func exerciseMarquee(_ app: XCUIApplication, prefix: String, folder: String?) {
         let visible = visiblePhotos(app)
         guard let first = visible.first else { return XCTFail("No photo on screen") }
         // A photo in a later row and a later column, so the rectangle spans
@@ -201,10 +205,19 @@ final class MomentsMarqueeUITests: XCTestCase {
         // Far enough after the drag above that this press is not read as a
         // second click of it.
         pauseLongerThanADoubleClick()
+        // Empty the press log first: after this drag, a missing file means the
+        // press never reached `begin`, not that an earlier drag wrote nothing.
+        // Earlier presses stay in their own marquee-report files.
+        if let folder {
+            let presses: String = URL(fileURLWithPath: folder).appending(path: "marquee-presses.txt").path
+            try? FileManager.default.removeItem(atPath: presses)
+        }
         XCUIElement.perform(withKeyModifiers: .command) {
             start.click(forDuration: 0.05, thenDragTo: firstCentre)
         }
-        XCTAssertEqual(value(of: first.element, becomes: "Not selected"), "Not selected", "Command-drag did not flip the photo")
+        let flipped: String? = value(of: first.element, becomes: "Not selected")
+        let commandLog: String = marqueePressLog(folder: folder)
+        XCTAssertEqual(flipped, "Not selected", "Command-drag did not flip the photo\(commandLog)")
         XCTAssertEqual(value(of: target.element, becomes: "Selected"), "Selected", "Command-drag dropped a photo it did not touch")
 
         // Shift-drag adds it back and keeps the rest.
@@ -260,6 +273,28 @@ final class MomentsMarqueeUITests: XCTestCase {
     private func touches(_ rect: CGRect, _ frame: CGRect) -> Bool {
         let rect = rect.standardized
         return frame.minX <= rect.maxX && frame.maxX >= rect.minX && frame.minY <= rect.maxY && frame.maxY >= rect.minY
+    }
+
+    /// The folder CI gives the app's marquee probe (`MOMENTS_MARQUEE_DIR`),
+    /// emptied first so a report from an earlier test cannot be read as this
+    /// one's; nil when the test runs without it.
+    private func marqueeFolder() -> String? {
+        let folder: String? = ProcessInfo.processInfo.environment["MOMENTS_MARQUEE_DIR"]
+            .flatMap { (value: String) -> String? in value.hasPrefix("/") ? value : nil }
+        if let folder { try? FileManager.default.removeItem(atPath: folder) }
+        return folder
+    }
+
+    /// The app's log of how each press decided its mode, for a failure
+    /// message. Says so when the folder is unset or the file is missing:
+    /// a missing file means no press reached `begin`.
+    private func marqueePressLog(folder: String?) -> String {
+        guard let folder else { return "\n(no MOMENTS_MARQUEE_DIR, no press log)" }
+        let path: String = URL(fileURLWithPath: folder).appending(path: "marquee-presses.txt").path
+        guard let text: String = try? String(contentsOfFile: path, encoding: .utf8) else {
+            return "\nmarquee-presses.txt: missing (no press reached begin)"
+        }
+        return "\nmarquee-presses.txt:\n\(text)"
     }
 
     /// A screen point as a coordinate in the app's window.

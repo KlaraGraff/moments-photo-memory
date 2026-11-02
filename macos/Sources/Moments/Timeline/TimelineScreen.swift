@@ -326,6 +326,62 @@ struct TimelineScreen: View {
         return TimelineBuildInputs(key: key, sourceItems: sourceItems, placeIndex: placeIndex, calendar: calendar)
     }
 
+    /// The same inputs as `buildInputs`, made for an app-level pre-build: the
+    /// snapshots are taken in slices with a yield between them, so a 20 000
+    /// photo library never means one long main-actor pass. A photo is only
+    /// touched while the photos, places and Library filters it was read for
+    /// still stand; anything moving under the read returns nil.
+    @MainActor
+    static func buildInputsSliced(
+        key: Int,
+        store: LibraryStore,
+        selection: SelectionModel,
+        memories: [Memory],
+        calendar: Calendar
+    ) async -> TimelineBuildInputs? {
+        // Taken before anything is read: these describe the library and the
+        // filters the snapshots below belong to.
+        let revisionAtStart: Int = store.photoPlaceRevision
+        let visibleAtStart: Int = selection.visibleGeneration
+        let placeIndex = NearestPlaceIndex(places: store.places)
+        let memoriesByPhotoID = Self.memoriesByPhotoID(memories)
+        let items: [MediaItem] = store.items
+        var sourceItems: [TimelineItemSnapshot] = []
+        sourceItems.reserveCapacity(items.count)
+        var start = 0
+        while start < items.count {
+            guard PagePrebuildSliceRule.readIsCurrent(
+                startedAtPhotoPlaceRevision: revisionAtStart,
+                photoPlaceRevision: store.photoPlaceRevision,
+                startedAtVisibleGeneration: visibleAtStart,
+                visibleGeneration: selection.visibleGeneration,
+                isCancelled: Task.isCancelled
+            ) else { return nil }
+            let end = min(items.count, start + PagePrebuildSliceRule.sliceSize)
+            for index in start..<end {
+                let item: MediaItem = items[index]
+                guard selection.isVisible(item.id) else { continue }
+                sourceItems.append(
+                    TimelineItemSnapshot(
+                        item: item,
+                        placeHint: nil,
+                        memories: memoriesByPhotoID[item.persistentModelID] ?? []
+                    )
+                )
+            }
+            start = end
+            await Task.yield()
+            guard PagePrebuildSliceRule.readIsCurrent(
+                startedAtPhotoPlaceRevision: revisionAtStart,
+                photoPlaceRevision: store.photoPlaceRevision,
+                startedAtVisibleGeneration: visibleAtStart,
+                visibleGeneration: selection.visibleGeneration,
+                isCancelled: Task.isCancelled
+            ) else { return nil }
+        }
+        return TimelineBuildInputs(key: key, sourceItems: sourceItems, placeIndex: placeIndex, calendar: calendar)
+    }
+
     /// The one Timeline build: place hints, then the builder, the months and
     /// the viewer order. This is the body `rebuild()` ran in its detached
     /// task, unchanged, so an app-level pre-builder can run the same build.
@@ -441,7 +497,16 @@ struct TimelineScreen: View {
         #endif
         let tripLinksByItemID = linksByItemID
 
-        let built = await Self.build(inputs)
+        // A pre-build that is already making this exact key hands its
+        // result over instead of a second build starting. Anything else
+        // running is cancelled first, so the two never race.
+        let built: TimelineBuildResult
+        if let joined = await PagePrebuilder.shared.joinTimeline(key: cacheKey) {
+            built = joined
+        } else {
+            PagePrebuilder.shared.cancel()
+            built = await Self.build(inputs)
+        }
         #if DEBUG
         for (name, seconds) in built.timings {
             PageProbe.tally("timeline bg: " + name, seconds: seconds)

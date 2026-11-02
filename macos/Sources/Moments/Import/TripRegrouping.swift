@@ -26,7 +26,7 @@ enum TripRegrouping {
         var leftTrips = 0
     }
 
-    /// Regroups once; later calls do nothing.
+    /// Regroups once per rules version; later calls with the same version do nothing.
     @MainActor
     @discardableResult
     static func runOnce(context: ModelContext, defaults: UserDefaults = TripAssignmentLocks.store) throws -> Outcome? {
@@ -69,7 +69,7 @@ enum TripRegrouping {
         guard !free.isEmpty else {
             // Nothing moves, but a trip left without photos still goes away.
             var outcome = Outcome()
-            outcome.removed = removeTripsWithoutPhotos(trips, remembered: remembered, covered: covered, context: context)
+            outcome.removed = removeTripsWithoutPhotos(trips, remembered: remembered, covered: covered, locked: locked, context: context)
             try context.save()
             return outcome
         }
@@ -147,26 +147,41 @@ enum TripRegrouping {
         }
         // A trip nothing is left in goes, whatever its status says.
         let remaining = trips.filter { !replaced.contains($0.id) && !reused.contains($0.id) }
-        outcome.removed += removeTripsWithoutPhotos(remaining, remembered: remembered, covered: covered, context: context)
+        outcome.removed += removeTripsWithoutPhotos(remaining, remembered: remembered, covered: covered, locked: locked, context: context)
         try context.save()
         return outcome
     }
 
-    /// Deletes every trip with no photo left outside Recently Deleted, except
-    /// one that was named, given a trip memory or given a cover. The photos in
-    /// Recently Deleted lose the trip first, as the regrouping always does.
+    /// Deletes a trip only when no person touched it and it has no photo left
+    /// outside Recently Deleted. Only trips with no hand edits are removed:
+    /// status `nil`, `""` or `"suggestion"`, `updatedBy == nil`,
+    /// `confirmedAt == nil`, no `overrideName`, no trip memory, no cover and no
+    /// locked photo. A trip a person made or confirmed stays even when it is
+    /// empty, and its Recently Deleted photos keep pointing at it, so Recover
+    /// puts them back in their trips. The sweep only clears leftovers no person
+    /// touched: empty suggestions and trips left by an old import. When such a
+    /// leftover goes, its Recently Deleted photos lose the trip first.
     private static func removeTripsWithoutPhotos(
         _ trips: [Trip],
         remembered: Set<String>,
         covered: Set<String>,
+        locked: Set<String>,
         context: ModelContext
     ) -> Int {
         var removed = 0
         for trip in trips where !trip.isDeleted {
-            guard trip.items.allSatisfy({ $0.deletedAt != nil }),
+            let status: String? = trip.suggestionStatusRaw
+            let untouchedStatus: Bool = status == nil || status == "" || status == "suggestion"
+            let hasLockedPhoto: Bool = trip.items.contains { (item: MediaItem) -> Bool in locked.contains(item.id) }
+            let onlyDeletedPhotos: Bool = trip.items.allSatisfy { (item: MediaItem) -> Bool in item.deletedAt != nil }
+            guard untouchedStatus,
+                  trip.updatedBy == nil,
+                  trip.confirmedAt == nil,
                   trip.overrideName == nil,
                   !remembered.contains(trip.id),
-                  !covered.contains(trip.id) else { continue }
+                  !covered.contains(trip.id),
+                  !hasLockedPhoto,
+                  onlyDeletedPhotos else { continue }
             for item in trip.items {
                 item.trip = nil
                 item.tripID = nil

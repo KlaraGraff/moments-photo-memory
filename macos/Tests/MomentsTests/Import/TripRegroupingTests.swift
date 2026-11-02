@@ -131,7 +131,7 @@ final class TripRegroupingTests: XCTestCase {
         XCTAssertNil(try context.fetch(FetchDescriptor<MediaItem>()).first { $0.id == "stray-deleted" }?.tripID)
     }
 
-    func testRunsOncePerMac() throws {
+    func testRunsOncePerRulesVersion() throws {
         let suite = "TripRegroupingTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -190,5 +190,66 @@ final class TripRegroupingTests: XCTestCase {
         let trips: [Trip] = try context.fetch(FetchDescriptor<Trip>())
         XCTAssertTrue(trips.isEmpty, "nothing moves, yet the trip with no photos goes away")
         XCTAssertEqual(outcome.removed, 1)
+    }
+
+    func testHandMadeEmptyTripStays() throws {
+        let context = try makeContext()
+        seedOldImport(in: context)
+        // What `TripEdits.create` makes without a typed name: a name taken
+        // from the places, `updatedBy` set, status nil, no override name and
+        // no photos.
+        let handmade = Trip(
+            id: "hand-made",
+            name: "Trip January 2026",
+            updatedAt: .now,
+            updatedBy: MomentsAccount.localID
+        )
+        context.insert(handmade)
+        try context.save()
+
+        _ = try TripRegrouping.regroup(context: context, locked: [], calendar: utc)
+
+        let trips: [Trip] = try context.fetch(FetchDescriptor<Trip>())
+        let ids: Set<String> = Set(trips.map { (trip: Trip) -> String in trip.id })
+        XCTAssertTrue(ids.contains("hand-made"), "a trip made by hand stays even when it has no photos")
+        XCTAssertTrue(ids.contains("old"), "the old import trip still keeps its photos")
+    }
+
+    func testConfirmedTripKeepsItsRecentlyDeletedPhoto() throws {
+        let context = try makeContext()
+        seedOldImport(in: context)
+        let confirmed = Trip(id: "confirmed", name: "Trip", suggestionStatusRaw: "confirmed")
+        context.insert(confirmed)
+        let deleted = photo("confirmed-deleted", day: 65, latitude: 10.0, longitude: 20.0, trip: confirmed, in: context)
+        deleted.deletedAt = .now
+        try context.save()
+
+        _ = try TripRegrouping.regroup(context: context, locked: [], calendar: utc)
+
+        let trips: [Trip] = try context.fetch(FetchDescriptor<Trip>())
+        let tripIDs: Set<String> = Set(trips.map { (trip: Trip) -> String in trip.id })
+        XCTAssertTrue(tripIDs.contains("confirmed"), "a confirmed trip stays even when only Recently Deleted photos are left")
+        let items: [MediaItem] = try context.fetch(FetchDescriptor<MediaItem>())
+        let recovered: MediaItem? = items.first { (item: MediaItem) -> Bool in item.id == "confirmed-deleted" }
+        XCTAssertEqual(recovered?.tripID, "confirmed", "the Recently Deleted photo keeps its trip, so Recover puts it back")
+        XCTAssertEqual(recovered?.trip?.id, "confirmed")
+    }
+
+    func testEmptyTripWithAMemoryOrCoverStays() throws {
+        let context = try makeContext()
+        let cover = Trip(id: "cover", name: "", suggestionStatusRaw: "suggestion")
+        context.insert(cover)
+        let memoryTrip = Trip(id: "memory-trip", name: "", suggestionStatusRaw: "suggestion")
+        context.insert(memoryTrip)
+        let memory = CollectionMemory(scope: .trip, scopeKey: "memory-trip", text: "Synthetic trip memory")
+        context.insert(memory)
+        try context.save()
+
+        _ = try TripRegrouping.regroup(context: context, locked: [], covered: ["cover"], calendar: utc)
+
+        let trips: [Trip] = try context.fetch(FetchDescriptor<Trip>())
+        let ids: Set<String> = Set(trips.map { (trip: Trip) -> String in trip.id })
+        XCTAssertTrue(ids.contains("cover"), "a trip given a cover stays even when it is empty")
+        XCTAssertTrue(ids.contains("memory-trip"), "a trip with a memory stays even when it is empty")
     }
 }

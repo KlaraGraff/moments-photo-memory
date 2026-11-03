@@ -18,6 +18,64 @@ private enum LibraryRegroupProbe {
 }
 
 #endif
+/// The group memberships the Library last fetched, kept across visits to the
+/// page: SwiftUI drops the page's `@State` when it is left, and a page switch
+/// must not fetch every `UserGroupItem` again. Keyed by the store's
+/// `groupSourcesRevision` and the model context's container, the two things a
+/// fetched result depends on.
+@MainActor
+enum LibraryMembershipsCache {
+    /// How many times the memberships were fetched; tests read it to prove a
+    /// cache hit did not fetch again.
+    private(set) static var fetchCount = 0
+
+    private struct Key: Equatable {
+        let revision: Int
+        let container: ObjectIdentifier
+    }
+
+    private static var last: (key: Key, items: [UserGroupItem])?
+    /// Held weakly: a freed container's address can be reused by a new one, so
+    /// identity, not just its `ObjectIdentifier`, has to match.
+    private static weak var lastContainer: ModelContainer?
+
+    /// Forgets the last fetch, so a test starts from an empty cache.
+    static func resetForTests() {
+        last = nil
+        lastContainer = nil
+        fetchCount = 0
+    }
+
+    /// The cached rows when the same revision and container were used before
+    /// and every row is still live; otherwise calls `fetch`, keeps and returns
+    /// its rows.
+    static func memberships(
+        revision: Int,
+        context: ModelContext,
+        fetch: () -> [UserGroupItem]
+    ) -> [UserGroupItem] {
+        let key: Key = Key(revision: revision, container: ObjectIdentifier(context.container))
+        if let cached = last, cached.key == key, lastContainer === context.container, isUsable(cached.items, in: context) {
+            return cached.items
+        }
+        let items: [UserGroupItem] = fetch()
+        fetchCount += 1
+        last = (key: key, items: items)
+        lastContainer = context.container
+        return items
+    }
+
+    /// A reused row must still be live in the context that fetched it. A save
+    /// that deletes a membership moves `groupSourcesRevision`, but a delete
+    /// can be registered before that save arrives; handing a dead model to a
+    /// photo menu would edit nothing. Such a row forces a fetch instead.
+    private static func isUsable(_ items: [UserGroupItem], in context: ModelContext) -> Bool {
+        items.allSatisfy { (item: UserGroupItem) -> Bool in
+            !item.isDeleted && item.modelContext?.container === context.container
+        }
+    }
+}
+
 struct LibraryView: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(ImportController.self) private var importController
@@ -140,15 +198,10 @@ struct LibraryView: View {
     }
 
     /// What the stack model is handed, without hashing each photo: the
-    /// store's per-photo sum, how many photos this page passes, and a name
-    /// for this page (two pages may pass different subsets).
-    private var stackSourceKey: Int {
-        var hasher = Hasher()
-        hasher.combine(store.stackFieldsKey)
-        hasher.combine(regularItems.count + screenshotItems.count)
-        hasher.combine("library")
-        return hasher.finalize()
-    }
+    /// store's running key over exactly the live photos this page passes
+    /// (`regularItems + screenshotItems` is `store.items`), and that count.
+    private var stackPhotosKey: Int { store.stackFieldsKey }
+    private var stackPhotoCount: Int { store.items.count }
 
     private var grouping: LibraryGrouping {
         LibraryGrouping(rawValue: groupingRaw) ?? .trip
@@ -762,7 +815,12 @@ struct LibraryView: View {
             hasGrouped = true
             // The stack model is shared with the other pages, so it is handed
             // the photos again; it does nothing when nothing changed.
-            stacks.update(items: allItems, decisions: stackRecords, sourceKey: stackSourceKey)
+            stacks.update(
+                items: allItems,
+                decisions: stackRecords,
+                photosKey: stackPhotosKey,
+                photoCount: stackPhotoCount
+            )
             // The menus build from the whole store and have their own cache.
             cachedFilterOptions = LibraryFilterOptionsCache.options(
                 for: store.items,
@@ -835,7 +893,12 @@ struct LibraryView: View {
         step("item by id")
         #endif
         // A burst is one cell showing its cover, and counts as one photo.
-        let stackIndex = stacks.update(items: all, decisions: stackRecords, sourceKey: stackSourceKey)
+        let stackIndex = stacks.update(
+            items: all,
+            decisions: stackRecords,
+            photosKey: stackPhotosKey,
+            photoCount: stackPhotoCount
+        )
         #if DEBUG
         step("stacks update")
         #endif
@@ -935,15 +998,19 @@ struct LibraryView: View {
 
     /// Fetches the group memberships the sections hand to the photo menus.
     /// Runs when `groupSourcesRevision` moves, so a save of anything else
-    /// leaves them alone.
+    /// leaves them alone. The fetch itself is shared with the last visit to
+    /// the page through `LibraryMembershipsCache`.
     private func refreshGroupItems() {
-        #if DEBUG
-        let started: CFTimeInterval = CACurrentMediaTime()
-        #endif
-        cachedGroupItems = (try? modelContext.fetch(FetchDescriptor<UserGroupItem>())) ?? []
-        #if DEBUG
-        PageProbe.tally("library memberships fetch", seconds: CACurrentMediaTime() - started)
-        #endif
+        cachedGroupItems = LibraryMembershipsCache.memberships(
+            revision: store.groupSourcesRevision,
+            context: modelContext
+        ) {
+            #if DEBUG
+            let started: CFTimeInterval = CACurrentMediaTime()
+            defer { PageProbe.tally("library memberships fetch", seconds: CACurrentMediaTime() - started) }
+            #endif
+            return (try? modelContext.fetch(FetchDescriptor<UserGroupItem>())) ?? []
+        }
     }
 
     /// Writes newly matched section memories, but only when the ids a section

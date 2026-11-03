@@ -7,6 +7,9 @@ struct ChapterFilterBar: View {
     let types: [ChapterType]
     @Binding var filterRaw: String
 
+    @Namespace private var thumb
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         ViewThatFits(in: .horizontal) {
             chips(showsLabels: true)
@@ -15,19 +18,21 @@ struct ChapterFilterBar: View {
     }
 
     private func chips(showsLabels: Bool) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 2) {
             chip(raw: "", label: String(localized: "All"), symbol: "square.stack", showsLabel: true)
             ForEach(types) { type in
                 chip(raw: type.raw, label: type.filterLabel, symbol: type.defaultSymbol, showsLabel: showsLabels)
             }
         }
+        .padding(3)
+        .background(Paper.well, in: Capsule())
         .fixedSize()
     }
 
     private func chip(raw: String, label: String, symbol: String, showsLabel: Bool) -> some View {
         let isOn = filterRaw == raw
         return Button {
-            filterRaw = raw
+            select(raw)
         } label: {
             Group {
                 if showsLabel {
@@ -40,7 +45,7 @@ struct ChapterFilterBar: View {
             .foregroundStyle(isOn ? Paper.raised : Paper.ink)
             .padding(.horizontal, 11)
             .padding(.vertical, 5)
-            .background(isOn ? Paper.accent : Paper.well, in: Capsule())
+            .background { thumbBackground(isOn: isOn) }
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -48,6 +53,28 @@ struct ChapterFilterBar: View {
         .accessibilityLabel(label)
         .accessibilityAddTraits(isOn ? .isSelected : [])
         .accessibilityIdentifier("chapters.filter.\(raw.isEmpty ? "all" : raw)")
+    }
+
+    /// The sliding red thumb sits behind the chosen chip; the others stay clear.
+    @ViewBuilder
+    private func thumbBackground(isOn: Bool) -> some View {
+        if isOn {
+            Capsule()
+                .fill(Paper.accent)
+                .matchedGeometryEffect(id: "thumb", in: thumb)
+        } else {
+            Color.clear
+        }
+    }
+
+    private func select(_ raw: String) {
+        if reduceMotion {
+            filterRaw = raw
+        } else {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                filterRaw = raw
+            }
+        }
     }
 }
 

@@ -37,22 +37,23 @@ final class OrganizationAccuracyTests: XCTestCase {
         "monthly-weekends": (1, 1)
     ]
 
-    /// The frequent-place libraries: no frequent place exists yet, so the
-    /// floors only hold today's trip scores, rounded down. A later change may
-    /// raise them, never lower them.
+    /// The frequent-place libraries: the floors hold the trip scores. A
+    /// frequent place groups visits that stay trips, so it may not split or
+    /// eat them; the floors are today's scores, rounded down.
     private static let placeTripFloors: [String: (pairF1: Double, agreement: Double)] = [
-        // The 45-day Tokyo stay becomes a usual place: 727 of the 988 "far"
-        // photos land in daily life and only the first legs stay one trip.
-        "far-long-trip": (0.1301, 0.5159),
-        // The four Dresden visits are found, but they are not one frequent place.
+        // The 45-day Tokyo stay is dense, so it is one long trip, not a place
+        // someone lives: the whole trip is found.
+        "far-long-trip": (1, 1),
+        // The four Dresden visits are found and form one frequent place.
         "second-place-visits": (1, 1),
         // Right today: two visits must stay two trips and form no frequent place.
         "two-visits-only": (1, 1),
-        // All thirteen weekends are found, but they are not one frequent place.
+        // All thirteen weekends are found and form one frequent place.
         "monthly-dresden": (1, 1),
-        // The road trip's Dresden night is no separate visit, but no frequent place exists.
+        // The road trip's Dresden night is no separate visit; the three real
+        // Dresden visits form one frequent place.
         "pass-through": (1, 1),
-        // The three New York stays are three trips, not one frequent place.
+        // The three New York stays are three trips and one frequent place.
         "frequent-far-place": (1, 1)
     ]
 

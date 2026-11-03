@@ -2,9 +2,9 @@ import Foundation
 import XCTest
 @testable import Moments
 
-/// One pass groups every unnamed face, however many there are: the faces are
-/// clustered in rounds of at most `chunkSize`, and each round pulls the close
-/// faces of the later rounds into its new groups. Every person, face and vector
+/// One pass groups every unnamed face, however many there are: the planner
+/// places every face in one card, one loose spot or one person, and a second
+/// run over the same library changes nothing. Every person, face and vector
 /// here is synthetic.
 final class PeopleClusterAllTests: XCTestCase {
     private static let dimension = 128
@@ -82,20 +82,23 @@ final class PeopleClusterAllTests: XCTestCase {
         }
     }
 
-    func testChunksOfTwoHundredGroupEveryFace() {
+    func testEveryFaceGetsExactlyOnePlace() {
         let faces = makeFaces(count: Self.faceCount)
         let result = PeopleScanController.makeAssignmentsResult(
             faces: snapshots(faces),
             people: [],
-            shouldStop: { false },
-            chunkSize: 200
+            shouldStop: { false }
         )
         XCTAssertFalse(result.clusteringStopped)
         XCTAssertEqual(result.assignments.count, Self.faceCount)
+        let placed: [PeopleFaceAssignment] = result.assignments.filter { (assignment: PeopleFaceAssignment) -> Bool in
+            assignment.personID != nil || assignment.clusterID != nil
+        }
+        XCTAssertEqual(placed.count, Self.faceCount, "Every face gets a person or a card")
         let pending: [PeopleFaceAssignment] = result.assignments.filter { (assignment: PeopleFaceAssignment) -> Bool in
             assignment.clusterID?.hasPrefix("pending-") == true
         }
-        XCTAssertEqual(pending.count, 0, "One pass should group every face, not only the newest chunk")
+        XCTAssertEqual(pending.count, 0, "No face is left waiting for a later chunk")
     }
 
     func testEachSyntheticPersonLandsInOneGroup() {
@@ -103,8 +106,7 @@ final class PeopleClusterAllTests: XCTestCase {
         let result = PeopleScanController.makeAssignmentsResult(
             faces: snapshots(faces),
             people: [],
-            shouldStop: { false },
-            chunkSize: 200
+            shouldStop: { false }
         )
         XCTAssertEqual(result.assignments.count, faces.count)
         var clusterByFaceID: [String: String] = [:]
@@ -138,36 +140,57 @@ final class PeopleClusterAllTests: XCTestCase {
         XCTAssertLessThanOrEqual(distinctClusters.count, 15, "12 people should not become dozens of groups")
     }
 
-    func testOneChunkGivesTheSameResultAsOneSinglePass() {
+    func testRegroupingTwiceChangesNothing() {
         let faces = makeFaces(count: Self.faceCount)
-        let sample: [PeopleFaceSnapshot] = Array(snapshots(faces).prefix(150))
-        let chunked = PeopleScanController.makeAssignmentsResult(
-            faces: sample,
+        let first = PeopleScanController.makeAssignmentsResult(
+            faces: snapshots(faces),
             people: [],
-            shouldStop: { false },
-            chunkSize: 200
+            shouldStop: { false }
         )
-        let onePass = PeopleScanController.makeAssignmentsResult(
-            faces: sample,
+        XCTAssertFalse(first.clusteringStopped)
+        // Store the first result, as a scan write-back does, and scan again.
+        let firstAssignments: [PeopleFaceAssignment] = first.assignments
+        let assignmentsByID: [String: PeopleFaceAssignment] = Dictionary(
+            uniqueKeysWithValues: firstAssignments.map { (assignment: PeopleFaceAssignment) -> (String, PeopleFaceAssignment) in
+                (assignment.id, assignment)
+            }
+        )
+        let secondInput: [PeopleFaceSnapshot] = faces.map { (face: SyntheticFace) -> PeopleFaceSnapshot in
+            let stored: PeopleFaceSnapshot = face.snapshot
+            let assignment: PeopleFaceAssignment? = assignmentsByID[stored.id]
+            return PeopleFaceSnapshot(
+                id: stored.id,
+                personID: assignment?.personID,
+                clusterID: assignment?.clusterID,
+                confirmed: assignment?.confirmed ?? false,
+                assignmentSource: assignment?.assignmentSource ?? "auto",
+                rejectedPersonIDs: stored.rejectedPersonIDs,
+                embedding: stored.embedding,
+                createdAt: stored.createdAt,
+                updatedAt: stored.updatedAt,
+                mediaID: stored.mediaID,
+                quality: stored.quality,
+                day: stored.day
+            )
+        }
+        let second = PeopleScanController.makeAssignmentsResult(
+            faces: secondInput,
             people: [],
-            shouldStop: { false },
-            chunkSize: 3_000
+            shouldStop: { false }
         )
-        XCTAssertFalse(chunked.clusteringStopped)
-        XCTAssertFalse(onePass.clusteringStopped)
-        XCTAssertEqual(describable(chunked.assignments), describable(onePass.assignments))
+        XCTAssertFalse(second.clusteringStopped)
+        XCTAssertEqual(describable(first.assignments), describable(second.assignments), "A regroup of the same faces keeps every card")
     }
 
     func testStopDuringClusteringKeepsTheInputAssignments() {
-        // Twelve faces: the pending pass checks the stop once, the clustering
-        // checks it at its first step, so the second call stops the run.
+        // Twelve faces: the planner checks the stop once on entry and again
+        // before it groups, so the second check stops the run.
         let faces = makeFaces(count: 12)
         let counter = ClusterTestCounter()
         let result = PeopleScanController.makeAssignmentsResult(
             faces: snapshots(faces),
             people: [],
-            shouldStop: { counter.next() > 1 },
-            chunkSize: 5
+            shouldStop: { counter.next() > 1 }
         )
         XCTAssertTrue(result.clusteringStopped)
         XCTAssertEqual(result.assignments.count, faces.count)

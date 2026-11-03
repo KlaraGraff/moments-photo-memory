@@ -35,19 +35,36 @@ final class PeopleSamePhotoTests: XCTestCase {
 
     func testTwoFacesFromOnePhotoNeverShareAnUnnamedGroup() {
         // a and b are near-identical vectors (think twins, or a face and its
-        // reflection) but sit in the same photo; c is the same look elsewhere.
+        // reflection) but sit in the same photo. The c-look appears in three
+        // other photos, so it is a full unnamed card of its own.
         let faces = [
             face("a", photo: "photo-1", [1, 0]),
             face("b", photo: "photo-1", [0.99, 0.01]),
-            face("c", photo: "photo-2", [0.995, 0.005])
+            face("c1", photo: "photo-2", [0.995, 0.005]),
+            face("c2", photo: "photo-3", [0.994, 0.006]),
+            face("c3", photo: "photo-4", [0.993, 0.007])
         ]
         let result = PeopleScanController.makeAssignmentsResult(faces: faces, people: [], shouldStop: { false })
         XCTAssertFalse(result.clusteringStopped)
-        let cluster = Dictionary(uniqueKeysWithValues: result.assignments.map { ($0.id, $0.clusterID) })
-        XCTAssertNotNil(cluster["a"] ?? nil)
-        XCTAssertNotEqual(cluster["a"], cluster["b"], "Two faces in one photo are two people")
-        XCTAssertTrue(cluster["c"] == cluster["a"] || cluster["c"] == cluster["b"], "The other photo still groups with one of them")
-        XCTAssertFalse(result.assignments.contains { $0.clusterID?.hasPrefix("pending-") == true })
+        let byID: [String: PeopleFaceAssignment] = Dictionary(uniqueKeysWithValues: result.assignments.map { (assignment: PeopleFaceAssignment) -> (String, PeopleFaceAssignment) in
+            (assignment.id, assignment)
+        })
+        let card: String? = byID["c1"]?.clusterID
+        XCTAssertNotNil(card)
+        XCTAssertTrue(card?.hasPrefix("cluster-") == true, "Three look-alikes from three photos are one card")
+        XCTAssertEqual(byID["c2"]?.clusterID, card)
+        XCTAssertEqual(byID["c3"]?.clusterID, card)
+        // No person exists in this library, so neither face may get one.
+        XCTAssertNil(byID["a"]?.personID)
+        XCTAssertNil(byID["b"]?.personID)
+        let clusterA: String? = byID["a"]?.clusterID
+        let clusterB: String? = byID["b"]?.clusterID
+        XCTAssertNotNil(clusterA, "The face stays as a loose face, never unplaced")
+        XCTAssertNotNil(clusterB, "The other face is on a card of its own")
+        XCTAssertTrue(clusterA != clusterB, "Two faces in one photo are never one unnamed group")
+        XCTAssertFalse(result.assignments.contains { (assignment: PeopleFaceAssignment) -> Bool in
+            assignment.clusterID?.hasPrefix("pending-") == true
+        })
     }
 
     func testOnlyTheCloserFaceInAPhotoIsSuggestedForAPerson() {
@@ -61,35 +78,44 @@ final class PeopleSamePhotoTests: XCTestCase {
         XCTAssertEqual(byID["known"]?.personID, "person-a")
         XCTAssertEqual(byID["close"]?.personID, "person-a")
         XCTAssertNil(byID["farther"]?.personID)
-        XCTAssertEqual(byID["farther"]?.clusterID, "cluster-solo-farther")
+        XCTAssertTrue(byID["farther"]?.clusterID?.hasPrefix("loose-") == true, "The farther face is loose, not a second suggestion")
     }
 
     func testAConfirmedFaceWinsItsPhotoOverASuggestion() {
-        var assignments = [
-            PeopleFaceAssignment(id: "known", personID: "person-a", clusterID: nil, confirmed: true, assignmentSource: "user"),
-            PeopleFaceAssignment(id: "suggested", personID: "person-a", clusterID: nil, confirmed: false, assignmentSource: "auto")
-        ]
         let faces = [
             face("known", photo: "photo-1", [0, 1], personID: "person-a", confirmed: true),
             // Closer to the person's other photos, but the user already picked
             // the face in this photo.
             face("suggested", photo: "photo-1", [1, 0], personID: "person-a")
         ]
-        PeopleScanController.separateSamePhotoFaces(&assignments, faces: faces)
-        XCTAssertEqual(assignments[0].personID, "person-a")
-        XCTAssertTrue(assignments[0].confirmed)
-        XCTAssertNil(assignments[1].personID)
-        XCTAssertEqual(assignments[1].clusterID, "cluster-solo-suggested")
+        let result = PeopleScanController.makeAssignmentsResult(
+            faces: faces,
+            people: [PeoplePersonSnapshot(id: "person-a")],
+            shouldStop: { false }
+        )
+        let byID: [String: PeopleFaceAssignment] = Dictionary(uniqueKeysWithValues: result.assignments.map { (assignment: PeopleFaceAssignment) -> (String, PeopleFaceAssignment) in
+            (assignment.id, assignment)
+        })
+        XCTAssertEqual(byID["known"]?.personID, "person-a")
+        XCTAssertTrue(byID["known"]?.confirmed ?? false)
+        XCTAssertNil(byID["suggested"]?.personID, "One person appears at most once in a photo")
     }
 
     func testFacesWithoutAPhotoAreLeftAlone() {
-        var assignments = [
-            PeopleFaceAssignment(id: "x", personID: nil, clusterID: "cluster-x", confirmed: false, assignmentSource: "auto"),
-            PeopleFaceAssignment(id: "y", personID: nil, clusterID: "cluster-x", confirmed: false, assignmentSource: "auto")
+        // Without a media id nobody can say they are from one photo, so the
+        // one-face-per-photo rule leaves them alone: they may share a card.
+        let faces = [
+            face("x", photo: "", [1, 0]),
+            face("y", photo: "", [0.99, 0.01]),
+            face("z", photo: "", [0.99, 0.02])
         ]
-        let faces = [face("x", photo: "", [1, 0], clusterID: "cluster-x"), face("y", photo: "", [1, 0], clusterID: "cluster-x")]
-        PeopleScanController.separateSamePhotoFaces(&assignments, faces: faces)
-        XCTAssertEqual(assignments.map(\.clusterID), ["cluster-x", "cluster-x"])
+        let result = PeopleScanController.makeAssignmentsResult(faces: faces, people: [], shouldStop: { false })
+        let byID: [String: PeopleFaceAssignment] = Dictionary(uniqueKeysWithValues: result.assignments.map { (assignment: PeopleFaceAssignment) -> (String, PeopleFaceAssignment) in
+            (assignment.id, assignment)
+        })
+        XCTAssertNotNil(byID["x"]?.clusterID)
+        XCTAssertEqual(byID["x"]?.clusterID, byID["y"]?.clusterID)
+        XCTAssertEqual(byID["x"]?.clusterID, byID["z"]?.clusterID)
     }
 
     func testZoomCropIsASquareAroundTheFace() {
@@ -145,9 +171,9 @@ final class PeopleSamePhotoTests: XCTestCase {
     }
 
     func testSamePhotoCheckIgnoresFacesItCannotMove() {
-        func stored(_ id: String, photo: String, personID: String?, confirmed: Bool, source: String) -> FaceObservation {
+        func stored(_ id: String, photo: String, personID: String?, confirmed: Bool, source: String, clusterID: String? = nil) -> FaceObservation {
             FaceObservation(id: id, mediaID: photo, rect: (0, 0, 0.1, 0.1), embedding: Data(), cropData: Data(), quality: 1,
-                            personID: personID, confirmed: confirmed, assignmentSource: source)
+                            personID: personID, clusterID: clusterID, confirmed: confirmed, assignmentSource: source)
         }
         // Legacy confirmed-but-auto rows and faces without a photo never count.
         XCTAssertFalse(PeopleScanStore.hasSamePhotoSuggestions([
@@ -159,6 +185,11 @@ final class PeopleSamePhotoTests: XCTestCase {
         XCTAssertTrue(PeopleScanStore.hasSamePhotoSuggestions([
             stored("e", photo: "photo-2", personID: "r", confirmed: false, source: "auto"),
             stored("f", photo: "photo-2", personID: "r", confirmed: false, source: "auto")
+        ]))
+        // A loose face is on its own, so a "loose-" cluster is never a group.
+        XCTAssertFalse(PeopleScanStore.hasSamePhotoSuggestions([
+            stored("g", photo: "photo-3", personID: nil, confirmed: false, source: "auto", clusterID: "loose-g"),
+            stored("h", photo: "photo-3", personID: nil, confirmed: false, source: "auto", clusterID: "loose-g")
         ]))
     }
 }

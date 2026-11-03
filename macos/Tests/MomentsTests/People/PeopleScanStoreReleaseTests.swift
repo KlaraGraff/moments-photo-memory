@@ -7,6 +7,23 @@ import XCTest
 /// work it reports must still be found on a synthetic in-memory store.
 @MainActor
 final class PeopleScanStoreReleaseTests: XCTestCase {
+    private var defaults: UserDefaults!
+    private var suiteName: String = ""
+
+    override func setUp() {
+        super.setUp()
+        suiteName = "PeopleScanStoreReleaseTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults = nil
+        suiteName = ""
+        super.tearDown()
+    }
+
     private func makeContainer() throws -> ModelContainer {
         try MomentsPersistence.makeContainer(inMemory: true)
     }
@@ -19,7 +36,7 @@ final class PeopleScanStoreReleaseTests: XCTestCase {
         try context.save()
 
         // Two photos nobody has scanned yet: there is work.
-        let pending: Bool = try await PeopleScanController.hasWork(container: container)
+        let pending: Bool = try await PeopleScanController.hasWork(container: container, defaults: defaults)
         XCTAssertTrue(pending)
 
         // Both scanned and stored as plain faces: nothing left to do.
@@ -29,8 +46,9 @@ final class PeopleScanStoreReleaseTests: XCTestCase {
             PeopleScanResult(mediaID: "synthetic-photo-b", faces: [])
         ]
         try await store.save(results: results, scannedIDs: ["synthetic-photo-a", "synthetic-photo-b"], version: 1)
+        defaults.set(PeopleScanStore.groupingVersion, forKey: PeopleScanStore.groupingVersionKey)
 
-        let done: Bool = try await PeopleScanController.hasWork(container: container)
+        let done: Bool = try await PeopleScanController.hasWork(container: container, defaults: defaults)
         XCTAssertFalse(done)
     }
 
@@ -51,8 +69,18 @@ final class PeopleScanStoreReleaseTests: XCTestCase {
         context.insert(FaceScanRecord(id: "synthetic-photo-c"))
         try context.save()
 
-        let pending: Bool = try await PeopleScanController.hasWork(container: container)
+        defaults.set(PeopleScanStore.groupingVersion, forKey: PeopleScanStore.groupingVersionKey)
+        let pending: Bool = try await PeopleScanController.hasWork(container: container, defaults: defaults)
         XCTAssertTrue(pending, "A face still in its pending cluster is work for the next scan")
+    }
+
+    func testHasWorkFindsOlderGroupingVersion() async throws {
+        let container: ModelContainer = try makeContainer()
+        let olderVersion: Int = PeopleScanStore.groupingVersion - 1
+        defaults.set(olderVersion, forKey: PeopleScanStore.groupingVersionKey)
+
+        let pending: Bool = try await PeopleScanController.hasWork(container: container, defaults: defaults)
+        XCTAssertTrue(pending, "An older grouping version requires another scan")
     }
 
     func testScanStepsStillReadAndWriteThroughTheirOwnStores() async throws {

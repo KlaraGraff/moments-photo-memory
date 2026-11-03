@@ -94,6 +94,33 @@ final class PhotoStackModel {
                 photosKeyBySource[sourceKey] = photosKey
             }
         }
+        return apply(items: items, records: records, waits: waits, photosKey: photosKey)
+    }
+
+    /// A page that passes exactly the store's current (live) photos hands over
+    /// the key the store keeps as a running per-photo sum, so the first visit
+    /// does not hash every photo on the main thread. `photoCount` is that same
+    /// store list's count: when the list handed in has another size, it is a
+    /// subset (or another list) and is hashed as before, so a subset can never
+    /// be folded with the full set's key.
+    @discardableResult
+    func update(
+        items: [MediaItem],
+        decisions records: [UserGroup],
+        waits: Bool = false,
+        photosKey storePhotosKey: Int,
+        photoCount: Int
+    ) -> PhotoStackIndex {
+        let photosKey: Int = items.count == photoCount ? storePhotosKey : Self.key(of: items)
+        return apply(items: items, records: records, waits: waits, photosKey: photosKey)
+    }
+
+    private func apply(
+        items: [MediaItem],
+        records: [UserGroup],
+        waits: Bool,
+        photosKey: Int
+    ) -> PhotoStackIndex {
         let decisionsKey = Self.key(of: records)
         guard photosKey != self.photosKey || decisionsKey != self.decisionsKey || analysis.revision != detectedRevision else {
             return index
@@ -230,17 +257,13 @@ final class PhotoStackModel {
     }
 
     /// Screens pass the same photos in different orders, so per-photo
-    /// hashes are added up and the order does not matter.
-    nonisolated private static func key(of items: [MediaItem]) -> Int {
+    /// hashes are added up and the order does not matter. The per-photo hash
+    /// is the store's own `stackFieldsHash`, so the key over exactly the
+    /// store's photos equals the store's running sum plus their count.
+    nonisolated static func key(of items: [MediaItem]) -> Int {
         var key = items.count
         for item in items {
-            var hasher = Hasher()
-            hasher.combine(item.id)
-            hasher.combine(item.effectiveCaptureDate)
-            hasher.combine(item.perceptualHash)
-            hasher.combine(item.kindRaw)
-            hasher.combine(item.isScreenshot)
-            key &+= hasher.finalize()
+            key &+= LibraryStore.stackFieldsHash(of: item)
         }
         return key
     }

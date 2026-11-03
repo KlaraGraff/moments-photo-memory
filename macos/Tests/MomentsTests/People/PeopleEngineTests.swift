@@ -119,16 +119,23 @@ final class PeopleEngineTests: XCTestCase {
     }
 
     func testAutoAssignedFacesDoNotMoveUserCentroid() {
+        // The confirmed face is the person's only centre. The other face of the
+        // person was only machine-assigned, so it must not pull the centre its
+        // way (a face like it would otherwise be suggested too).
         let faces = [
-            PeopleFaceSnapshot(id: "user-face", personID: "synthetic-person", clusterID: nil, confirmed: true, assignmentSource: "user", rejectedPersonIDs: "", embedding: embedding([1, 0])),
-            PeopleFaceSnapshot(id: "auto-face", personID: "synthetic-person", clusterID: nil, confirmed: true, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([-1, 0])),
-            PeopleFaceSnapshot(id: "candidate", personID: nil, clusterID: "pending-candidate", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([1, 0]))
+            PeopleFaceSnapshot(id: "user-face", personID: "synthetic-person", clusterID: nil, confirmed: true, assignmentSource: "user", rejectedPersonIDs: "", embedding: embedding([1, 0]), mediaID: "photo-user"),
+            PeopleFaceSnapshot(id: "auto-face", personID: "synthetic-person", clusterID: nil, confirmed: true, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([-1, 0]), mediaID: "photo-auto"),
+            PeopleFaceSnapshot(id: "candidate", personID: nil, clusterID: "pending-candidate", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([1, 0]), mediaID: "photo-candidate")
         ]
         let assignments = PeopleScanController.makeAssignments(faces: faces, people: [PeoplePersonSnapshot(id: "synthetic-person")])
         let candidate = assignments.first { $0.id == "candidate" }
         XCTAssertEqual(candidate?.personID, "synthetic-person")
         XCTAssertEqual(candidate?.assignmentSource, "auto")
         XCTAssertFalse(candidate?.confirmed ?? true)
+        // A face that is only machine-assigned keeps its person and stays confirmed.
+        let autoFace = assignments.first { $0.id == "auto-face" }
+        XCTAssertEqual(autoFace?.personID, "synthetic-person")
+        XCTAssertTrue(autoFace?.confirmed ?? false)
     }
 
     func testZeroFaceItemIsMarkedScanned() async throws {
@@ -360,18 +367,90 @@ final class PeopleEngineTests: XCTestCase {
         }
     }
 
-    func testNewPendingFaceJoinsExistingUnnamedCluster() {
+    func testNewFaceJoinsTheCardOfItsLook() {
+        // A card of three close faces already exists; a new face with a larger
+        // id looks like them and joins its card, and the card keeps its name.
         let faces = [
-            PeopleFaceSnapshot(id: "member-a", personID: nil, clusterID: "cluster-member-a", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([1, 0])),
-            PeopleFaceSnapshot(id: "member-b", personID: nil, clusterID: "cluster-member-a", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([0.98, 0.05])),
-            PeopleFaceSnapshot(id: "newcomer", personID: nil, clusterID: "pending-newcomer", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([0.99, 0.02])),
-            PeopleFaceSnapshot(id: "stranger", personID: nil, clusterID: "pending-stranger", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([-1, 0]))
+            PeopleFaceSnapshot(id: "member-a", personID: nil, clusterID: "cluster-member-a", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([1, 0]), mediaID: "photo-member-a"),
+            PeopleFaceSnapshot(id: "member-b", personID: nil, clusterID: "cluster-member-a", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([0.98, 0.05]), mediaID: "photo-member-b"),
+            PeopleFaceSnapshot(id: "member-c", personID: nil, clusterID: "cluster-member-a", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([0.97, 0.06]), mediaID: "photo-member-c"),
+            PeopleFaceSnapshot(id: "newcomer", personID: nil, clusterID: "pending-newcomer", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([0.99, 0.02]), mediaID: "photo-newcomer"),
+            PeopleFaceSnapshot(id: "stranger", personID: nil, clusterID: "pending-stranger", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([-1, 0]), mediaID: "photo-stranger")
         ]
         let result = PeopleScanController.makeAssignmentsResult(faces: faces, people: [], shouldStop: { false })
-        let byID = Dictionary(uniqueKeysWithValues: result.assignments.map { ($0.id, $0.clusterID) })
+        let byID: [String: String] = Dictionary(uniqueKeysWithValues: result.assignments.map { (assignment: PeopleFaceAssignment) -> (String, String) in
+            (assignment.id, assignment.clusterID ?? "-")
+        })
         XCTAssertEqual(byID["newcomer"], "cluster-member-a")
         XCTAssertNotEqual(byID["stranger"], "cluster-member-a")
-        XCTAssertEqual(byID["member-a"], "cluster-member-a")
+        XCTAssertEqual(byID["member-a"], "cluster-member-a", "The card keeps its cluster id")
+        XCTAssertEqual(byID["member-b"], "cluster-member-a")
+        XCTAssertEqual(byID["member-c"], "cluster-member-a")
+    }
+
+    func testOldLibraryRegroupsOnce() async throws {
+        // A library scanned under the old grouping rule: every photo has its
+        // scan record and every face has a person, so only the grouping
+        // version can ask for work. It must regroup once, not on every launch.
+        let suiteName = "moments-grouping-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        XCTAssertEqual(PeopleScanStore.groupingVersion, 2)
+        XCTAssertNil(defaults.object(forKey: PeopleScanStore.groupingVersionKey), "An old library has no version yet")
+
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        context.insert(MediaItem(id: "synthetic-old-photo"))
+        context.insert(FaceScanRecord(id: "synthetic-old-photo", scannedAt: .now, version: 1))
+        context.insert(Person(id: "synthetic-old-person", name: "Synthetic"))
+        context.insert(FaceObservation(
+            id: "synthetic-old-face",
+            mediaID: "synthetic-old-photo",
+            rect: (0, 0, 0.1, 0.1),
+            embedding: embedding([1, 0]),
+            cropData: Data([1]),
+            quality: 1,
+            personID: "synthetic-old-person",
+            clusterID: nil,
+            confirmed: true,
+            assignmentSource: "user"
+        ))
+        try context.save()
+
+        let store = PeopleScanStore(modelContainer: container)
+        let firstRun = try await store.hasWork(defaults: defaults)
+        XCTAssertTrue(firstRun, "A library from the old rule regroups once")
+        defaults.set(PeopleScanStore.groupingVersion, forKey: PeopleScanStore.groupingVersionKey)
+        let secondRun = try await store.hasWork(defaults: defaults)
+        XCTAssertFalse(secondRun, "After the regroup it does not run again")
+    }
+
+    func testPendingFaceStillMeansWork() async throws {
+        // The version is current, so only the face itself can ask for a scan:
+        // a "pending-" cluster means it was never placed.
+        let suiteName = "moments-grouping-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(PeopleScanStore.groupingVersion, forKey: PeopleScanStore.groupingVersionKey)
+
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        context.insert(MediaItem(id: "synthetic-pending-photo"))
+        context.insert(FaceScanRecord(id: "synthetic-pending-photo", scannedAt: .now, version: 1))
+        context.insert(FaceObservation(
+            id: "synthetic-pending-face",
+            mediaID: "synthetic-pending-photo",
+            rect: (0, 0, 0.1, 0.1),
+            embedding: embedding([1, 0]),
+            cropData: Data([1]),
+            quality: 1,
+            clusterID: "pending-synthetic-pending-face"
+        ))
+        try context.save()
+
+        let store = PeopleScanStore(modelContainer: container)
+        let hasWork: Bool = try await store.hasWork(defaults: defaults)
+        XCTAssertTrue(hasWork, "Faces with a pending- cluster still mean work")
     }
 
     private func naiveAverageLink(_ vectors: [[Float]], threshold: Float) -> [[Int]] {

@@ -110,7 +110,7 @@ private final class StepClock: @unchecked Sendable {
 private final class SaveCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var storage = 0
-    private let observer: NSObjectProtocol?
+    private var observer: NSObjectProtocol? = nil
 
     init(container: ModelContainer) {
         observer = NotificationCenter.default.addObserver(

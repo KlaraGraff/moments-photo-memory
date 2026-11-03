@@ -17,7 +17,55 @@ final class CoreLocationFootprintsGeocoder: FootprintsGeocoder {
               let countryName = placemark.country else {
             return .ocean
         }
-        return FootprintsGeocodeResult(countryCode: countryCode, countryName: countryName)
+        return FootprintsGeocodeResult(
+            countryCode: countryCode,
+            countryName: countryName,
+            cityName: FootprintsCityName.pick(
+                countryCode: countryCode,
+                administrativeArea: placemark.administrativeArea,
+                locality: placemark.locality,
+                subAdministrativeArea: placemark.subAdministrativeArea
+            )
+        )
+    }
+}
+
+/// The city at the level a person means when saying "I have been to Chongqing":
+/// one big city even when its suburbs come back as separate localities.
+enum FootprintsCityName {
+    /// Mainland China's four province-level municipalities: the geocoder names
+    /// a district such as 万州区 in `locality`, the city in `administrativeArea`.
+    private static let municipalities: Set<String> = [
+        "beijing", "shanghai", "tianjin", "chongqing",
+        "北京市", "上海市", "天津市", "重庆市"
+    ]
+
+    static func pick(
+        countryCode: String?,
+        administrativeArea: String?,
+        locality: String?,
+        subAdministrativeArea: String?
+    ) -> String? {
+        let country = countryCode?.uppercased()
+        let administrativeArea = cleaned(administrativeArea)
+        let locality = cleaned(locality)
+        let subAdministrativeArea = cleaned(subAdministrativeArea)
+
+        if country == "CN",
+           let administrativeArea,
+           municipalities.contains(administrativeArea.lowercased()) {
+            return administrativeArea
+        }
+        // In China, Hong Kong, Macao and Taiwan the city is the locality; the
+        // administrative area above it is the province or region. Elsewhere
+        // the same order holds, with a commune sometimes named one level up.
+        return locality ?? subAdministrativeArea ?? administrativeArea
+    }
+
+    private static func cleaned(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -86,6 +134,9 @@ final class FootprintsGeocodeResolver {
     private let minimumRequestInterval: TimeInterval
     private let requestTimeout: TimeInterval
     private var lastRequestDate: Date?
+    /// Cached entries that were looked up again for a missing city name. Kept
+    /// here so a place whose geocoder returns no city is asked only once.
+    private var refreshedCityNameKeys: Set<String> = []
 
     init(
         geocoder: any FootprintsGeocoder,
@@ -115,9 +166,22 @@ final class FootprintsGeocodeResolver {
             // stop here so two batches never mutate the cache at once.
             if Task.isCancelled { break }
             guard let center = cluster.center else { continue }
+            let cityNameKey = FootprintsGeocodeCache.key(for: center)
+            var refreshedKeyThisRound: String?
+            var staleResult: FootprintsGeocodeResult?
             if let cached = cache.result(for: center) {
-                results[cluster.id] = cached
-                continue
+                // Old cache entries have a country but no city. Look those up
+                // once more; the ocean and unknown places stay cached.
+                let needsCityName: Bool = !cached.isOcean
+                    && cached.cityName == nil
+                    && !refreshedCityNameKeys.contains(cityNameKey)
+                guard needsCityName else {
+                    results[cluster.id] = cached
+                    continue
+                }
+                refreshedCityNameKeys.insert(cityNameKey)
+                refreshedKeyThisRound = cityNameKey
+                staleResult = cached
             }
 
             await waitForRateLimit()
@@ -128,6 +192,14 @@ final class FootprintsGeocodeResolver {
                 try? cache.save()
                 results[cluster.id] = result
             } catch {
+                // Keep what the cache already knows, so an offline Mac still
+                // counts this place; it is tried again on the next launch.
+                if let staleResult {
+                    results[cluster.id] = staleResult
+                }
+                if let refreshedKeyThisRound {
+                    refreshedCityNameKeys.remove(refreshedKeyThisRound)
+                }
                 // Stop after the first failed request. This makes an offline
                 // panel explicit and avoids retrying every cluster forever.
                 didEncounterError = true

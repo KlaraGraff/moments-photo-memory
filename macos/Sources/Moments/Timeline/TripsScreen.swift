@@ -993,27 +993,24 @@ private struct TripShelfView: View {
                         ChapterFilterBar(types: types, filterRaw: $filterRaw)
                             .frame(maxWidth: 880, alignment: .leading)
                     }
-                    // Same spacing as the shelf; one identity for the fade.
-                    VStack(alignment: .center, spacing: 18) {
-                        ForEach(trips) { trip in
-                            TripCoverCard(
-                                trip: trip,
-                                target: target(trip.id),
-                                covers: covers(for: trip),
-                                photos: trip.orderedItems.compactMap { itemByID[$0.id] },
-                                memory: memories.first { $0.scope == .trip && $0.scopeKey == trip.id }?.text,
-                                actions: actions,
-                                onOpen: { onOpen(trip) }
-                            )
-                            .id(trip.id)
-                        }
-                    }
-                    // A new filter fades the cards out and back in; the bar
+                    // Cards sit straight in the lazy stack so only visible ones
+                    // are built. A new filter fades cards in and out; the bar
                     // above keeps its identity so its thumb can slide.
-                    .id(filterRaw)
-                    .transition(.opacity)
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: filterRaw)
+                    ForEach(trips) { trip in
+                        TripCoverCard(
+                            trip: trip,
+                            target: target(trip.id),
+                            covers: covers(for: trip),
+                            photos: trip.orderedItems.compactMap { itemByID[$0.id] },
+                            memory: memories.first { $0.scope == .trip && $0.scopeKey == trip.id }?.text,
+                            actions: actions,
+                            onOpen: { onOpen(trip) }
+                        )
+                        .id(trip.id)
+                        .transition(.opacity)
+                    }
                 }
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: filterRaw)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, PaperMetrics.screenInset)
                 .padding(.top, PaperMetrics.screenTopInset)

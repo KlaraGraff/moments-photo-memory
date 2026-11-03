@@ -596,6 +596,10 @@ extension MediaItem {
             .compactMap { ImportReviewReason(rawValue: String($0)) }
     }
 
-    /// Flagged on import and not yet accepted, changed or ignored.
-    public var needsImportReview: Bool { importDecision == .pending && !importReviewReasons.isEmpty }
+    /// Flagged on import and not yet accepted, changed or ignored. Screenshots
+    /// stay in the library but never ask for review: they carry no useful
+    /// location or date to confirm.
+    public var needsImportReview: Bool {
+        !isScreenshot && importDecision == .pending && !importReviewReasons.isEmpty
+    }
 }

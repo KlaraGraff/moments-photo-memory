@@ -231,3 +231,29 @@ enum FootprintsCalculator {
         )
     }
 }
+
+/// Picking the city group a zoom should frame, independent of MapKit.
+enum FootprintsFocus {
+    /// The cluster whose centre is the shortest great-circle distance from
+    /// `point`. Clusters without a centre are skipped; a tie goes to the
+    /// cluster with more photo stops.
+    static func nearestCluster(to point: GeoPoint, in clusters: [PlaceCluster]) -> PlaceCluster? {
+        var nearest: PlaceCluster?
+        var nearestDistance = Double.infinity
+        for cluster in clusters {
+            guard let center = cluster.center else { continue }
+            let distance = point.distance(to: center)
+            guard distance.isFinite else { continue }
+            if distance < nearestDistance {
+                nearest = cluster
+                nearestDistance = distance
+                continue
+            }
+            guard distance == nearestDistance,
+                  let current = nearest,
+                  cluster.stopIDs.count > current.stopIDs.count else { continue }
+            nearest = cluster
+        }
+        return nearest
+    }
+}

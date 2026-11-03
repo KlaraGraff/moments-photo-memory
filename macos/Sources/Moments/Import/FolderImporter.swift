@@ -218,6 +218,7 @@ struct FolderImporter {
                 kind: metadata.kind,
                 width: metadata.width,
                 height: metadata.height,
+                isScreenshot: ScreenshotFileName.looksLikeScreenshot(metadata.fileName),
                 source: .file,
                 title: metadata.fileName,
                 tripID: organized.tripID,

@@ -929,6 +929,9 @@ struct PeopleScreen: View {
     @State private var cachedQuestions: [String] = []
     @State private var looseExpanded = false
     @State private var lastFaceChange: FaceUndoSnapshot?
+    /// The face whose "New person…" alert is open, and the name typed in it.
+    @State private var newPersonFace: FaceObservation?
+    @State private var newPersonName = ""
     @State private var renamingPersonID: String?
     @State private var renameText = ""
     @State private var pendingRename: PendingRename?
@@ -1095,6 +1098,23 @@ struct PeopleScreen: View {
                 .keyboardShortcut(.defaultAction)
             Button(String(localized: "Keep separate")) { commitRename(pending, merge: false) }
             Button(String(localized: "Cancel"), role: .cancel) { pendingRename = nil }
+        }
+        .alert(
+            String(localized: "New person"),
+            isPresented: Binding(
+                get: { newPersonFace != nil },
+                set: { shown in
+                    if !shown {
+                        newPersonFace = nil
+                        newPersonName = ""
+                    }
+                }
+            )
+        ) {
+            TextField(String(localized: "What is this person's name?"), text: $newPersonName)
+            Button(String(localized: "Save")) { commitNewPerson() }
+                .keyboardShortcut(.defaultAction)
+            Button(String(localized: "Cancel"), role: .cancel) { newPersonFace = nil }
         }
     }
 
@@ -1567,6 +1587,12 @@ struct PeopleScreen: View {
                 }
             }
         }
+        // Also offered when nobody has a name yet, so a loose face can start
+        // the first person.
+        Button(String(localized: "New person…")) {
+            newPersonName = ""
+            newPersonFace = face
+        }
     }
 
     private func reassign(_ face: FaceObservation, to person: Person) {
@@ -1575,6 +1601,38 @@ struct PeopleScreen: View {
         lastFaceChange = nil
         selection.recordCorrection(CorrectionUndo(
             message: FaceCorrection.message(movedTo: person.name ?? ""),
+            actionName: String(localized: "Change Person"),
+            restore: { context in FaceCorrection.restore(snapshot, context: context) }
+        ), context: modelContext)
+    }
+
+    /// Names a new person from a face, as the photo info panel does.
+    private func commitNewPerson() {
+        guard let face = newPersonFace else { return }
+        let value = newPersonName.trimmingCharacters(in: .whitespacesAndNewlines)
+        newPersonFace = nil
+        newPersonName = ""
+        // An empty name creates nobody, as elsewhere on this screen.
+        guard !value.isEmpty else { return }
+        let snapshot = FaceCorrection.reassign(
+            face,
+            toName: value,
+            people: people,
+            observations: observations,
+            context: modelContext
+        )
+        try? modelContext.save()
+        if let snapshot {
+            recordNewPerson(snapshot, name: value)
+        }
+        refreshFaceCaches()
+    }
+
+    /// The same undo the "This is…" correction records.
+    private func recordNewPerson(_ snapshot: FaceCorrection.Snapshot, name: String) {
+        lastFaceChange = nil
+        selection.recordCorrection(CorrectionUndo(
+            message: FaceCorrection.message(movedTo: name),
             actionName: String(localized: "Change Person"),
             restore: { context in FaceCorrection.restore(snapshot, context: context) }
         ), context: modelContext)

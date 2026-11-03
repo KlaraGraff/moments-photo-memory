@@ -65,6 +65,8 @@ final class PhotoStackAnalysisStore {
         isLoaded = false
         loading = Task { [weak self] in
             let loaded = await Task.detached(priority: .utility) { Self.read(from: fileURL) }.value
+            // `forgetAll` cancelled this read: what it found is no longer wanted.
+            guard !Task.isCancelled else { return }
             self?.isLoaded = true
             guard let self, let loaded, !loaded.isEmpty else { return }
             // Results that arrived while the file was read win.
@@ -129,6 +131,24 @@ final class PhotoStackAnalysisStore {
             revision += 1
         }
         if hasUnsaved { save() }
+    }
+
+    /// Drops every stored result, in memory and in the file, and moves
+    /// `revision` so stacks are detected again. The next pass measures every
+    /// photo afresh; the stack decisions this person made live elsewhere and
+    /// are not touched.
+    func forgetAll() {
+        // Nothing is known any more, so a run must not wait for (or trust) a
+        // file read still in flight from launch.
+        loading?.cancel()
+        loading = nil
+        isLoaded = true
+        entries.removeAll()
+        hasUnpublished = false
+        // The existing save path, so the file on disk is emptied too and a
+        // later launch does not read the old results back.
+        revision += 1
+        save()
     }
 
     func save() {
@@ -206,6 +226,9 @@ final class PhotoStackAnalyzer {
                     }
                     return results
                 }.value
+                // A `forgetAll` while this batch ran means its results are
+                // exactly what was thrown away; the fresh pass measures them.
+                guard !Task.isCancelled else { break }
                 store.merge(results, interval: 30)
             }
             store.finish(keeping: Task.isCancelled ? nil : allIDs)
@@ -217,6 +240,18 @@ final class PhotoStackAnalyzer {
                 self.analyzeIfNeeded()
             }
         }
+    }
+
+    /// "Reorganize everything": throws the measurements away and measures
+    /// every photo again. A pass in flight stops at its next batch, so it does
+    /// not keep the old results; `analyzeIfNeeded` below starts the fresh pass
+    /// once that one has ended, so two passes never measure at the same time.
+    /// Stacks the person changed are `UserGroup` records, not analysis, and
+    /// stay as they are.
+    func reanalyzeAll() {
+        task?.cancel()
+        store.forgetAll()
+        analyzeIfNeeded()
     }
 
     struct PendingPhoto: Sendable {

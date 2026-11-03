@@ -21,6 +21,7 @@ final class PeopleReorganizeTests: XCTestCase {
     override func tearDown() {
         defaults.removePersistentDomain(forName: suiteName)
         defaults = nil
+        container = nil
         super.tearDown()
     }
 
@@ -61,8 +62,13 @@ final class PeopleReorganizeTests: XCTestCase {
         return try context.fetch(FetchDescriptor<FaceObservation>(sortBy: sort))
     }
 
+    /// Kept for the length of a test: a main context outlives nothing once
+    /// its container is released.
+    private var container: ModelContainer?
+
     private func makeContext() throws -> ModelContext {
         let container: ModelContainer = try MomentsPersistence.makeContainer(inMemory: true)
+        self.container = container
         return container.mainContext
     }
 

@@ -398,7 +398,7 @@ final class TripCorrectionSnapshotBuilder {
         guard let start, let end else { return [] }
         var rows: [TripCorrectionSnapshot.Day] = []
         var cursor: Date = start
-        while cursor <= end, rows.count < 3_660 {
+        while cursor.isOnOrBefore(end), rows.count < 3_660 {
             let key: String = Self.dayKey(cursor, calendar: calendar)
             let items: [MediaItem] = byDay[key] ?? []
             let weekday: Int = calendar.component(.weekday, from: cursor)
@@ -429,7 +429,7 @@ final class TripCorrectionSnapshotBuilder {
         let to: Date = calendar.date(byAdding: .day, value: 180, to: end) ?? end
         let candidates: [MediaItem] = self.itemsOutsideTrips().filter { (item: MediaItem) -> Bool in
             guard let date = item.effectiveCaptureDate else { return false }
-            return date >= from && date <= to
+            return date.isOnOrAfter(from) && date.isOnOrBefore(to)
         }
         var counts: [String: Int] = [:]
         var centres: [String: (Double, Double)] = [:]

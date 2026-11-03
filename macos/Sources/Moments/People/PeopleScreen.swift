@@ -171,14 +171,53 @@ final class PeopleScanController {
 
     func scanIfNeeded() {
         guard isAvailable, let container, task == nil else { return }
-        let store = PeopleScanStore(modelContainer: container)
         Task { @MainActor [weak self] in
-            let hasWork = (try? await Task.detached(priority: .utility) {
-                try await store.hasWork()
-            }.value) ?? false
+            let hasWork = (try? await Self.hasWork(container: container)) ?? false
             guard hasWork, let self, self.task == nil else { return }
             self.start()
         }
+    }
+
+    /// Makes the store inside the detached task that uses it and returns only
+    /// the answer, so nothing on the main actor holds the last reference and
+    /// the store's context and objects are freed off the main thread.
+    nonisolated static func hasWork(container: ModelContainer) async throws -> Bool {
+        try await Task.detached(priority: .utility) {
+            let store = PeopleScanStore(modelContainer: container)
+            return try await store.hasWork()
+        }.value
+    }
+
+    /// Every runScan step gets one short-lived store inside the detached task
+    /// that uses it. The task's end releases it on its own thread, so a store
+    /// dropped on the main actor cannot free a whole fetched library there,
+    /// and only plain Sendable values cross back to the caller.
+    nonisolated static func pendingDescriptors(container: ModelContainer) async throws -> [PeopleMediaDescriptor] {
+        try await Task.detached(priority: .utility) {
+            let store = PeopleScanStore(modelContainer: container)
+            return try await store.pendingDescriptors()
+        }.value
+    }
+
+    nonisolated static func save(container: ModelContainer, results: [PeopleScanResult], scannedIDs: [String]) async throws {
+        try await Task.detached(priority: .utility) {
+            let store = PeopleScanStore(modelContainer: container)
+            try await store.save(results: results, scannedIDs: scannedIDs, version: 1)
+        }.value
+    }
+
+    nonisolated static func assignmentSnapshot(container: ModelContainer) async throws -> PeopleStoreAssignmentSnapshot {
+        try await Task.detached(priority: .utility) {
+            let store = PeopleScanStore(modelContainer: container)
+            return try await store.assignmentSnapshot()
+        }.value
+    }
+
+    nonisolated static func apply(container: ModelContainer, assignments: [PeopleFaceAssignment], snapshots: [PeopleFaceSnapshot]) async throws {
+        try await Task.detached(priority: .utility) {
+            let store = PeopleScanStore(modelContainer: container)
+            try await store.apply(assignments: assignments, snapshots: snapshots)
+        }.value
     }
 
     func start() {
@@ -204,10 +243,7 @@ final class PeopleScanController {
     private func runScan(container: ModelContainer, embedder: any FaceEmbedder, scanID: UUID) async {
         do {
             guard activeScanID == scanID else { return }
-            let store = PeopleScanStore(modelContainer: container)
-            let descriptors = try await Task.detached(priority: .utility) {
-                try await store.pendingDescriptors()
-            }.value
+            let descriptors = try await Self.pendingDescriptors(container: container)
             let total = descriptors.count
             progress = PeopleScanDisplayProgress(completed: 0, total: total, skippedUnavailable: 0, isPaused: false)
             let pipeline = PeopleScanPipeline(embedder: embedder)
@@ -239,16 +275,12 @@ final class PeopleScanController {
                     }
                 }
                 try Task.checkCancellation()
-                try await Task.detached(priority: .utility) {
-                    try await store.save(results: batchResults, scannedIDs: batchScannedIDs, version: 1)
-                }.value
+                try await Self.save(container: container, results: batchResults, scannedIDs: batchScannedIDs)
                 completed += end - batch
                 progress = PeopleScanDisplayProgress(completed: completed, total: total, skippedUnavailable: skippedUnavailable, isPaused: false)
             }
             guard !Task.isCancelled else { throw CancellationError() }
-            let snapshot = try await Task.detached(priority: .utility) {
-                try await store.assignmentSnapshot()
-            }.value
+            let snapshot = try await Self.assignmentSnapshot(container: container)
             let assignmentTask = Task.detached(priority: .utility) {
                 guard !Task.isCancelled else { return PeopleAssignmentResult(assignments: [], clusteringStopped: true) }
                 return PeopleScanController.makeAssignmentsResult(faces: snapshot.faces, people: snapshot.people)
@@ -265,9 +297,7 @@ final class PeopleScanController {
                 state = .idle
                 return
             }
-            try await Task.detached(priority: .utility) {
-                try await store.apply(assignments: assignments.assignments, snapshots: snapshot.faces)
-            }.value
+            try await Self.apply(container: container, assignments: assignments.assignments, snapshots: snapshot.faces)
             guard activeScanID == scanID else { return }
             activePipeline = nil
             state = .finished

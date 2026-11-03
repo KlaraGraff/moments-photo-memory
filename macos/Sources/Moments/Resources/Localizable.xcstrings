@@ -15087,6 +15087,50 @@
         }
       }
     },
+    "Visited cities" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Besuchte Städte"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Visited cities"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "到访城市"
+          }
+        }
+      }
+    },
+    "Offline: cached cities only" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Offline: nur gespeicherte Städte"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Offline: cached cities only"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "离线：仅显示已缓存的城市"
+          }
+        }
+      }
+    },
     "Reorganize all memories" : {
       "localizations" : {
         "de" : {

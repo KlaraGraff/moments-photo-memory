@@ -208,22 +208,15 @@ struct LibraryFilterChips: View {
         Menu {
             content()
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: systemImage)
-                    .imageScale(.small)
-                    .accessibilityHidden(true)
-                Text(selected.map(Self.chipTitle) ?? label)
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold))
-            }
+            filterMenuTitle(selected.map(Self.chipTitle) ?? label, systemImage: systemImage, selected: selected != nil)
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
         // Chip labels read as ink; the app accent would turn every chip red.
         .tint(LibraryPalette.ink)
         .fixedSize()
         .paperChip(selected: selected != nil)
-        .foregroundStyle(LibraryPalette.ink)
         .accessibilityIdentifier(identifier)
     }
 
@@ -279,7 +272,8 @@ struct LibraryFilterChips: View {
         } label: {
             filterMenuTitle(String(localized: "Memory"), systemImage: "quote.bubble", selected: selectedMemoryFilter != .all)
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
         // Chip labels read as ink; the app accent would turn every chip red.
         .tint(LibraryPalette.ink)
@@ -301,7 +295,8 @@ struct LibraryFilterChips: View {
         } label: {
             filterMenuTitle(String(localized: "Person"), systemImage: "person", selected: !personFilterID.isEmpty)
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
         // Chip labels read as ink; the app accent would turn every chip red.
         .tint(LibraryPalette.ink)

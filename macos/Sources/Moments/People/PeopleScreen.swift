@@ -90,6 +90,58 @@ private struct FaceUndoSnapshot {
     }
 }
 
+/// The faces' state before "Not a real person", so the change can be taken
+/// back: the faces return to their old grouping and the hidden person goes.
+private struct NotAPersonSnapshot {
+    struct FaceState {
+        let faceID: String
+        let personID: String?
+        let clusterID: String?
+        let confirmed: Bool
+        let assignmentSource: String
+
+        init(_ face: FaceObservation) {
+            faceID = face.id
+            personID = face.personID
+            clusterID = face.clusterID
+            confirmed = face.confirmed
+            assignmentSource = face.assignmentSource
+        }
+    }
+
+    let faces: [FaceState]
+
+    init(_ faces: [FaceObservation]) {
+        self.faces = faces.map { (face: FaceObservation) -> FaceState in FaceState(face) }
+    }
+
+    /// Puts every face back where it was and removes the person the click
+    /// created, unless a later scan gave that person more faces to keep.
+    @MainActor
+    func restore(hiddenPersonID: String, context: ModelContext) {
+        let ids: [String] = faces.map { (state: FaceState) -> String in state.faceID }
+        let stored: [FaceObservation] = (try? context.fetch(FetchDescriptor<FaceObservation>(predicate: #Predicate { ids.contains($0.id) }))) ?? []
+        let byID: [String: FaceObservation] = Dictionary(
+            stored.map { (face: FaceObservation) -> (String, FaceObservation) in (face.id, face) },
+            uniquingKeysWith: { (first: FaceObservation, _: FaceObservation) -> FaceObservation in first }
+        )
+        for state in faces {
+            guard let face = byID[state.faceID] else { continue }
+            face.personID = state.personID
+            face.clusterID = state.clusterID
+            face.confirmed = state.confirmed
+            face.assignmentSource = state.assignmentSource
+            face.updatedAt = .now
+        }
+        let people: [Person] = (try? context.fetch(FetchDescriptor<Person>())) ?? []
+        guard let person = people.first(where: { (person: Person) -> Bool in person.id == hiddenPersonID }) else { return }
+        var stillUsed = FetchDescriptor<FaceObservation>(predicate: #Predicate { $0.personID == hiddenPersonID })
+        stillUsed.fetchLimit = 1
+        let remaining = (try? context.fetch(stillUsed)) ?? []
+        if remaining.isEmpty { context.delete(person) }
+    }
+}
+
 private struct PendingRename: Identifiable {
     let personID: String
     let name: String
@@ -623,6 +675,28 @@ enum PeopleStoreActions {
             face.rejectedPersonIDs = rejected.sorted().joined(separator: ",")
         }
         return target.id
+    }
+
+    /// "Not a real person": a game or cartoon character the detector takes for
+    /// a face. The faces move to a new hidden, unnamed person, so they leave
+    /// the page, and look-alike faces found later join them there instead of
+    /// coming back as a group. Faces that already have a person are left alone.
+    /// Returns nil when there was nothing to hide.
+    @discardableResult
+    static func markNotAPerson(faces: [FaceObservation], context: ModelContext) -> Person? {
+        let free = faces.filter { (face: FaceObservation) -> Bool in face.personID == nil }
+        guard !free.isEmpty else { return nil }
+        let person = Person(id: UUID().uuidString, name: nil, hidden: true)
+        context.insert(person)
+        for face in free {
+            face.personID = person.id
+            face.clusterID = nil
+            face.confirmed = true
+            face.assignmentSource = "user"
+            face.updatedAt = .now
+        }
+        try? context.save()
+        return person
     }
 
     /// Merges visible people whose names are equal into the oldest of them,
@@ -1499,6 +1573,13 @@ struct PeopleScreen: View {
                                 .onSubmit { name(cluster) }
                             Button(String(localized: "Save")) { name(cluster) }.buttonStyle(.borderedProminent)
                         }
+                        HStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            Button(String(localized: "Not a real person")) { notAPerson(cluster.faces) }
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(Paper.muted)
+                                .accessibilityIdentifier("people.card.notPerson")
+                        }
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 10) {
                                 ForEach(cluster.faces, id: \.id) { face in
@@ -1601,6 +1682,29 @@ struct PeopleScreen: View {
             newPersonName = ""
             newPersonFace = face
         }
+        // A loose face has no card to hide, so it is offered here: a game or
+        // cartoon character the detector took for a face.
+        if face.personID == nil {
+            Button(String(localized: "Not a real person")) { notAPerson([face]) }
+        }
+    }
+
+    /// Hides a group of faces as "not a real person", with an Undo that puts
+    /// every face back and removes the hidden person.
+    private func notAPerson(_ faces: [FaceObservation]) {
+        let free = faces.filter { (face: FaceObservation) -> Bool in face.personID == nil }
+        guard !free.isEmpty else { return }
+        let snapshot = NotAPersonSnapshot(free)
+        guard let person = PeopleStoreActions.markNotAPerson(faces: free, context: modelContext) else { return }
+        try? modelContext.save()
+        let hiddenPersonID = person.id
+        lastFaceChange = nil
+        refreshFaceCaches()
+        selection.recordCorrection(CorrectionUndo(
+            message: String(localized: "Not a real person"),
+            actionName: String(localized: "Not a Real Person"),
+            restore: { context in snapshot.restore(hiddenPersonID: hiddenPersonID, context: context) }
+        ), context: modelContext)
     }
 
     private func reassign(_ face: FaceObservation, to person: Person) {

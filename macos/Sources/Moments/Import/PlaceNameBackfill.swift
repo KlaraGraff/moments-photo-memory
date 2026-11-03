@@ -16,6 +16,13 @@ struct PlaceNameBackfill: Sendable {
     var pace: @Sendable () async -> Void = { await ImportGeocodePacer.shared.wait() }
     var timeout: Duration = .seconds(10)
     var maxConsecutiveFailures = 3
+    /// Longest stretch of named cities held in memory before a save. Each save
+    /// rebuilds the pages that read places, so saving every city made a long
+    /// run move the store revision once per city.
+    var saveInterval: Duration = .seconds(10)
+    /// The time a save decision compares against. Tests pass a clock they
+    /// advance themselves instead of waiting for real time.
+    var clock: @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }
 
     /// Returns how many cities were named. Stops early after repeated
     /// failures; the rest stay unnamed for the next run.
@@ -41,50 +48,82 @@ struct PlaceNameBackfill: Sendable {
     private func name(_ pending: [Place], context: ModelContext) async throws -> Int {
         var named = 0
         var failures = 0
-        for city in pending {
-            try Task.checkCancellation()
-            guard let latitude = city.latitude, let longitude = city.longitude else { continue }
-            let coordinate = GeoPoint(latitude: latitude, longitude: longitude)
-            var result = await geocodeCache.result(for: coordinate)
-            if result == nil {
-                await pace()
-                // A cancelled wait must end the run, not send a lookup that
-                // then records a failure against the failure stop.
+        let runStart: ContinuousClock.Instant = clock()
+        var lastSave: ContinuousClock.Instant = runStart
+        // Names arrive in batches: a save happens once every `saveInterval`, and
+        // before the trip pass reads the store through its own context. A quit
+        // therefore loses at most that many seconds of lookups, and the geocode
+        // cache keeps their results anyway, so the next run re-applies them
+        // without a network call.
+        do {
+            for city in pending {
                 try Task.checkCancellation()
-                let geocoder = self.geocoder
-                do {
-                    result = try await ImportGeocodeGate.firstResult(within: timeout) {
-                        try await geocoder.reverseGeocode(coordinate: coordinate)
+                if clock() - lastSave >= saveInterval {
+                    try save(context)
+                    lastSave = clock()
+                }
+                guard let latitude = city.latitude, let longitude = city.longitude else { continue }
+                let coordinate = GeoPoint(latitude: latitude, longitude: longitude)
+                var result = await geocodeCache.result(for: coordinate)
+                if result == nil {
+                    await pace()
+                    // A cancelled wait must end the run, not send a lookup that
+                    // then records a failure against the failure stop.
+                    try Task.checkCancellation()
+                    let geocoder = self.geocoder
+                    do {
+                        result = try await ImportGeocodeGate.firstResult(within: timeout) {
+                            try await geocoder.reverseGeocode(coordinate: coordinate)
+                        }
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        result = nil
                     }
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    result = nil
+                    guard let result else {
+                        failures += 1
+                        if failures >= maxConsecutiveFailures { break }
+                        continue
+                    }
+                    failures = 0
+                    await geocodeCache.insert(result, for: coordinate)
                 }
-                guard let result else {
-                    failures += 1
-                    if failures >= maxConsecutiveFailures { break }
-                    continue
+                guard let result else { continue }
+                apply(result, to: city)
+                clearRetryFlags(under: city)
+                repairZones(under: city, named: result)
+                named += 1
+                // Trips seen so far get their place names as they arrive, but
+                // only once every city they touch is named (see
+                // `TripNameBackfill`). It reads through its own context, so the
+                // names it must see are saved first.
+                if named.isMultiple(of: 10) {
+                    try save(context)
+                    lastSave = clock()
+                    _ = try await TripNameBackfill(geocoder: geocoder, geocodeCache: geocodeCache, pace: pace)
+                        .run(container: context.container, onlyFullyNamed: true)
                 }
-                failures = 0
-                await geocodeCache.insert(result, for: coordinate)
             }
-            guard let result else { continue }
-            apply(result, to: city)
-            clearRetryFlags(under: city)
-            repairZones(under: city, named: result)
-            // Save each city so the UI updates as names arrive and a quit
-            // loses at most one lookup.
-            try context.save()
-            named += 1
-            // Trips seen so far get their place names as they arrive, but only
-            // once every city they touch is named (see `TripNameBackfill`).
-            if named.isMultiple(of: 10) {
-                _ = try await TripNameBackfill(geocoder: geocoder, geocodeCache: geocodeCache, pace: pace)
-                    .run(container: context.container, onlyFullyNamed: true)
-            }
+        } catch is CancellationError {
+            // Whatever was applied is still in memory; write it before leaving
+            // so a cancelled run keeps the names it already looked up.
+            try? save(context)
+            throw CancellationError()
+        } catch {
+            try? save(context)
+            throw error
         }
+        // The last batch, the `break` after repeated failures and the run that
+        // named nothing all end here.
+        try save(context)
         return named
+    }
+
+    /// Writes the applied names, and only when there is something to write: an
+    /// unchanged context tallies as a save in the page probes.
+    private func save(_ context: ModelContext) throws {
+        guard context.hasChanges else { return }
+        try context.save()
     }
 
     /// True while the store still holds cities without a name, so a run that

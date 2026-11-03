@@ -669,9 +669,12 @@ struct TripsScreen: View {
                 case let .group(group):
                     let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !value.isEmpty, value != group.name else { return }
+                    let log = TripCorrectionSnapshotBuilder(context: modelContext)
+                    let before = [log.chapter(group)]
                     group.name = value
                     group.updatedAt = .now
                     try? modelContext.save()
+                    TripCorrectionRecorder.record(.rename, before: before, after: [log.chapter(group)])
                 }
             },
             setCover: { tripID, itemID in

@@ -104,9 +104,10 @@ public struct TripSegmenter: Sendable {
         let ordered = stops.sorted(by: Self.photoOrder)
         guard !ordered.isEmpty else { return Result(trips: [], atUsualPlaceIDs: []) }
         let photoIndex: [String: Int] = Dictionary(
-            uniqueKeysWithValues: ordered.enumerated().map { (offset: Int, stop: PhotoStop) -> (String, Int) in
+            ordered.enumerated().map { (offset: Int, stop: PhotoStop) -> (String, Int) in
                 (stop.id, offset)
-            }
+            },
+            uniquingKeysWith: { (first: Int, _: Int) -> Int in first }
         )
         let initialUsual = UsualPlaceFinder(segmenter: self, stops: ordered + context)
         // The everyday place, even in a year a long stay or a slow travel
@@ -118,10 +119,14 @@ public struct TripSegmenter: Sendable {
         // its far place into a usual place, and a place that is only ever
         // visited on separate short trips is a frequent place, not a home:
         // both kinds of day stay out of the usual-place counts.
-        let longStays = Self.longStays(segmenter: self, stops: ordered, usual: initialUsual, home: home)
+        // The day maps behind long stays, frequent places and home days see
+        // the whole library, not only the photos being placed: home days in
+        // the context must end a stay or a visit just as they do in a full
+        // import (`TripRegrouping` passes only suggested trip photos as stops).
+        let longStays = Self.longStays(segmenter: self, stops: ordered + context, usual: initialUsual, home: home)
         let frequent = Self.frequentPlaceVisits(
             segmenter: self,
-            stops: ordered,
+            stops: ordered + context,
             usual: initialUsual,
             home: home,
             longStays: longStays
@@ -221,7 +226,6 @@ public struct TripSegmenter: Sendable {
         if !current.isEmpty { runs.append(current) }
 
         var trips: [[String]] = []
-        var tripRuns: [(index: Int, run: [PhotoStop])] = []
         var atUsualPlaceIDs = Set(ordered.indices.filter { !away[$0] }.map { ordered[$0].id })
         for run in runs {
             guard let first = run.first, let last = run.last else { continue }
@@ -230,7 +234,6 @@ public struct TripSegmenter: Sendable {
             let nextToLibraryAway = Self.lowerBound(last.date.addingTimeInterval(maximumTimeGap), in: libraryAway, inclusive: true)
                 > Self.lowerBound(first.date.addingTimeInterval(-maximumTimeGap), in: libraryAway)
             if run.count >= minimumTripItems || spansSeveralDays(run) || !usualPlaceKnown(at: first.date) || nextToLibraryAway {
-                tripRuns.append((index: trips.count, run: run))
                 trips.append(run.map(\.id))
             } else {
                 atUsualPlaceIDs.formUnion(run.map(\.id))
@@ -238,9 +241,29 @@ public struct TripSegmenter: Sendable {
         }
         var result = Result(trips: trips, atUsualPlaceIDs: atUsualPlaceIDs)
         if detectsFrequentPlaces {
-            result.frequentPlaces = frequent.photoGroups.map { (ids: [String]) -> [Int] in
-                ids.compactMap { (id: String) -> Int? in photoIndex[id] }
+            // A group holds trip photos only: a visit whose photos ended in
+            // daily life is no frequent-place visit, and a place left with too
+            // few visits that are trips is no frequent place.
+            let tripIDs: Set<String> = Set(trips.flatMap { (trip: [String]) -> [String] in trip })
+            let minimumVisits: Int = max(1, minimumFrequentPlaceVisits)
+            var groups: [[Int]] = []
+            for placeVisits in frequent.visits {
+                let tripVisits: [[String]] = placeVisits
+                    .map { (visit: [String]) -> [String] in
+                        visit.filter { (id: String) -> Bool in tripIDs.contains(id) }
+                    }
+                    .filter { (visit: [String]) -> Bool in !visit.isEmpty }
+                guard tripVisits.count >= minimumVisits else { continue }
+                let indices: [Int] = tripVisits
+                    .flatMap { (visit: [String]) -> [String] in visit }
+                    .compactMap { (id: String) -> Int? in photoIndex[id] }
+                guard !indices.isEmpty else { continue }
+                groups.append(indices.sorted())
             }
+            groups.sort { (left: [Int], right: [Int]) -> Bool in
+                (left.first ?? Int.max) < (right.first ?? Int.max)
+            }
+            result.frequentPlaces = groups
         }
         return result
     }
@@ -255,8 +278,9 @@ public struct TripSegmenter: Sendable {
     /// trip that merely passes through is no visit either: the day before or
     /// after such a one-night stay sits at another far place, not at home.
     private struct FrequentVisits {
-        /// Photo ids of each frequent place, in date order.
-        let photoGroups: [[String]]
+        /// Photo ids of each frequent place's visits, in date order, one inner
+        /// array per visit.
+        let visits: [[[String]]]
         /// Photos of the places that must not count as usual places: a place
         /// visited on separate short trips holds far less of the year than the
         /// home, so it is no everyday place.
@@ -270,7 +294,7 @@ public struct TripSegmenter: Sendable {
         home: GeoPoint?,
         longStays: [LongStay]
     ) -> FrequentVisits {
-        guard let home else { return FrequentVisits(photoGroups: [], excludedIDs: []) }
+        guard let home else { return FrequentVisits(visits: [], excludedIDs: []) }
         var pointsByDay: [Int: [GeoPoint]] = [:]
         var idsByDay: [Int: [String]] = [:]
         for stop in stops {
@@ -281,10 +305,19 @@ public struct TripSegmenter: Sendable {
             }
         }
         let allDays: [Int] = pointsByDay.keys.sorted()
-        guard !allDays.isEmpty else { return FrequentVisits(photoGroups: [], excludedIDs: []) }
+        guard let firstDay = allDays.first, let lastDay = allDays.last else {
+            return FrequentVisits(visits: [], excludedIDs: [])
+        }
+        // One median point per photo day, read by home days, stay days and the
+        // visit splits, so no day is measured twice.
+        var medianByDay: [Int: GeoPoint] = [:]
+        for day in allDays {
+            guard let points = pointsByDay[day] else { continue }
+            medianByDay[day] = median(points)
+        }
         let homeDays: Set<Int> = Set(allDays.filter { (day: Int) -> Bool in
-            guard let points = pointsByDay[day] else { return false }
-            return median(points).distance(to: home) <= segmenter.awayRadiusMeters
+            guard let point = medianByDay[day] else { return false }
+            return point.distance(to: home) <= segmenter.awayRadiusMeters
         })
 
         // Days of a long stay's venue are no visits: that is where someone
@@ -292,8 +325,8 @@ public struct TripSegmenter: Sendable {
         var stayDays = Set<Int>()
         for stay in longStays {
             stayDays.formUnion(stay.days.filter { (day: Int) -> Bool in
-                guard let points = pointsByDay[day] else { return false }
-                return median(points).distance(to: stay.centre) <= segmenter.longStayClusterRadiusMeters
+                guard let point = medianByDay[day] else { return false }
+                return point.distance(to: stay.centre) <= segmenter.longStayClusterRadiusMeters
             })
         }
 
@@ -301,7 +334,7 @@ public struct TripSegmenter: Sendable {
         var centres: [GeoPoint] = []
         var daysByPlace: [[Int]] = []
         for day in allDays where !stayDays.contains(day) {
-            let point = median(pointsByDay[day] ?? [])
+            guard let point = medianByDay[day] else { continue }
             let known: Int? = centres.firstIndex { (centre: GeoPoint) -> Bool in
                 centre.distance(to: point) <= segmenter.frequentPlaceRadiusMeters
             }
@@ -312,7 +345,7 @@ public struct TripSegmenter: Sendable {
                 daysByPlace.append([day])
             }
         }
-        guard !centres.isEmpty else { return FrequentVisits(photoGroups: [], excludedIDs: []) }
+        guard !centres.isEmpty else { return FrequentVisits(visits: [], excludedIDs: []) }
         // The homes: the everyday place, plus a second home such as the
         // parents' town, which the usual places call home on most of the days
         // spent there. A place that only holds a few separate visits is no
@@ -338,17 +371,28 @@ public struct TripSegmenter: Sendable {
         }
         func isHomeDay(_ day: Int) -> Bool {
             if homeDays.contains(day) { return true }
-            guard let points = pointsByDay[day] else { return false }
-            let point = median(points)
+            guard let point = medianByDay[day] else { return false }
             return homeCentres.contains { (centre: GeoPoint) -> Bool in point.distance(to: centre) <= segmenter.awayRadiusMeters }
         }
-        /// True when a whole day at home lies between two photo days.
+        // Home days between two days, counted once for the whole library:
+        // `homePrefix[d - firstDay]` is the number of home days before `d`.
+        var homePrefix = [Int](repeating: 0, count: lastDay - firstDay + 2)
+        for day in firstDay...lastDay {
+            let before: Int = homePrefix[day - firstDay]
+            homePrefix[day - firstDay + 1] = before + (isHomeDay(day) ? 1 : 0)
+        }
+        // A quiet stretch between two photo days at the place ends a visit
+        // just as a day at home does, so a place seen only now and then stays
+        // separate visits even when the library holds no photos at home.
+        let quietDays: Int = Int((segmenter.maximumQuietGap / 86_400).rounded(.down))
+        /// True when a whole day at home lies between two photo days, or when
+        /// the two days are further apart than the maximum quiet gap.
         func splitByHome(_ first: Int, _ last: Int) -> Bool {
             guard last - first > 1 else { return false }
-            for day in (first + 1)..<last where isHomeDay(day) { return true }
-            return false
+            if last - first > quietDays { return true }
+            return homePrefix[last - firstDay] - homePrefix[first + 1 - firstDay] > 0
         }
-        var photoGroups: [[String]] = []
+        var places: [(firstDay: Int, visits: [[String]])] = []
         var excludedIDs = Set<String>()
         for (index, days) in daysByPlace.enumerated() {
             let centre: GeoPoint = centres[index]
@@ -367,47 +411,50 @@ public struct TripSegmenter: Sendable {
                 current.append(day)
             }
             if !current.isEmpty { runs.append(current) }
+            // A night between two other far places is a pass-through.
+            func farDay(_ day: Int) -> Bool {
+                guard let point = medianByDay[day] else { return false }
+                return point.distance(to: home) > segmenter.awayRadiusMeters
+                    && point.distance(to: centre) > segmenter.frequentPlaceRadiusMeters
+            }
             let visits: [[Int]] = runs.filter { (run: [Int]) -> Bool in
                 guard let first = run.first, let last = run.last else { return false }
                 guard last - first + 1 < segmenter.maximumVisitDays else { return false }
-                // A night between two other far places is a pass-through.
-                func farDay(_ day: Int) -> Bool {
-                    guard let points = pointsByDay[day] else { return false }
-                    let point = median(points)
-                    return point.distance(to: home) > segmenter.awayRadiusMeters
-                        && point.distance(to: centre) > segmenter.frequentPlaceRadiusMeters
-                }
                 return !farDay(first - 1) && !farDay(last + 1)
             }
-            guard visits.count >= segmenter.minimumFrequentPlaceVisits else { continue }
+            let minimumVisits: Int = max(1, segmenter.minimumFrequentPlaceVisits)
+            guard visits.count >= minimumVisits else { continue }
             // Three visits within twelve months.
             let firstDays: [Int] = visits.compactMap { (run: [Int]) -> Int? in run.first }
             let windowDays = Int((segmenter.frequentPlaceWindow / 86_400).rounded(.down))
             var enoughInWindow = false
-            for start in 0...(firstDays.count - segmenter.minimumFrequentPlaceVisits) {
-                let lastIndex = start + segmenter.minimumFrequentPlaceVisits - 1
+            for start in 0...(firstDays.count - minimumVisits) {
+                let lastIndex = start + minimumVisits - 1
                 if firstDays[lastIndex] - firstDays[start] <= windowDays {
                     enoughInWindow = true
                     break
                 }
             }
             guard enoughInWindow else { continue }
-            var ids: [String] = []
+            guard let firstVisitDay = firstDays.first else { continue }
+            var visitIDs: [[String]] = []
             for run in visits {
+                var ids: [String] = []
                 for day in run { ids.append(contentsOf: idsByDay[day] ?? []) }
+                if !ids.isEmpty { visitIDs.append(ids) }
             }
-            guard !ids.isEmpty else { continue }
-            photoGroups.append(ids)
+            guard visitIDs.count >= minimumVisits else { continue }
+            places.append((firstDay: firstVisitDay, visits: visitIDs))
             // A place visited on separate short trips is no home: its days
             // must not count towards the usual places of a half-year window.
             for run in visits {
                 for day in run { excludedIDs.formUnion(idsByDay[day] ?? []) }
             }
         }
-        let orderedGroups: [[String]] = photoGroups.sorted { (left: [String], right: [String]) -> Bool in
-            (left.first ?? "") < (right.first ?? "")
+        let orderedPlaces: [(firstDay: Int, visits: [[String]])] = places.sorted { (left: (firstDay: Int, visits: [[String]]), right: (firstDay: Int, visits: [[String]])) -> Bool in
+            left.firstDay < right.firstDay
         }
-        return FrequentVisits(photoGroups: orderedGroups, excludedIDs: excludedIDs)
+        return FrequentVisits(visits: orderedPlaces.map(\.visits), excludedIDs: excludedIDs)
     }
 
     /// The photo ids of the days that belong to a long stay's venue.
@@ -520,6 +567,31 @@ public struct TripSegmenter: Sendable {
             }
         }
 
+        // The library's half-year windows, each with the usual places read
+        // once. A window outside a stay that calls the stay's place home means
+        // the person lives there at another time of the library: the stay is
+        // part of a move, not a long trip.
+        let firstBucket: Int = Int((Double(firstDay) / 30).rounded(.down))
+        let lastBucket: Int = Int((Double(lastDay) / 30).rounded(.down))
+        var windows: [(window: ClosedRange<Int>, places: [GeoPoint])] = []
+        for bucket in firstBucket...lastBucket {
+            let middle = bucket * 30 + 15
+            let window: ClosedRange<Int> = (middle - segmenter.usualPlaceWindowDays)...(middle + segmenter.usualPlaceWindowDays)
+            let date = Date(timeIntervalSince1970: (Double(middle) + 0.5) * 86_400)
+            windows.append((window: window, places: usual.places(at: date)))
+        }
+        func isUsualPlaceOutside(_ span: ClosedRange<Int>, centre: GeoPoint) -> Bool {
+            for entry in windows {
+                guard entry.window.upperBound < span.lowerBound || entry.window.lowerBound > span.upperBound else { continue }
+                if entry.places.contains(where: { (place: GeoPoint) -> Bool in
+                    place.distance(to: centre) <= segmenter.longStayClusterRadiusMeters
+                }) {
+                    return true
+                }
+            }
+            return false
+        }
+
         var stays: [LongStay] = []
         for (index, days) in daysByPlace.enumerated() {
             let centre = centres[index]
@@ -538,11 +610,13 @@ public struct TripSegmenter: Sendable {
                     guard let first = part.first, let last = part.last else { continue }
                     let span = first...last
                     guard span.count >= segmenter.minimumLongStayDays else { continue }
-                    // Where someone lives runs to the edge of the library: a
-                    // stay that covers most of it is a move, not a stay. A
-                    // stay of a few months may end with the library.
-                    let touchesEdge: Bool = first <= firstDay || last >= lastDay
-                    guard !touchesEdge || span.count <= segmenter.maximumEdgeStayDays else { continue }
+                    // A long stay longer than a few months is a move, whether
+                    // it touches the edge of the library or not: a year in one
+                    // city is where someone lived, not one long trip.
+                    guard span.count <= segmenter.maximumEdgeStayDays else { continue }
+                    // The same place called home at another time of the
+                    // library is a move as well, edge or not.
+                    guard !isUsualPlaceOutside(span, centre: centre) else { continue }
                     let counts: [Int] = part.map { (day: Int) -> Int in photosByDay[day] ?? 0 }.sorted()
                     guard !counts.isEmpty else { continue }
                     let photoDayShare = Double(part.count) / Double(span.count)

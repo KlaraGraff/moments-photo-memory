@@ -600,6 +600,6 @@ extension MediaItem {
     /// stay in the library but never ask for review: they carry no useful
     /// location or date to confirm.
     public var needsImportReview: Bool {
-        !isScreenshot && importDecision == .pending && !importReviewReasons.isEmpty
+        importDecision == .pending && !importReviewReasons.isEmpty && !isScreenshot
     }
 }

@@ -59,13 +59,31 @@ enum PhotoInfoEditing {
     }
 
     /// Moves the photo into another trip, or out of every trip.
-    static func setTrip(_ trip: Trip?, on item: MediaItem, now: Date = .now, defaults: UserDefaults = TripAssignmentLocks.store) {
+    static func setTrip(_ trip: Trip?, on item: MediaItem, now: Date = .now, defaults: UserDefaults = TripAssignmentLocks.store, logsCorrection: Bool = true) {
         guard item.trip?.id != trip?.id || item.tripID != trip?.id else { return }
+        let log: TripCorrectionSnapshotBuilder? = logsCorrection
+            ? (item.modelContext ?? trip?.modelContext).map { (context: ModelContext) -> TripCorrectionSnapshotBuilder in
+                TripCorrectionSnapshotBuilder(context: context)
+            }
+            : nil
+        let oldTrip: Trip? = item.trip
+        // Both ends of the move: the trip it leaves and the one it joins.
+        let before: [TripCorrectionSnapshot] = (log.map { (builder: TripCorrectionSnapshotBuilder) -> [TripCorrectionSnapshot] in
+            [oldTrip.map { builder.trip($0) }, trip.map { builder.trip($0) }].compactMap { $0 }
+        }) ?? []
         // Placed by hand: changing a trip's dates never moves it again.
         TripAssignmentLocks.lock(item.id, defaults: defaults)
         item.trip = trip
         item.tripID = trip?.id
         touch(item, now: now)
+        guard let log else { return }
+        let after: [TripCorrectionSnapshot] = [oldTrip.map { log.trip($0) }, trip.map { log.trip($0) }].compactMap { $0 }
+        TripCorrectionRecorder.record(
+            trip == nil ? .removePhotos : .addPhotos,
+            before: before,
+            after: after,
+            movedPhotoIDs: [item.id]
+        )
     }
 
     /// Starts a trip with this photo in it, spanning the photo's day.
@@ -76,7 +94,10 @@ enum PhotoInfoEditing {
         let date = item.effectiveCaptureDate
         let trip = Trip(name: value, startDate: date, endDate: date, updatedAt: now, updatedBy: MomentsAccount.localID)
         context.insert(trip)
-        setTrip(trip, on: item, now: now, defaults: defaults)
+        // The new trip is one `create`, not a create and a move.
+        setTrip(trip, on: item, now: now, defaults: defaults, logsCorrection: false)
+        let log = TripCorrectionSnapshotBuilder(context: context)
+        TripCorrectionRecorder.record(.create, before: [], after: [log.trip(trip)], movedPhotoIDs: [item.id])
         return trip
     }
 
@@ -85,9 +106,16 @@ enum PhotoInfoEditing {
         let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let override: String? = value.isEmpty || value == trip.name ? nil : value
         guard trip.overrideName != override else { return }
+        let log: TripCorrectionSnapshotBuilder? = trip.modelContext.map { (context: ModelContext) -> TripCorrectionSnapshotBuilder in
+            TripCorrectionSnapshotBuilder(context: context)
+        }
+        let before: [TripCorrectionSnapshot] = log.map { (builder: TripCorrectionSnapshotBuilder) -> [TripCorrectionSnapshot] in [builder.trip(trip)] } ?? []
         trip.overrideName = override
         trip.updatedAt = now
         trip.updatedBy = MomentsAccount.localID
+        let after: [TripCorrectionSnapshot] = log.map { (builder: TripCorrectionSnapshotBuilder) -> [TripCorrectionSnapshot] in [builder.trip(trip)] } ?? []
+        guard !before.isEmpty else { return }
+        TripCorrectionRecorder.record(.rename, before: before, after: after)
     }
 
     private static func touch(_ item: MediaItem, now: Date) {

@@ -163,10 +163,13 @@ public struct TripSegmenter: Sendable {
         }
 
         // A long stay is judged by what was done there, not by its length.
+        // The context holds the photos that already explain the stay, so its
+        // photos take the stay's side too: otherwise an import next to a
+        // daily-life stay finds the library's photos marked away.
         let forcedSide: [String: Bool] = {
             var sides: [String: Bool] = [:]
             for stay in longStays {
-                for stop in ordered {
+                for stop in ordered + context {
                     guard let coordinate = stop.coordinate,
                           stay.days.contains(Self.dayNumber(of: stop.date)),
                           coordinate.distance(to: stay.centre) <= longStayClusterRadiusMeters
@@ -186,7 +189,11 @@ public struct TripSegmenter: Sendable {
             .sorted { $0.date < $1.date }
         let locatedDates = located.map(\.date)
         let libraryAway = context
-            .compactMap { stop in stop.coordinate.flatMap { isAway($0, at: stop.date) ? stop.date : nil } }
+            .compactMap { stop in
+                stop.coordinate.flatMap { coordinate in
+                    (forcedSide[stop.id] ?? isAway(coordinate, at: stop.date)) ? stop.date : nil
+                }
+            }
             .sorted()
 
         let away: [Bool] = ordered.map { stop in

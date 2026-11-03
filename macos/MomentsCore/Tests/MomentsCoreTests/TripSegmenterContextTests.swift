@@ -56,6 +56,47 @@ final class TripSegmenterContextTests: XCTestCase {
         XCTAssertEqual(result.frequentPlaces.count, 1, "one frequent place")
     }
 
+    /// A 90-day stay 600 km away, sparse (1-2 photos on about 30% of its days,
+    /// mostly weekends), is daily life, so its photos in the context are no
+    /// away photos. Two screenshots without GPS on one of its days copy that
+    /// daily life and must not become a trip.
+    func testScreenshotsNextToADailyLifeStayInContextStayDaily() {
+        let away = GeoPoint(latitude: 47.12, longitude: 13.40)
+        let stayDays: [Int] = (0..<90).filter { (day: Int) -> Bool in
+            day % 7 == 5 || day % 7 == 6 || day % 10 == 2
+        }
+        var context: [PhotoStop] = homeDays(-200..<0)
+        for (count, day) in stayDays.enumerated() {
+            let photos: Int = 1 + count % 2
+            for index in 0..<photos {
+                context.append(
+                    PhotoStop(
+                        id: String(format: "stay-%03d-%d", day, index),
+                        date: date(day: day, hour: 9 + Double(index) * 9),
+                        coordinate: GeoPoint(
+                            latitude: away.latitude + Double(index) * 0.01,
+                            longitude: away.longitude
+                        )
+                    )
+                )
+            }
+        }
+        context += homeDays(90..<290)
+        guard let stayDay = stayDays.first(where: { (day: Int) -> Bool in day % 7 == 6 }) else {
+            return XCTFail("the stay holds weekend days")
+        }
+        let stops: [PhotoStop] = (0..<2).map { (index: Int) -> PhotoStop in
+            PhotoStop(
+                id: String(format: "screen-%03d-%d", stayDay, index),
+                date: date(day: stayDay, hour: 10 + Double(index))
+            )
+        }
+        let result: TripSegmenter.Result = TripSegmenter().segment(stops, context: context)
+
+        XCTAssertTrue(result.trips.isEmpty, "the screenshots copy daily life from the stay")
+        XCTAssertEqual(result.atUsualPlaceIDs, Set(stops.map { (stop: PhotoStop) -> String in stop.id }))
+    }
+
     // MARK: - Helpers
 
     private func homeDays(_ range: Range<Int>) -> [PhotoStop] {

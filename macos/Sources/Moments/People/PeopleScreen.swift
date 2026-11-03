@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import ImageIO
+import MomentsCore
 import Observation
 import SwiftData
 import SwiftUI
@@ -29,6 +30,12 @@ struct PeopleFaceSnapshot: Sendable {
     /// The photo the face was found in. Empty means unknown, which turns off
     /// the one-face-per-photo rule for that face.
     var mediaID: String = ""
+    /// Detector capture quality, 0...1. Unknown counts as sharp, so a snapshot
+    /// built without a quality keeps the grouping it had.
+    var quality: Double = 1
+    /// The photo's capture day in the local calendar, as days since the
+    /// reference date.
+    var day: Double? = nil
 }
 
 struct PeoplePersonSnapshot: Sendable {
@@ -46,6 +53,8 @@ struct PeopleFaceAssignment: Sendable {
 struct PeopleAssignmentResult: Sendable {
     let assignments: [PeopleFaceAssignment]
     let clusteringStopped: Bool
+    /// The planner's "same person?" questions, shown and answered by later tasks.
+    var questions: [PeoplePlannerQuestion] = []
 }
 
 struct PeopleStoreAssignmentSnapshot: Sendable {
@@ -251,7 +260,7 @@ final class PeopleScanController {
             }.value
             let assignmentTask = Task.detached(priority: .utility) {
                 guard !Task.isCancelled else { return PeopleAssignmentResult(assignments: [], clusteringStopped: true) }
-                return PeopleScanController.makeAssignmentsResult(faces: snapshot.faces, people: snapshot.people)
+                return PeopleScanController.makeAssignmentsResult(faces: snapshot.faces, people: snapshot.people, declinedPairs: [])
             }
             let assignments = await withTaskCancellationHandler(operation: {
                 await assignmentTask.value
@@ -268,6 +277,9 @@ final class PeopleScanController {
             try await Task.detached(priority: .utility) {
                 try await store.apply(assignments: assignments.assignments, snapshots: snapshot.faces)
             }.value
+            // The grouping version moves only after the write-back succeeded,
+            // so an interrupted run regroups on the next start.
+            UserDefaults.standard.set(PeopleScanStore.groupingVersion, forKey: PeopleScanStore.groupingVersionKey)
             guard activeScanID == scanID else { return }
             activePipeline = nil
             state = .finished
@@ -295,222 +307,71 @@ final class PeopleScanController {
         Task { await coordinator.cancel() }
     }
 
+    /// Every face is grouped by `PeopleAssignmentPlanner.plan` on every run, so
+    /// a person stays one card across imports. The plan reads the confirmed
+    /// faces themselves, so `people` is only there for its callers. A face whose
+    /// embedding does not decode keeps its assignment and takes no part in the
+    /// plan.
     nonisolated static func makeAssignmentsResult(
         faces: [PeopleFaceSnapshot],
         people: [PeoplePersonSnapshot],
-        shouldStop: (@Sendable () -> Bool)? = nil,
-        chunkSize: Int = 3_000
+        declinedPairs: Set<String> = [],
+        shouldStop: (@Sendable () -> Bool)? = nil
     ) -> PeopleAssignmentResult {
-        let confirmed = people.compactMap { person -> (id: String, centroid: [Float])? in
-            let vectors = faces.filter { $0.personID == person.id && $0.confirmed && $0.assignmentSource == "user" }.compactMap { decode($0.embedding) }
-            guard !vectors.isEmpty else { return nil }
-            return (person.id, FaceClustering.centroid(of: vectors))
+        let originalAssignments: [PeopleFaceAssignment] = faces.map { (face: PeopleFaceSnapshot) -> PeopleFaceAssignment in
+            PeopleFaceAssignment(
+                id: face.id,
+                personID: face.personID,
+                clusterID: face.clusterID,
+                confirmed: face.confirmed,
+                assignmentSource: face.assignmentSource
+            )
         }
-        let originalAssignments = faces.map { PeopleFaceAssignment(id: $0.id, personID: $0.personID, clusterID: $0.clusterID, confirmed: $0.confirmed, assignmentSource: $0.assignmentSource) }
-        var assignments = originalAssignments
-        for index in assignments.indices where assignments[index].personID == nil {
-            guard let vector = decode(faces[index].embedding) else { continue }
-            let rejected = Set(faces[index].rejectedPersonIDs.split(separator: ",").map(String.init))
-            if let personID = FaceClustering.assignIncrementally(vector, to: confirmed, rejecting: rejected) {
-                assignments[index].personID = personID
-                assignments[index].clusterID = nil
-                assignments[index].confirmed = false
-                assignments[index].assignmentSource = "auto"
-            }
-        }
-        let pendingIndices = assignments.indices
-            .filter { assignments[$0].personID == nil && assignments[$0].clusterID?.hasPrefix("pending-") == true && decode(faces[$0].embedding) != nil }
-            .sorted { faces[$0].createdAt > faces[$1].createdAt }
-        let existingClusters = Dictionary(grouping: assignments.indices.filter {
-            assignments[$0].personID == nil && assignments[$0].clusterID?.hasPrefix("cluster-") == true
-        }, by: { assignments[$0].clusterID! })
-        // Average cosine distance to a cluster equals 1 - v·mean(members) for
-        // unit vectors, so each cluster needs one mean vector, computed once.
-        func unit(_ vector: [Float]) -> [Float] {
-            let norm = sqrt(vector.reduce(Float.zero) { $0 + $1 * $1 })
-            return norm > 0 ? vector.map { $0 / norm } : vector
-        }
-        var clusterMeans: [(id: String, mean: [Float])] = []
-        for (clusterID, members) in existingClusters {
-            let vectors = members.compactMap { decode(faces[$0].embedding) }.map(unit)
-            guard let dimension = vectors.first?.count else { continue }
-            var sum = [Float](repeating: 0, count: dimension)
-            for vector in vectors where vector.count == dimension {
-                for d in 0..<dimension { sum[d] += vector[d] }
-            }
-            clusterMeans.append((clusterID, sum.map { $0 / Float(vectors.count) }))
+        var plannerFaces: [PeoplePlannerFace] = []
+        var plannerIndices: [Int] = []
+        plannerFaces.reserveCapacity(faces.count)
+        plannerIndices.reserveCapacity(faces.count)
+        for (index, face) in faces.enumerated() {
+            // The planner needs a real vector; an empty embedding is as
+            // unusable as one that does not decode.
+            guard let vector = decode(face.embedding), !vector.isEmpty else { continue }
+            let rejected: Set<String> = Set(face.rejectedPersonIDs.split(separator: ",").map(String.init))
+            // A face without a photo gets a photo id of its own, so the
+            // one-face-per-photo rule never pairs it with another face.
+            let photoID: String = face.mediaID.isEmpty ? "face:\(face.id)" : face.mediaID
+            let confirmed: Bool = face.confirmed || face.assignmentSource == "user"
+            plannerFaces.append(PeoplePlannerFace(
+                id: face.id,
+                embedding: vector,
+                quality: face.quality,
+                photoID: photoID,
+                day: face.day,
+                personID: face.personID,
+                isUserConfirmed: confirmed,
+                rejectedPersonIDs: rejected
+            ))
+            plannerIndices.append(index)
         }
         let stop = shouldStop ?? { Task.isCancelled || FaceClustering.isPowerPaused }
-        var clusteringIndices: [Int] = []
-        for (position, index) in pendingIndices.enumerated() {
-            if position % 64 == 0, stop() {
-                return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
-            }
-            guard let vector = decode(faces[index].embedding).map(unit) else { continue }
-            var best: (id: String, distance: Float)?
-            for cluster in clusterMeans where cluster.mean.count == vector.count {
-                let distance = 1 - zip(vector, cluster.mean).reduce(Float.zero) { $0 + $1.0 * $1.1 }
-                if distance < FaceClustering.defaultThreshold, distance < (best?.distance ?? .infinity) {
-                    best = (cluster.id, distance)
-                }
-            }
-            if let best {
-                assignments[index].clusterID = best.id
-            } else {
-                clusteringIndices.append(index)
-            }
+        guard let plan = PeopleAssignmentPlanner.plan(
+            plannerFaces,
+            declinedPairs: declinedPairs,
+            shouldStop: stop
+        ) else {
+            // Stopped: nothing is regrouped, the next run starts over.
+            return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
         }
-        // Group the faces nobody has named yet in rounds of at most `chunkSize`
-        // (about 18 MB of distance matrix at 3,000 faces). Each round clusters
-        // its chunk, then pulls close faces of the later chunks into the new
-        // groups, so a whole import is grouped in one pass and the leftover
-        // faces shrink round by round. With at most one chunk left this is
-        // exactly the single pass it used to be.
-        let roundSize = max(chunkSize, 1)
-        while !clusteringIndices.isEmpty {
-            let chunk = Array(clusteringIndices.prefix(roundSize))
-            let vectors = chunk.compactMap { decode(faces[$0].embedding) }
-            guard vectors.count == chunk.count else {
-                separateSamePhotoFaces(&assignments, faces: faces)
-                return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false)
-            }
-            let result = FaceClustering.averageLinkResult(vectors, shouldStop: stop)
-            if result.stopped {
-                return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
-            }
-            var newClusterMeans: [(id: String, mean: [Float])] = []
-            for cluster in result.clusters {
-                guard let first = cluster.first else { continue }
-                let firstIndex = chunk[first]
-                let clusterID = "cluster-\(assignments[firstIndex].id)"
-                for member in cluster { assignments[chunk[member]].clusterID = clusterID }
-                if let mean = meanOfUnitVectors(cluster.map { vectors[$0] }) {
-                    newClusterMeans.append((clusterID, mean))
-                }
-            }
-            let rest = Array(clusteringIndices.dropFirst(chunk.count))
-            guard !rest.isEmpty else { break }
-            let next = assignToNearestNewCluster(&assignments, faces: faces, indices: rest, clusterMeans: newClusterMeans, stop: stop)
-            if next.stopped {
-                return PeopleAssignmentResult(assignments: originalAssignments, clusteringStopped: true)
-            }
-            clusteringIndices = next.left
+        var assignments = originalAssignments
+        for (position, plannerIndex) in plannerIndices.enumerated() {
+            let planned = plan.assignments[position]
+            // A face the owner confirmed keeps its person from the start.
+            guard !plannerFaces[position].isUserConfirmed else { continue }
+            assignments[plannerIndex].personID = planned.personID
+            assignments[plannerIndex].clusterID = planned.clusterID
+            assignments[plannerIndex].confirmed = false
+            assignments[plannerIndex].assignmentSource = "auto"
         }
-        separateSamePhotoFaces(&assignments, faces: faces)
-        return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false)
-    }
-
-    nonisolated private static func unitVector(_ vector: [Float]) -> [Float] {
-        let norm = sqrt(vector.reduce(Float.zero) { $0 + $1 * $1 })
-        return norm > 0 ? vector.map { $0 / norm } : vector
-    }
-
-    /// Mean of the unit vectors, the same averaging the existing unnamed groups
-    /// get above: unit vectors added up and divided by their count.
-    nonisolated private static func meanOfUnitVectors(_ vectors: [[Float]]) -> [Float]? {
-        let unitVectors = vectors.map(unitVector)
-        guard let dimension = unitVectors.first?.count else { return nil }
-        var sum = [Float](repeating: 0, count: dimension)
-        var count = 0
-        for vector in unitVectors where vector.count == dimension {
-            for d in 0..<dimension { sum[d] += vector[d] }
-            count += 1
-        }
-        guard count > 0 else { return nil }
-        return sum.map { $0 / Float(count) }
-    }
-
-    /// The rule the first step above already applies to existing groups: a face
-    /// joins the nearest of this round's new groups when its cosine distance to
-    /// that group's mean is below the threshold. Faces that stay on their own
-    /// come back in their order for the next round.
-    nonisolated private static func assignToNearestNewCluster(
-        _ assignments: inout [PeopleFaceAssignment],
-        faces: [PeopleFaceSnapshot],
-        indices: [Int],
-        clusterMeans: [(id: String, mean: [Float])],
-        stop: @Sendable () -> Bool
-    ) -> (left: [Int], stopped: Bool) {
-        var left: [Int] = []
-        for (position, index) in indices.enumerated() {
-            if position % 64 == 0, stop() { return (left, true) }
-            guard let vector = decode(faces[index].embedding).map(unitVector) else {
-                left.append(index)
-                continue
-            }
-            var best: (id: String, distance: Float)?
-            for cluster in clusterMeans where cluster.mean.count == vector.count {
-                var dot: Float = 0
-                for d in 0..<vector.count { dot += vector[d] * cluster.mean[d] }
-                let distance: Float = 1 - dot
-                if distance < FaceClustering.defaultThreshold, distance < (best?.distance ?? .infinity) {
-                    best = (cluster.id, distance)
-                }
-            }
-            if let best {
-                assignments[index].clusterID = best.id
-            } else {
-                left.append(index)
-            }
-        }
-        return (left, false)
-    }
-
-    /// One person appears at most once in a photo, so two faces from the same
-    /// photo never share a suggested person or an unnamed group. In each group
-    /// the face closest to the group's mean stays; the others move to groups of
-    /// their own. Faces the user confirmed are never moved.
-    nonisolated static func separateSamePhotoFaces(_ assignments: inout [PeopleFaceAssignment], faces: [PeopleFaceSnapshot]) {
-        // The same faces that write-back never touches: anything confirmed or
-        // set by the user.
-        func isUserConfirmed(_ index: Int) -> Bool {
-            assignments[index].confirmed || assignments[index].assignmentSource == "user"
-        }
-        func groupKey(_ index: Int) -> String? {
-            guard !faces[index].mediaID.isEmpty else { return nil }
-            if let personID = assignments[index].personID { return "person:\(personID)" }
-            if let clusterID = assignments[index].clusterID, !clusterID.hasPrefix("pending-") { return "cluster:\(clusterID)" }
-            return nil
-        }
-        func unit(_ vector: [Float]) -> [Float] {
-            let norm = sqrt(vector.reduce(Float.zero) { $0 + $1 * $1 })
-            return norm > 0 ? vector.map { $0 / norm } : vector
-        }
-        var groups: [String: [Int]] = [:]
-        for index in assignments.indices {
-            if let key = groupKey(index) { groups[key, default: []].append(index) }
-        }
-        for members in groups.values {
-            let byPhoto = Dictionary(grouping: members, by: { faces[$0].mediaID })
-            guard byPhoto.values.contains(where: { $0.count > 1 }) else { continue }
-            let vectors = Dictionary(uniqueKeysWithValues: members.compactMap { index in decode(faces[index].embedding).map { (index, unit($0)) } })
-            // Confirmed faces define the person when there are any.
-            let anchors = members.filter(isUserConfirmed).isEmpty ? members : members.filter(isUserConfirmed)
-            let anchorVectors = anchors.compactMap { vectors[$0] }
-            var mean: [Float] = []
-            if let dimension = anchorVectors.first?.count {
-                mean = [Float](repeating: 0, count: dimension)
-                for vector in anchorVectors where vector.count == dimension {
-                    for d in 0..<dimension { mean[d] += vector[d] }
-                }
-            }
-            func similarity(_ index: Int) -> Float {
-                guard let vector = vectors[index], vector.count == mean.count else { return -.infinity }
-                return zip(vector, mean).reduce(Float.zero) { $0 + $1.0 * $1.1 }
-            }
-            for (_, photoFaces) in byPhoto where photoFaces.count > 1 {
-                let confirmed = photoFaces.filter(isUserConfirmed)
-                let keep: Set<Int> = confirmed.isEmpty
-                    ? [photoFaces.max { (similarity($0), faces[$1].id) < (similarity($1), faces[$0].id) }!]
-                    : Set(confirmed)
-                for index in photoFaces where !keep.contains(index) {
-                    assignments[index].personID = nil
-                    assignments[index].clusterID = "cluster-solo-\(assignments[index].id)"
-                    assignments[index].confirmed = false
-                    assignments[index].assignmentSource = "auto"
-                }
-            }
-        }
+        return PeopleAssignmentResult(assignments: assignments, clusteringStopped: false, questions: plan.questions)
     }
 
     nonisolated static func makeAssignments(faces: [PeopleFaceSnapshot], people: [PeoplePersonSnapshot]) -> [PeopleFaceAssignment] {
@@ -710,7 +571,13 @@ struct PeopleMediaDescriptor: Sendable {
 /// is committed independently so cancellation can resume at the next item.
 @ModelActor
 actor PeopleScanStore {
-    func hasWork() throws -> Bool {
+    /// Bumped when the grouping rule changes: every existing library regroups
+    /// once, so the new rule reaches photos that were scanned before it.
+    static let groupingVersionKey = "moments.people.groupingVersion"
+    static let groupingVersion = 2
+
+    func hasWork(defaults: UserDefaults = .standard) throws -> Bool {
+        if defaults.integer(forKey: Self.groupingVersionKey) < Self.groupingVersion { return true }
         var recordsDescriptor = FetchDescriptor<FaceScanRecord>()
         recordsDescriptor.propertiesToFetch = [\.id]
         let completedIDs = Set(try modelContext.fetch(recordsDescriptor).map(\.id))
@@ -728,12 +595,12 @@ actor PeopleScanStore {
     /// from one photo, as groups made before the one-face-per-photo rule can.
     static func hasSamePhotoSuggestions(_ faces: [FaceObservation]) -> Bool {
         var seen = Set<String>()
-        // Matches separateSamePhotoFaces: faces without a photo and faces the
-        // write-back never moves can't make work.
+        // Faces without a photo and faces the write-back never moves can't
+        // make work; a loose face is on its own, so it is no group either.
         for face in faces where !face.mediaID.isEmpty && !face.confirmed && face.assignmentSource != "user" {
             let group: String
             if let personID = face.personID { group = "person:\(personID)" }
-            else if let clusterID = face.clusterID, !clusterID.hasPrefix("pending-") { group = "cluster:\(clusterID)" }
+            else if let clusterID = face.clusterID, !clusterID.hasPrefix("pending-"), !clusterID.hasPrefix("loose-") { group = "cluster:\(clusterID)" }
             else { continue }
             if !seen.insert("\(group)|\(face.mediaID)").inserted { return true }
         }
@@ -795,19 +662,31 @@ actor PeopleScanStore {
         // inserted earlier from its cache, hiding edits made on the main context.
         let modelContext = ModelContext(modelContainer)
         var descriptor = FetchDescriptor<FaceObservation>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
-        descriptor.propertiesToFetch = [\.id, \.mediaID, \.embedding, \.personID, \.clusterID, \.confirmed, \.rejectedPersonIDs, \.assignmentSource, \.createdAt, \.updatedAt]
-        let faces = try modelContext.fetch(descriptor).map {
-            PeopleFaceSnapshot(
-                id: $0.id,
-                personID: $0.personID,
-                clusterID: $0.clusterID,
-                confirmed: $0.confirmed,
-                assignmentSource: $0.assignmentSource,
-                rejectedPersonIDs: $0.rejectedPersonIDs,
-                embedding: $0.embedding,
-                createdAt: $0.createdAt,
-                updatedAt: $0.updatedAt,
-                mediaID: $0.mediaID
+        descriptor.propertiesToFetch = [\.id, \.mediaID, \.embedding, \.personID, \.clusterID, \.confirmed, \.rejectedPersonIDs, \.assignmentSource, \.createdAt, \.updatedAt, \.quality]
+        // One fetch for the capture dates the planner's day rule needs.
+        var itemsDescriptor = FetchDescriptor<MediaItem>()
+        itemsDescriptor.propertiesToFetch = [\.id, \.captureDate]
+        var captureDates: [String: Date] = [:]
+        for item in try modelContext.fetch(itemsDescriptor) {
+            if let captureDate = item.captureDate { captureDates[item.id] = captureDate }
+        }
+        let faces: [PeopleFaceSnapshot] = try modelContext.fetch(descriptor).map { (face: FaceObservation) -> PeopleFaceSnapshot in
+            let date = captureDates[face.mediaID]
+            return PeopleFaceSnapshot(
+                id: face.id,
+                personID: face.personID,
+                clusterID: face.clusterID,
+                confirmed: face.confirmed,
+                assignmentSource: face.assignmentSource,
+                rejectedPersonIDs: face.rejectedPersonIDs,
+                embedding: face.embedding,
+                createdAt: face.createdAt,
+                updatedAt: face.updatedAt,
+                mediaID: face.mediaID,
+                quality: face.quality,
+                day: date.map { (date: Date) -> Double in
+                    (date.timeIntervalSinceReferenceDate + Double(TimeZone.current.secondsFromGMT(for: date))) / 86_400
+                }
             )
         }
         var peopleDescriptor = FetchDescriptor<Person>()

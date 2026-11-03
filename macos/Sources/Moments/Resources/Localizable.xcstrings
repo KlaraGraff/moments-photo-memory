@@ -15130,6 +15130,578 @@
           }
         }
       }
+    },
+    "Reorganize all memories" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle Erinnerungen neu ordnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reorganize all memories"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整理全部回忆"
+          }
+        }
+      }
+    },
+    "Regroup people" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personen neu gruppieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Regroup people"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新归类人物"
+          }
+        }
+      }
+    },
+    "Fill in places again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orte erneut ergänzen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fill in places again"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新补全地点"
+          }
+        }
+      }
+    },
+    "Rearrange chapters" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kapitel neu anordnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rearrange chapters"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新编排篇章"
+          }
+        }
+      }
+    },
+    "Rearranges chapters, fills in places, finds bursts and regroups people, one after another." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ordnet Kapitel neu, ergänzt Orte, findet Serien und gruppiert Personen neu – nacheinander."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rearranges chapters, fills in places, finds bursts and regroups people, one after another."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "依次重新编排篇章、补全地点、找连拍、归类人物。"
+          }
+        }
+      }
+    },
+    "Groups all faces again by the current rules and asks the “same person?” questions again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gruppiert alle Gesichter nach den aktuellen Regeln neu und stellt die Fragen „Dieselbe Person?“ erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Groups all faces again by the current rules and asks the “same person?” questions again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把所有的脸按现在的规则重新分一次组，再重新列出「这两组是同一个人吗？」。"
+          }
+        }
+      }
+    },
+    "Looks up names for places that have none yet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sucht Namen für Orte, die noch keinen haben."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Looks up names for places that have none yet."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把还没有名字的地点重新查一遍名字。"
+          }
+        }
+      }
+    },
+    "Regroups trips, long stays, frequent places and big days by the latest rules." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gruppiert Reisen, längere Aufenthalte, häufige Orte und große Tage nach den neuesten Regeln neu."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Regroups trips, long stays, frequent places and big days by the latest rules."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按最新规则把旅程、长住、常去地点和大日子重新分一次。"
+          }
+        }
+      }
+    },
+    "What you confirmed on each page stays: named people, chapters you changed, stacks you split." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Was du auf jeder Seite bestätigt hast, bleibt: benannte Personen, geänderte Kapitel, getrennte Stapel."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What you confirmed on each page stays: named people, chapters you changed, stacks you split."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不会动：各页你确定过的内容（起过名字的人、改过的篇章、手动拆开的连拍等）。"
+          }
+        }
+      }
+    },
+    "Named people and faces you confirmed stay, and so do your yes/no answers. Hidden people, skipped questions and loose faces are regrouped." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Benannte Personen, bestätigte Gesichter und deine Ja/Nein-Antworten bleiben. Ausgeblendete Personen, übersprungene Fragen und einzelne Gesichter werden neu gruppiert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Named people and faces you confirmed stay, and so do your yes/no answers. Hidden people, skipped questions and loose faces are regrouped."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不会动：起过名字的人和你确认过的脸、答过「是/不是」的两组。隐藏的人、先跳过的问题、零散的脸会重新整理。"
+          }
+        }
+      }
+    },
+    "Place names you typed stay as they are." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ortsnamen, die du eingegeben hast, bleiben."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Place names you typed stay as they are."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不会动：你手动改过的地点名字。"
+          }
+        }
+      }
+    },
+    "Chapters you renamed, adjusted, or gave a cover or memory stay, and so do photos you moved by hand. Big days you deleted are considered again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kapitel, die du umbenannt, angepasst oder mit Titelbild oder Erinnerung versehen hast, bleiben, ebenso von Hand verschobene Fotos. Gelöschte große Tage werden erneut geprüft."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chapters you renamed, adjusted, or gave a cover or memory stay, and so do photos you moved by hand. Big days you deleted are considered again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不会动：改过名字、手动调整过、加过封面或回忆的篇章；手动放进或移出的照片。你删掉的大日子也会重新考虑。"
+          }
+        }
+      }
+    },
+    "Look up every place again (about one a second; slow with many places)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle Orte erneut nachschlagen (etwa einer pro Sekunde; bei vielen Orten dauert es lange)"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Look up every place again (about one a second; slow with many places)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所有地点都重新查名字（每秒约 1 个，地点多时要很久）"
+          }
+        }
+      }
+    },
+    "You can reorganize once the import has finished" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nach dem Import kannst du neu ordnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can reorganize once the import has finished"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入完成后可以整理"
+          }
+        }
+      }
+    },
+    "1/4 Arranging chapters…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1/4 Kapitel werden angeordnet…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1/4 Arranging chapters…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1/4 正在编排篇章…"
+          }
+        }
+      }
+    },
+    "2/4 Filling in places…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2/4 Orte werden ergänzt…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2/4 Filling in places…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2/4 正在补全地点…"
+          }
+        }
+      }
+    },
+    "3/4 Looking for bursts…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "3/4 Serienbilder werden gesucht…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "3/4 Looking for bursts…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "3/4 正在找连拍…"
+          }
+        }
+      }
+    },
+    "4/4 Regrouping people…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "4/4 Personen werden gruppiert…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "4/4 Regrouping people…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "4/4 正在归类人物…"
+          }
+        }
+      }
+    },
+    "Arranging chapters…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kapitel werden angeordnet…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arranging chapters…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在编排篇章…"
+          }
+        }
+      }
+    },
+    "Filling in places…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orte werden ergänzt…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filling in places…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在补全地点…"
+          }
+        }
+      }
+    },
+    "Regrouping people…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personen werden gruppiert…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Regrouping people…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在归类人物…"
+          }
+        }
+      }
+    },
+    "Finished" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fertig"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finished"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整理好了"
+          }
+        }
+      }
+    },
+    "Stopped" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Angehalten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stopped"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已停下，没整理完的部分保持原样"
+          }
+        }
+      }
+    },
+    "Could not finish" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Konnte nicht abgeschlossen werden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not finish"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没能整理完"
+          }
+        }
+      }
+    },
+    "Start" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Starten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始整理"
+          }
+        }
+      }
+    },
+    "Stop" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anhalten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停下"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

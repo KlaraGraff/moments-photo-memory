@@ -1030,6 +1030,7 @@ private struct TripShelfView: View {
                     .help(String(localized: "New chapter"))
                     .accessibilityIdentifier("trips.new")
                 }
+                ToolbarItem(placement: .primaryAction) { ReorganizeToolbarButton(kind: .chapters) }
             }
             .onAppear {
                 if let returnTripID { proxy.scrollTo(returnTripID, anchor: .center) }

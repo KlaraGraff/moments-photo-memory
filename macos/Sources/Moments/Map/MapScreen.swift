@@ -131,6 +131,9 @@ struct MapScreen: View {
         mapArea
         .compactLibraryFilters()
         .navigationTitle("Map")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) { ReorganizeToolbarButton(kind: .places) }
+        }
         #if DEBUG
         .onAppear {
             PageProbe.shellReady(token: PageProbe.phaseToken)

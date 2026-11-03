@@ -533,9 +533,17 @@ enum MarqueeProbe {
     private static var intervals: [CFTimeInterval] = []
     private static var selectionChanges = 0
     private static var reports = 0
-    /// One line per press that reached `begin`, so a drag that never ends
-    /// still says what the press saw and which mode it chose.
+    /// The number of the last press that reached `begin`. It runs for the
+    /// whole app run and is never reset, so every line says which press it
+    /// belongs to.
+    private static var pressCount = 0
+    /// Every press line written so far, oldest first. `marquee-presses.txt`
+    /// always holds all of them, so a drag that never reached `begin` shows
+    /// as a missing line instead of a missing log.
     private static var pressLines: [String] = []
+    /// How many of `pressLines` an earlier report already carried. A report
+    /// gets only the lines after this index.
+    private static var reportedPressLines = 0
     /// Where the last autoscroll step left the view, and how often the view
     /// was somewhere else by the next frame (something scrolled it back).
     private static var autoscrolledTo: CGFloat?
@@ -544,6 +552,9 @@ enum MarqueeProbe {
 
     static func dragStarted() {
         guard folder != nil else { return }
+        // Says that this press became a drag; a press with no such line
+        // stopped before the drag began.
+        appendPressLine("press \(pressCount): drag started")
         lastFrame = 0
         intervals = []
         selectionChanges = 0
@@ -586,20 +597,31 @@ enum MarqueeProbe {
         return "[" + names.joined(separator: "+") + "]"
     }
 
-    /// Records how one press of the marquee decided its mode. The lines so
-    /// far are rewritten at once, so a press whose drag never reaches
-    /// `finish` still leaves a trace in `marquee-presses.txt`.
-    static func pressBegan(eventType: String, eventFlags: String, keyboardFlags: String, mode: String) {
+    /// Appends one line to the press log and rewrites `marquee-presses.txt`
+    /// at once, so the file always holds every press line so far even when
+    /// a drag never reaches `finish`.
+    private static func appendPressLine(_ line: String) {
         guard let folder else { return }
-        let number = pressLines.count + 1
-        let line = "press \(number): event \(eventType), event flags \(eventFlags), keyboard flags \(keyboardFlags), mode \(mode)"
         pressLines.append(line)
         let text = pressLines.joined(separator: "\n") + "\n"
         try? text.write(to: folder.appending(path: "marquee-presses.txt"), atomically: true, encoding: .utf8)
     }
 
+    /// Records how one press of the marquee decided its mode. The lines so
+    /// far are rewritten at once, so a press whose drag never reaches
+    /// `finish` still leaves a trace in `marquee-presses.txt`.
+    static func pressBegan(eventType: String, eventFlags: String, keyboardFlags: String, mode: String) {
+        guard folder != nil else { return }
+        pressCount += 1
+        let line = "press \(pressCount): event \(eventType), event flags \(eventFlags), keyboard flags \(keyboardFlags), mode \(mode)"
+        appendPressLine(line)
+    }
+
     static func dragEnded(selected: Int, scrolledTo offset: CGFloat, uncounted: [String]) {
         guard let folder else { return }
+        // Says how the drag ended and what it left selected; a press whose
+        // "drag started" line has no matching line here never ended.
+        appendPressLine("press \(pressCount): ended, selected \(selected)")
         reports += 1
         let frame = 1.0 / 60.0
         let sorted = intervals.sorted()
@@ -618,10 +640,12 @@ enum MarqueeProbe {
         text += String(format: "  selected %d photos, %d selection changes, scrolled to %.0f pt\n", selected, selectionChanges, offset)
         text += String(format: "  scrolled back by something else: %d times, worst %.0f pt\n", snapBacks, worstSnapBack)
         text += "  inside the rectangle but not counted: \(uncounted.count)\(uncounted.isEmpty ? "" : " " + uncounted.joined(separator: ", "))\n"
-        for line in pressLines {
+        // Only the lines added since the previous report: earlier ones are
+        // already in that report, and the press file keeps them all.
+        for line in pressLines[reportedPressLines...] {
             text += "\(line)\n"
         }
-        pressLines = []
+        reportedPressLines = pressLines.count
         text += MainThreadSampler.stopAndReport()
         try? text.write(to: folder.appending(path: "marquee-report-\(reports).txt"), atomically: true, encoding: .utf8)
     }

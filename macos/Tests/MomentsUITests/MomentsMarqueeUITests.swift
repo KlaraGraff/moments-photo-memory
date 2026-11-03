@@ -192,12 +192,17 @@ final class MomentsMarqueeUITests: XCTestCase {
         XCTAssertGreaterThan(expected.count, 1)
 
         // A plain drag selects every photo the rectangle touches, and only those.
+        // The press log's line count now lets the failure messages below show
+        // just the lines this drag added.
+        let plainPressCount: Int = marqueePressLineCount(folder: folder)
         start.click(forDuration: 0.05, thenDragTo: point(app, x: endPoint.x, y: endPoint.y))
+        let plainLog: String = marqueePressLog(folder: folder, since: plainPressCount)
         for photo in visible {
-            let shouldBeSelected = expected.contains { $0.element.identifier == photo.element.identifier }
-            XCTAssertEqual(photo.element.value as? String, shouldBeSelected ? "Selected" : "Not selected", "\(photo.element.identifier) after the drag")
+            let shouldBeSelected: Bool = expected.contains { $0.element.identifier == photo.element.identifier }
+            let expectedValue: String = shouldBeSelected ? "Selected" : "Not selected"
+            XCTAssertEqual(photo.element.value as? String, expectedValue, "\(photo.element.identifier) after the drag\(plainLog)")
         }
-        XCTAssertEqual(selectionCount(app), String(expected.count))
+        XCTAssertEqual(selectionCount(app), String(expected.count), "The plain drag did not select \(expected.count) photos\(marqueePressLog(folder: folder, since: plainPressCount))")
         capture(app, named: "\(prefix)-01-dragged-evidence")
 
         // Command-drag over the first photo alone flips just that one.
@@ -205,28 +210,24 @@ final class MomentsMarqueeUITests: XCTestCase {
         // Far enough after the drag above that this press is not read as a
         // second click of it.
         pauseLongerThanADoubleClick()
-        // Empty the press log first: after this drag, a missing file means the
-        // press never reached `begin`, not that an earlier drag wrote nothing.
-        // Earlier presses stay in their own marquee-report files.
-        if let folder {
-            let presses: String = URL(fileURLWithPath: folder).appending(path: "marquee-presses.txt").path
-            try? FileManager.default.removeItem(atPath: presses)
-        }
+        // The press log keeps every line for the whole run; its line count
+        // says which lines this drag adds.
+        let commandPressCount: Int = marqueePressLineCount(folder: folder)
         XCUIElement.perform(withKeyModifiers: .command) {
             start.click(forDuration: 0.05, thenDragTo: firstCentre)
         }
         let flipped: String? = value(of: first.element, becomes: "Not selected")
-        let commandLog: String = marqueePressLog(folder: folder)
-        XCTAssertEqual(flipped, "Not selected", "Command-drag did not flip the photo\(commandLog)")
-        XCTAssertEqual(value(of: target.element, becomes: "Selected"), "Selected", "Command-drag dropped a photo it did not touch")
+        XCTAssertEqual(flipped, "Not selected", "Command-drag did not flip the photo\(marqueePressLog(folder: folder, since: commandPressCount))")
+        XCTAssertEqual(value(of: target.element, becomes: "Selected"), "Selected", "Command-drag dropped a photo it did not touch\(marqueePressLog(folder: folder, since: commandPressCount))")
 
         // Shift-drag adds it back and keeps the rest.
         pauseLongerThanADoubleClick()
+        let shiftPressCount: Int = marqueePressLineCount(folder: folder)
         XCUIElement.perform(withKeyModifiers: .shift) {
             start.click(forDuration: 0.05, thenDragTo: firstCentre)
         }
-        XCTAssertEqual(value(of: first.element, becomes: "Selected"), "Selected", "Shift-drag did not add the photo")
-        XCTAssertEqual(selectionCount(app), String(expected.count))
+        XCTAssertEqual(value(of: first.element, becomes: "Selected"), "Selected", "Shift-drag did not add the photo\(marqueePressLog(folder: folder, since: shiftPressCount))")
+        XCTAssertEqual(selectionCount(app), String(expected.count), "Shift-drag changed the selection count\(marqueePressLog(folder: folder, since: shiftPressCount))")
 
         // Esc clears.
         app.typeKey(.escape, modifierFlags: [])
@@ -285,16 +286,45 @@ final class MomentsMarqueeUITests: XCTestCase {
         return folder
     }
 
+    /// How many lines `marquee-presses.txt` holds now. Read right before a
+    /// drag, so that drag's failure message can show only the lines it
+    /// added: the file itself keeps every line of the whole run.
+    private func marqueePressLineCount(folder: String?) -> Int {
+        guard let folder else { return 0 }
+        let path: String = URL(fileURLWithPath: folder).appending(path: "marquee-presses.txt").path
+        let lines: [String] = pressLines(atPath: path) ?? []
+        return lines.count
+    }
+
     /// The app's log of how each press decided its mode, for a failure
-    /// message. Says so when the folder is unset or the file is missing:
-    /// a missing file means no press reached `begin`.
-    private func marqueePressLog(folder: String?) -> String {
+    /// message: only the lines added since `since`, the count read before
+    /// this drag. Says so when the folder is unset or the file is missing,
+    /// and says plainly when this drag added no line at all.
+    private func marqueePressLog(folder: String?, since: Int) -> String {
         guard let folder else { return "\n(no MOMENTS_MARQUEE_DIR, no press log)" }
         let path: String = URL(fileURLWithPath: folder).appending(path: "marquee-presses.txt").path
-        guard let text: String = try? String(contentsOfFile: path, encoding: .utf8) else {
+        guard var lines: [String] = pressLines(atPath: path) else {
             return "\nmarquee-presses.txt: missing (no press reached begin)"
         }
-        return "\nmarquee-presses.txt:\n\(text)"
+        // The app writes the file on its main thread, so a line can arrive a
+        // moment after the drag ends.
+        let deadline: Date = Date().addingTimeInterval(1)
+        while lines.count <= since, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            if let later: [String] = pressLines(atPath: path) { lines = later }
+        }
+        guard since < lines.count else {
+            return "\nno line since this drag started: the drag never reached the marquee"
+        }
+        let added: [String] = Array(lines[since...])
+        return "\nmarquee-presses.txt, lines since this drag started:\n\(added.joined(separator: "\n"))"
+    }
+
+    /// The lines of a press log file, or nil when it does not exist yet.
+    private func pressLines(atPath path: String) -> [String]? {
+        guard let text: String = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        let lines: [String] = text.split(separator: "\n").map { (line: Substring) -> String in String(line) }
+        return lines
     }
 
     /// A screen point as a coordinate in the app's window.

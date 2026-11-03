@@ -155,6 +155,11 @@ final class LibraryStore {
     /// photo itself. A favorite or a rename leaves it alone.
     @ObservationIgnored private var stackHash: [PersistentIdentifier: Int] = [:]
     @ObservationIgnored private var stackSum = 0
+    /// The same sum over the live photos only, which is exactly the set a page
+    /// hands `PhotoStackModel`. `stackSum` also covers Recently Deleted, so it
+    /// cannot answer for a page's photo list.
+    @ObservationIgnored private var stackLiveSum = 0
+    @ObservationIgnored private var stackLiveCount = 0
     /// Sort keys kept beside each photo, so rebuilding a list never reads a
     /// SwiftData property inside a comparator.
     @ObservationIgnored private var itemKeys: [PersistentIdentifier: PhotoKeys] = [:]
@@ -282,6 +287,8 @@ final class LibraryStore {
         itemSum = 0
         layoutSum = 0
         stackSum = 0
+        stackLiveSum = 0
+        stackLiveCount = 0
         for item in live + deleted {
             let id = item.persistentModelID
             let hash = Self.hash(of: item)
@@ -295,6 +302,10 @@ final class LibraryStore {
             itemSum &+= hash
             layoutSum &+= layout
             stackSum &+= stack
+            if item.deletedAt == nil {
+                stackLiveSum &+= stack
+                stackLiveCount += 1
+            }
         }
 
         faceByPID = [:]
@@ -711,7 +722,16 @@ final class LibraryStore {
     private func upsertPhoto(_ id: PersistentIdentifier, model: MediaItem, touched: inout Touched) {
         if let old = itemHash[id] { itemSum &-= old }
         if let old = layoutHash[id] { layoutSum &-= old }
-        if let old = stackHash[id] { stackSum &-= old }
+        // `itemKeys` still holds the keys before this save, so it says whether
+        // the photo was live before; the model itself may already be trashed.
+        let wasLive: Bool = itemKeys[id]?.deletedAt == nil
+        if let old = stackHash[id] {
+            stackSum &-= old
+            if wasLive {
+                stackLiveSum &-= old
+                stackLiveCount -= 1
+            }
+        }
         let hash = Self.hash(of: model)
         let layout = Self.layoutHash(of: model)
         let stack = Self.stackFieldsHash(of: model)
@@ -721,6 +741,10 @@ final class LibraryStore {
         itemSum &+= hash
         layoutSum &+= layout
         stackSum &+= stack
+        if model.deletedAt == nil {
+            stackLiveSum &+= stack
+            stackLiveCount += 1
+        }
 
         let existed = itemByPID[id] != nil
         itemByPID[id] = model
@@ -736,7 +760,14 @@ final class LibraryStore {
     private func removePhoto(_ id: PersistentIdentifier, touched: inout Touched) {
         if let old = itemHash.removeValue(forKey: id) { itemSum &-= old }
         if let old = layoutHash.removeValue(forKey: id) { layoutSum &-= old }
-        if let old = stackHash.removeValue(forKey: id) { stackSum &-= old }
+        let wasLive: Bool = itemKeys[id]?.deletedAt == nil
+        if let old = stackHash.removeValue(forKey: id) {
+            stackSum &-= old
+            if wasLive {
+                stackLiveSum &-= old
+                stackLiveCount -= 1
+            }
+        }
         itemKeys[id] = nil
         if itemByPID.removeValue(forKey: id) != nil { touched.photoLists = true }
     }
@@ -1131,16 +1162,15 @@ final class LibraryStore {
         )
     }
 
-    /// What the stack model would see in its photo list: the same sum the
-    /// full fetch and every applied batch keep, over exactly the fields
-    /// `PhotoStackModel.key(of:)` combines. A page passes this to
-    /// `PhotoStackModel.update(items:decisions:sourceKey:)`, so a visit that
-    /// changed nothing skips hashing every photo.
+    /// What `PhotoStackModel.key(of:)` would return for `items`: the count of
+    /// the live photos plus the running per-photo sum over exactly the fields
+    /// that key combines. A page hands this to
+    /// `PhotoStackModel.update(items:decisions:photosKey:photoCount:)`, so the
+    /// first visit does not hash every photo on the main thread.
     var stackFieldsKey: Int {
-        var hasher = Hasher()
-        hasher.combine(stackSum)
-        hasher.combine(itemByPID.count)
-        return hasher.finalize()
+        var key: Int = stackLiveCount
+        key &+= stackLiveSum
+        return key
     }
 
     private func bumpRevisionIfNeeded() {
@@ -1239,7 +1269,7 @@ final class LibraryStore {
     /// whether the stacks would detect the same thing without walking the
     /// library. `perceptualHash` is the field no other sum here covers: it
     /// arrives after import, and a burst only folds once it is there.
-    static func stackFieldsHash(of item: MediaItem) -> Int {
+    nonisolated static func stackFieldsHash(of item: MediaItem) -> Int {
         var hasher = Hasher()
         hasher.combine(item.id)
         hasher.combine(item.effectiveCaptureDate)

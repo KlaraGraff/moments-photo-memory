@@ -43,13 +43,13 @@ public actor ImportGeocodeCache {
 }
 
 /// Spaces reverse-geocoding during one import. CLGeocoder is rate-limited
-/// (roughly one request a second, then throttling errors), so lookups still run
-/// one at a time, each with `timeout`, spaced by `geocodeDelay()`, and stop
-/// after `maxConsecutiveFailures` failures in a row. There is deliberately no
-/// per-import lookup budget: the owner wants every place named on the first
-/// import, however many distinct places it holds. Pacing and the failure stop
-/// protect CLGeocoder; places left unnamed while offline are named later by
-/// `PlaceNameBackfill`.
+/// (roughly one request a second, then throttling errors), so lookups run one at
+/// a time, each with `timeout`, and stop after `maxConsecutiveFailures`
+/// failures in a row. `geocodeDelay()` decides whether a lookup may happen now;
+/// when it says no, the gate is `deferred` and the rest of the places are named
+/// later by `PlaceNameBackfill`. There is deliberately no per-import lookup
+/// budget: the owner wants every place named on the first import, however many
+/// distinct places it holds.
 actor ImportGeocodeGate {
     enum Purpose { case timeZone, placeName }
 
@@ -60,6 +60,14 @@ actor ImportGeocodeGate {
     /// progress callback shows it as the total. Only ever raised.
     private(set) var planned = 0
     private var consecutiveFailures = 0
+    /// True once the pacer had no room for another lookup. Deliberately not a
+    /// failure: the three-failure stop must not trip, and every later lookup in
+    /// this import returns nil at once instead of waiting for the rate window.
+    /// The progress total also stops growing: those places belong to the
+    /// background backfill, so the import does not promise to name them.
+    /// Time-zone lookups ignore it: a wrong zone moves a photo's capture date,
+    /// so the import waits for those few cells instead of deferring them.
+    private(set) var isDeferred = false
 
     init(maxConsecutiveFailures: Int = 3, timeout: Duration = .seconds(10)) {
         self.maxConsecutiveFailures = maxConsecutiveFailures
@@ -73,13 +81,33 @@ actor ImportGeocodeGate {
         return true
     }
 
+    /// True when this import will make no further lookup: the pacer had no
+    /// room (`isDeferred`) or the failure stop was reached. Later places then
+    /// return nil at once instead of paying the pacer's spacing per place.
+    var isFinishedLookingUp: Bool {
+        isFailureStopped || isDeferred
+    }
+
+    /// True once several lookups in a row failed. The service itself is not
+    /// answering, so even the time-zone pass stops instead of waiting.
+    var isFailureStopped: Bool {
+        consecutiveFailures >= maxConsecutiveFailures
+    }
+
     /// The organizer knows how many lookups a pass holds before it starts.
+    /// Once no further lookup will happen, nothing more is planned: lookups
+    /// left to the background backfill must not inflate the progress total.
     func plan(_ count: Int) {
+        guard !isFinishedLookingUp else { return }
         planned = max(planned, lookups) + max(0, count)
     }
 
     func recordSuccess() { consecutiveFailures = 0 }
     func recordFailure() { consecutiveFailures += 1 }
+
+    /// The pacer is out of room for now; this import leaves the rest to the
+    /// background backfill. Not a failure, so the failure stop stays clear.
+    func markDeferred() { isDeferred = true }
 }
 
 extension ImportGeocodeGate {
@@ -112,11 +140,12 @@ extension ImportGeocodeGate {
 /// Spaces reverse-geocoding lookups under CLGeocoder's rate limit.
 /// CLGeocoder allows about 50 calls a minute and then throws throttling errors,
 /// which would trip the gate's three-failure stop and leave most places
-/// unnamed. Keeping an import with hundreds of distinct places under the limit
-/// names every place on the first import (the owner's rule), while the first 45
-/// lookups still go at the old 0.1 s pace. Shared, so every import in one app
-/// run draws on the same budget; `PlaceNameBackfill` keeps its own 1 s interval
-/// (not changed here), so the two do not add up to more than the limit.
+/// unnamed. Keeping every lookup under the limit is what lets the import and
+/// the background backfill name every place (the owner's rule). `wait()` is for
+/// work that can wait for room; `startIfRoom()` is for the import, which must
+/// finish without waiting: it takes the lookups that fit now and leaves the rest
+/// to `PlaceNameBackfill`. Shared, so import and backfill draw on the same
+/// budget instead of adding up past the limit.
 actor ImportGeocodePacer {
     static let shared = ImportGeocodePacer()
 
@@ -131,6 +160,19 @@ actor ImportGeocodePacer {
         self.limit = limit
         self.window = window
         self.spacing = spacing
+    }
+
+    /// Starts one lookup now if the window has room, without waiting for room.
+    /// Sleeps `spacing` first (false if cancelled), drops calls older than
+    /// `window`, and returns false *without recording* when `limit` calls are
+    /// already inside it. The caller then leaves the place to the backfill.
+    func startIfRoom() async -> Bool {
+        guard await sleep(spacing) else { return false }
+        let now = clock.now
+        calls.removeAll { instant in instant.duration(to: now) >= window }
+        guard calls.count < limit else { return false }
+        calls.append(clock.now)
+        return true
     }
 
     /// Returns once the caller may start one lookup. A cancelled wait returns
@@ -215,6 +257,11 @@ struct OrganizedPlace: Equatable, Sendable {
 
 struct OrganizedMedia: Equatable, Sendable {
     let metadata: ImportedMediaMetadata
+    /// The confidence stored for the photo's time zone. Usually the metadata's
+    /// own value; `.zoneUnknown` when the group loop had to fall back to the
+    /// device zone because the photo's city is still waiting for its name.
+    /// `PlaceNameBackfill` repairs those once the city is named.
+    let timeConfidence: ImportTimeConfidence
     /// nil for daily life at a usual place (常驻地), which belongs to no trip.
     let tripID: String?
     let placeID: String?
@@ -248,7 +295,14 @@ struct ImportOrganizer {
     let configuration: ImportConfiguration
     let geocoder: any ImportGeocoder
     let geocodeCache: ImportGeocodeCache
-    let geocodeDelay: @Sendable () async -> Void
+    /// Decides whether a lookup may happen now: true: look up now; false:
+    /// leave the place to the background backfill.
+    let geocodeDelay: @Sendable () async -> Bool
+    /// Waits until one time-zone lookup may start. Time-zone cells are few
+    /// (half-degree cells) and a wrong zone moves the capture date, so the
+    /// import waits for them instead of deferring them. Place names can come
+    /// later.
+    let timeZoneDelay: @Sendable () async -> Void
     let geocodeGate: ImportGeocodeGate
     /// Reports (lookups made, lookups planned) so the UI shows progress while
     /// places are looked up.
@@ -258,7 +312,10 @@ struct ImportOrganizer {
         configuration: ImportConfiguration,
         geocoder: any ImportGeocoder,
         geocodeCache: ImportGeocodeCache,
-        geocodeDelay: @escaping @Sendable () async -> Void = {
+        geocodeDelay: @escaping @Sendable () async -> Bool = {
+            await ImportGeocodePacer.shared.startIfRoom()
+        },
+        timeZoneDelay: @escaping @Sendable () async -> Void = {
             await ImportGeocodePacer.shared.wait()
         },
         geocodeGate: ImportGeocodeGate = ImportGeocodeGate(),
@@ -268,6 +325,7 @@ struct ImportOrganizer {
         self.geocoder = geocoder
         self.geocodeCache = geocodeCache
         self.geocodeDelay = geocodeDelay
+        self.timeZoneDelay = timeZoneDelay
         self.geocodeGate = geocodeGate
         self.geocodeProgress = geocodeProgress
     }
@@ -318,7 +376,10 @@ struct ImportOrganizer {
             let tripID = isTrip ? stableID(prefix: "trip", ids: group.map(\.id)) : nil
             let isUndated = isTrip && group.allSatisfy { $0.captureDateSource == .fileDateFallback }
             let locatedInGroup = group.filter { $0.latitude != nil && $0.longitude != nil }
-            let zonedInGroup = group.filter { $0.timeZoneIdentifier != nil }
+            // Only a zone with confidence behind it may be lent to another photo:
+            // `.zoneUnknown` already means `resolveCaptureDates` fell back to the
+            // device zone, which says nothing about where the group was.
+            let zonedInGroup = group.filter { $0.timeZoneIdentifier != nil && $0.timeConfidence != .zoneUnknown }
             var tripName: String
             if isUndated {
                 // Several undated groups from one folder get numbered names.
@@ -339,30 +400,46 @@ struct ImportOrganizer {
             let cityLookup = try await cityNames(for: cityClusters)
             let cityNames = cityLookup.values
             if isTrip, !isUndated {
-                // "Morocco August 2026" or "Shanghai · Chongqing · Wulong April 2026":
-                // cities in the order they were first visited.
-                var orderedCities: [ImportGeocodeResult] = []
-                var seenClusters = Set<String>()
-                let cityOfStop = clusterMap(cityClusters)
-                for stop in stops {
-                    guard let cluster = cityOfStop[stop.id], seenClusters.insert(cluster.id).inserted,
-                          let result = cityNames[cluster.id] else { continue }
-                    orderedCities.append(result)
+                if cityLookup.deferred.isEmpty, cityLookup.failed.isEmpty {
+                    // "Morocco August 2026" or "Shanghai · Chongqing · Wulong April 2026":
+                    // cities in the order they were first visited.
+                    var orderedCities: [ImportGeocodeResult] = []
+                    var seenClusters = Set<String>()
+                    let cityOfStop = clusterMap(cityClusters)
+                    for stop in stops {
+                        guard let cluster = cityOfStop[stop.id], seenClusters.insert(cluster.id).inserted,
+                              let result = cityNames[cluster.id] else { continue }
+                        orderedCities.append(result)
+                    }
+                    tripName = TripNaming.name(
+                        cities: orderedCities.compactMap(\.city),
+                        countries: orderedCities.compactMap(\.country),
+                        start: group.first?.captureDate,
+                        index: index + 1
+                    )
+                } else {
+                    // Only a placeless default here. A name built from the cities
+                    // that happen to be known would freeze a half-named trip
+                    // ("Shanghai April 2026" for Shanghai + Chongqing), and the
+                    // backfill never renames a trip that already has places in
+                    // its name. The placeless default is exactly what
+                    // `TripNameBackfill` renames once every city has a name.
+                    tripName = TripNaming.name(cities: [], countries: [], start: group.first?.captureDate, index: index + 1)
                 }
-                tripName = TripNaming.name(
-                    cities: orderedCities.compactMap(\.city),
-                    countries: orderedCities.compactMap(\.country),
-                    start: group.first?.captureDate,
-                    index: index + 1
-                )
             }
 
             let cityByStop = clusterMap(cityClusters)
             let areaByStop = clusterMap(areaClusters)
             let spotByStop = clusterMap(spotClusters)
             var placeByID: [String: OrganizedPlace] = [:]
+            // A deferred city has no name yet, exactly like a failed one; the
+            // backfill fills it in. Neither gets the "Unknown city" placeholder,
+            // which would look like a real name.
+            func unnamedCluster(_ id: String) -> Bool {
+                cityLookup.failed.contains(id) || cityLookup.deferred.contains(id)
+            }
             for cluster in cityClusters {
-                let name = cityLookup.failed.contains(cluster.id)
+                let name = unnamedCluster(cluster.id)
                     ? ""
                     : cityNames[cluster.id]?.city ?? String(localized: "Unknown city")
                 placeByID[cluster.id] = OrganizedPlace(
@@ -378,7 +455,7 @@ struct ImportOrganizer {
                 let parent = cluster.stopIDs.compactMap { cityByStop[$0]?.id }.first
                 placeByID[cluster.id] = OrganizedPlace(
                     id: cluster.id,
-                    name: cityLookup.failed.contains(parent ?? "")
+                    name: unnamedCluster(parent ?? "")
                         ? ""
                         : cityNames[parent ?? ""]?.area ?? String(localized: "Unknown area"),
                     kind: .area,
@@ -404,6 +481,32 @@ struct ImportOrganizer {
                 let coordinate = item.latitude.flatMap { latitude in
                     item.longitude.map { longitude in GeoPoint(latitude: latitude, longitude: longitude) }
                 }
+                let city = cityByStop[item.id].flatMap { cityNames[$0.id] }
+                let cityWasDeferred = cityByStop[item.id].map { cityLookup.deferred.contains($0.id) } ?? false
+                // A photo with no zone of its own (Apple Photos assets carry
+                // none, and an offset-less EXIF value whose time-zone cell could
+                // not be looked up gets only the device zone) whose city the
+                // import left to the backfill has no zone from either side: no
+                // city zone (the name is not known yet) and no zoned photo in
+                // the group to borrow one from. It gets the device zone for now,
+                // but is stored as a guess, so `PlaceNameBackfill` repairs zone,
+                // day key and (for a folder photo whose EXIF wall-clock time was
+                // read in the wrong zone) the capture date once the city has a
+                // name. The capture date itself stays as it is here: Photos
+                // dates are absolute.
+                let borrowedZone = Self.nearest(to: item, in: zonedInGroup)?.timeZoneIdentifier
+                let hasOwnZone = item.timeZoneIdentifier != nil && item.timeConfidence != .zoneUnknown
+                // A file-dated photo has no EXIF reading at all: its `.low` is
+                // about the date, and its `dateHintUTC` is a file timestamp that
+                // must never be re-read in another zone.
+                let zoneUnknown = !hasOwnZone
+                    && cityWasDeferred
+                    && borrowedZone == nil
+                    && item.captureDateSource != .fileDateFallback
+                let timeZoneIdentifier = item.timeZoneIdentifier
+                    ?? city?.timeZoneIdentifier
+                    ?? borrowedZone
+                    ?? TimeZone.autoupdatingCurrent.identifier
                 var reasons: [ImportReviewReason] = []
                 var detailParts: [String] = []
                 if coordinate == nil { reasons.append(.missingLocation) }
@@ -436,13 +539,8 @@ struct ImportOrganizer {
                     detailParts.append(event.detail)
                 }
                 reasons = Array(Set(reasons)).sorted { $0.rawValue < $1.rawValue }
-                let city = cityByStop[item.id].flatMap { cityNames[$0.id] }
                 let suggested = nearestPlaceSuggestion(for: item, located: locatedInGroup, spotByStop: spotByStop)
                 let suggestedName = suggested.flatMap { placeByID[$0]?.name }
-                let timeZoneIdentifier = item.timeZoneIdentifier
-                    ?? city?.timeZoneIdentifier
-                    ?? Self.nearest(to: item, in: zonedInGroup)?.timeZoneIdentifier
-                    ?? TimeZone.autoupdatingCurrent.identifier
                 let dayKey = localDayKey(for: item, timeZoneIdentifier: timeZoneIdentifier)
                 let placeID = item.latitude.flatMap { latitude in
                     item.longitude.flatMap { longitude in
@@ -452,6 +550,7 @@ struct ImportOrganizer {
                 let reviewDetail = detailParts.isEmpty ? nil : Array(Set(detailParts)).joined(separator: " ")
                 allMedia.append(OrganizedMedia(
                     metadata: item,
+                    timeConfidence: zoneUnknown ? .zoneUnknown : item.timeConfidence,
                     tripID: tripID,
                     placeID: placeID,
                     suggestedPlaceID: placeID == nil ? suggested : nil,
@@ -552,7 +651,7 @@ struct ImportOrganizer {
                 ?? Self.nearestIdentifier(in: candidates, to: item.captureDate)
             let zoneUnknown = identifier == nil
             let resolvedIdentifier = identifier ?? TimeZone.autoupdatingCurrent.identifier
-            let resolvedDate = resolveWallClockDate(
+            let resolvedDate = Self.resolveWallClockDate(
                 wallClockDate,
                 in: TimeZone(identifier: resolvedIdentifier) ?? .autoupdatingCurrent
             )
@@ -588,7 +687,10 @@ struct ImportOrganizer {
         return options.min { $0.gap == $1.gap ? $0.identifier < $1.identifier : $0.gap < $1.gap }?.identifier
     }
 
-    private func resolveWallClockDate(_ wallClockDate: Date, in timeZone: TimeZone) -> Date {
+    /// The same clock time read in `timeZone`: 22:30 read in Tokyo becomes the
+    /// UTC instant of 22:30 Tokyo time. Shared with the backfill's zone repair,
+    /// so a resolved wall-clock value is only ever computed one way.
+    static func resolveWallClockDate(_ wallClockDate: Date, in timeZone: TimeZone) -> Date {
         var sourceCalendar = Calendar(identifier: .gregorian)
         sourceCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let components = sourceCalendar.dateComponents(
@@ -614,11 +716,30 @@ struct ImportOrganizer {
 
     private func lookupGeocode(coordinate: GeoPoint, for purpose: ImportGeocodeGate.Purpose) async throws -> ImportGeocodeResult? {
         if let cached = await geocodeCache.result(for: coordinate) { return cached }
+        // Once the pacer had no room, the rest of the import belongs to the
+        // background backfill: return at once instead of spacing every
+        // remaining place through another rate-window wait. Time-zone cells are
+        // the exception: they are few (half-degree cells) and a wrong zone
+        // moves the capture date, so the import waits for them; only a service
+        // that keeps failing stops those too.
+        switch purpose {
+        case .timeZone:
+            if await geocodeGate.isFailureStopped { return nil }
+            await timeZoneDelay()
+            try Task.checkCancellation()
+        case .placeName:
+            if await geocodeGate.isFinishedLookingUp { return nil }
+            guard await geocodeDelay() else {
+                // A cancelled lookup is not a full rate window.
+                try Task.checkCancellation()
+                await geocodeGate.markDeferred()
+                return nil
+            }
+        }
         guard await geocodeGate.reserve(for: purpose) else { return nil }
         let lookups = await geocodeGate.lookups
         let planned = await geocodeGate.planned
         geocodeProgress(lookups, planned)
-        await geocodeDelay()
         do {
             let geocoder = self.geocoder
             let result = try await ImportGeocodeGate.firstResult(within: geocodeGate.timeout) {
@@ -722,18 +843,24 @@ struct ImportOrganizer {
     }
 
     private func localDayKey(for item: ImportedMediaMetadata, timeZoneIdentifier: String?) -> String {
-        var calendar = Calendar(identifier: .gregorian)
         if let offset = item.timeZoneOffsetMinutes,
            let timeZone = TimeZone(secondsFromGMT: offset * 60) {
-            calendar.timeZone = timeZone
-        } else if let timeZoneIdentifier,
-                  let timeZone = TimeZone(identifier: timeZoneIdentifier) {
-            calendar.timeZone = timeZone
-        } else {
-            calendar.timeZone = .autoupdatingCurrent
+            return Self.localDayKey(for: item.captureDate, in: timeZone)
         }
-        let components = calendar.dateComponents([.year, .month, .day], from: item.captureDate)
-        return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
+        if let timeZoneIdentifier,
+           let timeZone = TimeZone(identifier: timeZoneIdentifier) {
+            return Self.localDayKey(for: item.captureDate, in: timeZone)
+        }
+        return Self.localDayKey(for: item.captureDate, in: .autoupdatingCurrent)
+    }
+
+    /// The `yyyy-MM-dd` day `date` falls on in `timeZone`. Imports and the
+    /// backfill's zone repair both use this one function (backed by
+    /// `UserGroupRuleSet.localDayKey`) so a day key is never formatted twice.
+    static func localDayKey(for date: Date, in timeZone: TimeZone) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return UserGroupRuleSet.localDayKey(for: date, calendar: calendar)
     }
 
     /// Looks up every distinct city centre the import needs before the groups
@@ -791,9 +918,15 @@ struct ImportOrganizer {
         }
     }
 
-    private func cityNames(for clusters: [PlaceCluster]) async throws -> (values: [String: ImportGeocodeResult], failed: Set<String>) {
+    /// The city names this pass could get. `failed` holds the clusters no
+    /// lookup could answer (review flag, summary flag); `deferred` holds the
+    /// ones the rate window left to `PlaceNameBackfill`. A deferred cluster is
+    /// not a failure: the import just names it later, so its city keeps an
+    /// empty name and the photos carry no retry reason.
+    private func cityNames(for clusters: [PlaceCluster]) async throws -> (values: [String: ImportGeocodeResult], failed: Set<String>, deferred: Set<String>) {
         var values: [String: ImportGeocodeResult] = [:]
         var failed = Set<String>()
+        var deferred = Set<String>()
         for cluster in clusters {
             try Task.checkCancellation()
             guard let center = cluster.center else { continue }
@@ -804,6 +937,8 @@ struct ImportOrganizer {
             do {
                 if let result = try await lookupGeocode(coordinate: center, for: .placeName) {
                     values[cluster.id] = result
+                } else if await geocodeGate.isDeferred {
+                    deferred.insert(cluster.id)
                 } else {
                     failed.insert(cluster.id)
                 }
@@ -811,7 +946,7 @@ struct ImportOrganizer {
                 throw CancellationError()
             }
         }
-        return (values, failed)
+        return (values, failed, deferred)
     }
 
     private func clusterMap(_ clusters: [PlaceCluster]) -> [String: PlaceCluster] {

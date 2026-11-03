@@ -160,7 +160,8 @@ final class FolderImportTests: XCTestCase {
         let importer = FolderImporter(
             geocoder: SyntheticGeocoder(result: ImportGeocodeResult(city: "Shanghai", timeZoneIdentifier: "Asia/Shanghai")),
             geocodeCache: ImportGeocodeCache(),
-            geocodeDelay: {}
+            geocodeDelay: { true },
+            timeZoneDelay: {}
         )
         let summary = try await importer.importFolder(folder, container: container)
         let items = try container.mainContext.fetch(FetchDescriptor<MediaItem>()).sorted { $0.captureDate! < $1.captureDate! }
@@ -181,7 +182,7 @@ final class FolderImportTests: XCTestCase {
             marker: 43
         )
         let container = try MomentsPersistence.makeContainer(inMemory: true)
-        let importer = FolderImporter(geocoder: SyntheticGeocoder(result: ImportGeocodeResult()), geocodeCache: ImportGeocodeCache(), geocodeDelay: {})
+        let importer = FolderImporter(geocoder: SyntheticGeocoder(result: ImportGeocodeResult()), geocodeCache: ImportGeocodeCache(), geocodeDelay: { true }, timeZoneDelay: {})
         let summary = try await importer.importFolder(folder, container: container)
         let item = try XCTUnwrap(try container.mainContext.fetch(FetchDescriptor<MediaItem>()).first)
         XCTAssertEqual(item.timeConfidence, .zoneUnknown)
@@ -199,7 +200,8 @@ final class FolderImportTests: XCTestCase {
         let importer = FolderImporter(
             geocoder: ThrowingSyntheticGeocoder(),
             geocodeCache: ImportGeocodeCache(),
-            geocodeDelay: {}
+            geocodeDelay: { true },
+            timeZoneDelay: {}
         )
         let summary = try await importer.importFolder(folder, container: container)
         let places = try container.mainContext.fetch(FetchDescriptor<Place>())

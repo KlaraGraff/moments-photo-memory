@@ -198,15 +198,10 @@ struct LibraryView: View {
     }
 
     /// What the stack model is handed, without hashing each photo: the
-    /// store's per-photo sum, how many photos this page passes, and a name
-    /// for this page (two pages may pass different subsets).
-    private var stackSourceKey: Int {
-        var hasher = Hasher()
-        hasher.combine(store.stackFieldsKey)
-        hasher.combine(regularItems.count + screenshotItems.count)
-        hasher.combine("library")
-        return hasher.finalize()
-    }
+    /// store's running key over exactly the live photos this page passes
+    /// (`regularItems + screenshotItems` is `store.items`), and that count.
+    private var stackPhotosKey: Int { store.stackFieldsKey }
+    private var stackPhotoCount: Int { store.items.count }
 
     private var grouping: LibraryGrouping {
         LibraryGrouping(rawValue: groupingRaw) ?? .trip
@@ -820,7 +815,12 @@ struct LibraryView: View {
             hasGrouped = true
             // The stack model is shared with the other pages, so it is handed
             // the photos again; it does nothing when nothing changed.
-            stacks.update(items: allItems, decisions: stackRecords, sourceKey: stackSourceKey)
+            stacks.update(
+                items: allItems,
+                decisions: stackRecords,
+                photosKey: stackPhotosKey,
+                photoCount: stackPhotoCount
+            )
             // The menus build from the whole store and have their own cache.
             cachedFilterOptions = LibraryFilterOptionsCache.options(
                 for: store.items,
@@ -893,7 +893,12 @@ struct LibraryView: View {
         step("item by id")
         #endif
         // A burst is one cell showing its cover, and counts as one photo.
-        let stackIndex = stacks.update(items: all, decisions: stackRecords, sourceKey: stackSourceKey)
+        let stackIndex = stacks.update(
+            items: all,
+            decisions: stackRecords,
+            photosKey: stackPhotosKey,
+            photoCount: stackPhotoCount
+        )
         #if DEBUG
         step("stacks update")
         #endif

@@ -46,15 +46,10 @@ struct TimelineScreen: View {
     @MainActor private static var lastBuild: (key: Int, result: TimelineBuildResult)?
 
     /// What the stack model is handed, without hashing each photo: the
-    /// store's per-photo sum, how many photos this page passes, and a name
-    /// for this page (two pages may pass different subsets).
-    private var stackSourceKey: Int {
-        var hasher = Hasher()
-        hasher.combine(store.stackFieldsKey)
-        hasher.combine(store.items.count)
-        hasher.combine("timeline")
-        return hasher.finalize()
-    }
+    /// store's running key over exactly the live photos this page passes, and
+    /// that list's count. A page that narrowed the list would have to hash.
+    private var stackPhotosKey: Int { store.stackFieldsKey }
+    private var stackPhotoCount: Int { store.items.count }
 
     /// Moves when anything the page builds from changes. `.onChange` follows
     /// it; the calendar is left out on purpose, as it always was.
@@ -451,7 +446,12 @@ struct TimelineScreen: View {
             // without the snapshots, place hints or builder.
             months = cached.months
             viewerOrder = cached.viewerOrder
-            stacks.update(items: items, decisions: stackRecords, sourceKey: stackSourceKey)
+            stacks.update(
+                items: items,
+                decisions: stackRecords,
+                photosKey: stackPhotosKey,
+                photoCount: stackPhotoCount
+            )
             itemByID = store.itemsByID
             var cachedLinksByItemID: [String: TripLink] = [:]
             for trip in trips {
@@ -484,7 +484,9 @@ struct TimelineScreen: View {
         // What assigning the result needs, read before the build awaits so a
         // change during it never mixes two states.
         let libraryItems = items
-        let stackKey: Int = stackSourceKey // taken with the photos it describes, before the build awaits
+        // Taken with the photos they describe, before the build awaits.
+        let stackKey: Int = stackPhotosKey
+        let stackCount: Int = stackPhotoCount
         let libraryItemByID = store.itemsByID
         let stackDecisions = stackRecords
         var linksByItemID: [String: TripLink] = [:]
@@ -526,7 +528,12 @@ struct TimelineScreen: View {
         tail("assign months")
         #endif
         Self.storeBuild(built, key: cacheKey)
-        stacks.update(items: libraryItems, decisions: stackDecisions, sourceKey: stackKey)
+        stacks.update(
+            items: libraryItems,
+            decisions: stackDecisions,
+            photosKey: stackKey,
+            photoCount: stackCount
+        )
         #if DEBUG
         tail("stacks update")
         #endif

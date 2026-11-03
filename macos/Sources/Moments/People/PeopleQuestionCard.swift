@@ -21,6 +21,9 @@ struct PeopleQuestionCard<Left: View, Right: View>: View {
     let onSame: () -> Void
     let onDifferent: () -> Void
     let onSkip: () -> Void
+    /// "Ignore" under an unnamed cluster side; nil on a named person's side.
+    var onIgnoreLeft: (() -> Void)? = nil
+    var onIgnoreRight: (() -> Void)? = nil
     @ViewBuilder let left: () -> Left
     @ViewBuilder let right: () -> Right
 
@@ -38,9 +41,9 @@ struct PeopleQuestionCard<Left: View, Right: View>: View {
 
     private var card: some View {
         HStack(spacing: 12) {
-            faceColumn(caption: leftCaption, face: left)
+            faceColumn(caption: leftCaption, face: left, onIgnore: onIgnoreLeft, identifier: "people.question.ignore.left")
             equalsMark
-            faceColumn(caption: rightCaption, face: right)
+            faceColumn(caption: rightCaption, face: right, onIgnore: onIgnoreRight, identifier: "people.question.ignore.right")
             buttons
             Spacer()
             counter
@@ -55,11 +58,20 @@ struct PeopleQuestionCard<Left: View, Right: View>: View {
 
     private func faceColumn<Face: View>(
         caption: PeopleQuestionCaption,
-        @ViewBuilder face: () -> Face
+        @ViewBuilder face: () -> Face,
+        onIgnore: (() -> Void)?,
+        identifier: String
     ) -> some View {
         VStack(spacing: 6) {
             face()
             PeopleQuestionCaptionLabel(caption: caption)
+            if case .unnamed = caption, let onIgnore {
+                Button(String(localized: "Ignore"), action: onIgnore)
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                    .foregroundStyle(Paper.muted)
+                    .accessibilityIdentifier(identifier)
+            }
         }
     }
 

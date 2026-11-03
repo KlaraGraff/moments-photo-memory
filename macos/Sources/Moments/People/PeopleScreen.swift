@@ -90,9 +90,9 @@ private struct FaceUndoSnapshot {
     }
 }
 
-/// The faces' state before "Not a real person", so the change can be taken
+/// The faces' state before "Ignore this group", so the change can be taken
 /// back: the faces return to their old grouping and the hidden person goes.
-private struct NotAPersonSnapshot {
+private struct IgnoredFacesSnapshot {
     struct FaceState {
         let faceID: String
         let personID: String?
@@ -677,13 +677,14 @@ enum PeopleStoreActions {
         return target.id
     }
 
-    /// "Not a real person": a game or cartoon character the detector takes for
+    /// "Ignore this group": the one button for a stranger the user does not
+    /// want to name and for a game or cartoon character the detector takes for
     /// a face. The faces move to a new hidden, unnamed person, so they leave
     /// the page, and look-alike faces found later join them there instead of
     /// coming back as a group. Faces that already have a person are left alone.
     /// Returns nil when there was nothing to hide.
     @discardableResult
-    static func markNotAPerson(faces: [FaceObservation], context: ModelContext) -> Person? {
+    static func ignore(faces: [FaceObservation], context: ModelContext) -> Person? {
         let free = faces.filter { (face: FaceObservation) -> Bool in face.personID == nil }
         guard !free.isEmpty else { return nil }
         let person = Person(id: UUID().uuidString, name: nil, hidden: true)
@@ -697,6 +698,40 @@ enum PeopleStoreActions {
         }
         try? context.save()
         return person
+    }
+
+    /// The ignored groups ``ignore(faces:context:)`` makes: hidden people
+    /// without a name, oldest first. A hidden person that has a name was
+    /// hidden another way and is not an ignored group.
+    static func ignoredPeople(_ people: [Person]) -> [Person] {
+        people
+            .filter { (person: Person) -> Bool in
+                person.hidden && (person.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            .sorted { (lhs: Person, rhs: Person) -> Bool in (lhs.createdAt, lhs.id) < (rhs.createdAt, rhs.id) }
+    }
+
+    /// Restores one ignored group: its faces go back to unnamed, unconfirmed
+    /// faces with a "pending-" cluster ID, so the next scan groups them again,
+    /// and the hidden person is deleted. Returns the faces it released.
+    @discardableResult
+    static func restoreIgnored(personID: String, observations: [FaceObservation], context: ModelContext) -> [FaceObservation] {
+        let released: [FaceObservation] = observations.filter { (face: FaceObservation) -> Bool in
+            face.personID == personID
+        }
+        for face in released {
+            face.personID = nil
+            face.clusterID = "pending-\(face.id)"
+            face.confirmed = false
+            face.assignmentSource = "auto"
+            face.updatedAt = .now
+        }
+        let people: [Person] = (try? context.fetch(FetchDescriptor<Person>())) ?? []
+        if let person = people.first(where: { (person: Person) -> Bool in person.id == personID }) {
+            context.delete(person)
+        }
+        if context.hasChanges { try? context.save() }
+        return released
     }
 
     /// Merges visible people whose names are equal into the oldest of them,
@@ -1023,6 +1058,7 @@ struct PeopleScreen: View {
     @State private var cachedLooseFaces: [FaceObservation] = []
     @State private var cachedQuestions: [String] = []
     @State private var looseExpanded = false
+    @State private var ignoredExpanded = false
     @State private var lastFaceChange: FaceUndoSnapshot?
     /// The face whose "New person…" alert is open, and the name typed in it.
     @State private var newPersonFace: FaceObservation?
@@ -1046,6 +1082,13 @@ struct PeopleScreen: View {
     }
 
     private var unnamedClusters: [PeopleClusterSnapshot] { cachedUnnamedClusters }
+
+    /// The ignored groups, each with its faces, for the bottom section.
+    private var ignoredGroups: [PeopleIgnoredGroup] {
+        PeopleStoreActions.ignoredPeople(people).map { (person: Person) -> PeopleIgnoredGroup in
+            PeopleIgnoredGroup(id: person.id, cover: PeopleFacePicker.cover(cachedFacesByPerson[person.id] ?? []))
+        }
+    }
 
     private var observationsKey: Int {
         var hasher = Hasher()
@@ -1103,7 +1146,7 @@ struct PeopleScreen: View {
 
                 if !scanner.isAvailable {
                     Spacer(minLength: 0)
-                } else if namedPeople.isEmpty && unnamedClusters.isEmpty && cachedLooseFaces.isEmpty {
+                } else if namedPeople.isEmpty && unnamedClusters.isEmpty && cachedLooseFaces.isEmpty && ignoredGroups.isEmpty {
                     ContentUnavailableView {
                         Label(String(localized: "No people yet"), systemImage: "person.2")
                     } description: {
@@ -1120,6 +1163,7 @@ struct PeopleScreen: View {
                             if !unnamedClusters.isEmpty { unnamedSection }
                             if !namedPeople.isEmpty { namedSection }
                             if !cachedLooseFaces.isEmpty { looseFacesSection }
+                            if !ignoredGroups.isEmpty { ignoredSection }
                         }
                     }
                 }
@@ -1358,9 +1402,29 @@ struct PeopleScreen: View {
                 onSame: { answerSameQuestion(key) },
                 onDifferent: { answerDifferentQuestion(key) },
                 onSkip: { skipQuestion(key) },
+                onIgnoreLeft: ignoreQuestionSide(first, key: key),
+                onIgnoreRight: ignoreQuestionSide(second, key: key),
                 left: { questionFace(first) },
                 right: { questionFace(second) }
             )
+        }
+    }
+
+    /// "Ignore" under one side of a question. Only a cluster side gets one:
+    /// it ignores that card's faces and drops the question, so a group of
+    /// strangers is out of the way without answering.
+    private func ignoreQuestionSide(_ side: PeoplePlannerSide, key: String) -> (() -> Void)? {
+        guard case .cluster(let clusterID) = side else { return nil }
+        return {
+            let faces: [FaceObservation] = cachedUnnamedClusters.first { (card: PeopleClusterSnapshot) -> Bool in
+                card.id == clusterID
+            }?.faces ?? []
+            guard !faces.isEmpty else { return }
+            PeopleStoreActions.ignore(faces: faces, context: modelContext)
+            PeopleStoreActions.answerDifferent(key)
+            try? modelContext.save()
+            lastFaceChange = nil
+            refreshFaceCaches()
         }
     }
 
@@ -1633,10 +1697,10 @@ struct PeopleScreen: View {
                         }
                         HStack(spacing: 0) {
                             Spacer(minLength: 0)
-                            Button(String(localized: "Not a real person")) { notAPerson(cluster.faces) }
+                            Button(String(localized: "Ignore this group")) { ignore(cluster.faces) }
                                 .buttonStyle(.borderless)
                                 .foregroundStyle(Paper.muted)
-                                .accessibilityIdentifier("people.card.notPerson")
+                                .accessibilityIdentifier("people.card.ignore")
                         }
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 10) {
@@ -1682,6 +1746,21 @@ struct PeopleScreen: View {
         PeopleLooseFacesSection(faces: cachedLooseFaces, isExpanded: $looseExpanded) { face in
             faceCorrectionMenu(face, current: nil)
         }
+    }
+
+    /// The ignored groups, collapsed at the very bottom: right-click one to
+    /// restore it, and the next scan groups its faces again.
+    private var ignoredSection: some View {
+        PeopleIgnoredSection(groups: ignoredGroups, isExpanded: $ignoredExpanded) { group in
+            Button(String(localized: "Restore")) { restoreIgnored(group) }
+        }
+    }
+
+    private func restoreIgnored(_ group: PeopleIgnoredGroup) {
+        PeopleStoreActions.restoreIgnored(personID: group.id, observations: observations, context: modelContext)
+        try? modelContext.save()
+        lastFaceChange = nil
+        refreshFaceCaches()
     }
 
     private func name(_ cluster: PeopleClusterSnapshot) {
@@ -1740,27 +1819,27 @@ struct PeopleScreen: View {
             newPersonName = ""
             newPersonFace = face
         }
-        // A loose face has no card to hide, so it is offered here: a game or
-        // cartoon character the detector took for a face.
+        // A loose face has no card to ignore, so it is offered here: a
+        // stranger or a game or cartoon character the detector took for a face.
         if face.personID == nil {
-            Button(String(localized: "Not a real person")) { notAPerson([face]) }
+            Button(String(localized: "Ignore this group")) { ignore([face]) }
         }
     }
 
-    /// Hides a group of faces as "not a real person", with an Undo that puts
-    /// every face back and removes the hidden person.
-    private func notAPerson(_ faces: [FaceObservation]) {
+    /// Hides a group of faces as ignored, with an Undo that puts every face
+    /// back and removes the hidden person.
+    private func ignore(_ faces: [FaceObservation]) {
         let free = faces.filter { (face: FaceObservation) -> Bool in face.personID == nil }
         guard !free.isEmpty else { return }
-        let snapshot = NotAPersonSnapshot(free)
-        guard let person = PeopleStoreActions.markNotAPerson(faces: free, context: modelContext) else { return }
+        let snapshot = IgnoredFacesSnapshot(free)
+        guard let person = PeopleStoreActions.ignore(faces: free, context: modelContext) else { return }
         try? modelContext.save()
         let hiddenPersonID = person.id
         lastFaceChange = nil
         refreshFaceCaches()
         selection.recordCorrection(CorrectionUndo(
-            message: String(localized: "Not a real person"),
-            actionName: String(localized: "Not a Real Person"),
+            message: String(localized: "Ignore this group"),
+            actionName: String(localized: "Ignore Group"),
             restore: { context in snapshot.restore(hiddenPersonID: hiddenPersonID, context: context) }
         ), context: modelContext)
     }

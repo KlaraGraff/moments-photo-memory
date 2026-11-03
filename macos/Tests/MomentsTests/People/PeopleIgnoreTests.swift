@@ -3,10 +3,11 @@ import SwiftData
 import XCTest
 @testable import Moments
 
-/// "Not a real person": a game or cartoon character hides as an unnamed,
-/// hidden person. Every face and ID here is synthetic.
+/// "Ignore this group": a stranger or a game/cartoon character hides as an
+/// unnamed, hidden person, and Restore puts its faces back for the next scan.
+/// Every face and ID here is synthetic.
 @MainActor
-final class PeopleNotAPersonTests: XCTestCase {
+final class PeopleIgnoreTests: XCTestCase {
     private func face(_ id: String, personID: String? = nil, clusterID: String? = nil) -> FaceObservation {
         FaceObservation(
             id: id,
@@ -26,14 +27,14 @@ final class PeopleNotAPersonTests: XCTestCase {
         try context.fetch(FetchDescriptor<Person>(sortBy: [SortDescriptor(\.createdAt)]))
     }
 
-    func testMarkingAThreeFaceCardCreatesOneHiddenUnnamedPerson() throws {
+    func testIgnoringAThreeFaceCardCreatesOneHiddenUnnamedPerson() throws {
         let container = try MomentsPersistence.makeContainer(inMemory: true)
         let context = container.mainContext
         let faces: [FaceObservation] = [face("a", clusterID: "cluster-a"), face("b", clusterID: "cluster-a"), face("c", clusterID: "cluster-a")]
         for face in faces { context.insert(face) }
         try context.save()
 
-        let person: Person? = PeopleStoreActions.markNotAPerson(faces: faces, context: context)
+        let person: Person? = PeopleStoreActions.ignore(faces: faces, context: context)
         try context.save()
 
         let hidden = try XCTUnwrap(person)
@@ -43,7 +44,7 @@ final class PeopleNotAPersonTests: XCTestCase {
 
         for face in faces {
             XCTAssertEqual(face.personID, hidden.id)
-            XCTAssertNil(face.clusterID, "A face in the hidden person leaves its card")
+            XCTAssertNil(face.clusterID, "A face in the ignored group leaves its card")
             XCTAssertTrue(face.confirmed)
             XCTAssertEqual(face.assignmentSource, "user", "The user, not a guess, put the face there")
         }
@@ -60,7 +61,7 @@ final class PeopleNotAPersonTests: XCTestCase {
         for face in [kept, freeA, freeB] { context.insert(face) }
         try context.save()
 
-        let person: Person? = PeopleStoreActions.markNotAPerson(faces: [kept, freeA, freeB], context: context)
+        let person: Person? = PeopleStoreActions.ignore(faces: [kept, freeA, freeB], context: context)
         try context.save()
 
         let hidden = try XCTUnwrap(person)
@@ -74,11 +75,47 @@ final class PeopleNotAPersonTests: XCTestCase {
         }
     }
 
-    func testNothingToHideReturnsNoPerson() throws {
+    func testNothingToIgnoreReturnsNoPerson() throws {
         let container = try MomentsPersistence.makeContainer(inMemory: true)
         let context = container.mainContext
 
-        XCTAssertNil(PeopleStoreActions.markNotAPerson(faces: [], context: context))
+        XCTAssertNil(PeopleStoreActions.ignore(faces: [], context: context))
         XCTAssertTrue(try allPeople(context).isEmpty)
+    }
+
+    func testRestoreReleasesTheFacesAndDeletesThePerson() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let faces: [FaceObservation] = [face("r-a", clusterID: "cluster-r"), face("r-b", clusterID: "cluster-r"), face("r-c", clusterID: "cluster-r")]
+        for face in faces { context.insert(face) }
+        try context.save()
+        let ignored = try XCTUnwrap(PeopleStoreActions.ignore(faces: faces, context: context))
+        try context.save()
+
+        let observations: [FaceObservation] = try context.fetch(FetchDescriptor<FaceObservation>())
+        let released: [FaceObservation] = PeopleStoreActions.restoreIgnored(personID: ignored.id, observations: observations, context: context)
+        try context.save()
+
+        XCTAssertEqual(released.map(\.id).sorted(), ["r-a", "r-b", "r-c"])
+        for face in released {
+            XCTAssertNil(face.personID, "A restored face has no person again")
+            XCTAssertEqual(face.clusterID, "pending-\(face.id)", "The next scan groups it again")
+            XCTAssertFalse(face.confirmed)
+            XCTAssertEqual(face.assignmentSource, "auto")
+        }
+        XCTAssertTrue(try allPeople(context).isEmpty, "The hidden person is deleted")
+    }
+
+    func testAnIgnoredPersonIsListedButANamedHiddenPersonIsNot() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let ignored = Person(id: "hidden-unnamed", hidden: true)
+        let namedHidden = Person(id: "hidden-named", name: "Synthetic Bob", hidden: true)
+        let visible = Person(id: "visible", name: "Synthetic Alice")
+        for person in [ignored, namedHidden, visible] { context.insert(person) }
+        try context.save()
+
+        let people: [Person] = try allPeople(context)
+        XCTAssertEqual(PeopleStoreActions.ignoredPeople(people).map(\.id), [ignored.id])
     }
 }

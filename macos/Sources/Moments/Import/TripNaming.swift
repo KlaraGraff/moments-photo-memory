@@ -98,11 +98,20 @@ struct TripNameBackfill: Sendable {
             var countries: [String] = []
             if Set(cities.map(\.name)).count > 3 {
                 let ends = cities.count > 1 ? [cities[0], cities[cities.count - 1]] : [cities[0]]
+                var countryMissing = false
                 for city in ends {
                     if let country = try await country(of: city.coordinate) {
                         countries.append(country)
+                    } else {
+                        countryMissing = true
                     }
                 }
+                // A mid-run rename must not freeze a partial name: a trip of
+                // more than three cities that lost a country lookup would get a
+                // name built from some of its countries only, and the backfill
+                // never renames a trip that already holds places. The final run
+                // (`onlyFullyNamed: false`) tries again.
+                if onlyFullyNamed, countryMissing { continue }
             }
             let start = trip.startDate ?? trip.orderedItems.compactMap(\.captureDate).first
             trip.name = TripNaming.name(cities: cities.map(\.name), countries: countries, start: start, index: 1)
@@ -165,6 +174,8 @@ struct TripNameBackfill: Sendable {
             return country
         }
         await pace()
+        // A cancelled wait must end the run, not send a lookup.
+        try Task.checkCancellation()
         let geocoder = self.geocoder
         let result: ImportGeocodeResult?
         do {

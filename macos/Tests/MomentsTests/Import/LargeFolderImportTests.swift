@@ -34,6 +34,16 @@ private actor NamingGeocoder: ImportGeocoder {
     }
 }
 
+/// Names the one synthetic city it serves and puts it in a fixed zone, the way
+/// a reverse lookup answers once a deferred city finally gets its name.
+private struct ZoneGeocoder: ImportGeocoder {
+    let zoneIdentifier: String
+
+    func reverseGeocode(coordinate: GeoPoint) async throws -> ImportGeocodeResult {
+        ImportGeocodeResult(city: "Synthetic City", area: "Synthetic Area", timeZoneIdentifier: zoneIdentifier)
+    }
+}
+
 /// Says "look up now" for the first `allowed` calls and "leave it to the
 /// backfill" after, like a pacer whose rate window is full.
 private actor DelayCallCounter {
@@ -42,6 +52,15 @@ private actor DelayCallCounter {
     func shouldLookUpNow(allowed: Int) -> Bool {
         calls += 1
         return calls <= allowed
+    }
+}
+
+/// Gives each hemisphere its own zone, so a test can tell which zone a photo got.
+private struct HemisphereZoneGeocoder: ImportGeocoder {
+    func reverseGeocode(coordinate: GeoPoint) async throws -> ImportGeocodeResult {
+        let identifier: String = coordinate.latitude >= 0 ? "Asia/Shanghai" : "America/New_York"
+        let index: Int = Int(coordinate.latitude.rounded())
+        return ImportGeocodeResult(city: "City \(index)", area: "Area \(index)", timeZoneIdentifier: identifier)
     }
 }
 
@@ -81,7 +100,7 @@ final class LargeFolderImportTests: XCTestCase {
         let folder = try writeFolder(count: 1_200)
         defer { SyntheticMediaFixture.removeFolder(folder) }
         let geocoder = CountingSlowGeocoder(delayMilliseconds: 50)
-        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: { true })
+        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: { true }, timeZoneDelay: {})
         let container = try MomentsPersistence.makeContainer(inMemory: true)
 
         let started = Date()
@@ -98,7 +117,7 @@ final class LargeFolderImportTests: XCTestCase {
         let folder = try writeFolder(count: 300)
         defer { SyntheticMediaFixture.removeFolder(folder) }
         let geocoder = CountingSlowGeocoder(delayMilliseconds: 50, fails: true)
-        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: { true })
+        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: { true }, timeZoneDelay: {})
         let container = try MomentsPersistence.makeContainer(inMemory: true)
 
         let summary = try await importer.importFolder(folder, container: container)
@@ -143,7 +162,7 @@ final class LargeFolderImportTests: XCTestCase {
         defer { SyntheticMediaFixture.removeFolder(folder) }
         let geocoder = NamingGeocoder()
         let cache = ImportGeocodeCache()
-        let importer = FolderImporter(geocoder: geocoder, geocodeCache: cache, geocodeDelay: { true })
+        let importer = FolderImporter(geocoder: geocoder, geocodeCache: cache, geocodeDelay: { true }, timeZoneDelay: {})
         let container = try MomentsPersistence.makeContainer(inMemory: true)
 
         let started = Date()
@@ -172,7 +191,7 @@ final class LargeFolderImportTests: XCTestCase {
         // Offline during the import: the time-zone pass and the place pass each
         // stop after a few failures, so places stay unnamed.
         await geocoder.setFails(true)
-        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: { true })
+        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: { true }, timeZoneDelay: {})
         let container = try MomentsPersistence.makeContainer(inMemory: true)
         _ = try await importer.importFolder(folder, container: container)
         let importCalls = await geocoder.calls
@@ -227,7 +246,7 @@ final class LargeFolderImportTests: XCTestCase {
         let delay: @Sendable () async -> Bool = {
             await counter.shouldLookUpNow(allowed: 10)
         }
-        let importer = FolderImporter(geocoder: geocoder, geocodeCache: cache, geocodeDelay: delay)
+        let importer = FolderImporter(geocoder: geocoder, geocodeCache: cache, geocodeDelay: delay, timeZoneDelay: {})
         let container = try MomentsPersistence.makeContainer(inMemory: true)
 
         let started = Date()
@@ -292,6 +311,176 @@ final class LargeFolderImportTests: XCTestCase {
         return trips?.first { $0.id == id }?.name
     }
 
+    private func trips(in container: ModelContainer) throws -> [Trip] {
+        try ModelContext(container).fetch(FetchDescriptor<Trip>()).sorted { $0.id < $1.id }
+    }
+
+    /// Two cities, one geocodeDelay budget: the second city is deferred. The
+    /// import must not freeze "City A April 2026" as the trip's name; it uses
+    /// the placeless default the backfill can still rename, and a deferred
+    /// city is not a failure (no retry reason).
+    func testTripAcrossTheDeferralCutGetsThePlacelessName() async throws {
+        let folder = try SyntheticMediaFixture.makeFolder()
+        defer { SyntheticMediaFixture.removeFolder(folder) }
+        let start: Date = Date(timeIntervalSince1970: 1_767_225_600)
+        // Two distant cities, well beyond the 300 km trip distance, so the two
+        // stretches also form one trip only by time gap, each in its own city.
+        for index in 0..<6 {
+            let isSecond: Bool = index >= 3
+            let latitude: Double = isSecond ? 48.0 : 31.0
+            let longitude: Double = isSecond ? 2.0 : 121.0
+            let offset: TimeInterval = Double(index) * 600 + (isSecond ? 86_400 : 0)
+            try SyntheticMediaFixture.writeJPEG(
+                at: folder.appendingPathComponent("deferral-\(index).jpg"),
+                date: start.addingTimeInterval(offset),
+                offset: "+00:00",
+                latitude: latitude,
+                longitude: longitude,
+                marker: index
+            )
+        }
+        let geocoder = NamingGeocoder()
+        let cache = ImportGeocodeCache()
+        let counter = DelayCallCounter()
+        let delay: @Sendable () async -> Bool = {
+            await counter.shouldLookUpNow(allowed: 1)
+        }
+        let importer = FolderImporter(
+            geocoder: geocoder,
+            geocodeCache: cache,
+            geocodeDelay: delay,
+            timeZoneDelay: {}
+        )
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+
+        let summary = try await importer.importFolder(folder, container: container)
+        XCTAssertEqual(summary.importedCount, 6)
+        XCTAssertEqual(summary.tripCount, 1)
+        let importedTrips = try trips(in: container)
+        XCTAssertEqual(importedTrips.count, 1)
+        let importedName: String = try XCTUnwrap(importedTrips.first?.name)
+        XCTAssertTrue(TripNaming.isPlacelessDefaultName(importedName), "Half-named: \(importedName)")
+        XCTAssertFalse(importedName.contains("City "), "No city may be frozen into the name: \(importedName)")
+        XCTAssertEqual(try retryFlagCount(in: container), 0, "Deferred is not failed")
+
+        _ = try await PlaceNameBackfill(geocoder: geocoder, geocodeCache: cache, pace: {}).run(container: container)
+        let namedCities: [String] = try cityNames(in: container)
+        XCTAssertEqual(namedCities.filter(\.isEmpty).count, 0, "Backfill names every city: \(namedCities)")
+        _ = try await TripNameBackfill(geocoder: geocoder, geocodeCache: cache, pace: {}).run(container: container)
+        let renamed: String = try XCTUnwrap(Self.tripName(try XCTUnwrap(importedTrips.first?.id), in: container))
+        XCTAssertTrue(renamed.contains("City 31"), renamed)
+        XCTAssertTrue(renamed.contains("City 48"), renamed)
+    }
+
+    /// A wrong zone moves the capture date by hours, so the time-zone pass waits
+    /// for the pacer even when the place pass is deferred.
+    func testTimeZonePassIsNeverDeferred() async throws {
+        let folder = try SyntheticMediaFixture.makeFolder()
+        defer { SyntheticMediaFixture.removeFolder(folder) }
+        let start: Date = Date(timeIntervalSince1970: 1_767_225_600)
+        // Offset-less EXIF times at two distant coordinates: two half-degree cells.
+        try SyntheticMediaFixture.writeJPEG(
+            at: folder.appendingPathComponent("north.jpg"),
+            date: start,
+            offset: nil,
+            latitude: 31.2,
+            longitude: 121.5,
+            marker: 1
+        )
+        try SyntheticMediaFixture.writeJPEG(
+            at: folder.appendingPathComponent("south.jpg"),
+            date: start.addingTimeInterval(86_400),
+            offset: nil,
+            latitude: -33.9,
+            longitude: 151.2,
+            marker: 2
+        )
+        let geocoder = HemisphereZoneGeocoder()
+        // The place pass is out of room from the first call; the time-zone pass
+        // must not care.
+        let importer = FolderImporter(
+            geocoder: geocoder,
+            geocodeCache: ImportGeocodeCache(),
+            geocodeDelay: { false },
+            timeZoneDelay: {}
+        )
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+
+        _ = try await importer.importFolder(folder, container: container)
+        let items = try ModelContext(container).fetch(FetchDescriptor<MediaItem>()).sorted { $0.title < $1.title }
+        XCTAssertEqual(items.map(\.timeConfidence), [.exact, .exact])
+        XCTAssertEqual(items.map(\.timeZoneIdentifier), ["Asia/Shanghai", "America/New_York"])
+        XCTAssertTrue(items.allSatisfy { $0.localDayKey != nil })
+    }
+
+    /// A photo whose zone the import could only guess because its city was still
+    /// unnamed gets zone, day key and confidence repaired once the name arrives.
+    /// A folder photo whose EXIF wall-clock time was read in the wrong zone also
+    /// gets its capture date resolved again in the right one.
+    func testBackfillRepairsAZoneLeftUnknown() async throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let deviceZone: TimeZone = .autoupdatingCurrent
+        var deviceCalendar: Calendar = Calendar(identifier: .gregorian)
+        deviceCalendar.timeZone = deviceZone
+        // 18:00 on the device clock: ten hours away is the next day, so the day
+        // key of an absolute date must change wherever this test runs.
+        let date: Date = try XCTUnwrap(deviceCalendar.date(from: DateComponents(year: 2026, month: 1, day: 15, hour: 18)))
+        let deviceDayKey: String = UserGroupRuleSet.localDayKey(for: date, calendar: deviceCalendar)
+        let deviceOffsetSeconds: Int = deviceZone.secondsFromGMT(for: date)
+        let tenHoursAway: TimeZone = try XCTUnwrap(TimeZone(secondsFromGMT: deviceOffsetSeconds + 10 * 3_600))
+        var awayCalendar: Calendar = Calendar(identifier: .gregorian)
+        awayCalendar.timeZone = tenHoursAway
+        let awayDayKey: String = UserGroupRuleSet.localDayKey(for: date, calendar: awayCalendar)
+        XCTAssertNotEqual(awayDayKey, deviceDayKey, "The test needs a zone that crosses the day")
+
+        let city = Place(id: "unknown-zone-city", name: "", kind: .city, latitude: 35.0, longitude: 139.0)
+        // An Apple Photos asset: an absolute date and no wall-clock reading.
+        let absolute = MediaItem(
+            id: "unknown-zone-absolute",
+            captureDate: date,
+            place: city,
+            localDayKey: deviceDayKey,
+            timeZoneIdentifier: deviceZone.identifier,
+            timeConfidenceRaw: ImportTimeConfidence.zoneUnknown.rawValue
+        )
+        // A folder photo whose EXIF wall-clock time was read in the wrong zone.
+        let wallClock = MediaItem(
+            id: "unknown-zone-wallclock",
+            captureDate: date,
+            place: city,
+            localDayKey: deviceDayKey,
+            captureDateHintUTC: date,
+            timeZoneIdentifier: deviceZone.identifier,
+            timeConfidenceRaw: ImportTimeConfidence.zoneUnknown.rawValue
+        )
+        context.insert(city)
+        context.insert(absolute)
+        context.insert(wallClock)
+        try context.save()
+
+        let geocoder = ZoneGeocoder(zoneIdentifier: tenHoursAway.identifier)
+        let cache = ImportGeocodeCache()
+        let named: Int = try await PlaceNameBackfill(geocoder: geocoder, geocodeCache: cache, pace: {}).run(container: container)
+        XCTAssertEqual(named, 1)
+
+        let repaired = try ModelContext(container).fetch(FetchDescriptor<MediaItem>())
+        let repairedAbsolute = try XCTUnwrap(repaired.first { $0.id == "unknown-zone-absolute" })
+        XCTAssertEqual(repairedAbsolute.timeZoneIdentifier, tenHoursAway.identifier)
+        XCTAssertEqual(repairedAbsolute.timeConfidence, .exact)
+        XCTAssertEqual(repairedAbsolute.localDayKey, awayDayKey, "The day key must follow the new zone")
+        XCTAssertEqual(repairedAbsolute.captureDate, date, "An absolute date does not move")
+
+        let repairedWallClock = try XCTUnwrap(repaired.first { $0.id == "unknown-zone-wallclock" })
+        let expectedDate: Date = ImportOrganizer.resolveWallClockDate(date, in: tenHoursAway)
+        let expectedDayKey: String = UserGroupRuleSet.localDayKey(for: expectedDate, calendar: awayCalendar)
+        XCTAssertEqual(repairedWallClock.timeZoneIdentifier, tenHoursAway.identifier)
+        XCTAssertEqual(repairedWallClock.timeConfidence, .exact)
+        XCTAssertEqual(repairedWallClock.captureDate, expectedDate, "The wall-clock time is read in the new zone")
+        XCTAssertNotEqual(repairedWallClock.captureDate, date)
+        XCTAssertEqual(repairedWallClock.localDayKey, expectedDayKey, "The day key follows the resolved date")
+    }
+
     func testPacerStartIfRoomRefusesWithoutWaiting() async throws {
         let pacer = ImportGeocodePacer(limit: 2, window: .seconds(60), spacing: .zero)
         let first = await pacer.startIfRoom()
@@ -330,7 +519,7 @@ final class LargeFolderImportTests: XCTestCase {
         let folder = try writeTwoTripsInOneCity()
         defer { SyntheticMediaFixture.removeFolder(folder) }
         let geocoder = NamingGeocoder()
-        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: { true })
+        let importer = FolderImporter(geocoder: geocoder, geocodeCache: ImportGeocodeCache(), geocodeDelay: { true }, timeZoneDelay: {})
         let container = try MomentsPersistence.makeContainer(inMemory: true)
 
         let summary = try await importer.importFolder(folder, container: container)

@@ -48,6 +48,9 @@ struct PlaceNameBackfill: Sendable {
             var result = await geocodeCache.result(for: coordinate)
             if result == nil {
                 await pace()
+                // A cancelled wait must end the run, not send a lookup that
+                // then records a failure against the failure stop.
+                try Task.checkCancellation()
                 let geocoder = self.geocoder
                 do {
                     result = try await ImportGeocodeGate.firstResult(within: timeout) {
@@ -69,6 +72,7 @@ struct PlaceNameBackfill: Sendable {
             guard let result else { continue }
             apply(result, to: city)
             clearRetryFlags(under: city)
+            repairZones(under: city, named: result)
             // Save each city so the UI updates as names arrive and a quit
             // loses at most one lookup.
             try context.save()
@@ -104,13 +108,7 @@ struct PlaceNameBackfill: Sendable {
     /// Photos in a city that just got its name no longer need a place retry.
     private func clearRetryFlags(under city: Place) {
         let retry = ImportReviewReason.geocodingRetry.rawValue
-        var places = [city]
-        var items: [MediaItem] = []
-        while let place = places.popLast() {
-            items.append(contentsOf: place.items)
-            places.append(contentsOf: place.children)
-        }
-        for item in items {
+        for item in items(under: city) {
             guard let raw = item.importReviewReasonsRaw, raw.contains(retry) else { continue }
             let reasons = raw
                 .split(separator: ",")
@@ -121,6 +119,48 @@ struct PlaceNameBackfill: Sendable {
                 item.reviewDecisionRaw = ImportReviewDecision.accepted.rawValue
             }
         }
+    }
+
+    /// Photos under a city whose zone the import could only guess because the
+    /// city was still unnamed got the device zone and `.zoneUnknown`. Now that
+    /// the city has a name (and usually its zone), they get the real one: the
+    /// zone identifier, the day key in that zone and, for a folder photo whose
+    /// EXIF wall-clock time was read in the wrong zone, the capture date
+    /// resolved again from that wall-clock value.
+    private func repairZones(under city: Place, named result: ImportGeocodeResult) {
+        guard let identifier = result.timeZoneIdentifier,
+              let zone = TimeZone(identifier: identifier) else { return }
+        for item in items(under: city) where item.timeConfidence == .zoneUnknown {
+            // A date the person corrected themselves is never touched.
+            guard item.userCorrectedCaptureDateUTC == nil else { continue }
+            item.timeZoneIdentifier = identifier
+            if let wallClock = item.captureDateHintUTC {
+                let resolved = ImportOrganizer.resolveWallClockDate(wallClock, in: zone)
+                item.captureDate = resolved
+                item.originalCaptureDateUTC = resolved
+            }
+            if let date = item.captureDate {
+                item.localDayKey = Self.localDayKey(for: date, in: zone)
+            }
+            item.timeConfidenceRaw = ImportTimeConfidence.exact.rawValue
+        }
+    }
+
+    /// The `yyyy-MM-dd` day a moment falls on in `zone`, through the same
+    /// function the import uses, so a repaired day key matches a fresh import.
+    private static func localDayKey(for date: Date, in zone: TimeZone) -> String {
+        ImportOrganizer.localDayKey(for: date, in: zone)
+    }
+
+    /// The city itself and every area and spot under it.
+    private func items(under place: Place) -> [MediaItem] {
+        var places = [place]
+        var items: [MediaItem] = []
+        while let place = places.popLast() {
+            items.append(contentsOf: place.items)
+            places.append(contentsOf: place.children)
+        }
+        return items
     }
 }
 
@@ -190,13 +230,18 @@ final class PlaceNameBackfillScheduler {
         let backfill = makeBackfill()
         task = Task.detached(priority: .utility) { [weak self] in
             let named = (try? await backfill.run(container: container)) ?? 0
-            // Then trips still named by date only get their places in the name.
-            if !Task.isCancelled {
-                _ = try? await TripNameBackfill(geocoder: backfill.geocoder, geocodeCache: backfill.geocodeCache)
-                    .run(container: container)
-            }
+            // Whether any city still has no name, computed before the trip pass
+            // (it can name cities itself and must not change the answer).
             let cancelled = Task.isCancelled
             let remaining = !cancelled && ((try? PlaceNameBackfill.hasUnnamedCities(in: container)) ?? false)
+            // Then trips still named by date only get their places in the name.
+            // The final pass waits too (the T1d fix): a trip renamed while only
+            // some of its cities have names keeps that partial name forever,
+            // because only placeless default names are renamed again.
+            if !cancelled {
+                _ = try? await TripNameBackfill(geocoder: backfill.geocoder, geocodeCache: backfill.geocodeCache)
+                    .run(container: container, onlyFullyNamed: remaining)
+            }
             await self?.finished(current, named: named, retryNeeded: remaining)
         }
     }

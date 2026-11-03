@@ -56,6 +56,10 @@ struct FolderImporter {
     let geocodeCache: ImportGeocodeCache
     /// true: look up now; false: leave the place to the background backfill.
     let geocodeDelay: @Sendable () async -> Bool
+    /// Waits until one time-zone lookup may start. Time-zone cells are few
+    /// (half-degree cells) and a wrong zone moves the capture date, so the
+    /// import waits for them. Place names can come later.
+    let timeZoneDelay: @Sendable () async -> Void
 
     init(
         configuration: ImportConfiguration = ImportConfiguration(),
@@ -63,6 +67,9 @@ struct FolderImporter {
         geocodeCache: ImportGeocodeCache? = nil,
         geocodeDelay: @escaping @Sendable () async -> Bool = {
             await ImportGeocodePacer.shared.startIfRoom()
+        },
+        timeZoneDelay: @escaping @Sendable () async -> Void = {
+            await ImportGeocodePacer.shared.wait()
         }
     ) {
         self.configuration = configuration
@@ -73,6 +80,7 @@ struct FolderImporter {
                 .appending(path: "import-geocoding.json")
         )
         self.geocodeDelay = geocodeDelay
+        self.timeZoneDelay = timeZoneDelay
     }
 
     func importFolder(
@@ -109,6 +117,7 @@ struct FolderImporter {
             geocoder: geocoder,
             geocodeCache: geocodeCache,
             geocodeDelay: geocodeDelay,
+            timeZoneDelay: timeZoneDelay,
             geocodeProgress: { done, budget in
                 progress(ImportProgress(phase: .organizing, completed: done, total: budget, message: String(localized: "Looking up places")))
             }
@@ -225,7 +234,7 @@ struct FolderImporter {
                 originalCaptureDateUTC: metadata.exactCaptureDate,
                 captureDateHintUTC: metadata.dateHintUTC,
                 timeZoneIdentifier: organized.timeZoneIdentifier,
-                timeConfidenceRaw: metadata.timeConfidence.rawValue,
+                timeConfidenceRaw: organized.timeConfidence.rawValue,
                 sourceReferencesRaw: sourceReferencesJSON(metadata.sourceReferences),
                 pairedVideoContentHash: metadata.pairedVideoContentHash,
                 pairedVideoBookmarkData: metadata.pairedVideoBookmarkData,

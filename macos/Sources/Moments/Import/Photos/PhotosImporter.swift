@@ -357,12 +357,15 @@ public struct PhotosImporter {
                 existing.height = organized.metadata.height
                 existing.isScreenshot = mapped.isScreenshot
                 existing.duration = organized.metadata.duration
-                if existing.userCorrectedCaptureDateUTC == nil {
+                // A `.zoneUnknown` zone is only the device-zone placeholder for
+                // a city still waiting for its name. It must never replace a
+                // zone and day key the item already has; `PlaceNameBackfill`
+                // repairs the placeholder later.
+                let zoneIsGuess = organized.timeConfidence == .zoneUnknown
+                if existing.userCorrectedCaptureDateUTC == nil, !zoneIsGuess {
                     existing.localDayKey = organized.localDayKey
                     existing.timeZoneIdentifier = organized.timeZoneIdentifier
-                }
-                if existing.userCorrectedCaptureDateUTC == nil {
-                    existing.timeConfidenceRaw = organized.metadata.timeConfidence.rawValue
+                    existing.timeConfidenceRaw = organized.timeConfidence.rawValue
                 }
                 let existingReasons = Set((existing.importReviewReasonsRaw ?? "").split(separator: ",").map { String($0) })
                 let incomingReasons = Set(reasons.map(\.rawValue))
@@ -416,7 +419,7 @@ public struct PhotosImporter {
                 originalCaptureDateUTC: organized.metadata.exactCaptureDate,
                 captureDateHintUTC: organized.metadata.dateHintUTC,
                 timeZoneIdentifier: organized.timeZoneIdentifier,
-                timeConfidenceRaw: organized.metadata.timeConfidence.rawValue,
+                timeConfidenceRaw: organized.timeConfidence.rawValue,
                 sourceReferencesRaw: nil,
                 photosLocalIdentifier: asset.localIdentifier,
                 photosCloudIdentifier: asset.cloudIdentifier,

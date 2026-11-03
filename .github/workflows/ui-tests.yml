@@ -60,6 +60,10 @@ on:
         description: 'Page probe, optional: measure this branch or commit instead, with the probe files of the branch you run from laid over it (a branch name or a full commit SHA; it must already have the probe hooks)'
         required: false
         default: ''
+      optimise:
+        description: 'Page probe, optional: build with the Swift optimiser on (as a Release build is), keeping DEBUG so the probe works'
+        type: boolean
+        default: false
 
 # A new push to a pull request cancels that pull request's older run, so
 # superseded runs never hold one of the few hosted Macs; on main only the
@@ -225,16 +229,31 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate --spec macos/project.yml
       - name: Build the app and UI tests
+        env:
+          OPTIMISE: ${{ inputs.optimise }}
         run: |
+          # The probe hooks are compiled only with DEBUG, so this job always
+          # builds Debug. "optimise" keeps DEBUG and turns the Swift and C
+          # optimisers on inside it, the way the owner's Release build is
+          # compiled; off leaves the command exactly as it was.
+          optimise=()
+          if [ "$OPTIMISE" = "true" ]; then
+            optimise=(SWIFT_OPTIMIZATION_LEVEL=-O SWIFT_COMPILATION_MODE=wholemodule GCC_OPTIMIZATION_LEVEL=s)
+            echo "optimiser: on"
+          else
+            echo "optimiser: off"
+          fi
           xcodebuild \
             -project macos/Moments.xcodeproj \
             -scheme MomentsUITests \
             -destination 'platform=macOS' \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
+            "${optimise[@]}" \
             build-for-testing
       - name: Run the page probe under the watchdog
         env:
+          OPTIMISE: ${{ inputs.optimise }}
           TEST_RUNNER_MOMENTS_PAGE_DIR: ${{ runner.temp }}/pages
           TEST_RUNNER_MOMENTS_PAGE_STRESS_COUNT: ${{ inputs.page_stress_count || '5000' }}
           TEST_RUNNER_MOMENTS_PAGE_SKIP: ${{ inputs.skip_pages }}
@@ -243,6 +262,12 @@ jobs:
           # 10 minutes, the heartbeat stops for 3, the main thread leaves a
           # ping unanswered for 4, or no phase finishes for 15. Single pages
           # still have the probe's own 45-second settle limit.
+          # The optimiser flags must match the build step: test-without-building
+          # looks up the build made with the same settings.
+          optimise=()
+          if [ "$OPTIMISE" = "true" ]; then
+            optimise=(SWIFT_OPTIMIZATION_LEVEL=-O SWIFT_COMPILATION_MODE=wholemodule GCC_OPTIMIZATION_LEVEL=s)
+          fi
           python3 scripts/page_probe_watchdog.py \
             --page-dir "$RUNNER_TEMP/pages" \
             --diagnostics "$RUNNER_TEMP/probe-diagnostics" \
@@ -255,6 +280,7 @@ jobs:
               -derivedDataPath "$RUNNER_TEMP/DerivedData" \
               -resultBundlePath "$RUNNER_TEMP/PageProbe.xcresult" \
               CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
+              "${optimise[@]}" \
               -only-testing:MomentsUITests/MomentsPageProbeUITests/testFirstImportAndPagesWithALargeLibrary \
               test-without-building
       - name: Print the full page report

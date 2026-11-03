@@ -189,23 +189,120 @@ final class PeopleAssignmentPlannerTests: XCTestCase {
         XCTAssertEqual(personByID["extra"]?.clusterID, "loose-extra")
 
         // Within an unnamed group: the face closest to the centre stays
-        // (`ee`, exactly at the centre), `dd` and `ff` become loose.
+        // (`ee`, exactly at the centre), `dd` and `ff` become loose. `gg`
+        // comes from another photo, so what is left is a card of this size
+        // (`minSize` is 2 here); a smaller rest would be loose faces (rule 4b).
         let clusterFaces: [PeoplePlannerFace] = [
             makeFace(id: "dd", embedding: angled(0), photoID: "shared-2"),
             makeFace(id: "ee", embedding: angled(10), photoID: "shared-2"),
             makeFace(id: "ff", embedding: angled(20), photoID: "shared-2"),
+            makeFace(id: "gg", embedding: angled(25), photoID: "photo-g"),
         ]
-        XCTAssertEqual(groupingPlan(clusterFaces, parameters: parameters)?.groups, [[0, 1, 2]])
+        XCTAssertEqual(groupingPlan(clusterFaces, parameters: parameters)?.groups, [[0, 1, 2, 3]])
         let clusterResult = PeopleAssignmentPlanner.plan(clusterFaces, parameters: parameters)
         let clusterByID = assignmentsByID(clusterResult)
         XCTAssertEqual(clusterByID["ee"]?.clusterID, "cluster-dd")
+        XCTAssertEqual(clusterByID["gg"]?.clusterID, "cluster-dd")
         XCTAssertEqual(clusterByID["dd"]?.clusterID, "loose-dd")
         XCTAssertEqual(clusterByID["ff"]?.clusterID, "loose-ff")
         XCTAssertNil(clusterByID["ff"]?.personID)
     }
 
-    // MARK: - f) a loose face joins a close named person
+    // MARK: - e2) a card below the minimum is loose faces (rule 4b)
 
+    /// Faces of one unnamed card at ~0 degrees and a confirmed p1 card at
+    /// ~70 degrees: close enough for a question (0.66 < `askCentre`), far
+    /// enough that rule 5 does not pull the released faces to p1 (0.55).
+    private func smallCardAndPersonCard(
+        cardIDs: [String],
+        cardPhotoIDs: [String],
+        cardAngles: [Double]
+    ) -> ([PeoplePlannerFace], PeopleGroupingParameters) {
+        var faces: [PeoplePlannerFace] = []
+        for index in cardIDs.indices {
+            faces.append(makeFace(id: cardIDs[index], embedding: angled(cardAngles[index]), photoID: cardPhotoIDs[index]))
+        }
+        faces.append(makeFace(id: "p1-a", embedding: angled(70), photoID: "photo-p1-a", personID: "p1", isUserConfirmed: true))
+        faces.append(makeFace(id: "p1-b", embedding: angled(76), photoID: "photo-p1-b", personID: "p1", isUserConfirmed: true))
+        faces.append(makeFace(id: "p1-c", embedding: angled(65), photoID: "photo-p1-c", personID: "p1", isUserConfirmed: true))
+        return (faces, tightParameters(minSize: 3))
+    }
+
+    /// Cluster ids of the output that are cards, with their face counts.
+    private func clusterSizes(_ result: PeoplePlannerResult?) -> [String: Int] {
+        guard let result else { return [:] }
+        var sizes: [String: Int] = [:]
+        for assignment in result.assignments {
+            guard let clusterID = assignment.clusterID, !clusterID.hasPrefix("loose-") else { continue }
+            sizes[clusterID, default: 0] += 1
+        }
+        return sizes
+    }
+
+    func testCardBelowMinimumSizeBecomesLooseFacesAndLosesItsQuestion() {
+        // Three faces are a card, but two of them come from one photo: rule 4
+        // leaves two faces, fewer than `minSize` (3), so the card dissolves and
+        // the question about it must not be asked.
+        let (faces, parameters) = smallCardAndPersonCard(
+            cardIDs: ["a1", "a2", "a3"],
+            cardPhotoIDs: ["shared-a", "shared-a", "photo-a3"],
+            cardAngles: [0, 1, -1]
+        )
+        let grouped = groupingPlan(faces, parameters: parameters)
+        XCTAssertEqual(grouped?.groups, [[0, 1, 2], [3, 4, 5]])
+        // The grouping does ask about the two cards; only the planner drops it.
+        XCTAssertEqual(grouped?.questions, [PeopleGroupingPair(first: 0, second: 1)])
+
+        let result = PeopleAssignmentPlanner.plan(faces, parameters: parameters)
+        XCTAssertNotNil(result)
+        let sizes = clusterSizes(result)
+        XCTAssertTrue(sizes.isEmpty, "no card may keep fewer than 3 faces, got \(sizes)")
+        let byID = assignmentsByID(result)
+        for faceID in ["a1", "a2", "a3"] {
+            XCTAssertNil(byID[faceID]?.personID)
+            XCTAssertEqual(byID[faceID]?.clusterID, "loose-\(faceID)")
+        }
+        XCTAssertEqual(byID["p1-a"]?.personID, "p1")
+        // No question names the card that is gone.
+        let questionSides: [PeoplePlannerSide] = (result?.questions ?? []).flatMap { (question: PeoplePlannerQuestion) -> [PeoplePlannerSide] in
+            [question.first, question.second]
+        }
+        XCTAssertTrue(
+            questionSides.allSatisfy { (side: PeoplePlannerSide) -> Bool in
+                if case .cluster = side { return false }
+                return true
+            },
+            "no cluster question may survive its card, got \(result?.questions ?? [])"
+        )
+    }
+
+    func testFourFaceCardWithOneSamePhotoPairKeepsThreeFacesAndItsQuestion() {
+        // Four faces, two from one photo: rule 4 leaves three, which is still a
+        // card, and the question about it stays.
+        let (faces, parameters) = smallCardAndPersonCard(
+            cardIDs: ["a1", "a2", "a3", "a4"],
+            cardPhotoIDs: ["shared-a", "shared-a", "photo-a3", "photo-a4"],
+            cardAngles: [0, 1.5, -1, 2]
+        )
+        let grouped = groupingPlan(faces, parameters: parameters)
+        XCTAssertEqual(grouped?.groups, [[0, 1, 2, 3], [4, 5, 6]])
+
+        let result = PeopleAssignmentPlanner.plan(faces, parameters: parameters)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(clusterSizes(result), ["cluster-a1": 3])
+        let byID = assignmentsByID(result)
+        XCTAssertNil(byID["a2"]?.personID)
+        XCTAssertEqual(byID["a2"]?.clusterID, "loose-a2")
+        XCTAssertEqual(byID["a1"]?.clusterID, "cluster-a1")
+        XCTAssertEqual(byID["a3"]?.clusterID, "cluster-a1")
+        XCTAssertEqual(byID["a4"]?.clusterID, "cluster-a1")
+        XCTAssertEqual(
+            result?.questions,
+            [PeoplePlannerQuestion(first: .cluster("cluster-a1"), second: .person("p1"))]
+        )
+    }
+
+    // MARK: - f) a loose face joins a close named person
     func testLooseFaceJoinsCloseNamedPerson() {
         // `attach`, `absorb`, `absorbWide` are tightened so the grouping plan
         // leaves the low-quality faces loose; `personAttach` (0.55) is the

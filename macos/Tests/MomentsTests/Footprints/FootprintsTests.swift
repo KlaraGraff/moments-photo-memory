@@ -58,7 +58,9 @@ final class FootprintsTests: XCTestCase {
             .appendingPathComponent("footprints-geocoding-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: cacheURL) }
 
-        let fake = CountingGeocoder(result: FootprintsGeocodeResult(countryCode: "MA", countryName: "Morocco"))
+        let fake = CountingGeocoder(
+            result: FootprintsGeocodeResult(countryCode: "MA", countryName: "Morocco", cityName: "Tangier")
+        )
         let city = cluster(id: "city", stopIDs: ["photo"], latitude: 35.78, longitude: -5.81)
         let first = FootprintsGeocodeResolver(
             geocoder: fake,
@@ -141,6 +143,106 @@ final class FootprintsTests: XCTestCase {
         let nearest: PlaceCluster? = FootprintsFocus.nearestCluster(to: point, in: [few, many])
 
         XCTAssertEqual(nearest?.id, "city-many")
+    }
+
+    func testCityNamePrefersTheBigCityOverItsDistricts() {
+        // Chongqing's geocoder answer: the municipality in the administrative
+        // area, the district (万州区) in the locality.
+        let chongqing: String? = FootprintsCityName.pick(
+            countryCode: "CN",
+            administrativeArea: "重庆市",
+            locality: "万州区",
+            subAdministrativeArea: nil
+        )
+        XCTAssertEqual(chongqing, "重庆市")
+
+        let englishChongqing: String? = FootprintsCityName.pick(
+            countryCode: "CN",
+            administrativeArea: "Chongqing",
+            locality: "Wanzhou",
+            subAdministrativeArea: nil
+        )
+        XCTAssertEqual(englishChongqing, "Chongqing")
+
+        let paris: String? = FootprintsCityName.pick(
+            countryCode: "FR",
+            administrativeArea: "Île-de-France",
+            locality: "Paris",
+            subAdministrativeArea: nil
+        )
+        XCTAssertEqual(paris, "Paris")
+
+        let noLocality: String? = FootprintsCityName.pick(
+            countryCode: "FR",
+            administrativeArea: "Occitanie",
+            locality: nil,
+            subAdministrativeArea: "Toulouse"
+        )
+        XCTAssertEqual(noLocality, "Toulouse")
+    }
+
+    func testCitiesMergeChongqingDistrictsIntoOneCity() {
+        let wanzhou = cluster(id: "wanzhou", stopIDs: ["a", "b"], latitude: 30.8, longitude: 108.4)
+        let kaizhou = cluster(id: "kaizhou", stopIDs: ["c"], latitude: 31.2, longitude: 108.4)
+        let shanghai = cluster(id: "shanghai", stopIDs: ["d"], latitude: 31.2, longitude: 121.5)
+        let snapshot = FootprintsSnapshot(
+            cityClusters: [wanzhou, kaizhou, shanghai],
+            overviewSegments: [],
+            cameraTarget: FootprintsCalculator.cameraTarget(for: [wanzhou, kaizhou, shanghai])
+        )
+        let geocoding: [String: FootprintsGeocodeResult] = [
+            wanzhou.id: FootprintsGeocodeResult(countryCode: "CN", countryName: "China", cityName: "重庆市"),
+            kaizhou.id: FootprintsGeocodeResult(countryCode: "CN", countryName: "China", cityName: "重庆市"),
+            shanghai.id: FootprintsGeocodeResult(countryCode: "CN", countryName: "China", cityName: "上海市")
+        ]
+
+        let cities: [FootprintsCitySummary] = FootprintsCitySummary.build(
+            clusters: snapshot.cityClusters,
+            geocoding: geocoding
+        )
+        let statistics: FootprintsStatistics = FootprintsCalculator.statistics(
+            for: snapshot,
+            geocoding: geocoding
+        )
+
+        XCTAssertEqual(cities.count, 2)
+        XCTAssertEqual(statistics.cityCount, 2)
+        let chongqing: FootprintsCitySummary? = cities.first { $0.name == "重庆市" }
+        XCTAssertEqual(chongqing?.photoCount, 3)
+        XCTAssertEqual(chongqing?.clusterIDs, ["kaizhou", "wanzhou"])
+        XCTAssertEqual(chongqing?.firstCenter, wanzhou.center)
+        XCTAssertEqual(chongqing?.flag, "🇨🇳")
+    }
+
+    func testOldCacheJSONWithoutCityNameStillDecodes() throws {
+        let json = #"[{"countryCode":"FR","countryName":"France"}]"#
+        let decoded = try JSONDecoder().decode([FootprintsGeocodeResult].self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertEqual(decoded.first?.countryCode, "FR")
+        XCTAssertNil(decoded.first?.cityName)
+    }
+
+    func testCachedEntryWithoutCityNameIsLookedUpOnceMore() async {
+        let cacheURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("footprints-geocoding-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: cacheURL) }
+
+        let city = cluster(id: "city", stopIDs: ["photo"], latitude: 35.78, longitude: -5.81)
+        let oldCache = FootprintsGeocodeCache(fileURL: cacheURL)
+        oldCache.insert(FootprintsGeocodeResult(countryCode: "MA", countryName: "Morocco"), for: city.center!)
+        try? oldCache.save()
+
+        let fake = CountingGeocoder(
+            result: FootprintsGeocodeResult(countryCode: "MA", countryName: "Morocco", cityName: "Marrakesh")
+        )
+        let resolver = FootprintsGeocodeResolver(
+            geocoder: fake,
+            cache: FootprintsGeocodeCache(fileURL: cacheURL),
+            minimumRequestInterval: 0
+        )
+        let batch = await resolver.resolve(clusters: [city])
+        XCTAssertEqual(fake.requestCount, 1)
+        XCTAssertEqual(batch.results[city.id]?.cityName, "Marrakesh")
     }
 
     private func cluster(id: String, stopIDs: [String], latitude: Double, longitude: Double) -> PlaceCluster {

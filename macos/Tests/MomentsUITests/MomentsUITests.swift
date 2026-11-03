@@ -897,7 +897,8 @@ final class MomentsUITests: XCTestCase {
         element(in: app, identifier: "sidebar.map").click()
         let stats = element(in: app, identifier: "map.stats")
         XCTAssertTrue(stats.waitForExistence(timeout: 30), "The globe has no countries card")
-        stats.click()
+        // The card has a Countries and a Cities half; each opens its own list.
+        element(in: app, identifier: "map.stats.countries").click()
         let button = app.buttons
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "map.country.photos."))
             .firstMatch

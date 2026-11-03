@@ -913,9 +913,28 @@ struct MapScreen: View {
         selectedClusterID = snapshot.cluster(containing: itemID)?.id
     }
 
+    /// "Zoom to photos": frame the city group nearest the middle of what is on
+    /// screen, so its routes fill the map. With no group to pick, or a group
+    /// whose photos are not in the current snapshot, fall back to every photo.
     private func fitAll() {
-        guard !snapshot.stops.isEmpty else { return }
-        moveCamera(to: .region(viewModel.initialRegion(for: snapshot.stops)), isGlobe: false)
+        let allStops: [PhotoStop] = snapshot.stops
+        guard !allStops.isEmpty else { return }
+        let point: GeoPoint = focusPoint
+        let cluster: PlaceCluster? = FootprintsFocus.nearestCluster(to: point, in: world.snapshot.cityClusters)
+        let clusterStopIDs: Set<String> = Set(cluster?.stopIDs ?? [])
+        let clusterStops: [PhotoStop] = allStops.filter { stop in
+            clusterStopIDs.contains(stop.id)
+        }
+        let stops: [PhotoStop] = clusterStops.isEmpty ? allStops : clusterStops
+        selectedClusterID = nil
+        moveCamera(to: .region(viewModel.initialRegion(for: stops)), isGlobe: false)
+    }
+
+    /// The middle of the map on screen, or the globe's target before MapKit
+    /// has reported a region.
+    private var focusPoint: GeoPoint {
+        guard let viewport else { return world.snapshot.cameraTarget.center }
+        return GeoPoint(latitude: viewport.centerLatitude, longitude: viewport.centerLongitude)
     }
 
     private func flyTo(_ center: GeoPoint, latitudeDelta: Double) {

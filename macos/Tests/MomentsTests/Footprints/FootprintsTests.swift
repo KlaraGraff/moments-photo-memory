@@ -93,6 +93,56 @@ final class FootprintsTests: XCTestCase {
         XCTAssertEqual(ocean.first?.flag, "🌊")
     }
 
+    // MARK: - FootprintsFocus
+
+    func testNearestClusterPicksTheCityNearThePoint() {
+        let paris: PlaceCluster = cluster(id: "city-paris", stopIDs: ["p1", "p2"], latitude: 48.8566, longitude: 2.3522)
+        let casablanca: PlaceCluster = cluster(id: "city-casablanca", stopIDs: ["c1", "c2", "c3"], latitude: 33.5731, longitude: -7.5898)
+        let doha: PlaceCluster = cluster(id: "city-doha", stopIDs: ["d1"], latitude: 25.2854, longitude: 51.5310)
+        let clusters: [PlaceCluster] = [paris, casablanca, doha]
+        // Rabat sits about 90 km from Casablanca and thousands from the others.
+        let rabat: GeoPoint = GeoPoint(latitude: 34.0209, longitude: -6.8416)
+
+        let nearest: PlaceCluster? = FootprintsFocus.nearestCluster(to: rabat, in: clusters)
+
+        XCTAssertEqual(nearest?.id, "city-casablanca")
+    }
+
+    func testNearestClusterSkipsClustersWithoutACentre() {
+        let noCentre: PlaceCluster = PlaceCluster(
+            id: "city-unknown",
+            level: .city,
+            stopIDs: ["u1", "u2", "u3", "u4"],
+            center: nil,
+            firstDate: origin
+        )
+        let doha: PlaceCluster = cluster(id: "city-doha", stopIDs: ["d1"], latitude: 25.2854, longitude: 51.5310)
+        let clusters: [PlaceCluster] = [noCentre, doha]
+        let point: GeoPoint = GeoPoint(latitude: 25.0, longitude: 51.0)
+
+        let nearest: PlaceCluster? = FootprintsFocus.nearestCluster(to: point, in: clusters)
+
+        XCTAssertEqual(nearest?.id, "city-doha")
+        XCTAssertNil(FootprintsFocus.nearestCluster(to: point, in: [noCentre]))
+    }
+
+    func testNearestClusterIsNilWithoutClusters() {
+        let point: GeoPoint = GeoPoint(latitude: 48.8566, longitude: 2.3522)
+        let clusters: [PlaceCluster] = []
+
+        XCTAssertNil(FootprintsFocus.nearestCluster(to: point, in: clusters))
+    }
+
+    func testNearestClusterTieGoesToTheClusterWithMoreStops() {
+        let few: PlaceCluster = cluster(id: "city-few", stopIDs: ["a"], latitude: 10, longitude: 10)
+        let many: PlaceCluster = cluster(id: "city-many", stopIDs: ["b", "c"], latitude: 10, longitude: 10)
+        let point: GeoPoint = GeoPoint(latitude: 10, longitude: 10)
+
+        let nearest: PlaceCluster? = FootprintsFocus.nearestCluster(to: point, in: [few, many])
+
+        XCTAssertEqual(nearest?.id, "city-many")
+    }
+
     private func cluster(id: String, stopIDs: [String], latitude: Double, longitude: Double) -> PlaceCluster {
         PlaceCluster(
             id: id,

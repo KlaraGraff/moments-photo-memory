@@ -208,14 +208,7 @@ struct LibraryFilterChips: View {
         Menu {
             content()
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: systemImage)
-                    .imageScale(.small)
-                    .accessibilityHidden(true)
-                Text(selected.map(Self.chipTitle) ?? label)
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold))
-            }
+            filterMenuTitle(selected.map(Self.chipTitle) ?? label, systemImage: systemImage, selected: selected != nil)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -223,7 +216,6 @@ struct LibraryFilterChips: View {
         .tint(LibraryPalette.ink)
         .fixedSize()
         .paperChip(selected: selected != nil)
-        .foregroundStyle(LibraryPalette.ink)
         .accessibilityIdentifier(identifier)
     }
 

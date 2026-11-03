@@ -81,7 +81,65 @@ enum PlaceNames {
     }
 
     static func options(for items: [MediaItem]) -> [LibraryPlaceOption] {
-        groups(for: items).map { LibraryPlaceOption(id: $0.id, name: $0.name) }
+        var spellings: [String: [String: Int]] = [:]
+        var resolvedNames: [PersistentIdentifier: String?] = [:]
+        for item in items {
+            guard let name = filterName(of: item, resolving: &resolvedNames) else { continue }
+            let key = Self.key(name)
+            guard !key.isEmpty else { continue }
+            spellings[key, default: [:]][name, default: 0] += 1
+        }
+        return options(from: spellings)
+    }
+
+    /// The Library filter's row name: a personal name wins, then a city,
+    /// while groups and matching keep their existing place-name semantics.
+    private static func filterName(
+        of item: MediaItem,
+        resolving resolvedNames: inout [PersistentIdentifier: String?]
+    ) -> String? {
+        let override = item.placeOverrideName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let override, !override.isEmpty { return override }
+        guard let place = item.place else { return nil }
+        let id = place.persistentModelID
+        if let cached = resolvedNames[id] { return cached }
+        let name = filterName(of: place)
+        resolvedNames[id] = .some(name)
+        return name
+    }
+
+    private static func filterName(of place: Place) -> String? {
+        var current: Place? = place
+        var depth = 0
+        var cityName: String?
+        while let candidate = current, depth < 4 {
+            if let corrected = candidate.correctedName { return corrected }
+            if cityName == nil, candidate.kind == .city {
+                cityName = PlaceDisplayName.ownName(of: candidate)
+            }
+            current = candidate.parent
+            depth += 1
+        }
+        return cityName ?? PlaceDisplayName.resolvedName(of: place)
+    }
+
+    private static func options(from spellings: [String: [String: Int]]) -> [LibraryPlaceOption] {
+        var names: [String: String] = [:]
+        for (key, counts) in spellings {
+            let best: (key: String, value: Int)? = counts.max {
+                (lhs: (key: String, value: Int), rhs: (key: String, value: Int)) -> Bool in
+                (lhs.value, rhs.key) < (rhs.value, lhs.key)
+            }
+            if let best { names[key] = best.key }
+        }
+        var options: [LibraryPlaceOption] = []
+        options.reserveCapacity(names.count)
+        for (key, name) in names {
+            options.append(LibraryPlaceOption(id: optionPrefix + key, name: name))
+        }
+        return options.sorted { (left: LibraryPlaceOption, right: LibraryPlaceOption) -> Bool in
+            left.name.localizedStandardCompare(right.name) == .orderedAscending
+        }
     }
 
     /// `options(for:)` from what the photos are listed under, counted: how many
@@ -103,28 +161,12 @@ enum PlaceNames {
             // The cached counts hold places across saves; reading a deleted
             // one, or one no context owns any more, traps in SwiftData.
             guard entry.place.modelContext != nil, !entry.place.isDeleted else { continue }
-            guard let name: String = PlaceDisplayName.resolvedName(of: entry.place) else { continue }
+            guard let name: String = filterName(of: entry.place) else { continue }
             let key: String = Self.key(name)
             guard !key.isEmpty else { continue }
             spellings[key, default: [:]][name, default: 0] += entry.count
         }
-        var names: [String: String] = [:]
-        for (key, counts) in spellings {
-            // The tie-break `groups(for:)` uses, spelled with named parts.
-            let best: (key: String, value: Int)? = counts.max {
-                (lhs: (key: String, value: Int), rhs: (key: String, value: Int)) -> Bool in
-                (lhs.value, rhs.key) < (rhs.value, lhs.key)
-            }
-            if let best { names[key] = best.key }
-        }
-        var options: [LibraryPlaceOption] = []
-        options.reserveCapacity(names.count)
-        for (key, name) in names {
-            options.append(LibraryPlaceOption(id: optionPrefix + key, name: name))
-        }
-        return options.sorted { (left: LibraryPlaceOption, right: LibraryPlaceOption) -> Bool in
-            left.name.localizedStandardCompare(right.name) == .orderedAscending
-        }
+        return options(from: spellings)
     }
 
     /// True when the photo is listed under the name `key`: its own correction

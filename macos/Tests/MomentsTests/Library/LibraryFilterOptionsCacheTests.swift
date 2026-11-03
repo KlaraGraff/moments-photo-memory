@@ -251,7 +251,8 @@ final class LibraryFilterOptionsCacheTests: XCTestCase {
         }), let spot: Place = renamedItem.place else {
             return XCTFail("The fixture must create spot-fixture-0")
         }
-        spot.name = "Synthetic Renamed Spot"
+        let correction = PlaceOverride(placeID: spot.id, nameOverride: "Synthetic Renamed Spot", place: spot)
+        context.insert(correction)
         try context.save()
 
         let after: LibraryFilterOptionSet = LibraryFilterOptionsCache.options(for: items, key: 2, sourceKey: 10)

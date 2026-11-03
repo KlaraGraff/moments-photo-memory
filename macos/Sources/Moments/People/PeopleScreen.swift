@@ -1044,6 +1044,7 @@ struct PeopleScreen: View {
                 .help(String(localized: "Add person"))
                 .accessibilityIdentifier("people.add")
             }
+            ToolbarItem(placement: .primaryAction) { ReorganizeToolbarButton(kind: .people) }
         }
         .onAppear {
             mergeSameNamedPeople()

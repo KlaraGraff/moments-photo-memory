@@ -485,6 +485,7 @@ struct LibraryView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) { ReorganizeToolbarButton(kind: .all) }
             ToolbarItem(placement: .primaryAction) { LibraryZoomControl(state: state) }
         }
         .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search places, trips, notes")))

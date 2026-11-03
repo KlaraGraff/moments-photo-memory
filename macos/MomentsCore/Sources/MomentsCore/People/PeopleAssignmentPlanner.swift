@@ -254,6 +254,35 @@ public enum PeopleAssignmentPlanner {
         }
         if shouldStop() { return nil }
 
+        // Rule 4b: rule 4 can leave an unnamed card with fewer faces than a
+        // card needs (`minSize`, the same number the grouping used to make
+        // cards). Such a card is not a card: its faces go back to rule 5, which
+        // places each one on a nearby person or as its own loose face. Named
+        // people and confirmed faces are not touched.
+        var clusterCounts: [String: Int] = [:]
+        for index in faces.indices {
+            guard outputPerson[index] == nil,
+                  let clusterID = outputCluster[index],
+                  clusterID.hasPrefix("cluster-")
+            else { continue }
+            clusterCounts[clusterID, default: 0] += 1
+        }
+        var shrunkenClusters: Set<String> = []
+        for (clusterID, count) in clusterCounts where count < parameters.minSize {
+            shrunkenClusters.insert(clusterID)
+        }
+        if !shrunkenClusters.isEmpty {
+            for index in faces.indices {
+                guard outputPerson[index] == nil,
+                      let clusterID = outputCluster[index],
+                      shrunkenClusters.contains(clusterID)
+                else { continue }
+                outputCluster[index] = nil
+                settled[index] = false
+            }
+        }
+        if shouldStop() { return nil }
+
         // Rule 5: a loose face may join the nearest confirmed person when that
         // person is close enough, was not rejected and has no face from the
         // same photo. Otherwise it is its own loose cluster.
@@ -300,6 +329,16 @@ public enum PeopleAssignmentPlanner {
         if shouldStop() { return nil }
 
         // Rule 6: the plan's card questions, mapped to person/cluster sides.
+        // A cluster side only exists while at least one face still carries it
+        // (rule 4b can have emptied the card), so questions about a card that
+        // is no longer in the output are dropped. Person sides need no check:
+        // a person's card always keeps its confirmed face.
+        var liveClusters: Set<String> = []
+        for index in faces.indices where outputPerson[index] == nil {
+            if let cluster = outputCluster[index] {
+                liveClusters.insert(cluster)
+            }
+        }
         var questions: [PeoplePlannerQuestion] = []
         var seenPairs: Set<String> = []
         for pair in groupingPlan.questions {
@@ -318,6 +357,10 @@ public enum PeopleAssignmentPlanner {
             }
             // Merging two named people stays a manual action.
             if isPersonPair { continue }
+            // A side that no face carries any more is not a card.
+            guard isLive(first, liveClusters: liveClusters),
+                  isLive(second, liveClusters: liveClusters)
+            else { continue }
             let key = pairKey(first, second)
             if declinedPairs.contains(key) { continue }
             if seenPairs.contains(key) { continue }
@@ -387,6 +430,16 @@ public enum PeopleAssignmentPlanner {
             centres[personID] = FaceGroupingMath.centre(of: indices, in: unit)
         }
         return centres
+    }
+
+    /// True while a question side still exists in the output: a person always
+    /// does (its card keeps the confirmed face), a cluster only while at least
+    /// one face still carries it.
+    private static func isLive(_ side: PeoplePlannerSide, liveClusters: Set<String>) -> Bool {
+        switch side {
+        case .person: return true
+        case .cluster(let id): return liveClusters.contains(id)
+        }
     }
 
     private static func side(of card: CardFacts) -> PeoplePlannerSide? {

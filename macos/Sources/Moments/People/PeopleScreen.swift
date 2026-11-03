@@ -392,6 +392,11 @@ final class PeopleScanController {
 }
 
 enum PeopleStoreActions {
+    /// The owner's rule: a person needs at least this many faces to be a card
+    /// (the same number as `PeopleGroupingParameters.minSize`, which the
+    /// grouping uses). Fewer are loose faces, never a card and never a
+    /// "same person?" question.
+    static let minimumCardFaces = 3
     /// Local person IDs the user chose to keep apart from a same-named person.
     /// Only opaque IDs are stored here, never names, faces or embeddings.
     static let keepSeparateKey = "moments.people.keepSeparate"
@@ -530,31 +535,32 @@ enum PeopleStoreActions {
     }
 
     /// The stored questions whose two sides still exist. A person side needs a
-    /// visible person with at least one face. A cluster side needs at least one
-    /// face with that clusterID and no person.
+    /// visible person with at least one face. A cluster side needs at least
+    /// ``minimumCardFaces`` faces with that clusterID and no person: a card
+    /// that shrank below that is loose faces now, so its question is not asked.
     static func liveQuestions(observations: [FaceObservation], people: [Person], defaults: UserDefaults = .standard) -> [String] {
         let visible = Set(people.filter { (person: Person) -> Bool in !person.hidden }.map(\.id))
         var peopleWithFaces = Set<String>()
-        var clustersWithFreeFaces = Set<String>()
+        var clusterFaceCounts: [String: Int] = [:]
         for face in observations {
             if let personID = face.personID, visible.contains(personID) {
                 peopleWithFaces.insert(personID)
             }
             if face.personID == nil, let clusterID = face.clusterID {
-                clustersWithFreeFaces.insert(clusterID)
+                clusterFaceCounts[clusterID, default: 0] += 1
             }
         }
         return storedQuestions(defaults).filter { (key: String) -> Bool in
             guard let (first, second) = sides(of: key) else { return false }
-            return isLive(first, peopleWithFaces: peopleWithFaces, clustersWithFreeFaces: clustersWithFreeFaces)
-                && isLive(second, peopleWithFaces: peopleWithFaces, clustersWithFreeFaces: clustersWithFreeFaces)
+            return isLive(first, peopleWithFaces: peopleWithFaces, clusterFaceCounts: clusterFaceCounts)
+                && isLive(second, peopleWithFaces: peopleWithFaces, clusterFaceCounts: clusterFaceCounts)
         }
     }
 
-    private static func isLive(_ side: PeoplePlannerSide, peopleWithFaces: Set<String>, clustersWithFreeFaces: Set<String>) -> Bool {
+    private static func isLive(_ side: PeoplePlannerSide, peopleWithFaces: Set<String>, clusterFaceCounts: [String: Int]) -> Bool {
         switch side {
         case .person(let id): return peopleWithFaces.contains(id)
-        case .cluster(let id): return clustersWithFreeFaces.contains(id)
+        case .cluster(let id): return (clusterFaceCounts[id] ?? 0) >= minimumCardFaces
         }
     }
 
@@ -972,7 +978,9 @@ struct PeopleScreen: View {
         var loose: [FaceObservation] = []
         for group in grouped {
             let sortedFaces: [FaceObservation] = group.value.sorted { $0.createdAt < $1.createdAt }
-            if group.key.hasPrefix("loose-") {
+            // An unnamed card below the owner's minimum is not a card: its
+            // faces show as loose faces. "loose-" groups always do.
+            if group.key.hasPrefix("loose-") || sortedFaces.count < PeopleStoreActions.minimumCardFaces {
                 loose.append(contentsOf: sortedFaces)
             } else {
                 let cover: FaceObservation? = PeopleFacePicker.cover(sortedFaces)

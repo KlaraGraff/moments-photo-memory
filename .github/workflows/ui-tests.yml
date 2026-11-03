@@ -2,9 +2,9 @@ name: macOS UI tests
 
 # UI tests drive the app on a hosted Mac, never on a developer's screen.
 # Synthetic data only: demo seed plus generated fixture photos.
-# The smoke suite runs once a pull request is ready for review (drafts skip
-# it) and again on main after each merge, so changes that pass alone but
-# clash together still get caught.
+# Pull requests run the core list in scripts/ui_core_tests.txt; main runs the
+# whole suite. A pull request touching the UI tests or this workflow also runs
+# the whole suite.
 #
 # The page probe (MomentsPageProbeUITests: a first import of a large
 # synthetic library, then every page) is its own job and runs only by hand:
@@ -83,6 +83,38 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Choose the UI tests
+        id: pick
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ONLY_TESTING: ${{ inputs.only_testing }}
+        run: |
+          set -f
+          mode=full
+          reason="push to main or a manual run of the whole suite"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ -n "$ONLY_TESTING" ]; then
+            mode=only
+            reason="workflow_dispatch set only_testing"
+          elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            mode=core
+            reason="pull request leaves the UI tests, core list, and workflow unchanged"
+            if changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA"); then
+              if printf '%s\n' "$changed" | grep -Eq '^(macos/Tests/MomentsUITests/|scripts/ui_core_tests\.txt$|\.github/workflows/ui-tests\.yml$)'; then
+                mode=full
+                reason="pull request changes the UI tests, core list, or workflow"
+              fi
+            else
+              mode=full
+              reason="the pull request diff failed"
+            fi
+          fi
+          echo "UI test mode: $mode ($reason)"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+      - name: Check the core UI-test list
+        run: python3 scripts/check_ui_core_tests.py
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project
@@ -97,12 +129,27 @@ jobs:
           TEST_RUNNER_MOMENTS_RESIZE_DIR: ${{ runner.temp }}/resize
           TEST_RUNNER_MOMENTS_MARQUEE_DIR: ${{ runner.temp }}/marquee
           ONLY_TESTING: ${{ inputs.only_testing }}
+          TEST_MODE: ${{ steps.pick.outputs.mode }}
         run: |
-          # A manual run can target a few tests for a quick check; pull
-          # requests always run the whole suite.
+          # A manual run can target a few tests; pull requests use the core
+          # list unless they change the tests themselves or this workflow.
           only=()
           set -f  # test IDs are words, never file globs
-          for t in $ONLY_TESTING; do only+=("-only-testing:$t"); done
+          if [ "$TEST_MODE" = only ]; then
+            for t in $ONLY_TESTING; do only+=("-only-testing:$t"); done
+          elif [ "$TEST_MODE" = core ]; then
+            while IFS= read -r t || [ -n "$t" ]; do
+              case "$t" in ''|'#'*) continue ;; esac
+              only+=("-only-testing:$t")
+            done < scripts/ui_core_tests.txt
+          fi
+          if ((${#only[@]})); then
+            printf 'xcodebuild only-testing arguments:'
+            printf ' %s' "${only[@]}"
+            printf '\n'
+          else
+            echo 'xcodebuild only-testing arguments: (none; full suite)'
+          fi
           # Ad-hoc signing is enough for the test runner on the hosted Mac.
           xcodebuild \
             -project macos/Moments.xcodeproj \
@@ -111,7 +158,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -resultBundlePath "$RUNNER_TEMP/MomentsUITests.xcresult" \
             CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- \
-            "${only[@]}" \
+            ${only[@]+"${only[@]}"} \
             -skip-testing:MomentsUITests/MomentsPageProbeUITests \
             test
       - name: Print scroll reports

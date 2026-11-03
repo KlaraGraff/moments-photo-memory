@@ -78,7 +78,7 @@ struct PeopleQuestionCard<Left: View, Right: View>: View {
     @ViewBuilder
     private var counter: some View {
         if remaining > 0 {
-            Text("\(remaining) questions left")
+            Text(String(localized: "\(remaining) questions left"))
                 .font(.callout)
                 .foregroundStyle(Paper.muted)
         }
@@ -101,7 +101,7 @@ private struct PeopleQuestionCaptionLabel: View {
         case .named(let name):
             return Text("Named: \(name)")
         case .unnamed(let count):
-            return Text("Unnamed · \(count) faces")
+            return Text(String(localized: "Unnamed · \(count) faces"))
         }
     }
 }

@@ -925,6 +925,9 @@ struct PeopleScreen: View {
     @State private var cachedFacesByPerson: [String: [FaceObservation]] = [:]
     @State private var cachedCardSummaries: [String: PeopleCardSummary] = [:]
     @State private var cachedUnnamedClusters: [PeopleClusterSnapshot] = []
+    @State private var cachedLooseFaces: [FaceObservation] = []
+    @State private var cachedQuestions: [String] = []
+    @State private var looseExpanded = false
     @State private var lastFaceChange: FaceUndoSnapshot?
     @State private var renamingPersonID: String?
     @State private var renameText = ""
@@ -962,11 +965,20 @@ struct PeopleScreen: View {
             keyFaceID: { (personID: String) -> String? in PeopleStoreActions.keyFaceID(for: personID) }
         )
         let grouped = Dictionary(grouping: shown.filter { $0.personID == nil && $0.clusterID != nil }, by: { $0.clusterID! })
-        cachedUnnamedClusters = grouped.map { group -> PeopleClusterSnapshot in
+        var cards: [PeopleClusterSnapshot] = []
+        var loose: [FaceObservation] = []
+        for group in grouped {
             let sortedFaces: [FaceObservation] = group.value.sorted { $0.createdAt < $1.createdAt }
-            let cover: FaceObservation? = PeopleFacePicker.cover(sortedFaces)
-            return PeopleClusterSnapshot(id: group.key, faces: sortedFaces, cover: cover)
-        }.sorted { $0.id < $1.id }
+            if group.key.hasPrefix("loose-") {
+                loose.append(contentsOf: sortedFaces)
+            } else {
+                let cover: FaceObservation? = PeopleFacePicker.cover(sortedFaces)
+                cards.append(PeopleClusterSnapshot(id: group.key, faces: sortedFaces, cover: cover))
+            }
+        }
+        cachedUnnamedClusters = cards.sorted { $0.id < $1.id }
+        cachedLooseFaces = loose.sorted { $0.createdAt < $1.createdAt }
+        cachedQuestions = PeopleStoreActions.liveQuestions(observations: shown, people: people)
     }
 
     var body: some View {
@@ -982,7 +994,7 @@ struct PeopleScreen: View {
 
                 if !scanner.isAvailable {
                     Spacer(minLength: 0)
-                } else if namedPeople.isEmpty && unnamedClusters.isEmpty {
+                } else if namedPeople.isEmpty && unnamedClusters.isEmpty && cachedLooseFaces.isEmpty {
                     ContentUnavailableView {
                         Label(String(localized: "No people yet"), systemImage: "person.2")
                     } description: {
@@ -995,8 +1007,10 @@ struct PeopleScreen: View {
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 28) {
-                            if !namedPeople.isEmpty { namedSection }
+                            if !cachedQuestions.isEmpty { questionSection }
                             if !unnamedClusters.isEmpty { unnamedSection }
+                            if !namedPeople.isEmpty { namedSection }
+                            if !cachedLooseFaces.isEmpty { looseFacesSection }
                         }
                     }
                 }
@@ -1206,9 +1220,87 @@ struct PeopleScreen: View {
         .frame(width: 360)
     }
 
+    /// One "same person?" question for the first live pair. Answering it
+    /// refreshes the caches, so the next question takes its place.
+    @ViewBuilder
+    private var questionSection: some View {
+        if let key = cachedQuestions.first, let (first, second) = PeopleStoreActions.sides(of: key) {
+            PeopleQuestionCard(
+                leftCaption: questionCaption(first),
+                rightCaption: questionCaption(second),
+                remaining: cachedQuestions.count - 1,
+                onSame: { answerSameQuestion(key) },
+                onDifferent: { answerDifferentQuestion(key) },
+                onSkip: { skipQuestion(key) },
+                left: { questionFace(first) },
+                right: { questionFace(second) }
+            )
+        }
+    }
+
+    private func questionCaption(_ side: PeoplePlannerSide) -> PeopleQuestionCaption {
+        switch side {
+        case .person(let personID):
+            let person: Person? = people.first { (person: Person) -> Bool in
+                person.id == personID && !person.hidden
+            }
+            return .named(person?.name ?? String(localized: "Unnamed person"))
+        case .cluster(let clusterID):
+            let card: PeopleClusterSnapshot? = cachedUnnamedClusters.first { (card: PeopleClusterSnapshot) -> Bool in
+                card.id == clusterID
+            }
+            return .unnamed(card?.faces.count ?? 0)
+        }
+    }
+
+    @ViewBuilder
+    private func questionFace(_ side: PeoplePlannerSide) -> some View {
+        if let face = questionCover(side) {
+            FaceInPhotoView(
+                faceID: face.id,
+                faceRect: CGRect(x: face.rectX, y: face.rectY, width: face.rectWidth, height: face.rectHeight),
+                mediaID: face.mediaID,
+                fallbackCrop: face.cropData,
+                size: 112
+            )
+        } else {
+            Circle()
+                .fill(Color.gray.opacity(0.18))
+                .frame(width: 112, height: 112)
+        }
+    }
+
+    private func questionCover(_ side: PeoplePlannerSide) -> FaceObservation? {
+        switch side {
+        case .person(let personID):
+            let faces: [FaceObservation] = cachedFacesByPerson[personID] ?? []
+            return PeopleFacePicker.cover(faces, keyFaceID: PeopleStoreActions.keyFaceID(for: personID))
+        case .cluster(let clusterID):
+            let card: PeopleClusterSnapshot? = cachedUnnamedClusters.first { (card: PeopleClusterSnapshot) -> Bool in
+                card.id == clusterID
+            }
+            return card?.cover
+        }
+    }
+
+    private func answerSameQuestion(_ key: String) {
+        PeopleStoreActions.answerSame(key, observations: observations, context: modelContext)
+        refreshFaceCaches()
+    }
+
+    private func answerDifferentQuestion(_ key: String) {
+        PeopleStoreActions.answerDifferent(key)
+        refreshFaceCaches()
+    }
+
+    private func skipQuestion(_ key: String) {
+        PeopleStoreActions.skip(key)
+        refreshFaceCaches()
+    }
+
     private var namedSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(String(localized: "Named people")).font(.system(.title3, design: .serif).weight(.medium)).foregroundStyle(Paper.ink)
+            Text(String(localized: "Named")).font(.system(.title3, design: .serif).weight(.medium)).foregroundStyle(Paper.ink)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 14)], alignment: .leading, spacing: 14) {
                 ForEach(namedPeople, id: \.id) { person in namedCard(person) }
             }
@@ -1360,7 +1452,7 @@ struct PeopleScreen: View {
     private var unnamedSection: some View {
         // Lazy so a card's zoomed photo loads only when the card scrolls in.
         LazyVStack(alignment: .leading, spacing: 14) {
-            Text(String(localized: "Is this the same person?")).font(.system(.title3, design: .serif).weight(.medium)).foregroundStyle(Paper.ink)
+            Text(String(localized: "Give these people a name")).font(.system(.title3, design: .serif).weight(.medium)).foregroundStyle(Paper.ink)
             ForEach(unnamedClusters) { cluster in
                 HStack(alignment: .top, spacing: 14) {
                     if let cover = cluster.cover {
@@ -1374,7 +1466,7 @@ struct PeopleScreen: View {
                     }
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 8) {
-                            TextField(String(localized: "Name this person"), text: Binding(get: { clusterNames[cluster.id] ?? "" }, set: { clusterNames[cluster.id] = $0 }))
+                            TextField(String(localized: "What is this person's name?"), text: Binding(get: { clusterNames[cluster.id] ?? "" }, set: { clusterNames[cluster.id] = $0 }))
                                 .textFieldStyle(.paper)
                                 .onSubmit { name(cluster) }
                             Button(String(localized: "Save")) { name(cluster) }.buttonStyle(.borderedProminent)
@@ -1407,10 +1499,21 @@ struct PeopleScreen: View {
                                 }
                             }
                         }
+                        Text(String(localized: "\(cluster.faces.count) faces in all"))
+                            .font(.caption)
+                            .foregroundStyle(Paper.muted)
                     }
                 }
                 .paperCard(cornerRadius: 12, padding: 14)
             }
+        }
+    }
+
+    /// The loose faces, collapsed at the bottom: seen once or twice, so they
+    /// are never asked to be named.
+    private var looseFacesSection: some View {
+        PeopleLooseFacesSection(faces: cachedLooseFaces, isExpanded: $looseExpanded) { face in
+            faceCorrectionMenu(face, current: nil)
         }
     }
 

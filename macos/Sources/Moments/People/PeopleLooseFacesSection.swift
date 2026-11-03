@@ -17,7 +17,7 @@ struct PeopleLooseFacesSection<Menu: View>: View {
     }
 
     private var summary: some View {
-        Text("\(faces.count) faces · seen once or twice, no name needed")
+        Text(String(localized: "\(faces.count) faces · seen once or twice, no name needed"))
             .font(.callout)
             .foregroundStyle(Paper.muted)
     }

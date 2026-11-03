@@ -210,8 +210,7 @@ struct LibraryFilterChips: View {
         } label: {
             filterMenuTitle(selected.map(Self.chipTitle) ?? label, systemImage: systemImage, selected: selected != nil)
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         // Chip labels read as ink; the app accent would turn every chip red.
         .tint(LibraryPalette.ink)
@@ -272,8 +271,7 @@ struct LibraryFilterChips: View {
         } label: {
             filterMenuTitle(String(localized: "Memory"), systemImage: "quote.bubble", selected: selectedMemoryFilter != .all)
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         // Chip labels read as ink; the app accent would turn every chip red.
         .tint(LibraryPalette.ink)
@@ -295,8 +293,7 @@ struct LibraryFilterChips: View {
         } label: {
             filterMenuTitle(String(localized: "Person"), systemImage: "person", selected: !personFilterID.isEmpty)
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         // Chip labels read as ink; the app accent would turn every chip red.
         .tint(LibraryPalette.ink)

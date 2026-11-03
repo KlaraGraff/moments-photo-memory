@@ -18,6 +18,64 @@ private enum LibraryRegroupProbe {
 }
 
 #endif
+/// The group memberships the Library last fetched, kept across visits to the
+/// page: SwiftUI drops the page's `@State` when it is left, and a page switch
+/// must not fetch every `UserGroupItem` again. Keyed by the store's
+/// `groupSourcesRevision` and the model context's container, the two things a
+/// fetched result depends on.
+@MainActor
+enum LibraryMembershipsCache {
+    /// How many times the memberships were fetched; tests read it to prove a
+    /// cache hit did not fetch again.
+    private(set) static var fetchCount = 0
+
+    private struct Key: Equatable {
+        let revision: Int
+        let container: ObjectIdentifier
+    }
+
+    private static var last: (key: Key, items: [UserGroupItem])?
+    /// Held weakly: a freed container's address can be reused by a new one, so
+    /// identity, not just its `ObjectIdentifier`, has to match.
+    private static weak var lastContainer: ModelContainer?
+
+    /// Forgets the last fetch, so a test starts from an empty cache.
+    static func resetForTests() {
+        last = nil
+        lastContainer = nil
+        fetchCount = 0
+    }
+
+    /// The cached rows when the same revision and container were used before
+    /// and every row is still live; otherwise calls `fetch`, keeps and returns
+    /// its rows.
+    static func memberships(
+        revision: Int,
+        context: ModelContext,
+        fetch: () -> [UserGroupItem]
+    ) -> [UserGroupItem] {
+        let key: Key = Key(revision: revision, container: ObjectIdentifier(context.container))
+        if let cached = last, cached.key == key, lastContainer === context.container, isUsable(cached.items, in: context) {
+            return cached.items
+        }
+        let items: [UserGroupItem] = fetch()
+        fetchCount += 1
+        last = (key: key, items: items)
+        lastContainer = context.container
+        return items
+    }
+
+    /// A reused row must still be live in the context that fetched it. A save
+    /// that deletes a membership moves `groupSourcesRevision`, but a delete
+    /// can be registered before that save arrives; handing a dead model to a
+    /// photo menu would edit nothing. Such a row forces a fetch instead.
+    private static func isUsable(_ items: [UserGroupItem], in context: ModelContext) -> Bool {
+        items.allSatisfy { (item: UserGroupItem) -> Bool in
+            !item.isDeleted && item.modelContext?.container === context.container
+        }
+    }
+}
+
 struct LibraryView: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(ImportController.self) private var importController
@@ -935,15 +993,19 @@ struct LibraryView: View {
 
     /// Fetches the group memberships the sections hand to the photo menus.
     /// Runs when `groupSourcesRevision` moves, so a save of anything else
-    /// leaves them alone.
+    /// leaves them alone. The fetch itself is shared with the last visit to
+    /// the page through `LibraryMembershipsCache`.
     private func refreshGroupItems() {
-        #if DEBUG
-        let started: CFTimeInterval = CACurrentMediaTime()
-        #endif
-        cachedGroupItems = (try? modelContext.fetch(FetchDescriptor<UserGroupItem>())) ?? []
-        #if DEBUG
-        PageProbe.tally("library memberships fetch", seconds: CACurrentMediaTime() - started)
-        #endif
+        cachedGroupItems = LibraryMembershipsCache.memberships(
+            revision: store.groupSourcesRevision,
+            context: modelContext
+        ) {
+            #if DEBUG
+            let started: CFTimeInterval = CACurrentMediaTime()
+            defer { PageProbe.tally("library memberships fetch", seconds: CACurrentMediaTime() - started) }
+            #endif
+            return (try? modelContext.fetch(FetchDescriptor<UserGroupItem>())) ?? []
+        }
     }
 
     /// Writes newly matched section memories, but only when the ids a section

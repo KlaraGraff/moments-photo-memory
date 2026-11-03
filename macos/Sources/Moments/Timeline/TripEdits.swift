@@ -111,6 +111,9 @@ enum TripEdits {
         fileprivate(set) var groups: [String: GroupState?] = [:]
         /// Chapter memberships by id; `nil` for one the change created.
         fileprivate(set) var memberships: [String: MembershipState?] = [:]
+        /// Correction log entries this change wrote, oldest first, so an undo
+        /// can point back at the entry it reverses.
+        fileprivate(set) var correctionEntryIDs: [UUID] = []
 
         var isEmpty: Bool { trips.isEmpty && items.isEmpty && memoryKeys.isEmpty && groups.isEmpty && memberships.isEmpty }
     }
@@ -155,6 +158,9 @@ enum TripEdits {
         let calendar: Calendar
         private(set) var undo: Undo
         private let defaults: UserDefaults
+        /// A change that hands off to another one (a new trip also sets its
+        /// dates) logs only its own action.
+        private var correctionLogPaused = false
 
         init(context: ModelContext, now: Date = .now, calendar: Calendar = .current, defaults: UserDefaults = TripAssignmentLocks.store, continuing undo: Undo = Undo()) {
             self.context = context
@@ -213,6 +219,34 @@ enum TripEdits {
 
         func save() { try? context.save() }
 
+        // MARK: Correction log
+
+        var logsCorrections: Bool { !correctionLogPaused }
+
+        func pauseCorrectionLog() { correctionLogPaused = true }
+
+        func resumeCorrectionLog() { correctionLogPaused = false }
+
+        /// One line in the local correction log; nothing about the edit waits
+        /// for it. `before` and `after` are snapshots taken by the caller.
+        func noteCorrection(
+            _ action: TripCorrectionLog.Entry.Action,
+            before: [TripCorrectionSnapshot],
+            after: [TripCorrectionSnapshot],
+            movedPhotoIDs: [String] = [],
+            note: String? = nil
+        ) {
+            guard logsCorrections else { return }
+            let id = TripCorrectionRecorder.record(
+                action,
+                before: before,
+                after: after,
+                movedPhotoIDs: movedPhotoIDs,
+                note: note
+            )
+            undo.correctionEntryIDs.append(id)
+        }
+
         var allItems: [MediaItem] { (try? context.fetch(FetchDescriptor<MediaItem>())) ?? [] }
         var allTrips: [Trip] { (try? context.fetch(FetchDescriptor<Trip>())) ?? [] }
     }
@@ -220,6 +254,13 @@ enum TripEdits {
     /// Puts back the dates, names, photos and memories one change touched.
     @MainActor
     static func undo(_ undo: Undo, context: ModelContext, defaults: UserDefaults = TripAssignmentLocks.store, now: Date = .now) {
+        let log = TripCorrectionSnapshotBuilder(context: context)
+        // The entry this undo reverses names the trips or chapters it put back.
+        let tripIDs: [String] = undo.trips.keys.sorted()
+        let chapterIDs: [String] = undo.groups.keys.sorted()
+        let beforeTrips: [TripCorrectionSnapshot] = tripIDs.compactMap { log.snapshot(tripID: $0) }
+        let beforeChapters: [TripCorrectionSnapshot] = chapterIDs.compactMap { log.snapshot(chapterID: $0) }
+        let beforeSnapshots: [TripCorrectionSnapshot] = beforeTrips + beforeChapters
         var tripByID = Dictionary(
             ((try? context.fetch(FetchDescriptor<Trip>())) ?? []).map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -323,6 +364,18 @@ enum TripEdits {
             defaults.set(Array(kept).sorted(), forKey: TripAssignmentLocks.defaultsKey)
         }
         try? context.save()
+        if let reverses = undo.correctionEntryIDs.last {
+            let afterTrips: [TripCorrectionSnapshot] = tripIDs.compactMap { log.snapshot(tripID: $0) }
+            let afterChapters: [TripCorrectionSnapshot] = chapterIDs.compactMap { log.snapshot(chapterID: $0) }
+            let entry = TripCorrectionRecorder.entry(
+                .undo,
+                before: beforeSnapshots,
+                after: afterTrips + afterChapters,
+                movedPhotoIDs: undo.items.keys.sorted(),
+                reverses: reverses
+            )
+            TripCorrectionRecorder.append(entry)
+        }
     }
 
     // MARK: Dates
@@ -360,6 +413,8 @@ enum TripEdits {
         let plan = Self.plan(for: trip, start: start, end: end, members: members(items, trips: session.allTrips, locked: locked), calendar: session.calendar)
         let itemByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let oldStart = firstDay(of: trip)
+        let log = TripCorrectionSnapshotBuilder(context: session.context, calendar: session.calendar)
+        let before = [log.trip(trip)]
 
         session.record(trip)
         trip.startDate = range.lowerBound
@@ -369,6 +424,13 @@ enum TripEdits {
         rename(trip, start: range.lowerBound, oldStart: oldStart, session: session)
         session.touch(trip)
         session.save()
+
+        session.noteCorrection(
+            .changeDates,
+            before: before,
+            after: [log.trip(trip)],
+            movedPhotoIDs: (plan.joining + plan.leaving).sorted()
+        )
 
         let names = Dictionary(session.allTrips.map { ($0.id, $0.effectiveName) }, uniquingKeysWith: { first, _ in first })
         let elsewhere = plan.elsewhere
@@ -394,7 +456,12 @@ enum TripEdits {
         if !typed.isEmpty { trip.overrideName = typed }
         session.context.insert(trip)
         session.created(trip)
+        // The dates this trip takes are part of `create`, not a second entry.
+        session.pauseCorrectionLog()
         let outcome = changeDates(of: trip, start: start, end: end, session: session, locked: locked)
+        session.resumeCorrectionLog()
+        let log = TripCorrectionSnapshotBuilder(context: session.context, calendar: session.calendar)
+        session.noteCorrection(.create, before: [], after: [log.trip(trip)], movedPhotoIDs: outcome.undo.items.keys.sorted())
         return (trip, outcome)
     }
 
@@ -407,12 +474,15 @@ enum TripEdits {
         let items = session.allItems.filter { wanted.contains($0.id) }
         guard !items.isEmpty else { return }
         let oldStart = firstDay(of: trip)
+        let log = TripCorrectionSnapshotBuilder(context: session.context, calendar: session.calendar)
+        let before = [log.trip(trip)]
         session.record(trip)
         for item in items { session.move(item, to: trip, lock: true) }
         stretchDates(of: trip, toHold: items.compactMap { dayKey($0) }, calendar: session.calendar)
         rename(trip, start: trip.startDate ?? oldStart, oldStart: oldStart, session: session)
         session.touch(trip)
         session.save()
+        session.noteCorrection(.addPhotos, before: before, after: [log.trip(trip)], movedPhotoIDs: items.map(\.id).sorted())
     }
 
     /// One day's photos leave the trip; a first or last day also leaves its dates.
@@ -422,6 +492,8 @@ enum TripEdits {
         let leaving = trip.items.filter { dayKey($0) == key }
         guard !leaving.isEmpty else { return }
         let oldStart = firstDay(of: trip)
+        let log = TripCorrectionSnapshotBuilder(context: session.context, calendar: session.calendar)
+        let before = [log.trip(trip)]
         session.record(trip)
         for item in leaving { session.move(item, to: nil, lock: true) }
         let remaining = trip.items.filter { $0.tripID == trip.id && dayKey($0) != key }.compactMap { dayKey($0) }
@@ -438,6 +510,7 @@ enum TripEdits {
         rename(trip, start: trip.startDate ?? oldStart, oldStart: oldStart, session: session)
         session.touch(trip)
         session.save()
+        session.noteCorrection(.removeDay, before: before, after: [log.trip(trip)], movedPhotoIDs: leaving.map(\.id).sorted(), note: key)
     }
 
     /// The trip ends the day before `day`; a new trip starts on it with the
@@ -452,6 +525,8 @@ enum TripEdits {
         guard !later.isEmpty, !earlier.isEmpty else { return nil }
         let oldStart = firstDay(of: trip)
         let oldEnd = trip.endDate
+        let log = TripCorrectionSnapshotBuilder(context: session.context, calendar: session.calendar)
+        let before = [log.trip(trip)]
 
         session.record(trip)
         let part = Trip(name: "", startDate: cut, endDate: oldEnd, updatedAt: session.now, updatedBy: MomentsAccount.localID)
@@ -470,6 +545,13 @@ enum TripEdits {
             ?? TripNaming.name(cities: [], countries: [], start: cut, index: 1, calendar: calendar)
         session.touch(trip)
         session.save()
+        session.noteCorrection(
+            .split,
+            before: before,
+            after: [log.trip(trip), log.trip(part)],
+            movedPhotoIDs: later.map(\.id).sorted(),
+            note: key
+        )
         return part
     }
 
@@ -479,6 +561,8 @@ enum TripEdits {
     static func merge(_ other: Trip, into trip: Trip, session: Session) {
         guard other.id != trip.id else { return }
         let oldStart = firstDay(of: trip)
+        let log = TripCorrectionSnapshotBuilder(context: session.context, calendar: session.calendar)
+        let before = [log.trip(trip), log.trip(other)]
         session.record(trip)
         session.record(other)
         let moving = other.items
@@ -498,6 +582,12 @@ enum TripEdits {
         session.save()
         session.context.delete(other)
         session.save()
+        session.noteCorrection(
+            .merge,
+            before: before,
+            after: [log.trip(trip)],
+            movedPhotoIDs: moving.map(\.id).sorted()
+        )
     }
 
     // MARK: Helpers
@@ -614,6 +704,8 @@ extension TripEdits {
             session.created(membership)
         }
         session.save()
+        let log = TripCorrectionSnapshotBuilder(context: session.context, calendar: session.calendar)
+        session.noteCorrection(.create, before: [], after: [log.chapter(group)])
         return group
     }
 
@@ -625,6 +717,8 @@ extension TripEdits {
         let range = Self.range(start: start, end: end, calendar: session.calendar)
         let plan = Self.plan(for: group.id, start: start, end: end, members: members(of: group, context: session.context), calendar: session.calendar)
         let rows = memberships(of: group, context: session.context)
+        let log = TripCorrectionSnapshotBuilder(context: session.context, calendar: session.calendar)
+        let before = [log.chapter(group)]
         session.record(group)
         var info = group.chapterInfo
         info.startDate = range.lowerBound
@@ -642,6 +736,12 @@ extension TripEdits {
         }
         group.updatedAt = session.now
         session.save()
+        session.noteCorrection(
+            .changeDates,
+            before: before,
+            after: [log.chapter(group)],
+            movedPhotoIDs: (plan.joining + plan.leaving).sorted()
+        )
         return (plan.joining.count, plan.leaving.count)
     }
 
@@ -650,6 +750,8 @@ extension TripEdits {
     static func add(_ itemIDs: [String], to group: UserGroup, session: Session) {
         let wanted = Set(itemIDs)
         let rows = memberships(of: group, context: session.context)
+        let log = TripCorrectionSnapshotBuilder(context: session.context, calendar: session.calendar)
+        let before = [log.chapter(group)]
         session.record(group)
         for id in wanted {
             if let row = rows.first(where: { $0.mediaID == id }) {
@@ -666,6 +768,7 @@ extension TripEdits {
         stretchChapter(group, toHold: keys, calendar: session.calendar)
         group.updatedAt = session.now
         session.save()
+        session.noteCorrection(.addPhotos, before: before, after: [log.chapter(group)], movedPhotoIDs: wanted.sorted())
     }
 
     /// One day's photos leave the chapter and stay out; a first or last day
@@ -677,6 +780,8 @@ extension TripEdits {
         let keyByID = Dictionary(session.allItems.map { ($0.id, dayKey($0)) }, uniquingKeysWith: { first, _ in first })
         let leaving = rows.filter { keyByID[$0.mediaID] == .some(key) }
         guard !leaving.isEmpty else { return }
+        let log = TripCorrectionSnapshotBuilder(context: session.context, calendar: session.calendar)
+        let before = [log.chapter(group)]
         session.record(group)
         for row in leaving {
             session.record(row)
@@ -695,11 +800,14 @@ extension TripEdits {
         group.chapterInfo = info
         group.updatedAt = session.now
         session.save()
+        session.noteCorrection(.removeDay, before: before, after: [log.chapter(group)], movedPhotoIDs: leaving.map(\.mediaID).sorted(), note: key)
     }
 
     /// The chapter goes away; its photos stay in the Library and any trip.
     @MainActor
     static func delete(_ group: UserGroup, session: Session) {
+        let log = TripCorrectionSnapshotBuilder(context: session.context, calendar: session.calendar)
+        let before = [log.chapter(group)]
         session.record(group)
         for row in memberships(of: group, context: session.context) {
             session.record(row)
@@ -708,17 +816,24 @@ extension TripEdits {
         session.save()
         session.context.delete(group)
         session.save()
+        // Nothing is left to snapshot after the delete.
+        session.noteCorrection(.delete, before: before, after: [])
     }
 
     /// The trip goes away; its photos become "Not in a trip" and its trip
     /// memories stay stored under its id, back if undone.
     @MainActor
     static func delete(_ trip: Trip, session: Session) {
+        let log = TripCorrectionSnapshotBuilder(context: session.context, calendar: session.calendar)
+        let before = [log.trip(trip)]
+        let moved = trip.items.map(\.id).sorted()
         session.record(trip)
         for item in trip.items { session.move(item, to: nil) }
         session.save()
         session.context.delete(trip)
         session.save()
+        // Nothing is left to snapshot after the delete.
+        session.noteCorrection(.delete, before: before, after: [], movedPhotoIDs: moved)
     }
 
     static func plan(for chapterID: String, start: Date, end: Date, members: [Member], calendar: Calendar) -> Plan {

@@ -76,6 +76,8 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(Paper.muted)
             }
 
+            CorrectionLogSettingsSection()
+
             Section(String(localized: "People")) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -123,6 +125,72 @@ struct GeneralSettingsView: View {
             }
         }
         .accessibilityIdentifier(identifier)
+    }
+}
+
+/// The hand correction log: who is correcting, how many entries there are,
+/// and buttons to export or clear it. The log stays on this Mac.
+struct CorrectionLogSettingsSection: View {
+    @AppStorage(TripCorrectionLog.editorKey) private var editor = ""
+    @State private var entries = 0
+    @State private var confirmingClear = false
+
+    var body: some View {
+        Section {
+            LabeledContent(String(localized: "Recorded by")) {
+                TextField(String(localized: "Name"), text: $editor)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 220)
+                    .accessibilityIdentifier("settings.correction-editor")
+            }
+            LabeledContent(String(localized: "Entries")) {
+                Text("\(entries)")
+                    .foregroundStyle(Paper.muted)
+                    .accessibilityIdentifier("settings.correction-count")
+            }
+            HStack(spacing: 10) {
+                Button(String(localized: "Export…")) { export() }
+                    .accessibilityIdentifier("settings.correction-export")
+                Button(String(localized: "Clear…"), role: .destructive) { confirmingClear = true }
+                    .accessibilityIdentifier("settings.correction-clear")
+                Spacer(minLength: 0)
+            }
+        } header: {
+            Text(String(localized: "Correction log"))
+        } footer: {
+            Text(String(localized: "Kept only on this Mac, to improve trip detection"))
+                .font(.caption)
+                .foregroundStyle(Paper.muted)
+        }
+        .task { entries = await TripCorrectionLog.shared.count() }
+        .confirmationDialog(String(localized: "Clear the correction log?"), isPresented: $confirmingClear) {
+            Button(String(localized: "Clear"), role: .destructive) {
+                Task {
+                    await TripCorrectionLog.shared.clear()
+                    entries = await TripCorrectionLog.shared.count()
+                }
+            }
+            Button(String(localized: "Cancel"), role: .cancel) {}
+        } message: {
+            Text(String(localized: "Every entry is removed. This cannot be undone."))
+        }
+        .accessibilityIdentifier("settings.correction-log")
+    }
+
+    private func export() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "trip-corrections.jsonl"
+        panel.canCreateDirectories = true
+        panel.title = String(localized: "Export the correction log")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let source = TripCorrectionLog.shared
+        Task {
+            do {
+                try await source.export(to: url)
+            } catch {
+                NSSound.beep()
+            }
+        }
     }
 }
 

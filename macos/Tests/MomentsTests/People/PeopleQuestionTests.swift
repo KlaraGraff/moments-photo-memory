@@ -195,10 +195,13 @@ final class PeopleQuestionTests: XCTestCase {
         let visibleFace = face("visible-face", personID: visible.id, confirmed: true, source: "user")
         let hiddenFace = face("hidden-face", personID: hidden.id, confirmed: true, source: "user")
         let clusterFace = face("cluster-face", clusterID: "cluster-live")
+        // A cluster side needs at least three unnamed faces to be live.
+        let clusterFace2 = face("cluster-face-2", clusterID: "cluster-live")
+        let clusterFace3 = face("cluster-face-3", clusterID: "cluster-live")
         // This face used to be in cluster-empty and now belongs to a person, so
         // nothing is left in that cluster.
         let emptiedFace = face("emptied-face", personID: visible.id, confirmed: true, source: "user")
-        let observations: [FaceObservation] = [visibleFace, hiddenFace, clusterFace, emptiedFace]
+        let observations: [FaceObservation] = [visibleFace, hiddenFace, clusterFace, clusterFace2, clusterFace3, emptiedFace]
         observations.forEach(context.insert)
         let people: [Person] = [visible, hidden]
 

@@ -90,6 +90,58 @@ private struct FaceUndoSnapshot {
     }
 }
 
+/// The faces' state before "Ignore this group", so the change can be taken
+/// back: the faces return to their old grouping and the hidden person goes.
+private struct IgnoredFacesSnapshot {
+    struct FaceState {
+        let faceID: String
+        let personID: String?
+        let clusterID: String?
+        let confirmed: Bool
+        let assignmentSource: String
+
+        init(_ face: FaceObservation) {
+            faceID = face.id
+            personID = face.personID
+            clusterID = face.clusterID
+            confirmed = face.confirmed
+            assignmentSource = face.assignmentSource
+        }
+    }
+
+    let faces: [FaceState]
+
+    init(_ faces: [FaceObservation]) {
+        self.faces = faces.map { (face: FaceObservation) -> FaceState in FaceState(face) }
+    }
+
+    /// Puts every face back where it was and removes the person the click
+    /// created, unless a later scan gave that person more faces to keep.
+    @MainActor
+    func restore(hiddenPersonID: String, context: ModelContext) {
+        let ids: [String] = faces.map { (state: FaceState) -> String in state.faceID }
+        let stored: [FaceObservation] = (try? context.fetch(FetchDescriptor<FaceObservation>(predicate: #Predicate { ids.contains($0.id) }))) ?? []
+        let byID: [String: FaceObservation] = Dictionary(
+            stored.map { (face: FaceObservation) -> (String, FaceObservation) in (face.id, face) },
+            uniquingKeysWith: { (first: FaceObservation, _: FaceObservation) -> FaceObservation in first }
+        )
+        for state in faces {
+            guard let face = byID[state.faceID] else { continue }
+            face.personID = state.personID
+            face.clusterID = state.clusterID
+            face.confirmed = state.confirmed
+            face.assignmentSource = state.assignmentSource
+            face.updatedAt = .now
+        }
+        let people: [Person] = (try? context.fetch(FetchDescriptor<Person>())) ?? []
+        guard let person = people.first(where: { (person: Person) -> Bool in person.id == hiddenPersonID }) else { return }
+        var stillUsed = FetchDescriptor<FaceObservation>(predicate: #Predicate { $0.personID == hiddenPersonID })
+        stillUsed.fetchLimit = 1
+        let remaining = (try? context.fetch(stillUsed)) ?? []
+        if remaining.isEmpty { context.delete(person) }
+    }
+}
+
 private struct PendingRename: Identifiable {
     let personID: String
     let name: String
@@ -422,6 +474,11 @@ final class PeopleScanController {
 }
 
 enum PeopleStoreActions {
+    /// The owner's rule: a person needs at least this many faces to be a card
+    /// (the same number as `PeopleGroupingParameters.minSize`, which the
+    /// grouping uses). Fewer are loose faces, never a card and never a
+    /// "same person?" question.
+    static let minimumCardFaces = 3
     /// Local person IDs the user chose to keep apart from a same-named person.
     /// Only opaque IDs are stored here, never names, faces or embeddings.
     static let keepSeparateKey = "moments.people.keepSeparate"
@@ -560,31 +617,32 @@ enum PeopleStoreActions {
     }
 
     /// The stored questions whose two sides still exist. A person side needs a
-    /// visible person with at least one face. A cluster side needs at least one
-    /// face with that clusterID and no person.
+    /// visible person with at least one face. A cluster side needs at least
+    /// ``minimumCardFaces`` faces with that clusterID and no person: a card
+    /// that shrank below that is loose faces now, so its question is not asked.
     static func liveQuestions(observations: [FaceObservation], people: [Person], defaults: UserDefaults = .standard) -> [String] {
         let visible = Set(people.filter { (person: Person) -> Bool in !person.hidden }.map(\.id))
         var peopleWithFaces = Set<String>()
-        var clustersWithFreeFaces = Set<String>()
+        var clusterFaceCounts: [String: Int] = [:]
         for face in observations {
             if let personID = face.personID, visible.contains(personID) {
                 peopleWithFaces.insert(personID)
             }
             if face.personID == nil, let clusterID = face.clusterID {
-                clustersWithFreeFaces.insert(clusterID)
+                clusterFaceCounts[clusterID, default: 0] += 1
             }
         }
         return storedQuestions(defaults).filter { (key: String) -> Bool in
             guard let (first, second) = sides(of: key) else { return false }
-            return isLive(first, peopleWithFaces: peopleWithFaces, clustersWithFreeFaces: clustersWithFreeFaces)
-                && isLive(second, peopleWithFaces: peopleWithFaces, clustersWithFreeFaces: clustersWithFreeFaces)
+            return isLive(first, peopleWithFaces: peopleWithFaces, clusterFaceCounts: clusterFaceCounts)
+                && isLive(second, peopleWithFaces: peopleWithFaces, clusterFaceCounts: clusterFaceCounts)
         }
     }
 
-    private static func isLive(_ side: PeoplePlannerSide, peopleWithFaces: Set<String>, clustersWithFreeFaces: Set<String>) -> Bool {
+    private static func isLive(_ side: PeoplePlannerSide, peopleWithFaces: Set<String>, clusterFaceCounts: [String: Int]) -> Bool {
         switch side {
         case .person(let id): return peopleWithFaces.contains(id)
-        case .cluster(let id): return clustersWithFreeFaces.contains(id)
+        case .cluster(let id): return (clusterFaceCounts[id] ?? 0) >= minimumCardFaces
         }
     }
 
@@ -647,6 +705,63 @@ enum PeopleStoreActions {
             face.rejectedPersonIDs = rejected.sorted().joined(separator: ",")
         }
         return target.id
+    }
+
+    /// "Ignore this group": the one button for a stranger the user does not
+    /// want to name and for a game or cartoon character the detector takes for
+    /// a face. The faces move to a new hidden, unnamed person, so they leave
+    /// the page, and look-alike faces found later join them there instead of
+    /// coming back as a group. Faces that already have a person are left alone.
+    /// Returns nil when there was nothing to hide.
+    @discardableResult
+    static func ignore(faces: [FaceObservation], context: ModelContext) -> Person? {
+        let free = faces.filter { (face: FaceObservation) -> Bool in face.personID == nil }
+        guard !free.isEmpty else { return nil }
+        let person = Person(id: UUID().uuidString, name: nil, hidden: true)
+        context.insert(person)
+        for face in free {
+            face.personID = person.id
+            face.clusterID = nil
+            face.confirmed = true
+            face.assignmentSource = "user"
+            face.updatedAt = .now
+        }
+        try? context.save()
+        return person
+    }
+
+    /// The ignored groups ``ignore(faces:context:)`` makes: hidden people
+    /// without a name, oldest first. A hidden person that has a name was
+    /// hidden another way and is not an ignored group.
+    static func ignoredPeople(_ people: [Person]) -> [Person] {
+        people
+            .filter { (person: Person) -> Bool in
+                person.hidden && (person.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            .sorted { (lhs: Person, rhs: Person) -> Bool in (lhs.createdAt, lhs.id) < (rhs.createdAt, rhs.id) }
+    }
+
+    /// Restores one ignored group: its faces go back to unnamed, unconfirmed
+    /// faces with a "pending-" cluster ID, so the next scan groups them again,
+    /// and the hidden person is deleted. Returns the faces it released.
+    @discardableResult
+    static func restoreIgnored(personID: String, observations: [FaceObservation], context: ModelContext) -> [FaceObservation] {
+        let released: [FaceObservation] = observations.filter { (face: FaceObservation) -> Bool in
+            face.personID == personID
+        }
+        for face in released {
+            face.personID = nil
+            face.clusterID = "pending-\(face.id)"
+            face.confirmed = false
+            face.assignmentSource = "auto"
+            face.updatedAt = .now
+        }
+        let people: [Person] = (try? context.fetch(FetchDescriptor<Person>())) ?? []
+        if let person = people.first(where: { (person: Person) -> Bool in person.id == personID }) {
+            context.delete(person)
+        }
+        if context.hasChanges { try? context.save() }
+        return released
     }
 
     /// Merges visible people whose names are equal into the oldest of them,
@@ -754,11 +869,17 @@ actor PeopleScanStore {
         recordsDescriptor.propertiesToFetch = [\.id]
         let completedIDs = Set(try modelContext.fetch(recordsDescriptor).map(\.id))
         var itemsDescriptor = FetchDescriptor<MediaItem>()
-        itemsDescriptor.propertiesToFetch = [\.id, \.kindRaw]
-        let needsFaceScan = try modelContext.fetch(itemsDescriptor).contains { $0.kind != .video && !completedIDs.contains($0.id) }
+        itemsDescriptor.propertiesToFetch = [\.id, \.kindRaw, \.isScreenshot]
+        let items = try modelContext.fetch(itemsDescriptor)
+        // Screenshots are never scanned for faces and their faces never reach
+        // the planner, so neither can ask for work: otherwise a screenshot with
+        // an old pending face would start a scan on every visit for nothing.
+        var screenshotIDs: Set<String> = []
+        for item in items where item.isScreenshot { screenshotIDs.insert(item.id) }
+        let needsFaceScan = items.contains { $0.kind != .video && !$0.isScreenshot && !completedIDs.contains($0.id) }
         var facesDescriptor = FetchDescriptor<FaceObservation>()
         facesDescriptor.propertiesToFetch = [\.mediaID, \.personID, \.clusterID, \.confirmed, \.assignmentSource]
-        let faces = try modelContext.fetch(facesDescriptor)
+        let faces = try modelContext.fetch(facesDescriptor).filter { !screenshotIDs.contains($0.mediaID) }
         let needsClustering = faces.contains { $0.personID == nil && $0.clusterID?.hasPrefix("pending-") == true }
         return needsFaceScan || needsClustering || Self.hasSamePhotoSuggestions(faces)
     }
@@ -785,10 +906,13 @@ actor PeopleScanStore {
         let records = try modelContext.fetch(recordsDescriptor)
         let completedIDs = Set(records.map(\.id))
         var itemsDescriptor = FetchDescriptor<MediaItem>()
-        itemsDescriptor.propertiesToFetch = [\.id, \.kindRaw, \.originalBookmarkData, \.photosLocalIdentifier]
+        itemsDescriptor.propertiesToFetch = [\.id, \.kindRaw, \.isScreenshot, \.originalBookmarkData, \.photosLocalIdentifier]
         let items = try modelContext.fetch(itemsDescriptor)
         return items.compactMap { item in
-            guard item.kind != .video, !completedIDs.contains(item.id) else { return nil }
+            // A screenshot's faces are game or cartoon faces, so it is never
+            // scanned; it also gets no scan record, which is harmless because
+            // `hasWork` leaves screenshots out of its pending count too.
+            guard item.kind != .video, !item.isScreenshot, !completedIDs.contains(item.id) else { return nil }
             return PeopleMediaDescriptor(item)
         }
     }
@@ -837,30 +961,36 @@ actor PeopleScanStore {
         descriptor.propertiesToFetch = [\.id, \.mediaID, \.embedding, \.personID, \.clusterID, \.confirmed, \.rejectedPersonIDs, \.assignmentSource, \.createdAt, \.updatedAt, \.quality]
         // One fetch for the capture dates the planner's day rule needs.
         var itemsDescriptor = FetchDescriptor<MediaItem>()
-        itemsDescriptor.propertiesToFetch = [\.id, \.captureDate]
+        itemsDescriptor.propertiesToFetch = [\.id, \.captureDate, \.isScreenshot]
         var captureDates: [String: Date] = [:]
+        var screenshotIDs: Set<String> = []
         for item in try modelContext.fetch(itemsDescriptor) {
             if let captureDate = item.captureDate { captureDates[item.id] = captureDate }
+            if item.isScreenshot { screenshotIDs.insert(item.id) }
         }
-        let faces: [PeopleFaceSnapshot] = try modelContext.fetch(descriptor).map { (face: FaceObservation) -> PeopleFaceSnapshot in
-            let date = captureDates[face.mediaID]
-            return PeopleFaceSnapshot(
-                id: face.id,
-                personID: face.personID,
-                clusterID: face.clusterID,
-                confirmed: face.confirmed,
-                assignmentSource: face.assignmentSource,
-                rejectedPersonIDs: face.rejectedPersonIDs,
-                embedding: face.embedding,
-                createdAt: face.createdAt,
-                updatedAt: face.updatedAt,
-                mediaID: face.mediaID,
-                quality: face.quality,
-                day: date.map { (date: Date) -> Double in
-                    (date.timeIntervalSinceReferenceDate + Double(TimeZone.current.secondsFromGMT(for: date))) / 86_400
-                }
-            )
-        }
+        // Faces in screenshots are left out of the planner input entirely, so
+        // their stored assignment is never rewritten. They stay in the store.
+        let faces: [PeopleFaceSnapshot] = try modelContext.fetch(descriptor)
+            .filter { !screenshotIDs.contains($0.mediaID) }
+            .map { (face: FaceObservation) -> PeopleFaceSnapshot in
+                let date = captureDates[face.mediaID]
+                return PeopleFaceSnapshot(
+                    id: face.id,
+                    personID: face.personID,
+                    clusterID: face.clusterID,
+                    confirmed: face.confirmed,
+                    assignmentSource: face.assignmentSource,
+                    rejectedPersonIDs: face.rejectedPersonIDs,
+                    embedding: face.embedding,
+                    createdAt: face.createdAt,
+                    updatedAt: face.updatedAt,
+                    mediaID: face.mediaID,
+                    quality: face.quality,
+                    day: date.map { (date: Date) -> Double in
+                        (date.timeIntervalSinceReferenceDate + Double(TimeZone.current.secondsFromGMT(for: date))) / 86_400
+                    }
+                )
+            }
         var peopleDescriptor = FetchDescriptor<Person>()
         peopleDescriptor.propertiesToFetch = [\.id]
         let people = try modelContext.fetch(peopleDescriptor).map { PeoplePersonSnapshot(id: $0.id) }
@@ -958,7 +1088,11 @@ struct PeopleScreen: View {
     @State private var cachedLooseFaces: [FaceObservation] = []
     @State private var cachedQuestions: [String] = []
     @State private var looseExpanded = false
+    @State private var ignoredExpanded = false
     @State private var lastFaceChange: FaceUndoSnapshot?
+    /// The face whose "New person…" alert is open, and the name typed in it.
+    @State private var newPersonFace: FaceObservation?
+    @State private var newPersonName = ""
     @State private var renamingPersonID: String?
     @State private var renameText = ""
     @State private var pendingRename: PendingRename?
@@ -968,6 +1102,8 @@ struct PeopleScreen: View {
     @State private var addPersonName = ""
     /// The unnamed groups picked in the Add person sheet.
     @State private var addPersonClusters: Set<String> = []
+    /// The owner's group chips and their selection; nil shows everyone.
+    @State private var groupsModel = PeopleGroupsModel()
     @Environment(SelectionModel.self) private var selection
     @AppStorage("moments.library.person") private var libraryPersonFilterID = ""
 
@@ -976,6 +1112,13 @@ struct PeopleScreen: View {
     }
 
     private var unnamedClusters: [PeopleClusterSnapshot] { cachedUnnamedClusters }
+
+    /// The ignored groups, each with its faces, for the bottom section.
+    private var ignoredGroups: [PeopleIgnoredGroup] {
+        PeopleStoreActions.ignoredPeople(people).map { (person: Person) -> PeopleIgnoredGroup in
+            PeopleIgnoredGroup(id: person.id, cover: PeopleFacePicker.cover(cachedFacesByPerson[person.id] ?? []))
+        }
+    }
 
     private var observationsKey: Int {
         var hasher = Hasher()
@@ -988,7 +1131,14 @@ struct PeopleScreen: View {
 
     private func refreshFaceCaches() {
         let deletedIDs = Set(deletedItems.map(\.id))
-        let shown = deletedIDs.isEmpty ? observations : observations.filter { !deletedIDs.contains($0.mediaID) }
+        // Faces in screenshots never appear on this page: no card, no count and
+        // no question. One ID-only fetch per refresh keeps the photos themselves
+        // out of memory.
+        var screenshotDescriptor = FetchDescriptor<MediaItem>(predicate: #Predicate<MediaItem> { $0.isScreenshot == true })
+        screenshotDescriptor.propertiesToFetch = [\.id]
+        let screenshotIDs = Set(((try? modelContext.fetch(screenshotDescriptor)) ?? []).map(\.id))
+        let hiddenIDs = deletedIDs.union(screenshotIDs)
+        let shown = hiddenIDs.isEmpty ? observations : observations.filter { !hiddenIDs.contains($0.mediaID) }
         cachedFacesByPerson = Dictionary(grouping: shown.compactMap { $0.personID == nil ? nil : $0 }, by: { $0.personID! })
         cachedCardSummaries = PeopleCardSummaries.make(
             facesByPerson: cachedFacesByPerson,
@@ -999,7 +1149,9 @@ struct PeopleScreen: View {
         var loose: [FaceObservation] = []
         for group in grouped {
             let sortedFaces: [FaceObservation] = group.value.sorted { $0.createdAt < $1.createdAt }
-            if group.key.hasPrefix("loose-") {
+            // An unnamed card below the owner's minimum is not a card: its
+            // faces show as loose faces. "loose-" groups always do.
+            if group.key.hasPrefix("loose-") || sortedFaces.count < PeopleStoreActions.minimumCardFaces {
                 loose.append(contentsOf: sortedFaces)
             } else {
                 let cover: FaceObservation? = PeopleFacePicker.cover(sortedFaces)
@@ -1024,7 +1176,7 @@ struct PeopleScreen: View {
 
                 if !scanner.isAvailable {
                     Spacer(minLength: 0)
-                } else if namedPeople.isEmpty && unnamedClusters.isEmpty && cachedLooseFaces.isEmpty {
+                } else if namedPeople.isEmpty && unnamedClusters.isEmpty && cachedLooseFaces.isEmpty && ignoredGroups.isEmpty {
                     ContentUnavailableView {
                         Label(String(localized: "No people yet"), systemImage: "person.2")
                     } description: {
@@ -1041,6 +1193,7 @@ struct PeopleScreen: View {
                             if !unnamedClusters.isEmpty { unnamedSection }
                             if !namedPeople.isEmpty { namedSection }
                             if !cachedLooseFaces.isEmpty { looseFacesSection }
+                            if !ignoredGroups.isEmpty { ignoredSection }
                         }
                     }
                 }
@@ -1126,6 +1279,23 @@ struct PeopleScreen: View {
                 .keyboardShortcut(.defaultAction)
             Button(String(localized: "Keep separate")) { commitRename(pending, merge: false) }
             Button(String(localized: "Cancel"), role: .cancel) { pendingRename = nil }
+        }
+        .alert(
+            String(localized: "New person"),
+            isPresented: Binding(
+                get: { newPersonFace != nil },
+                set: { shown in
+                    if !shown {
+                        newPersonFace = nil
+                        newPersonName = ""
+                    }
+                }
+            )
+        ) {
+            TextField(String(localized: "What is this person's name?"), text: $newPersonName)
+            Button(String(localized: "Save")) { commitNewPerson() }
+                .keyboardShortcut(.defaultAction)
+            Button(String(localized: "Cancel"), role: .cancel) { newPersonFace = nil }
         }
     }
 
@@ -1263,9 +1433,29 @@ struct PeopleScreen: View {
                 onSame: { answerSameQuestion(key) },
                 onDifferent: { answerDifferentQuestion(key) },
                 onSkip: { skipQuestion(key) },
+                onIgnoreLeft: ignoreQuestionSide(first, key: key),
+                onIgnoreRight: ignoreQuestionSide(second, key: key),
                 left: { questionFace(first) },
                 right: { questionFace(second) }
             )
+        }
+    }
+
+    /// "Ignore" under one side of a question. Only a cluster side gets one:
+    /// it ignores that card's faces and drops the question, so a group of
+    /// strangers is out of the way without answering.
+    private func ignoreQuestionSide(_ side: PeoplePlannerSide, key: String) -> (() -> Void)? {
+        guard case .cluster(let clusterID) = side else { return nil }
+        return {
+            let faces: [FaceObservation] = cachedUnnamedClusters.first { (card: PeopleClusterSnapshot) -> Bool in
+                card.id == clusterID
+            }?.faces ?? []
+            guard !faces.isEmpty else { return }
+            PeopleStoreActions.ignore(faces: faces, context: modelContext)
+            PeopleStoreActions.answerDifferent(key)
+            try? modelContext.save()
+            lastFaceChange = nil
+            refreshFaceCaches()
         }
     }
 
@@ -1332,9 +1522,19 @@ struct PeopleScreen: View {
     private var namedSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(String(localized: "Named")).font(.system(.title3, design: .serif).weight(.medium)).foregroundStyle(Paper.ink)
+            PeopleGroupChips(model: groupsModel, namedPersonIDs: Set(namedPeople.map { (person: Person) -> String in person.id }))
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 14)], alignment: .leading, spacing: 14) {
-                ForEach(namedPeople, id: \.id) { person in namedCard(person) }
+                ForEach(shownNamedPeople, id: \.id) { person in namedCard(person) }
             }
+        }
+    }
+
+    /// The named people the selected group chip keeps; everyone when none is
+    /// selected.
+    private var shownNamedPeople: [Person] {
+        guard let groupID = groupsModel.selectedGroupID else { return namedPeople }
+        return namedPeople.filter { (person: Person) -> Bool in
+            groupsModel.isMember(personID: person.id, of: groupID)
         }
     }
 
@@ -1425,6 +1625,30 @@ struct PeopleScreen: View {
             }
         }
         .paperCard(cornerRadius: 12, padding: 12)
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contextMenu {
+            groupMenu(for: person)
+        }
+    }
+
+    /// "Put in group": one checked entry per group, then "New group…". A person
+    /// can be in several groups.
+    @ViewBuilder
+    private func groupMenu(for person: Person) -> some View {
+        Menu(String(localized: "Put in group")) {
+            ForEach(groupsModel.groups) { group in
+                Toggle(isOn: Binding(
+                    get: { groupsModel.isMember(personID: person.id, of: group.id) },
+                    set: { (isOn: Bool) in groupsModel.setMember(isOn, personID: person.id, in: group.id) }
+                )) {
+                    Text(verbatim: group.name)
+                }
+            }
+            Divider()
+            Button(String(localized: "New group…")) {
+                groupsModel.beginCreatingGroup(for: person.id)
+            }
+        }
     }
 
     private func coverFace(of person: Person) -> FaceObservation? {
@@ -1502,6 +1726,13 @@ struct PeopleScreen: View {
                                 .onSubmit { name(cluster) }
                             Button(String(localized: "Save")) { name(cluster) }.buttonStyle(.borderedProminent)
                         }
+                        HStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            Button(String(localized: "Ignore this group")) { ignore(cluster.faces) }
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(Paper.muted)
+                                .accessibilityIdentifier("people.card.ignore")
+                        }
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 10) {
                                 ForEach(cluster.faces, id: \.id) { face in
@@ -1546,6 +1777,21 @@ struct PeopleScreen: View {
         PeopleLooseFacesSection(faces: cachedLooseFaces, isExpanded: $looseExpanded) { face in
             faceCorrectionMenu(face, current: nil)
         }
+    }
+
+    /// The ignored groups, collapsed at the very bottom: right-click one to
+    /// restore it, and the next scan groups its faces again.
+    private var ignoredSection: some View {
+        PeopleIgnoredSection(groups: ignoredGroups, isExpanded: $ignoredExpanded) { group in
+            Button(String(localized: "Restore")) { restoreIgnored(group) }
+        }
+    }
+
+    private func restoreIgnored(_ group: PeopleIgnoredGroup) {
+        PeopleStoreActions.restoreIgnored(personID: group.id, observations: observations, context: modelContext)
+        try? modelContext.save()
+        lastFaceChange = nil
+        refreshFaceCaches()
     }
 
     private func name(_ cluster: PeopleClusterSnapshot) {
@@ -1598,6 +1844,35 @@ struct PeopleScreen: View {
                 }
             }
         }
+        // Also offered when nobody has a name yet, so a loose face can start
+        // the first person.
+        Button(String(localized: "New person…")) {
+            newPersonName = ""
+            newPersonFace = face
+        }
+        // A loose face has no card to ignore, so it is offered here: a
+        // stranger or a game or cartoon character the detector took for a face.
+        if face.personID == nil {
+            Button(String(localized: "Ignore this group")) { ignore([face]) }
+        }
+    }
+
+    /// Hides a group of faces as ignored, with an Undo that puts every face
+    /// back and removes the hidden person.
+    private func ignore(_ faces: [FaceObservation]) {
+        let free = faces.filter { (face: FaceObservation) -> Bool in face.personID == nil }
+        guard !free.isEmpty else { return }
+        let snapshot = IgnoredFacesSnapshot(free)
+        guard let person = PeopleStoreActions.ignore(faces: free, context: modelContext) else { return }
+        try? modelContext.save()
+        let hiddenPersonID = person.id
+        lastFaceChange = nil
+        refreshFaceCaches()
+        selection.recordCorrection(CorrectionUndo(
+            message: String(localized: "Ignore this group"),
+            actionName: String(localized: "Ignore Group"),
+            restore: { context in snapshot.restore(hiddenPersonID: hiddenPersonID, context: context) }
+        ), context: modelContext)
     }
 
     private func reassign(_ face: FaceObservation, to person: Person) {
@@ -1606,6 +1881,38 @@ struct PeopleScreen: View {
         lastFaceChange = nil
         selection.recordCorrection(CorrectionUndo(
             message: FaceCorrection.message(movedTo: person.name ?? ""),
+            actionName: String(localized: "Change Person"),
+            restore: { context in FaceCorrection.restore(snapshot, context: context) }
+        ), context: modelContext)
+    }
+
+    /// Names a new person from a face, as the photo info panel does.
+    private func commitNewPerson() {
+        guard let face = newPersonFace else { return }
+        let value = newPersonName.trimmingCharacters(in: .whitespacesAndNewlines)
+        newPersonFace = nil
+        newPersonName = ""
+        // An empty name creates nobody, as elsewhere on this screen.
+        guard !value.isEmpty else { return }
+        let snapshot = FaceCorrection.reassign(
+            face,
+            toName: value,
+            people: people,
+            observations: observations,
+            context: modelContext
+        )
+        try? modelContext.save()
+        if let snapshot {
+            recordNewPerson(snapshot, name: value)
+        }
+        refreshFaceCaches()
+    }
+
+    /// The same undo the "This is…" correction records.
+    private func recordNewPerson(_ snapshot: FaceCorrection.Snapshot, name: String) {
+        lastFaceChange = nil
+        selection.recordCorrection(CorrectionUndo(
+            message: FaceCorrection.message(movedTo: name),
             actionName: String(localized: "Change Person"),
             restore: { context in FaceCorrection.restore(snapshot, context: context) }
         ), context: modelContext)

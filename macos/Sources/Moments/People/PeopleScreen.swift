@@ -804,11 +804,17 @@ actor PeopleScanStore {
         recordsDescriptor.propertiesToFetch = [\.id]
         let completedIDs = Set(try modelContext.fetch(recordsDescriptor).map(\.id))
         var itemsDescriptor = FetchDescriptor<MediaItem>()
-        itemsDescriptor.propertiesToFetch = [\.id, \.kindRaw]
-        let needsFaceScan = try modelContext.fetch(itemsDescriptor).contains { $0.kind != .video && !completedIDs.contains($0.id) }
+        itemsDescriptor.propertiesToFetch = [\.id, \.kindRaw, \.isScreenshot]
+        let items = try modelContext.fetch(itemsDescriptor)
+        // Screenshots are never scanned for faces and their faces never reach
+        // the planner, so neither can ask for work: otherwise a screenshot with
+        // an old pending face would start a scan on every visit for nothing.
+        var screenshotIDs: Set<String> = []
+        for item in items where item.isScreenshot { screenshotIDs.insert(item.id) }
+        let needsFaceScan = items.contains { $0.kind != .video && !$0.isScreenshot && !completedIDs.contains($0.id) }
         var facesDescriptor = FetchDescriptor<FaceObservation>()
         facesDescriptor.propertiesToFetch = [\.mediaID, \.personID, \.clusterID, \.confirmed, \.assignmentSource]
-        let faces = try modelContext.fetch(facesDescriptor)
+        let faces = try modelContext.fetch(facesDescriptor).filter { !screenshotIDs.contains($0.mediaID) }
         let needsClustering = faces.contains { $0.personID == nil && $0.clusterID?.hasPrefix("pending-") == true }
         return needsFaceScan || needsClustering || Self.hasSamePhotoSuggestions(faces)
     }
@@ -835,10 +841,13 @@ actor PeopleScanStore {
         let records = try modelContext.fetch(recordsDescriptor)
         let completedIDs = Set(records.map(\.id))
         var itemsDescriptor = FetchDescriptor<MediaItem>()
-        itemsDescriptor.propertiesToFetch = [\.id, \.kindRaw, \.originalBookmarkData, \.photosLocalIdentifier]
+        itemsDescriptor.propertiesToFetch = [\.id, \.kindRaw, \.isScreenshot, \.originalBookmarkData, \.photosLocalIdentifier]
         let items = try modelContext.fetch(itemsDescriptor)
         return items.compactMap { item in
-            guard item.kind != .video, !completedIDs.contains(item.id) else { return nil }
+            // A screenshot's faces are game or cartoon faces, so it is never
+            // scanned; it also gets no scan record, which is harmless because
+            // `hasWork` leaves screenshots out of its pending count too.
+            guard item.kind != .video, !item.isScreenshot, !completedIDs.contains(item.id) else { return nil }
             return PeopleMediaDescriptor(item)
         }
     }
@@ -887,30 +896,36 @@ actor PeopleScanStore {
         descriptor.propertiesToFetch = [\.id, \.mediaID, \.embedding, \.personID, \.clusterID, \.confirmed, \.rejectedPersonIDs, \.assignmentSource, \.createdAt, \.updatedAt, \.quality]
         // One fetch for the capture dates the planner's day rule needs.
         var itemsDescriptor = FetchDescriptor<MediaItem>()
-        itemsDescriptor.propertiesToFetch = [\.id, \.captureDate]
+        itemsDescriptor.propertiesToFetch = [\.id, \.captureDate, \.isScreenshot]
         var captureDates: [String: Date] = [:]
+        var screenshotIDs: Set<String> = []
         for item in try modelContext.fetch(itemsDescriptor) {
             if let captureDate = item.captureDate { captureDates[item.id] = captureDate }
+            if item.isScreenshot { screenshotIDs.insert(item.id) }
         }
-        let faces: [PeopleFaceSnapshot] = try modelContext.fetch(descriptor).map { (face: FaceObservation) -> PeopleFaceSnapshot in
-            let date = captureDates[face.mediaID]
-            return PeopleFaceSnapshot(
-                id: face.id,
-                personID: face.personID,
-                clusterID: face.clusterID,
-                confirmed: face.confirmed,
-                assignmentSource: face.assignmentSource,
-                rejectedPersonIDs: face.rejectedPersonIDs,
-                embedding: face.embedding,
-                createdAt: face.createdAt,
-                updatedAt: face.updatedAt,
-                mediaID: face.mediaID,
-                quality: face.quality,
-                day: date.map { (date: Date) -> Double in
-                    (date.timeIntervalSinceReferenceDate + Double(TimeZone.current.secondsFromGMT(for: date))) / 86_400
-                }
-            )
-        }
+        // Faces in screenshots are left out of the planner input entirely, so
+        // their stored assignment is never rewritten. They stay in the store.
+        let faces: [PeopleFaceSnapshot] = try modelContext.fetch(descriptor)
+            .filter { !screenshotIDs.contains($0.mediaID) }
+            .map { (face: FaceObservation) -> PeopleFaceSnapshot in
+                let date = captureDates[face.mediaID]
+                return PeopleFaceSnapshot(
+                    id: face.id,
+                    personID: face.personID,
+                    clusterID: face.clusterID,
+                    confirmed: face.confirmed,
+                    assignmentSource: face.assignmentSource,
+                    rejectedPersonIDs: face.rejectedPersonIDs,
+                    embedding: face.embedding,
+                    createdAt: face.createdAt,
+                    updatedAt: face.updatedAt,
+                    mediaID: face.mediaID,
+                    quality: face.quality,
+                    day: date.map { (date: Date) -> Double in
+                        (date.timeIntervalSinceReferenceDate + Double(TimeZone.current.secondsFromGMT(for: date))) / 86_400
+                    }
+                )
+            }
         var peopleDescriptor = FetchDescriptor<Person>()
         peopleDescriptor.propertiesToFetch = [\.id]
         let people = try modelContext.fetch(peopleDescriptor).map { PeoplePersonSnapshot(id: $0.id) }
@@ -1041,7 +1056,14 @@ struct PeopleScreen: View {
 
     private func refreshFaceCaches() {
         let deletedIDs = Set(deletedItems.map(\.id))
-        let shown = deletedIDs.isEmpty ? observations : observations.filter { !deletedIDs.contains($0.mediaID) }
+        // Faces in screenshots never appear on this page: no card, no count and
+        // no question. One ID-only fetch per refresh keeps the photos themselves
+        // out of memory.
+        var screenshotDescriptor = FetchDescriptor<MediaItem>(predicate: #Predicate<MediaItem> { $0.isScreenshot == true })
+        screenshotDescriptor.propertiesToFetch = [\.id]
+        let screenshotIDs = Set(((try? modelContext.fetch(screenshotDescriptor)) ?? []).map(\.id))
+        let hiddenIDs = deletedIDs.union(screenshotIDs)
+        let shown = hiddenIDs.isEmpty ? observations : observations.filter { !hiddenIDs.contains($0.mediaID) }
         cachedFacesByPerson = Dictionary(grouping: shown.compactMap { $0.personID == nil ? nil : $0 }, by: { $0.personID! })
         cachedCardSummaries = PeopleCardSummaries.make(
             facesByPerson: cachedFacesByPerson,

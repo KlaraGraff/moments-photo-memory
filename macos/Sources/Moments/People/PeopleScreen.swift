@@ -62,7 +62,7 @@ struct PeopleStoreAssignmentSnapshot: Sendable {
     let people: [PeoplePersonSnapshot]
 }
 
-private struct PeopleClusterSnapshot: Identifiable {
+struct PeopleClusterSnapshot: Identifiable {
     let id: String
     let faces: [FaceObservation]
     /// Worked out once when the snapshot is built, not on every redraw.
@@ -1139,27 +1139,18 @@ struct PeopleScreen: View {
         let screenshotIDs = Set(((try? modelContext.fetch(screenshotDescriptor)) ?? []).map(\.id))
         let hiddenIDs = deletedIDs.union(screenshotIDs)
         let shown = hiddenIDs.isEmpty ? observations : observations.filter { !hiddenIDs.contains($0.mediaID) }
-        cachedFacesByPerson = Dictionary(grouping: shown.compactMap { $0.personID == nil ? nil : $0 }, by: { $0.personID! })
-        cachedCardSummaries = PeopleCardSummaries.make(
-            facesByPerson: cachedFacesByPerson,
+        // One read of each face feeds every cache; the grouping, sorting and
+        // covers run on plain values, not on the SwiftData models.
+        let caches = PeopleFaceCaches.make(
+            observations: observations,
+            deletedIDs: hiddenIDs,
+            minimumCardFaces: PeopleStoreActions.minimumCardFaces,
             keyFaceID: { (personID: String) -> String? in PeopleStoreActions.keyFaceID(for: personID) }
         )
-        let grouped = Dictionary(grouping: shown.filter { $0.personID == nil && $0.clusterID != nil }, by: { $0.clusterID! })
-        var cards: [PeopleClusterSnapshot] = []
-        var loose: [FaceObservation] = []
-        for group in grouped {
-            let sortedFaces: [FaceObservation] = group.value.sorted { $0.createdAt < $1.createdAt }
-            // An unnamed card below the owner's minimum is not a card: its
-            // faces show as loose faces. "loose-" groups always do.
-            if group.key.hasPrefix("loose-") || sortedFaces.count < PeopleStoreActions.minimumCardFaces {
-                loose.append(contentsOf: sortedFaces)
-            } else {
-                let cover: FaceObservation? = PeopleFacePicker.cover(sortedFaces)
-                cards.append(PeopleClusterSnapshot(id: group.key, faces: sortedFaces, cover: cover))
-            }
-        }
-        cachedUnnamedClusters = cards.sorted { $0.id < $1.id }
-        cachedLooseFaces = loose.sorted { $0.createdAt < $1.createdAt }
+        cachedFacesByPerson = caches.facesByPerson
+        cachedCardSummaries = caches.cardSummaries
+        cachedUnnamedClusters = caches.unnamedClusters
+        cachedLooseFaces = caches.looseFaces
         cachedQuestions = PeopleStoreActions.liveQuestions(observations: shown, people: people)
     }
 

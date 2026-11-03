@@ -1036,6 +1036,8 @@ struct PeopleScreen: View {
     @State private var addPersonName = ""
     /// The unnamed groups picked in the Add person sheet.
     @State private var addPersonClusters: Set<String> = []
+    /// The owner's group chips and their selection; nil shows everyone.
+    @State private var groupsModel = PeopleGroupsModel()
     @Environment(SelectionModel.self) private var selection
     @AppStorage("moments.library.person") private var libraryPersonFilterID = ""
 
@@ -1425,9 +1427,19 @@ struct PeopleScreen: View {
     private var namedSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(String(localized: "Named")).font(.system(.title3, design: .serif).weight(.medium)).foregroundStyle(Paper.ink)
+            PeopleGroupChips(model: groupsModel, namedPersonIDs: Set(namedPeople.map { (person: Person) -> String in person.id }))
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 14)], alignment: .leading, spacing: 14) {
-                ForEach(namedPeople, id: \.id) { person in namedCard(person) }
+                ForEach(shownNamedPeople, id: \.id) { person in namedCard(person) }
             }
+        }
+    }
+
+    /// The named people the selected group chip keeps; everyone when none is
+    /// selected.
+    private var shownNamedPeople: [Person] {
+        guard let groupID = groupsModel.selectedGroupID else { return namedPeople }
+        return namedPeople.filter { (person: Person) -> Bool in
+            groupsModel.isMember(personID: person.id, of: groupID)
         }
     }
 
@@ -1518,6 +1530,30 @@ struct PeopleScreen: View {
             }
         }
         .paperCard(cornerRadius: 12, padding: 12)
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contextMenu {
+            groupMenu(for: person)
+        }
+    }
+
+    /// "Put in group": one checked entry per group, then "New group…". A person
+    /// can be in several groups.
+    @ViewBuilder
+    private func groupMenu(for person: Person) -> some View {
+        Menu(String(localized: "Put in group")) {
+            ForEach(groupsModel.groups) { group in
+                Toggle(isOn: Binding(
+                    get: { groupsModel.isMember(personID: person.id, of: group.id) },
+                    set: { (isOn: Bool) in groupsModel.setMember(isOn, personID: person.id, in: group.id) }
+                )) {
+                    Text(verbatim: group.name)
+                }
+            }
+            Divider()
+            Button(String(localized: "New group…")) {
+                groupsModel.beginCreatingGroup(for: person.id)
+            }
+        }
     }
 
     private func coverFace(of person: Person) -> FaceObservation? {

@@ -44,6 +44,7 @@ struct MapScreen: View {
     @State private var awaitingProgrammaticCamera = false
     @State private var programmaticDistance: Double?
     @State private var showingCountries = false
+    @State private var showingCities = false
 
     /// Clustering and routes are rebuilt only when items, the Library filter
     /// or the zoom level change, not on every render or selection change.
@@ -456,38 +457,66 @@ struct MapScreen: View {
         .accessibilityIdentifier("map.toolbar")
     }
 
-    /// Countries, cities and distance, in a corner the globe never reaches.
-    /// The country list opens from it instead of taking room beside the globe.
+    /// Countries and cities are two separate lists, so they are two separate
+    /// buttons; the distance stays plain text. The lists open from here
+    /// instead of taking room beside the globe.
     private var worldSummary: some View {
         let statistics = world.statistics
-        return Button {
-            showingCountries.toggle()
-        } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 14) {
-                worldStat(value: "\(statistics.countryCount)", title: "Countries")
-                worldStat(value: "\(statistics.cityCount)", title: "Cities")
-                worldStat(value: statistics.formattedKilometres, title: "Kilometres")
-                if world.isGeocoding {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityLabel(Text("Looking up countries"))
-                } else {
-                    Image(systemName: "chevron.down")
-                        .font(.caption.weight(.semibold))
+        return HStack(alignment: .firstTextBaseline, spacing: 14) {
+            Button {
+                showingCities = false
+                showingCountries.toggle()
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(statistics.countryCount, format: .number)
+                        .font(.headline.monospacedDigit())
+                        .foregroundStyle(Paper.ink)
+                    Text("Countries")
+                        .font(.caption)
                         .foregroundStyle(Paper.muted)
                 }
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .help("Visited countries")
+            .accessibilityIdentifier("map.stats.countries")
+            .popover(isPresented: $showingCountries, arrowEdge: .bottom) {
+                countryList
+            }
+
+            Button {
+                showingCountries = false
+                showingCities.toggle()
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(statistics.cityCount, format: .number)
+                        .font(.headline.monospacedDigit())
+                        .foregroundStyle(Paper.ink)
+                    Text("Cities")
+                        .font(.caption)
+                        .foregroundStyle(Paper.muted)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Visited cities")
+            .accessibilityIdentifier("map.stats.cities")
+            .popover(isPresented: $showingCities, arrowEdge: .bottom) {
+                cityList
+            }
+
+            worldStat(value: statistics.formattedKilometres, title: "Kilometres")
+            if world.isGeocoding {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel(Text("Looking up countries"))
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
         .paperFloatingPanel(cornerRadius: 10)
-        .help("Visited countries")
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("map.stats")
-        .popover(isPresented: $showingCountries, arrowEdge: .bottom) {
-            countryList
-        }
     }
 
     private func worldStat(value: String, title: LocalizedStringKey) -> some View {
@@ -546,7 +575,7 @@ struct MapScreen: View {
                         .accessibilityIdentifier("map.country.\(country.id)")
                         Button {
                             showingCountries = false
-                            selection.showInLibrary(itemIDs(of: country), title: country.name)
+                            selection.showInLibrary(itemIDs(clusterIDs: country.clusterIDs), title: country.name)
                         } label: {
                             Image(systemName: "photo.on.rectangle")
                                 .font(.callout)
@@ -559,6 +588,75 @@ struct MapScreen: View {
                         .help(String(format: String(localized: "Show photos from %@"), country.name))
                         .accessibilityLabel(String(format: String(localized: "Show photos from %@"), country.name))
                         .accessibilityIdentifier("map.country.photos.\(country.id)")
+                    }
+                }
+            }
+            .padding(.bottom, 10)
+        }
+        .frame(width: 280)
+        .frame(maxHeight: 360)
+        .background(Paper.raised)
+    }
+
+    /// The same list as the countries, one row per big city.
+    private var cityList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Visited cities")
+                    .font(.system(.title3, design: .serif).weight(.medium))
+                    .foregroundStyle(Paper.ink)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 6)
+                if world.didEncounterGeocodingError {
+                    Label("Offline: cached cities only", systemImage: "wifi.slash")
+                        .font(.caption)
+                        .foregroundStyle(Paper.muted)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 6)
+                }
+                ForEach(world.citySummaries) { city in
+                    HStack(spacing: 0) {
+                        Button {
+                            showingCities = false
+                            guard let center = city.firstCenter else { return }
+                            flyTo(center, latitudeDelta: 0.6)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Text(city.flag)
+                                    .font(.title3)
+                                    .frame(width: 28)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(city.name)
+                                        .foregroundStyle(Paper.ink)
+                                    Text(String(localized: "\(city.photoCount) photos"))
+                                        .font(.caption)
+                                        .foregroundStyle(Paper.muted)
+                                }
+                                Spacer(minLength: 8)
+                            }
+                            .padding(.leading, 16)
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Show on the map")
+                        .accessibilityIdentifier("map.city.\(city.id)")
+                        Button {
+                            showingCities = false
+                            selection.showInLibrary(itemIDs(clusterIDs: city.clusterIDs), title: city.name)
+                        } label: {
+                            Image(systemName: "photo.on.rectangle")
+                                .font(.callout)
+                                .foregroundStyle(Paper.muted)
+                                .frame(width: 32, height: 32)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        .padding(.trailing, 8)
+                        .help(String(format: String(localized: "Show photos from %@"), city.name))
+                        .accessibilityLabel(String(format: String(localized: "Show photos from %@"), city.name))
+                        .accessibilityIdentifier("map.city.photos.\(city.id)")
                     }
                 }
             }
@@ -1007,10 +1105,10 @@ struct MapScreen: View {
         world.didEncounterGeocodingError = batch.didEncounterError
     }
 
-    private func itemIDs(of country: FootprintsCountrySummary) -> [String] {
-        let clusterIDs = Set(country.clusterIDs)
+    private func itemIDs(clusterIDs: [String]) -> [String] {
+        let ids = Set(clusterIDs)
         return world.snapshot.cityClusters
-            .filter { clusterIDs.contains($0.id) }
+            .filter { ids.contains($0.id) }
             .flatMap(\.stopIDs)
     }
 
@@ -1044,6 +1142,10 @@ private struct MapWorldState {
 
     var countrySummaries: [FootprintsCountrySummary] {
         FootprintsCountrySummary.build(clusters: snapshot.cityClusters, geocoding: geocoding)
+    }
+
+    var citySummaries: [FootprintsCitySummary] {
+        FootprintsCitySummary.build(clusters: snapshot.cityClusters, geocoding: geocoding)
     }
 }
 

@@ -83,6 +83,8 @@ struct LibraryView: View {
     @Environment(LibraryStore.self) private var store
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Which review items on-device Vision is sure are not camera photos.
+    private var reviewNoise: ReviewNoiseStore { .shared }
     // The library's photos, screenshots, faces and places come from the shared
     // store, which fetches them once for every page.
     private var regularItems: [MediaItem] { store.regularItems }
@@ -294,6 +296,8 @@ struct LibraryView: View {
         }
         // Bursts regroup when someone changes a stack or new analysis arrives.
         hasher.combine(stacks.generation)
+        // New noise answers change the review banner.
+        hasher.combine(reviewNoise.revision)
         for record in stackRecords {
             hasher.combine(record.id)
             hasher.combine(record.rulesData)
@@ -353,6 +357,7 @@ struct LibraryView: View {
             ("place overrides", overrides.finalize()),
             ("memories", memories.finalize()),
             ("stacks.generation", stacks.generation),
+            ("review noise", reviewNoise.revision),
             ("stack records", records.finalize())
         ]
     }
@@ -440,6 +445,16 @@ struct LibraryView: View {
         // query SwiftData refreshes on every save.
         .onChange(of: store.groupSourcesRevision, initial: true) { _, _ in
             refreshGroupItems()
+        }
+        // One background pass over the review items Vision has not seen yet.
+        .task {
+            reviewNoise.start(container: modelContext.container)
+        }
+        // An import of saved web images can add review items after the first
+        // pass; it changes the photo count, and the pass skips what it already
+        // answered, so asking again costs one fetch.
+        .onChange(of: store.items.count) { _, _ in
+            reviewNoise.start(container: modelContext.container)
         }
         .sheet(isPresented: $showingReview) {
             ReviewSheet()
@@ -856,8 +871,8 @@ struct LibraryView: View {
         #if DEBUG
         step("allItems")
         #endif
-        cachedReviewCount = all.reduce(into: 0) { count, item in
-            if item.needsImportReview { count += 1 }
+        cachedReviewCount = all.reduce(into: 0) { (count: inout Int, item: MediaItem) in
+            if item.needsImportReview, !reviewNoise.isNoise(item.id) { count += 1 }
         }
         #if DEBUG
         step("review count")
@@ -1716,9 +1731,9 @@ struct ReviewListView: View {
 
     private var pending: [MediaItem] {
         items
-            .filter { $0.needsImportReview }
-            .sorted {
-                ($0.effectiveCaptureDate ?? .distantPast) < ($1.effectiveCaptureDate ?? .distantPast)
+            .filter { $0.needsImportReview && !ReviewNoiseStore.shared.isNoise($0.id) }
+            .sorted { (first: MediaItem, second: MediaItem) -> Bool in
+                (first.effectiveCaptureDate ?? .distantPast) < (second.effectiveCaptureDate ?? .distantPast)
             }
     }
 

@@ -5,6 +5,15 @@ import MomentsCore
 struct FootprintsGeocodeResult: Codable, Equatable, Hashable, Sendable {
     let countryCode: String?
     let countryName: String?
+    /// The big-city level name; nil in entries cached before it existed, which
+    /// the resolver looks up again once.
+    let cityName: String?
+
+    init(countryCode: String?, countryName: String?, cityName: String? = nil) {
+        self.countryCode = countryCode
+        self.countryName = countryName
+        self.cityName = cityName
+    }
 
     static let ocean = FootprintsGeocodeResult(countryCode: nil, countryName: nil)
 
@@ -139,6 +148,69 @@ struct FootprintsCountrySummary: Identifiable, Equatable {
     }
 }
 
+struct FootprintsCitySummary: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let flag: String
+    let photoCount: Int
+    let clusterIDs: [String]
+    let centers: [GeoPoint]
+
+    var firstCenter: GeoPoint? { centers.first }
+
+    /// One entry per big city: the city-level name from reverse geocoding, so
+    /// Chongqing's districts (万州区, 开州区, …) count as one city, not many.
+    /// Clusters without a city name (old cache, unknown place, open ocean)
+    /// are left out; the caller falls back to the cluster count while no
+    /// cluster has a name at all.
+    static func build(
+        clusters: [PlaceCluster],
+        geocoding: [String: FootprintsGeocodeResult]
+    ) -> [FootprintsCitySummary] {
+        struct Accumulator {
+            var name: String
+            var flag: String
+            var photoCount = 0
+            var clusterIDs: [String] = []
+            var centers: [GeoPoint] = []
+        }
+
+        var grouped: [String: Accumulator] = [:]
+        for cluster in clusters {
+            guard let result = geocoding[cluster.id],
+                  let cityName = result.cityName else {
+                continue
+            }
+            let countryCode: String = result.countryCode?.uppercased() ?? "unknown"
+            let id: String = "\(countryCode)|\(cityName)"
+            var accumulator: Accumulator = grouped[id] ?? Accumulator(
+                name: cityName,
+                flag: result.flagEmoji
+            )
+            accumulator.photoCount += cluster.stopIDs.count
+            accumulator.clusterIDs.append(cluster.id)
+            if let center = cluster.center {
+                accumulator.centers.append(center)
+            }
+            grouped[id] = accumulator
+        }
+
+        return grouped.map { id, accumulator in
+            FootprintsCitySummary(
+                id: id,
+                name: accumulator.name,
+                flag: accumulator.flag,
+                photoCount: accumulator.photoCount,
+                clusterIDs: accumulator.clusterIDs.sorted(),
+                centers: accumulator.centers
+            )
+        }
+        .sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+}
+
 struct FootprintsInput: Equatable, Sendable {
     let stops: [PhotoStop]
 
@@ -224,9 +296,15 @@ enum FootprintsCalculator {
         let countryCodes = Set(
             snapshot.cityClusters.compactMap { geocoding[$0.id]?.countryCode?.uppercased() }
         )
+        let cities = FootprintsCitySummary.build(
+            clusters: snapshot.cityClusters,
+            geocoding: geocoding
+        )
         return FootprintsStatistics(
             countryCount: countryCodes.count,
-            cityCount: snapshot.cityClusters.count,
+            // Before any city name is known (empty cache, first lookup still
+            // running) the cluster count is the closest true answer.
+            cityCount: cities.isEmpty ? snapshot.cityClusters.count : cities.count,
             kilometres: snapshot.overviewSegments.reduce(0) { $0 + $1.distanceKilometers }
         )
     }

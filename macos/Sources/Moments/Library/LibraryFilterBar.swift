@@ -205,18 +205,18 @@ struct LibraryFilterChips: View {
     }
 
     private func filterMenu<Content: View>(label: String, systemImage: String, identifier: String, selected: String?, @ViewBuilder content: () -> Content) -> some View {
-        Menu {
-            content()
-        } label: {
-            filterMenuTitle(selected.map(Self.chipTitle) ?? label, systemImage: systemImage, selected: selected != nil)
+        menuChip(selected: selected != nil) {
+            Menu {
+                content()
+            } label: {
+                filterMenuTitle(selected.map(Self.chipTitle) ?? label, systemImage: systemImage, selected: selected != nil, showsChevron: false)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            // Chip labels read as ink; the app accent would turn every chip red.
+            .tint(LibraryPalette.ink)
+            .accessibilityIdentifier(identifier)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        // Chip labels read as ink; the app accent would turn every chip red.
-        .tint(LibraryPalette.ink)
-        .fixedSize()
-        .paperChip(selected: selected != nil)
-        .accessibilityIdentifier(identifier)
     }
 
     /// A long place or trip name would push the other chips out of the row;
@@ -252,64 +252,78 @@ struct LibraryFilterChips: View {
     }
 
     private var memoryFilterMenu: some View {
-        Menu {
-            Button {
-                memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+        menuChip(selected: selectedMemoryFilter != .all) {
+            Menu {
+                Button {
+                    memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+                } label: {
+                    filterMenuLabel(String(localized: "All memories"), selected: selectedMemoryFilter == .all)
+                }
+                Button {
+                    memoryFilterRaw = LibraryMemoryFilter.hasMemory.rawValue
+                } label: {
+                    filterMenuLabel(String(localized: "Has memory"), selected: selectedMemoryFilter == .hasMemory)
+                }
+                Button {
+                    memoryFilterRaw = LibraryMemoryFilter.noMemory.rawValue
+                } label: {
+                    filterMenuLabel(String(localized: "No memory"), selected: selectedMemoryFilter == .noMemory)
+                }
             } label: {
-                filterMenuLabel(String(localized: "All memories"), selected: selectedMemoryFilter == .all)
+                filterMenuTitle(String(localized: "Memory"), systemImage: "quote.bubble", selected: selectedMemoryFilter != .all, showsChevron: false)
             }
-            Button {
-                memoryFilterRaw = LibraryMemoryFilter.hasMemory.rawValue
-            } label: {
-                filterMenuLabel(String(localized: "Has memory"), selected: selectedMemoryFilter == .hasMemory)
-            }
-            Button {
-                memoryFilterRaw = LibraryMemoryFilter.noMemory.rawValue
-            } label: {
-                filterMenuLabel(String(localized: "No memory"), selected: selectedMemoryFilter == .noMemory)
-            }
-        } label: {
-            filterMenuTitle(String(localized: "Memory"), systemImage: "quote.bubble", selected: selectedMemoryFilter != .all)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            // Chip labels read as ink; the app accent would turn every chip red.
+            .tint(LibraryPalette.ink)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        // Chip labels read as ink; the app accent would turn every chip red.
-        .tint(LibraryPalette.ink)
-        .fixedSize()
-        .paperChip(selected: selectedMemoryFilter != .all)
     }
 
     private var personFilterMenu: some View {
-        Menu {
-            Button { personFilterID = "" } label: {
-                filterMenuLabel(String(localized: "All people"), selected: personFilterID.isEmpty)
-            }
-            if !visiblePeople.isEmpty { Divider() }
-            ForEach(visiblePeople, id: \.id) { person in
-                Button { personFilterID = person.id } label: {
-                    filterMenuLabel(person.name ?? String(localized: "Unnamed person"), selected: person.id == personFilterID)
+        menuChip(selected: !personFilterID.isEmpty) {
+            Menu {
+                Button { personFilterID = "" } label: {
+                    filterMenuLabel(String(localized: "All people"), selected: personFilterID.isEmpty)
                 }
+                if !visiblePeople.isEmpty { Divider() }
+                ForEach(visiblePeople, id: \.id) { person in
+                    Button { personFilterID = person.id } label: {
+                        filterMenuLabel(person.name ?? String(localized: "Unnamed person"), selected: person.id == personFilterID)
+                    }
+                }
+            } label: {
+                filterMenuTitle(String(localized: "Person"), systemImage: "person", selected: !personFilterID.isEmpty, showsChevron: false)
             }
-        } label: {
-            filterMenuTitle(String(localized: "Person"), systemImage: "person", selected: !personFilterID.isEmpty)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            // Chip labels read as ink; the app accent would turn every chip red.
+            .tint(LibraryPalette.ink)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        // Chip labels read as ink; the app accent would turn every chip red.
-        .tint(LibraryPalette.ink)
-        .fixedSize()
-        .paperChip(selected: !personFilterID.isEmpty)
     }
 
-    private func filterMenuTitle(_ label: String, systemImage: String, selected: Bool) -> some View {
+    private func menuChip<M: View>(selected: Bool, @ViewBuilder menu: () -> M) -> some View {
+        HStack(spacing: 4) {
+            menu()
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(selected ? LibraryPalette.accent : LibraryPalette.ink)
+                .allowsHitTesting(false)
+        }
+        .fixedSize()
+        .paperChip(selected: selected)
+    }
+
+    private func filterMenuTitle(_ label: String, systemImage: String, selected: Bool, showsChevron: Bool = true) -> some View {
         HStack(spacing: 5) {
             Image(systemName: systemImage)
                 .imageScale(.small)
                 .accessibilityHidden(true)
             Text(label)
                 .fontWeight(selected ? .semibold : .regular)
-            Image(systemName: "chevron.down")
-                .font(.caption2.weight(.semibold))
+            if showsChevron {
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
+            }
         }
         .foregroundStyle(selected ? LibraryPalette.accent : LibraryPalette.ink)
     }

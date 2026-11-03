@@ -260,7 +260,7 @@ final class PeopleScanController {
             }.value
             let assignmentTask = Task.detached(priority: .utility) {
                 guard !Task.isCancelled else { return PeopleAssignmentResult(assignments: [], clusteringStopped: true) }
-                return PeopleScanController.makeAssignmentsResult(faces: snapshot.faces, people: snapshot.people, declinedPairs: [])
+                return PeopleScanController.makeAssignmentsResult(faces: snapshot.faces, people: snapshot.people, declinedPairs: PeopleStoreActions.declinedPairs())
             }
             let assignments = await withTaskCancellationHandler(operation: {
                 await assignmentTask.value
@@ -277,6 +277,8 @@ final class PeopleScanController {
             try await Task.detached(priority: .utility) {
                 try await store.apply(assignments: assignments.assignments, snapshots: snapshot.faces)
             }.value
+            // Keep the remaining questions for the screen that asks them.
+            PeopleStoreActions.storeQuestions(assignments.questions)
             // The grouping version moves only after the write-back succeeded,
             // so an interrupted run regroups on the next start.
             UserDefaults.standard.set(PeopleScanStore.groupingVersion, forKey: PeopleScanStore.groupingVersionKey)
@@ -339,7 +341,9 @@ final class PeopleScanController {
             // A face without a photo gets a photo id of its own, so the
             // one-face-per-photo rule never pairs it with another face.
             let photoID: String = face.mediaID.isEmpty ? "face:\(face.id)" : face.mediaID
-            let confirmed: Bool = face.confirmed || face.assignmentSource == "user"
+            // A person's centre is built from the faces the owner named; an
+            // older auto row that is merely marked confirmed must not move it.
+            let isUserConfirmed: Bool = face.confirmed && face.assignmentSource == "user"
             plannerFaces.append(PeoplePlannerFace(
                 id: face.id,
                 embedding: vector,
@@ -347,7 +351,7 @@ final class PeopleScanController {
                 photoID: photoID,
                 day: face.day,
                 personID: face.personID,
-                isUserConfirmed: confirmed,
+                isUserConfirmed: isUserConfirmed,
                 rejectedPersonIDs: rejected
             ))
             plannerIndices.append(index)
@@ -364,8 +368,10 @@ final class PeopleScanController {
         var assignments = originalAssignments
         for (position, plannerIndex) in plannerIndices.enumerated() {
             let planned = plan.assignments[position]
-            // A face the owner confirmed keeps its person from the start.
-            guard !plannerFaces[position].isUserConfirmed else { continue }
+            // A face the owner named, or one that is marked confirmed, keeps its
+            // person from the start; only the planner's centre rule changed.
+            let face = faces[plannerIndex]
+            guard !(face.confirmed || face.assignmentSource == "user") else { continue }
             assignments[plannerIndex].personID = planned.personID
             assignments[plannerIndex].clusterID = planned.clusterID
             assignments[plannerIndex].confirmed = false
@@ -391,6 +397,10 @@ enum PeopleStoreActions {
     static let keepSeparateKey = "moments.people.keepSeparate"
     /// Person ID → face ID of the key photo the user picked. Opaque IDs only.
     static let keyFacesKey = "moments.people.keyFaces"
+    /// Pair keys of the "same person?" questions, in asking order. Opaque IDs only.
+    static let questionsKey = "moments.people.questions"
+    /// Pair keys the user answered "no". A "no" is never asked again.
+    static let declinedPairsKey = "moments.people.declinedPairs"
 
     static func keyFaceID(for personID: String, defaults: UserDefaults = .standard) -> String? {
         (defaults.dictionary(forKey: keyFacesKey) as? [String: String])?[personID]
@@ -420,6 +430,138 @@ enum PeopleStoreActions {
         let changed = isSeparate ? ids.insert(personID).inserted : ids.remove(personID) != nil
         guard changed else { return }
         if ids.isEmpty { defaults.removeObject(forKey: keepSeparateKey) } else { defaults.set(ids.sorted(), forKey: keepSeparateKey) }
+    }
+
+    // MARK: - "Same person?" questions
+
+    static func storedQuestions(_ defaults: UserDefaults = .standard) -> [String] {
+        defaults.stringArray(forKey: questionsKey) ?? []
+    }
+
+    /// Saves the planner's questions as pair keys: same order, no duplicates.
+    static func storeQuestions(_ questions: [PeoplePlannerQuestion], defaults: UserDefaults = .standard) {
+        var seen = Set<String>()
+        let keys: [String] = questions.compactMap { (question: PeoplePlannerQuestion) -> String? in
+            let key = PeopleAssignmentPlanner.pairKey(question.first, question.second)
+            return seen.insert(key).inserted ? key : nil
+        }
+        if keys.isEmpty { defaults.removeObject(forKey: questionsKey) } else { defaults.set(keys, forKey: questionsKey) }
+    }
+
+    static func declinedPairs(_ defaults: UserDefaults = .standard) -> Set<String> {
+        Set(defaults.stringArray(forKey: declinedPairsKey) ?? [])
+    }
+
+    /// Inverse of `PeopleAssignmentPlanner.pairKey`: "person:<id>" /
+    /// "cluster:<id>" halves joined by "|".
+    static func sides(of pairKey: String) -> (PeoplePlannerSide, PeoplePlannerSide)? {
+        let halves = pairKey.split(separator: "|", omittingEmptySubsequences: false)
+        guard halves.count == 2,
+              let first = side(of: String(halves[0])),
+              let second = side(of: String(halves[1]))
+        else { return nil }
+        return (first, second)
+    }
+
+    /// One "person:<id>" or "cluster:<id>" half of a pair key.
+    private static func side(of half: String) -> PeoplePlannerSide? {
+        guard let colon = half.firstIndex(of: ":") else { return nil }
+        let kind = half[half.startIndex..<colon]
+        let id = String(half[half.index(after: colon)...])
+        guard !id.isEmpty else { return nil }
+        switch kind {
+        case "person": return .person(id)
+        case "cluster": return .cluster(id)
+        default: return nil
+        }
+    }
+
+    /// "Yes, same person".
+    /// - Person + cluster: every face with that clusterID and no person gets the
+    ///   person, confirmed by the user, and loses that person from its rejected
+    ///   list.
+    /// - Cluster + cluster: the second cluster's faces take the first one's
+    ///   clusterID (still unconfirmed).
+    /// - Person + person never happens; ignore it.
+    /// Then the key leaves the stored questions. Save.
+    static func answerSame(_ pairKey: String, observations: [FaceObservation], context: ModelContext, defaults: UserDefaults = .standard) {
+        if let (first, second) = sides(of: pairKey) {
+            switch (first, second) {
+            case let (.person(personID), .cluster(clusterID)),
+                 let (.cluster(clusterID), .person(personID)):
+                for face in observations where face.personID == nil && face.clusterID == clusterID {
+                    face.personID = personID
+                    face.clusterID = nil
+                    face.confirmed = true
+                    face.assignmentSource = "user"
+                    var rejected = face.rejectedPersonIDSet
+                    if rejected.remove(personID) != nil {
+                        face.rejectedPersonIDs = rejected.sorted().joined(separator: ",")
+                    }
+                    face.updatedAt = .now
+                }
+            case let (.cluster(targetID), .cluster(mergedID)):
+                for face in observations where face.personID == nil && face.clusterID == mergedID {
+                    face.clusterID = targetID
+                    face.updatedAt = .now
+                }
+            case (.person, .person):
+                break
+            }
+        }
+        removeFromStoredQuestions(pairKey, defaults: defaults)
+        if context.hasChanges { try? context.save() }
+    }
+
+    /// "No". The key joins declinedPairs and leaves the stored questions.
+    static func answerDifferent(_ pairKey: String, defaults: UserDefaults = .standard) {
+        var declined = declinedPairs(defaults)
+        declined.insert(pairKey)
+        defaults.set(declined.sorted(), forKey: declinedPairsKey)
+        removeFromStoredQuestions(pairKey, defaults: defaults)
+    }
+
+    /// "Skip for now": the key moves to the end of the stored questions.
+    static func skip(_ pairKey: String, defaults: UserDefaults = .standard) {
+        var stored = storedQuestions(defaults)
+        stored.removeAll { (key: String) -> Bool in key == pairKey }
+        stored.append(pairKey)
+        defaults.set(stored, forKey: questionsKey)
+    }
+
+    /// The stored questions whose two sides still exist. A person side needs a
+    /// visible person with at least one face. A cluster side needs at least one
+    /// face with that clusterID and no person.
+    static func liveQuestions(observations: [FaceObservation], people: [Person], defaults: UserDefaults = .standard) -> [String] {
+        let visible = Set(people.filter { (person: Person) -> Bool in !person.hidden }.map(\.id))
+        var peopleWithFaces = Set<String>()
+        var clustersWithFreeFaces = Set<String>()
+        for face in observations {
+            if let personID = face.personID, visible.contains(personID) {
+                peopleWithFaces.insert(personID)
+            }
+            if face.personID == nil, let clusterID = face.clusterID {
+                clustersWithFreeFaces.insert(clusterID)
+            }
+        }
+        return storedQuestions(defaults).filter { (key: String) -> Bool in
+            guard let (first, second) = sides(of: key) else { return false }
+            return isLive(first, peopleWithFaces: peopleWithFaces, clustersWithFreeFaces: clustersWithFreeFaces)
+                && isLive(second, peopleWithFaces: peopleWithFaces, clustersWithFreeFaces: clustersWithFreeFaces)
+        }
+    }
+
+    private static func isLive(_ side: PeoplePlannerSide, peopleWithFaces: Set<String>, clustersWithFreeFaces: Set<String>) -> Bool {
+        switch side {
+        case .person(let id): return peopleWithFaces.contains(id)
+        case .cluster(let id): return clustersWithFreeFaces.contains(id)
+        }
+    }
+
+    private static func removeFromStoredQuestions(_ pairKey: String, defaults: UserDefaults) {
+        var stored = storedQuestions(defaults)
+        stored.removeAll { (key: String) -> Bool in key == pairKey }
+        if stored.isEmpty { defaults.removeObject(forKey: questionsKey) } else { defaults.set(stored, forKey: questionsKey) }
     }
 
     private static func isOlder(_ lhs: Person, _ rhs: Person) -> Bool {

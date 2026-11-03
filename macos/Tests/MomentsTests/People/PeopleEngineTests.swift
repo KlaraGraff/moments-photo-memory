@@ -124,7 +124,7 @@ final class PeopleEngineTests: XCTestCase {
         // way (a face like it would otherwise be suggested too).
         let faces = [
             PeopleFaceSnapshot(id: "user-face", personID: "synthetic-person", clusterID: nil, confirmed: true, assignmentSource: "user", rejectedPersonIDs: "", embedding: embedding([1, 0]), mediaID: "photo-user"),
-            PeopleFaceSnapshot(id: "auto-face", personID: "synthetic-person", clusterID: nil, confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([-1, 0]), mediaID: "photo-auto"),
+            PeopleFaceSnapshot(id: "auto-face", personID: "synthetic-person", clusterID: nil, confirmed: true, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([-1, 0]), mediaID: "photo-auto"),
             PeopleFaceSnapshot(id: "candidate", personID: nil, clusterID: "pending-candidate", confirmed: false, assignmentSource: "auto", rejectedPersonIDs: "", embedding: embedding([1, 0]), mediaID: "photo-candidate")
         ]
         let assignments = PeopleScanController.makeAssignments(faces: faces, people: [PeoplePersonSnapshot(id: "synthetic-person")])
@@ -132,6 +132,10 @@ final class PeopleEngineTests: XCTestCase {
         XCTAssertEqual(candidate?.personID, "synthetic-person")
         XCTAssertEqual(candidate?.assignmentSource, "auto")
         XCTAssertFalse(candidate?.confirmed ?? true)
+        // A face that is only machine-assigned keeps its person and stays confirmed.
+        let autoFace = assignments.first { $0.id == "auto-face" }
+        XCTAssertEqual(autoFace?.personID, "synthetic-person")
+        XCTAssertTrue(autoFace?.confirmed ?? false)
     }
 
     func testZeroFaceItemIsMarkedScanned() async throws {

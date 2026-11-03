@@ -58,7 +58,9 @@ final class FootprintsTests: XCTestCase {
             .appendingPathComponent("footprints-geocoding-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: cacheURL) }
 
-        let fake = CountingGeocoder(result: FootprintsGeocodeResult(countryCode: "MA", countryName: "Morocco"))
+        let fake = CountingGeocoder(
+            result: FootprintsGeocodeResult(countryCode: "MA", countryName: "Morocco", cityName: "Tangier")
+        )
         let city = cluster(id: "city", stopIDs: ["photo"], latitude: 35.78, longitude: -5.81)
         let first = FootprintsGeocodeResolver(
             geocoder: fake,

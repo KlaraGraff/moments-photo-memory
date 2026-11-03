@@ -669,9 +669,12 @@ struct TripsScreen: View {
                 case let .group(group):
                     let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !value.isEmpty, value != group.name else { return }
+                    let log = TripCorrectionSnapshotBuilder(context: modelContext)
+                    let before = [log.chapter(group)]
                     group.name = value
                     group.updatedAt = .now
                     try? modelContext.save()
+                    TripCorrectionRecorder.record(.rename, before: before, after: [log.chapter(group)])
                 }
             },
             setCover: { tripID, itemID in
@@ -978,6 +981,8 @@ private struct TripShelfView: View {
     let onOpen: (TimelineTrip) -> Void
     let onNew: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private var chapterCount: Int { trips.filter { !$0.isUnsorted }.count }
 
     var body: some View {
@@ -988,18 +993,26 @@ private struct TripShelfView: View {
                         ChapterFilterBar(types: types, filterRaw: $filterRaw)
                             .frame(maxWidth: 880, alignment: .leading)
                     }
-                    ForEach(trips) { trip in
-                        TripCoverCard(
-                            trip: trip,
-                            target: target(trip.id),
-                            covers: covers(for: trip),
-                            photos: trip.orderedItems.compactMap { itemByID[$0.id] },
-                            memory: memories.first { $0.scope == .trip && $0.scopeKey == trip.id }?.text,
-                            actions: actions,
-                            onOpen: { onOpen(trip) }
-                        )
-                        .id(trip.id)
+                    // Same spacing as the shelf; one identity for the fade.
+                    VStack(alignment: .center, spacing: 18) {
+                        ForEach(trips) { trip in
+                            TripCoverCard(
+                                trip: trip,
+                                target: target(trip.id),
+                                covers: covers(for: trip),
+                                photos: trip.orderedItems.compactMap { itemByID[$0.id] },
+                                memory: memories.first { $0.scope == .trip && $0.scopeKey == trip.id }?.text,
+                                actions: actions,
+                                onOpen: { onOpen(trip) }
+                            )
+                            .id(trip.id)
+                        }
                     }
+                    // A new filter fades the cards out and back in; the bar
+                    // above keeps its identity so its thumb can slide.
+                    .id(filterRaw)
+                    .transition(.opacity)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: filterRaw)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, PaperMetrics.screenInset)

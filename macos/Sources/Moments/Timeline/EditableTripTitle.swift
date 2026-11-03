@@ -74,8 +74,11 @@ enum TripRenaming {
     @MainActor
     static func rename(_ trip: Trip, to name: String, context: ModelContext) {
         let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let log = TripCorrectionSnapshotBuilder(context: context)
+        let before = [log.trip(trip)]
         trip.overrideName = value.isEmpty || value == trip.name ? nil : value
         trip.updatedAt = .now
         try? context.save()
+        TripCorrectionRecorder.record(.rename, before: before, after: [log.trip(trip)])
     }
 }

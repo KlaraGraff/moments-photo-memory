@@ -413,18 +413,24 @@ struct ImportReviewView: View {
     private func saveRename(for trip: ImportTripSummary) {
         guard let model = (try? modelContext.fetch(FetchDescriptor<Trip>()))?.first(where: { $0.id == trip.id }) else { return }
         let value = renameValues[trip.id]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let log = TripCorrectionSnapshotBuilder(context: modelContext)
+        let before = [log.trip(model)]
         model.overrideName = value?.isEmpty == false ? value : nil
         model.suggestionStatusRaw = "confirmed"
         model.confirmedAt = .now
         model.updatedAt = .now
         model.updatedBy = MomentsAccount.localID
         try? modelContext.save()
+        TripCorrectionRecorder.record(.rename, before: before, after: [log.trip(model)])
     }
 
     private func mergeTrips() {
         guard let first = summary.trips.first,
               let models = try? modelContext.fetch(FetchDescriptor<Trip>()),
               let target = models.first(where: { $0.id == first.id }) else { return }
+        let log = TripCorrectionSnapshotBuilder(context: modelContext)
+        let involved = summary.trips.compactMap { summary in models.first(where: { $0.id == summary.id }) }
+        let before = involved.map { log.trip($0) }
         for trip in summary.trips.dropFirst() {
             models.first(where: { $0.id == trip.id })?.mergeOverrideID = target.id
         }
@@ -433,26 +439,33 @@ struct ImportReviewView: View {
         target.suggestionStatusRaw = "confirmed"
         target.confirmedAt = .now
         try? modelContext.save()
+        TripCorrectionRecorder.record(.merge, before: before, after: [log.trip(target)])
     }
 
     private func split(at trip: ImportTripSummary) {
         guard let model = (try? modelContext.fetch(FetchDescriptor<Trip>()))?.first(where: { $0.id == trip.id }),
               let firstDay = model.orderedItems.compactMap(\.localDayKey).first else { return }
+        let log = TripCorrectionSnapshotBuilder(context: modelContext)
+        let before = [log.trip(model)]
         model.splitOverrideDayKeys = firstDay
         model.suggestionStatusRaw = "confirmed"
         model.confirmedAt = .now
         model.updatedAt = .now
         model.updatedBy = MomentsAccount.localID
         try? modelContext.save()
+        TripCorrectionRecorder.record(.split, before: before, after: [log.trip(model)], note: firstDay)
     }
 
     private func confirm(_ trip: ImportTripSummary) {
         guard let model = (try? modelContext.fetch(FetchDescriptor<Trip>()))?.first(where: { $0.id == trip.id }) else { return }
+        let log = TripCorrectionSnapshotBuilder(context: modelContext)
+        let before = [log.trip(model)]
         model.suggestionStatusRaw = "confirmed"
         model.confirmedAt = .now
         model.updatedAt = .now
         model.updatedBy = MomentsAccount.localID
         try? modelContext.save()
+        TripCorrectionRecorder.record(.confirm, before: before, after: [log.trip(model)])
     }
 
     private func apply(_ flag: ImportReviewFlag, decision: ImportReviewDecision) {

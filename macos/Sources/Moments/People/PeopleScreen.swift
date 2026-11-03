@@ -62,7 +62,7 @@ struct PeopleStoreAssignmentSnapshot: Sendable {
     let people: [PeoplePersonSnapshot]
 }
 
-private struct PeopleClusterSnapshot: Identifiable {
+struct PeopleClusterSnapshot: Identifiable {
     let id: String
     let faces: [FaceObservation]
     /// Worked out once when the snapshot is built, not on every redraw.
@@ -959,25 +959,17 @@ struct PeopleScreen: View {
     private func refreshFaceCaches() {
         let deletedIDs = Set(deletedItems.map(\.id))
         let shown = deletedIDs.isEmpty ? observations : observations.filter { !deletedIDs.contains($0.mediaID) }
-        cachedFacesByPerson = Dictionary(grouping: shown.compactMap { $0.personID == nil ? nil : $0 }, by: { $0.personID! })
-        cachedCardSummaries = PeopleCardSummaries.make(
-            facesByPerson: cachedFacesByPerson,
+        // One read of each face feeds every cache; the grouping, sorting and
+        // covers run on plain values, not on the SwiftData models.
+        let caches = PeopleFaceCaches.make(
+            observations: shown,
+            deletedIDs: deletedIDs,
             keyFaceID: { (personID: String) -> String? in PeopleStoreActions.keyFaceID(for: personID) }
         )
-        let grouped = Dictionary(grouping: shown.filter { $0.personID == nil && $0.clusterID != nil }, by: { $0.clusterID! })
-        var cards: [PeopleClusterSnapshot] = []
-        var loose: [FaceObservation] = []
-        for group in grouped {
-            let sortedFaces: [FaceObservation] = group.value.sorted { $0.createdAt < $1.createdAt }
-            if group.key.hasPrefix("loose-") {
-                loose.append(contentsOf: sortedFaces)
-            } else {
-                let cover: FaceObservation? = PeopleFacePicker.cover(sortedFaces)
-                cards.append(PeopleClusterSnapshot(id: group.key, faces: sortedFaces, cover: cover))
-            }
-        }
-        cachedUnnamedClusters = cards.sorted { $0.id < $1.id }
-        cachedLooseFaces = loose.sorted { $0.createdAt < $1.createdAt }
+        cachedFacesByPerson = caches.facesByPerson
+        cachedCardSummaries = caches.cardSummaries
+        cachedUnnamedClusters = caches.unnamedClusters
+        cachedLooseFaces = caches.looseFaces
         cachedQuestions = PeopleStoreActions.liveQuestions(observations: shown, people: people)
     }
 

@@ -4556,11 +4556,28 @@ public enum MomentsPersistence {
         )
     }
 
-    /// '~/Library/Application Support/Moments/Moments.store', never a shared 'default.store'.
+    /// Returns the on-disk store used by this build.
+    ///
+    /// The owner-facing preview build shipped before the native app's bundle
+    /// identifier was finalized, so its existing library lives under the
+    /// legacy ``Moments People Preview`` folder. Keep that path stable for
+    /// the preview bundle while the normal app continues to use ``Moments``.
     public static func defaultStoreURL() throws -> URL {
-        let folder = URL.applicationSupportDirectory.appending(path: "Moments", directoryHint: .isDirectory)
+        let folder = defaultStoreFolder()
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder.appending(path: "Moments.store")
+    }
+
+    /// Chooses the store root without touching the filesystem, so the path
+    /// compatibility rule can be tested without opening a user's store.
+    static func defaultStoreFolder(
+        applicationSupportDirectory: URL = URL.applicationSupportDirectory,
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier
+    ) -> URL {
+        let folderName = bundleIdentifier?.hasSuffix(".peoplepreview") == true
+            ? "Moments People Preview"
+            : "Moments"
+        return applicationSupportDirectory.appending(path: folderName, directoryHint: .isDirectory)
     }
 
     private enum LegacyInspection {

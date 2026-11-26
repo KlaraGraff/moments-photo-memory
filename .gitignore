@@ -53,6 +53,3 @@ macos/MomentsCore/.build/
 macos/MomentsCore/.swiftpm/
 # Local code-signing settings (team id, bundle id); see macos/Config/Local.xcconfig.example
 macos/Config/Local.xcconfig
-
-# The app icon is drawn artwork (source docs/app-icon.svg), pinned by hash in scripts/check_privacy.py.
-!/macos/Sources/Moments/Assets.xcassets/AppIcon.appiconset/icon_*.png

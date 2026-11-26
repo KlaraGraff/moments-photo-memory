@@ -143,9 +143,6 @@ struct LibraryView: View {
         #endif
         var hasher = Hasher()
         hasher.combine(query)
-        // The photo being written on stays in a memory filter's results
-        // until it is left; without that filter, focus changes nothing.
-        if memoryFilterRaw != LibraryMemoryFilter.all.rawValue { hasher.combine(state.focusedMemoryItemID) }
         hasher.combine(selection.libraryScope?.itemIDs)
         // All photos and faces the pages group by, as one revision.
         hasher.combine(store.photoFaceRevision)
@@ -191,7 +188,6 @@ struct LibraryView: View {
     private var groupingKeyParts: [(String, Int)] {
         var filters = Hasher()
         filters.combine(query)
-        if memoryFilterRaw != LibraryMemoryFilter.all.rawValue { filters.combine(state.focusedMemoryItemID) }
         filters.combine(selection.libraryScope?.itemIDs)
         var trips = Hasher()
         for trip in allTrips {

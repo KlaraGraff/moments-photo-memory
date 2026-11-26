@@ -202,7 +202,6 @@ struct TimelineScreen: View {
             wantedBuild &+= 1
             startBuildingIfIdle()
         }
-        .compactLibraryFilters()
     }
 
     private var timelineScroll: some View {

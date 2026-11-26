@@ -96,8 +96,10 @@ public enum DemoSeeder {
     #if DEBUG
     /// Inserts a deterministic, local-only stress fixture for scrolling checks.
     /// The generator never reads files or Photos and keeps all coordinates near 0,0.
+    /// With `inTrip` off the photos belong to no chapter, so the Library lists
+    /// them by month.
     @discardableResult
-    public static func generateSyntheticLibrary(count: Int = 5_000, spacing: TimeInterval = 120, context: ModelContext) throws -> Int {
+    public static func generateSyntheticLibrary(count: Int = 5_000, spacing: TimeInterval = 120, inTrip: Bool = true, context: ModelContext) throws -> Int {
         guard count > 0 else { return 0 }
         let existingItems = try context.fetch(FetchDescriptor<MediaItem>())
         let existingIDs = Set(existingItems.map(\.id))
@@ -127,14 +129,14 @@ public enum DemoSeeder {
                 isScreenshot: index % 97 == 0,
                 source: .demo,
                 title: "Synthetic stress item \(index + 1)",
-                tripID: tripID,
+                tripID: inTrip ? tripID : nil,
                 place: place
             )
             context.insert(item)
             newItems.append(item)
         }
         // One relationship update instead of 5,000 (each append re-observes the array).
-        trip.items.append(contentsOf: newItems)
+        if inTrip { trip.items.append(contentsOf: newItems) }
         if !newItems.isEmpty { try context.save() }
         return newItems.count
     }
@@ -179,19 +181,6 @@ public enum DemoSeeder {
     }
 
     #if DEBUG
-    /// UI tests: flags the demo photos that have no date or place, the way an
-    /// import would, so the Library's "to confirm" banner has something to show.
-    public static func flagUndatedDemoItemsForReview(context: ModelContext) throws {
-        for item in try context.fetch(FetchDescriptor<MediaItem>()) where item.source == .demo {
-            var reasons: [ImportReviewReason] = []
-            if item.captureDate == nil { reasons.append(.needsDate) }
-            if item.latitude == nil { reasons.append(.missingLocation) }
-            guard !reasons.isEmpty else { continue }
-            item.importReviewReasonsRaw = reasons.map(\.rawValue).joined(separator: ",")
-        }
-        try context.save()
-    }
-
     /// UI tests: two named people with synthetic faces (flat coloured
     /// squares, no real faces) on the first demo photos, so People and the
     /// viewer have someone to correct.
@@ -219,6 +208,22 @@ public enum DemoSeeder {
             ))
             context.insert(FaceScanRecord(id: face.item.id))
         }
+        // One group of faces nobody has named yet, in five more photos, so
+        // the Library's row of faces has a "?" to name.
+        if items.count >= 8 {
+            for (offset, item) in items[3..<8].enumerated() {
+                context.insert(FaceObservation(
+                    id: "demo-face-unnamed-\(offset + 1)",
+                    mediaID: item.id,
+                    rect: (0.35, 0.3, 0.3, 0.3),
+                    embedding: Data(),
+                    cropData: syntheticFaceCrop(hue: 0.33),
+                    quality: 1,
+                    clusterID: "demo-cluster-1"
+                ))
+                context.insert(FaceScanRecord(id: item.id))
+            }
+        }
         try context.save()
     }
 
@@ -231,19 +236,6 @@ public enum DemoSeeder {
         guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
               let jpeg = bitmap.representation(using: .jpeg, properties: [:]) else { return Data() }
         return jpeg
-    }
-    #endif
-
-    #if DEBUG
-    /// UI tests: files three demo photos under a synthetic imported folder,
-    /// so Settings › Imports has a source to remove.
-    public static func addSyntheticImportSource(context: ModelContext) throws {
-        guard try context.fetchCount(FetchDescriptor<ImportSource>()) == 0 else { return }
-        let source = ImportSource(kind: .folder, name: "Synthetic folder", locationKey: "/synthetic/Synthetic folder")
-        context.insert(source)
-        let items = try context.fetch(FetchDescriptor<MediaItem>()).filter { $0.source == .demo }.sorted { $0.id < $1.id }
-        for item in items.prefix(3) { item.addImportSource(source.id) }
-        try context.save()
     }
     #endif
 

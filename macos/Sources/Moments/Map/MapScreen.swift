@@ -43,6 +43,8 @@ struct MapScreen: View {
     /// the first report after a move is the baseline for spotting user zooms.
     @State private var awaitingProgrammaticCamera = false
     @State private var programmaticDistance: Double?
+    /// The scope the camera was last framed for, so each opening frames once.
+    @State private var fittedScopeGeneration: Int?
     @State private var showingCountries = false
     @State private var showingCities = false
 
@@ -91,7 +93,8 @@ struct MapScreen: View {
         // The store bumps `revision` when anything the pins are built from
         // changes: a photo's time or place, a place's name or its rename.
         hasher.combine(store.revision)
-        hasher.combine(selection.visibleGeneration)
+        // The photos this map was opened for.
+        hasher.combine(selection.mapScopeGeneration)
         hasher.combine(viewModel.level(for: latitudeDelta))
         return hasher.finalize()
     }
@@ -113,7 +116,7 @@ struct MapScreen: View {
         guard let selectedCluster else { return [] }
         return selectedCluster.stopIDs
             .compactMap { itemsByID[$0] }
-            .filter { selection.isVisible($0.id) }
+            .filter { selection.isOnMap($0.id) }
             .sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) < ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
     }
 
@@ -125,14 +128,23 @@ struct MapScreen: View {
     }
 
     var body: some View {
-        // The Library's filters, kept in step with it, behind a search field
-        // and a Filter button: pick a person to see only the places you
-        // were with them.
+        // The large map is what a small map opens into: it shows the photos
+        // that small map stood for (one chapter's, one person's, or all of
+        // them), so it needs no filters of its own. Back returns to where the
+        // small map was.
         mapArea
-        .compactLibraryFilters()
-        .navigationTitle("Map")
+        .navigationTitle(selection.mapScope?.title ?? String(localized: "Map"))
         .toolbar {
-            ToolbarItem(placement: .primaryAction) { ReorganizeToolbarButton(kind: .places) }
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    selection.mapScope = nil
+                } label: {
+                    Label(String(localized: "Back"), systemImage: "chevron.left")
+                }
+                .help(String(localized: "Back"))
+                .keyboardShortcut("[", modifiers: .command)
+                .accessibilityIdentifier("map.back")
+            }
         }
         #if DEBUG
         .onAppear {
@@ -143,7 +155,9 @@ struct MapScreen: View {
             #if DEBUG
             let probeToken = PageProbe.phaseToken
             #endif
-            let stops = viewModel.photoStops(from: items, visibleItemIDs: selection.visibleItemIDs)
+            let scopeGeneration: Int = selection.mapScopeGeneration
+            let scopedIDs: Set<String>? = selection.mapScope?.itemIDs
+            let stops = viewModel.photoStops(from: items, visibleItemIDs: scopedIDs)
             let delta = latitudeDelta
             let model = viewModel
             let entries = NearestPlaceIndex(places: places)
@@ -162,7 +176,7 @@ struct MapScreen: View {
             keepSelectedCluster(in: built.snapshot)
             // Also clears the world grid and rebuilds both pin layers.
             refreshPinCounts()
-            let input = FootprintsCalculator.input(from: items, visibleItemIDs: selection.visibleItemIDs)
+            let input = FootprintsCalculator.input(from: items, visibleItemIDs: scopedIDs)
             if worldInput?.signature != input.signature { worldInput = input }
             #if DEBUG
             let segmentCount: Int = isWorldView ? globeSegments.count : visibleSegments.count
@@ -170,10 +184,17 @@ struct MapScreen: View {
             PageProbe.note("routes \(segmentCount), pins \(clusterCount), world view \(isWorldView)")
             PageProbe.contentReady(token: probeToken)
             #endif
-            // "Show on Map" from another screen: fly there once the pins exist.
+            // A photo's small map: fly to that photo once the pins exist.
             if let requested = selection.mapFocusRequest {
                 selection.mapFocusRequest = nil
+                fittedScopeGeneration = scopeGeneration
                 focus(on: requested)
+            } else if scopedIDs != nil, fittedScopeGeneration != scopeGeneration, !built.snapshot.stops.isEmpty {
+                // Opened for some photos (a chapter, a person, a place): frame
+                // exactly those, once, instead of the whole globe.
+                fittedScopeGeneration = scopeGeneration
+                selectedClusterID = nil
+                moveCamera(to: .region(viewModel.initialRegion(for: built.snapshot.stops)), isGlobe: false, animated: false)
             }
         }
         .task(id: worldInput?.signature) {
@@ -196,7 +217,7 @@ struct MapScreen: View {
                 self.selectedClusterID = nil
             }
         }
-        .onChange(of: selection.visibleGeneration) { _, _ in
+        .onChange(of: selection.mapScopeGeneration) { _, _ in
             selectedClusterID = nil
         }
         .onChange(of: latitudeDelta) { _, _ in
@@ -757,27 +778,13 @@ struct MapScreen: View {
         }
     }
 
-    /// No pins: either nothing has a location yet, or the filters left out
-    /// every photo that does. Each says so, and the second offers a way back.
+    /// No pins: none of the photos this map was opened for has a location.
     private var emptyState: some View {
-        Group {
-            if items.contains(where: { !$0.isScreenshot && $0.latitude != nil && $0.longitude != nil }) {
-                ContentUnavailableView {
-                    Label("No photos match these filters", systemImage: "line.3.horizontal.decrease.circle")
-                } description: {
-                    Text("Change or clear the filters above to see more places.")
-                } actions: {
-                    Button("Clear filters") { LibraryFilterKeys.clearAll() }
-                        .accessibilityIdentifier("map.clear-filters")
-                }
-            } else {
-                ContentUnavailableView(
-                    "No geotagged photos",
-                    systemImage: "mappin.slash",
-                    description: Text("Add a location to see places and routes.")
-                )
-            }
-        }
+        ContentUnavailableView(
+            "No geotagged photos",
+            systemImage: "mappin.slash",
+            description: Text("Add a location to see places and routes.")
+        )
         .frame(maxWidth: 320)
         .padding(24)
         .paperFloatingPanel()

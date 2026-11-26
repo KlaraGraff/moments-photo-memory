@@ -153,6 +153,10 @@ final class LibrarySectionsTests: XCTestCase {
 
     private func referenceGroupKey(for item: MediaItem, grouping: LibraryGrouping) -> String {
         switch grouping {
+        case .story:
+            if let tripID: String = item.tripID { return "trip:\(tripID)" }
+            guard let date: Date = item.effectiveCaptureDate else { return "month:unknown" }
+            return "month:\(Self.referenceMonthFormatter.string(from: date))"
         case .trip:
             let tripID: String = item.tripID ?? "unassigned"
             return "trip:\(tripID)"
@@ -169,6 +173,10 @@ final class LibrarySectionsTests: XCTestCase {
 
     private func referenceGroupTitle(for item: MediaItem, grouping: LibraryGrouping) -> String {
         switch grouping {
+        case .story:
+            if item.tripID != nil { return item.trip?.effectiveName ?? String(localized: "Unsorted") }
+            guard let date: Date = item.effectiveCaptureDate else { return String(localized: "Undated") }
+            return date.formatted(.dateTime.year().month(.wide))
         case .trip:
             return item.trip?.effectiveName ?? String(localized: "Unsorted")
         case .place:

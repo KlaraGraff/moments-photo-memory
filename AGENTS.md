@@ -82,7 +82,7 @@ The owner's description is a hint for locating the bug, not a diagnosis. If what
 ## Performance work
 
 - Evidence first: finish the measurement harness and record each phase before choosing fixes. Suspects (loading every photo at once, database queries or image decoding on the main thread, grids without on-demand loading, whole-page recomputation on every change, background work after import saturating the main thread) are directions, not conclusions.
-- The page probe measures, on synthetic libraries of 5,000 and 20,000 items: first import, post-import work, People, Map, Timeline, Chapters, Library, viewer open/close, chapter open/close, and repeat navigation. Each report gives ready time, longest main-thread stall, count of stalls over 100 ms, main-thread busy time, memory and a stack sample.
+- The page probe measures, on synthetic libraries of 5,000 and 20,000 items: first import, post-import work, the large map, Chapters, Library, viewer open/close, chapter open/close, and repeat navigation. Each report gives ready time, longest main-thread stall, count of stalls over 100 ms, main-thread busy time, memory and a stack sample.
 - Each performance fix carries a before/after report from the same probe and a focused test, and fixes the shared mechanism when the same slowness appears on several pages. Performance PRs get the independent review.
 - The responsiveness threshold is the owner's decision (see Who decides).
 

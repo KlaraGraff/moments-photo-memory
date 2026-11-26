@@ -690,6 +690,7 @@ private struct WrittenSuggestionRow: View {
 /// Place and time under a photo, with the place's description when one was written.
 struct PhotoPlaceLine: View {
     @Environment(SelectionModel.self) private var selection
+    @Environment(LibraryStore.self) private var store
     let item: MediaItem
     let placeNotes: [PlaceNote]
     @State private var showingDescription = false
@@ -712,21 +713,16 @@ struct PhotoPlaceLine: View {
         if item.namedPlace != nil || item.effectiveCaptureDate != nil {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if let name = item.namedPlace {
-                    // The place goes to the map, the time opens the date editor.
-                    if item.latitude != nil {
-                        Button { selection.showOnMap(item.id) } label: {
-                            Text(name)
-                                .foregroundStyle(LibraryPalette.ink)
-                                .lineLimit(1)
-                        }
-                        .buttonStyle(.plain)
-                        .help(String(localized: "Show on Map"))
-                        .accessibilityIdentifier("library.place.\(item.id)")
-                    } else {
+                    // The place shows the photos taken there, the time opens
+                    // the date editor.
+                    Button { PlaceClue.showPhotos(at: name, store: store, selection: selection) } label: {
                         Text(name)
                             .foregroundStyle(LibraryPalette.ink)
                             .lineLimit(1)
                     }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Photos taken here"))
+                    .accessibilityIdentifier("library.place.\(item.id)")
                 }
                 if let time = item.effectiveCaptureDate.map({ PhotoDateEditor.timeText($0, in: item.captureTimeZone) }) {
                     Button {

@@ -51,9 +51,9 @@ final class MomentsPageProbeUITests: XCTestCase {
         // visible in the attachment so the slow phase can be diagnosed.
         let phases = [
             "first import", "after import (faces, bursts, place names)",
-            "People", "Map", "Timeline", "Chapters", "Library",
-            "viewer open", "favorite on", "favorite off", "viewer close", "Chapters again",
-            "chapter with most photos", "back to chapters", "Timeline again",
+            "Map", "Chapters", "Library",
+            "viewer open", "viewer close", "Chapters again",
+            "chapter with most photos", "back to chapters",
             "Library again"
         ].filter { !skipped.contains($0) }
         for phase in phases {
@@ -72,11 +72,11 @@ final class MomentsPageProbeUITests: XCTestCase {
         // records the destination that becomes visible after the close.
         // A page phase whose page is already on screen, because the phases
         // between were skipped (Library again right after the viewer when
-        // Chapters and Timeline are skipped), shows no new shell either.
+        // Chapters is skipped), shows no new shell either.
         let pageOfPhase = [
-            "People": "people", "Map": "map", "Timeline": "timeline", "Chapters": "chapters",
+            "Map": "map", "Chapters": "chapters",
             "Library": "library", "Chapters again": "chapters", "chapter with most photos": "chapter",
-            "back to chapters": "chapters", "Timeline again": "timeline", "Library again": "library"
+            "back to chapters": "chapters", "Library again": "library"
         ]
         var pageOnScreen = "library"
         var shellPhases: [String] = []
@@ -88,7 +88,7 @@ final class MomentsPageProbeUITests: XCTestCase {
                 pageOnScreen = page
             }
         }
-        let contentPhases = shellPhases + ["favorite on", "favorite off"].filter { !skipped.contains($0) }
+        let contentPhases = shellPhases
         let pagePhases = phases.filter { $0 != "first import" && !$0.hasPrefix("after import") }
         let pageReportLines = text
             .split(separator: "\n")
@@ -111,10 +111,6 @@ final class MomentsPageProbeUITests: XCTestCase {
             XCTAssertNotNil(viewerClose)
             XCTAssertTrue(viewerClose?.contains("selection-to-shell not observed") == true)
             XCTAssertTrue(viewerClose?.contains("first-content not observed") == true)
-        }
-        for phase in ["favorite on", "favorite off"] where !skipped.contains(phase) {
-            let line = pageReportLines.first { $0.hasPrefix("page report (\(phase)):") }
-            XCTAssertTrue(line?.contains("selection-to-shell not observed") == true, "\(phase) is an edit, not a new page:\n\(text)")
         }
         // A phase that did not settle within its limit is a measurement, not
         // a probe failure: the report marks it "(timed out)" and the workflow

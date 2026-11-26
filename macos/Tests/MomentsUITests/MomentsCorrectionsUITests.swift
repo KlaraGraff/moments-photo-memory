@@ -72,116 +72,92 @@ final class MomentsCorrectionsUITests: XCTestCase {
         editPlaces(launch(smallWindow: true), prefix: "fix-place-small")
     }
 
+    /// A place is renamed where it shows: click its name under a photo, type
+    /// over the name in the heading. A name another place already has joins
+    /// the two places.
     private func editPlaces(_ app: XCUIApplication, prefix: String) {
-        openPlacesEditor(app)
-        capture(app, named: "\(prefix)-01-editor-evidence")
+        let place = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.place."))
+            .firstMatch
+        XCTAssertTrue(place.waitForExistence(timeout: timeout), "No place under a photo")
+        place.click()
+        let field = app.textFields["library.scope.place"]
+        XCTAssertTrue(field.waitForExistence(timeout: timeout), "The place's heading has no name field")
+        let original = field.value as? String ?? ""
+        XCTAssertFalse(original.isEmpty, "The place's heading shows no name")
+        let count = photoCount(app)
+        XCTAssertGreaterThan(count, 0)
+        capture(app, named: "\(prefix)-01-place-evidence")
 
-        // Two places that are really one: tick both and keep one name.
-        let one = element(in: app, identifier: "places.editor.check.demo place 1")
-        let two = element(in: app, identifier: "places.editor.check.demo place 2")
-        XCTAssertTrue(two.waitForExistence(timeout: timeout))
-        one.click()
-        two.click()
-        let merge = element(in: app, identifier: "places.editor.merge")
-        XCTAssertTrue(merge.waitForExistence(timeout: timeout), "No Merge button for two ticked places")
-        merge.click()
-        let keep = app.menuItems["Demo place 1"].firstMatch
-        XCTAssertTrue(keep.waitForExistence(timeout: timeout))
-        keep.click()
-        XCTAssertTrue(element(in: app, identifier: "places.editor.row.demo place 2").waitForNonExistence(timeout: timeout), "The merged place is still listed")
-        capture(app, named: "\(prefix)-02-merged-evidence")
-
-        // Rename a place, then take it back from the sheet.
-        element(in: app, identifier: "places.editor.rename.demo place 3").click()
-        let field = element(in: app, identifier: "places.editor.name-field")
-        XCTAssertTrue(field.waitForExistence(timeout: timeout))
+        // Rename, then take it back from the bar.
+        field.click()
         field.typeKey("a", modifierFlags: .command)
         field.typeText("Harbour\r")
-        XCTAssertTrue(element(in: app, identifier: "places.editor.row.harbour").waitForExistence(timeout: timeout), "The rename did not apply")
-        capture(app, named: "\(prefix)-03-renamed-evidence")
-        element(in: app, identifier: "places.editor.undo").click()
-        XCTAssertTrue(element(in: app, identifier: "places.editor.row.demo place 3").waitForExistence(timeout: timeout), "Undo did not bring the old name back")
-        element(in: app, identifier: "places.editor.done").click()
+        let bar = element(in: app, identifier: "correction.bar")
+        XCTAssertTrue(bar.waitForExistence(timeout: timeout), "No Undo bar after renaming the place")
+        let renamed = NSPredicate(format: "value == %@", "Harbour")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: renamed, evaluatedWith: field)], timeout: timeout), .completed, "The rename did not apply")
+        XCTAssertEqual(photoCount(app), count, "Renaming a place changed which photos are there")
+        capture(app, named: "\(prefix)-02-renamed-evidence")
+        undoFromBar(app, bar: bar, prefix: prefix)
+        let restored = NSPredicate(format: "value == %@", original)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: restored, evaluatedWith: field)], timeout: timeout), .completed, "Undo did not bring the old name back")
 
-        // The Map's filter lists the merged place once.
-        element(in: app, identifier: "sidebar.map").click()
-        let filterButton = element(in: app, identifier: "toolbar.filter")
-        XCTAssertTrue(filterButton.waitForExistence(timeout: 30), "The Map has no Filter button")
-        filterButton.click()
-        let popover = app.popovers.firstMatch
-        XCTAssertTrue(popover.waitForExistence(timeout: timeout), "Filter did not open its options")
-        let place = popover.descendants(matching: .any).matching(identifier: "filter.place").firstMatch
-        XCTAssertTrue(place.waitForExistence(timeout: timeout), "The Map's filters have no Place filter: \(popover.debugDescription)")
-        place.click()
-        let merged = app.menuItems["Demo place 1"].firstMatch
-        XCTAssertTrue(merged.waitForExistence(timeout: timeout), "The Map's Place filter does not list the merged place: \(app.menus.firstMatch.debugDescription)")
-        XCTAssertFalse(app.menuItems["Demo place 2"].exists, "The Map still lists the merged place")
-        merged.click()
-        app.typeKey(.escape, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 1.5)
-        capture(app, named: "\(prefix)-04-map-evidence")
-
-        // Filters are saved settings: leave none behind for the next test.
-        filterButton.click()
-        XCTAssertTrue(place.waitForExistence(timeout: timeout))
-        place.click()
-        app.menuItems["All places"].firstMatch.click()
-        app.typeKey(.escape, modifierFlags: [])
+        // Two places that are really one: give this one the other's name.
+        let other = original == "Demo place 1" ? "Demo place 2" : "Demo place 1"
+        field.click()
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText(other + "\r")
+        XCTAssertTrue(bar.waitForExistence(timeout: timeout), "No Undo bar after joining two places")
+        let joined = NSPredicate(format: "value == %@", other)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: joined, evaluatedWith: field)], timeout: timeout), .completed, "The second rename did not apply")
+        XCTAssertGreaterThan(photoCount(app), count, "The same name did not join the two places")
+        capture(app, named: "\(prefix)-03-joined-evidence")
+        undoFromBar(app, bar: bar, prefix: prefix)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: restored, evaluatedWith: field)], timeout: timeout), .completed, "Undo did not separate the two places")
+        XCTAssertEqual(photoCount(app), count)
+        element(in: app, identifier: "library.scope.close").click()
     }
 
-    private func openPlacesEditor(_ app: XCUIApplication) {
-        let place = element(in: app, identifier: "filter.place")
-        XCTAssertTrue(place.waitForExistence(timeout: timeout), "The Library has no Place filter")
-        place.click()
-        let edit = app.menuItems["Rename or Merge Places…"].firstMatch
-        XCTAssertTrue(edit.waitForExistence(timeout: timeout), "The Place filter has no Rename or Merge Places")
-        edit.click()
-        XCTAssertTrue(element(in: app, identifier: "places.editor.done").waitForExistence(timeout: timeout), "The places sheet did not open")
+    private func photoCount(_ app: XCUIApplication) -> Int {
+        let count = element(in: app, identifier: "library.photoCount")
+        XCTAssertTrue(count.waitForExistence(timeout: timeout))
+        // Let a regroup after a scope change publish its count.
+        Thread.sleep(forTimeInterval: 0.5)
+        return Int(count.value as? String ?? "") ?? -1
     }
 
     // MARK: People
 
-    func testThisIsntAlexItsSam() {
-        moveFaces(launch(people: true), prefix: "fix-face")
+    func testAFaceLeadsToItsPhotosAndTheViewerListsTheFace() {
+        followAFace(launch(people: true), prefix: "fix-face")
     }
 
-    func testThisIsntAlexItsSamInASmallWindow() {
-        moveFaces(launch(smallWindow: true, people: true), prefix: "fix-face-small")
+    func testAFaceLeadsToItsPhotosAndTheViewerListsTheFaceInASmallWindow() {
+        followAFace(launch(smallWindow: true, people: true), prefix: "fix-face-small")
     }
 
-    private func moveFaces(_ app: XCUIApplication, prefix: String) {
-        element(in: app, identifier: "sidebar.people").click()
-        let face = element(in: app, identifier: "people.face.demo-face-1")
-        XCTAssertTrue(face.waitForExistence(timeout: timeout), "The seeded face is not on the People screen")
-        capture(app, named: "\(prefix)-01-people-evidence")
-
-        face.rightClick()
-        let sam = app.menuItems["Sam"].firstMatch
-        XCTAssertTrue(sam.waitForExistence(timeout: timeout), "The face has no “This isn’t Alex, it’s…” menu")
+    private func followAFace(_ app: XCUIApplication, prefix: String) {
+        // The row of faces over the photos: Sam's face shows Sam's photos.
+        let sam = element(in: app, identifier: "library.person.Sam")
+        XCTAssertTrue(sam.waitForExistence(timeout: timeout), "The seeded person is not in the row of faces")
+        capture(app, named: "\(prefix)-01-faces-evidence")
         sam.click()
-        let bar = element(in: app, identifier: "correction.bar")
-        XCTAssertTrue(bar.waitForExistence(timeout: timeout), "No Undo bar after moving the face")
-        capture(app, named: "\(prefix)-02-moved-evidence")
-        undoFromBar(app, bar: bar, prefix: prefix)
-        XCTAssertTrue(face.waitForExistence(timeout: timeout), "Undo did not bring the face back to Alex")
+        XCTAssertTrue(element(in: app, identifier: "library.scope").waitForExistence(timeout: timeout), "The face did not show Sam's photos")
 
         // In the large viewer the face is listed with its person's name, as
         // the menu that says "This isn't Sam, it's…". (The column's scroll
         // view stands in for its controls, so the menu is not clicked here;
-        // moving a face is the same code as on the People screen.)
-        element(in: app, identifier: "people.person.demo-person-sam").click()
+        // moving a face is covered by the unit tests.)
         // The seeded Sam face is on the third demo photo.
         let photo = element(in: app, identifier: "library.photo.D0003")
         XCTAssertTrue(photo.waitForExistence(timeout: timeout))
         photo.doubleClick()
         XCTAssertTrue(element(in: app, identifier: "viewer").waitForExistence(timeout: timeout), "Double click did not open the photo")
         XCTAssertTrue(element(in: app, identifier: "viewer.face.demo-face-3").waitForExistence(timeout: timeout), "The viewer does not list who is in the photo")
-        capture(app, named: "\(prefix)-03-viewer-evidence")
-
-        // Filters are saved settings: leave none behind for the next test.
+        capture(app, named: "\(prefix)-02-viewer-evidence")
         app.typeKey(.escape, modifierFlags: [])
-        let chip = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Person:")).firstMatch
-        if chip.waitForExistence(timeout: timeout) { chip.click() }
+        element(in: app, identifier: "library.scope.close").click()
     }
 
     // MARK: Helpers

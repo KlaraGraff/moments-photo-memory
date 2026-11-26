@@ -29,7 +29,7 @@ final class MomentsTitleBarUITests: XCTestCase {
     private func checkTopBar(extraArguments: [String], expect: String) {
         let log = "/tmp/moments-titlebar-\(UUID().uuidString).log"
         let app = XCUIApplication()
-        app.launchArguments = ["-MomentsUITesting", "-MomentsUITestTitleBarLog", log, "-AppleLanguages", "(en)", "-AppleLocale", "en"] + extraArguments
+        app.launchArguments = ["-MomentsUITesting", "-MomentsUITestPeople", "-MomentsUITestTitleBarLog", log, "-AppleLanguages", "(en)", "-AppleLocale", "en"] + extraArguments
         app.launch()
         app.activate()
         let window = app.windows.firstMatch
@@ -37,7 +37,7 @@ final class MomentsTitleBarUITests: XCTestCase {
         let title = window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 260, dy: 26))
 
         // The page title, on every page.
-        for page in ["sidebar.people", "sidebar.map", "sidebar.timeline", "sidebar.trips", "sidebar.library"] {
+        for page in ["sidebar.trips", "sidebar.library"] {
             let item = element(in: app, identifier: page)
             XCTAssertTrue(item.waitForExistence(timeout: launchTimeout), "Missing \(page)")
             item.click()
@@ -45,15 +45,16 @@ final class MomentsTitleBarUITests: XCTestCase {
             assertDoubleClickTogglesZoom(window, at: title, "the title on \(page)")
         }
 
-        let more = element(in: app, identifier: "library.type-more")
-        XCTAssertTrue(more.waitForExistence(timeout: launchTimeout))
+        // The row of faces over the photos; its right end is empty.
+        let faces = element(in: app, identifier: "library.people")
+        XCTAssertTrue(faces.waitForExistence(timeout: launchTimeout), "The Library shows no faces over the photos")
         for size in ["small", "large"] {
             Thread.sleep(forTimeInterval: 1)
             assertDoubleClickTogglesZoom(window, at: title, "the Library title (\(size) window)")
             // The Library's own row under the bar is page content.
             let row = window.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: more.frame.maxX + 16 - window.frame.minX, dy: more.frame.midY - window.frame.minY))
-            assertDoubleClickLeavesWindow(window, at: row, "the Library header row (\(size) window)")
+                .withOffset(CGVector(dx: faces.frame.maxX - 40 - window.frame.minX, dy: faces.frame.midY - window.frame.minY))
+            assertDoubleClickLeavesWindow(window, at: row, "the Library's row of faces (\(size) window)")
             // A toolbar control is that control's.
             let search = app.searchFields.firstMatch
             if search.exists {

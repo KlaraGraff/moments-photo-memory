@@ -15,7 +15,6 @@ struct MomentsApp: App {
     @State private var peopleController = PeopleScanController()
     @State private var photoStacks = PhotoStackModel()
     @State private var stackAnalyzer = PhotoStackAnalyzer()
-    @State private var reorganize = ReorganizeController()
     @State private var libraryStore = LibraryStore()
     @State private var photosImportController = PhotosImportController(importer: PhotosImporter(source: PhotoKitAssetSource()))
     @State private var showingPhotosImport = false
@@ -114,21 +113,17 @@ struct MomentsApp: App {
             // The on-disk UI-test store holds only what the test imports.
             if Self.uiTestStoreDirectory == nil {
                 try? DemoSeeder.seedIfNeeded(context: container.mainContext)
-                if ProcessInfo.processInfo.arguments.contains("-MomentsUITestReviewItems") {
-                    try? DemoSeeder.flagUndatedDemoItemsForReview(context: container.mainContext)
-                }
                 if ProcessInfo.processInfo.arguments.contains("-MomentsUITestPeople") {
                     try? DemoSeeder.seedPeopleForUITests(context: container.mainContext)
                 }
                 if ProcessInfo.processInfo.arguments.contains("-MomentsUITestBurst") {
                     try? DemoSeeder.addSyntheticBurst(context: container.mainContext)
                 }
-                if ProcessInfo.processInfo.arguments.contains("-MomentsUITestImportSource") {
-                    try? DemoSeeder.addSyntheticImportSource(context: container.mainContext)
-                }
             }
             if isUITesting || testStoreURL != nil, let count = Self.uiTestStressCount {
-                try? DemoSeeder.generateSyntheticLibrary(count: count, spacing: Self.uiTestStressSpacing, context: container.mainContext)
+                // -MomentsUITestStressNoTrip: no chapter, so the Library lists them by month.
+                let inTrip: Bool = !ProcessInfo.processInfo.arguments.contains("-MomentsUITestStressNoTrip")
+                try? DemoSeeder.generateSyntheticLibrary(count: count, spacing: Self.uiTestStressSpacing, inTrip: inTrip, context: container.mainContext)
             }
             #endif
             modelContainer = container
@@ -174,7 +169,6 @@ struct MomentsApp: App {
                     .environment(peopleController)
                     .environment(photoStacks)
                     .environment(libraryStore)
-                    .environment(reorganize)
                     .environment(photosImportController)
                     .modelContainer(modelContainer)
                     .onAppear {
@@ -182,7 +176,6 @@ struct MomentsApp: App {
                         peopleController.configure(container: modelContainer)
                         photosImportController.configure(container: modelContainer)
                         stackAnalyzer.configure(container: modelContainer)
-                        reorganize.configure(container: modelContainer, people: peopleController, stacks: stackAnalyzer)
                         stackAnalyzer.analyzeIfNeeded()
                         photoStacks.refresh(container: modelContainer)
                         #if DEBUG
@@ -262,10 +255,6 @@ struct MomentsApp: App {
                     .keyboardShortcut("i", modifiers: [.command, .shift])
                 Button("Import from Apple Photos…") { showingPhotosImport = true }
                     .keyboardShortcut("p", modifiers: [.command, .shift])
-                Divider()
-                Button(String(localized: "Reorganize all memories")) { reorganize.run(.all) }
-                    .disabled(reorganize.running != nil || importController.isRunning || photosImportController.isRunning)
-                    .accessibilityIdentifier("reorganize.menu.all")
             }
         }
 

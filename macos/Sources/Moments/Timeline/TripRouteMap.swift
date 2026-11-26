@@ -7,6 +7,11 @@ import SwiftUI
 struct TripRouteMap: View {
     let stops: [TripRouteStop]
     var outline: WorldOutline = .shared
+    /// False for places that are not one journey (every chapter's place, the
+    /// places a person was photographed): stamps only, no line joining them.
+    var showsRoute = true
+    /// Room kept around the stops; a miniature map keeps less.
+    var inset = CGSize(width: 26, height: 24)
 
     /// The smallest stretch of map shown, in degrees, so a short trip still
     /// shows its coast or border.
@@ -14,18 +19,18 @@ struct TripRouteMap: View {
 
     var body: some View {
         Canvas { context, size in
-            let box = CGRect(origin: .zero, size: size).insetBy(dx: 26, dy: 24)
+            let box = CGRect(origin: .zero, size: size).insetBy(dx: inset.width, dy: inset.height)
             let projection = Self.projection(stops, in: box)
             let points = Self.layout(stops, in: box)
             if let projection { drawLand(&context, projection: projection, size: size) }
             drawPaper(&context, size: size)
-            drawRoute(&context, points: points)
+            if showsRoute { drawRoute(&context, points: points) }
             drawStamps(&context, points: points, size: size)
         }
         .background(Paper.well, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .accessibilityElement()
-        .accessibilityLabel(Text(stops.map(\.name).joined(separator: " → ")))
+        .accessibilityLabel(Text(stops.map(\.name).filter { !$0.isEmpty }.joined(separator: " → ")))
     }
 
     /// From longitude and latitude to the map: east–west shrunk by the
@@ -148,12 +153,17 @@ struct TripRouteMap: View {
     }
 
     private func drawStamps(_ context: inout GraphicsContext, points: [CGPoint], size: CGSize) {
-        let labelled: Set<Int> = points.count <= 6 ? Set(points.indices) : [0, points.count - 1]
+        // Without a route every place is its own, so each may have its name.
+        let labelled: Set<Int> = points.count <= 6 || !showsRoute ? Set(points.indices) : [0, points.count - 1]
         // Stamps count as taken, so a label never covers another city's mark.
         var placed: [CGRect] = points.map { CGRect(x: $0.x - 5, y: $0.y - 6, width: 10, height: 12) }
         for (index, point) in points.enumerated() {
-            let isEnd = index == points.count - 1 && points.count > 1
-            if index == 0 {
+            let isEnd = showsRoute && index == points.count - 1 && points.count > 1
+            if !showsRoute {
+                // Places, not a journey: every one the same filled stamp.
+                context.fill(Path(ellipseIn: CGRect(x: point.x - 4.5, y: point.y - 4.5, width: 9, height: 9)), with: .color(Paper.accent))
+                context.fill(Path(ellipseIn: CGRect(x: point.x - 1.8, y: point.y - 1.8, width: 3.6, height: 3.6)), with: .color(Paper.raised))
+            } else if index == 0 {
                 // The start: a filled stamp.
                 context.fill(Path(ellipseIn: CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10)), with: .color(Paper.accent))
                 context.fill(Path(ellipseIn: CGRect(x: point.x - 2, y: point.y - 2, width: 4, height: 4)), with: .color(Paper.raised))
@@ -173,8 +183,8 @@ struct TripRouteMap: View {
         let order = points.count > 1 ? [0, points.count - 1] + Array(1..<(points.count - 1)) : [0]
         for index in order {
             let point = points[index]
-            let isEnd = index == points.count - 1 && points.count > 1
-            guard labelled.contains(index), index < stops.count else { continue }
+            let isEnd = showsRoute && index == points.count - 1 && points.count > 1
+            guard labelled.contains(index), index < stops.count, !stops[index].name.isEmpty else { continue }
             let label = context.resolve(
                 Text(stops[index].name)
                     .font(.system(size: 10, weight: .medium, design: .rounded))

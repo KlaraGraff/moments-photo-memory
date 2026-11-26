@@ -88,14 +88,26 @@ final class MomentsStackUITests: XCTestCase {
         capture(app, "stack-07-small-viewer-evidence")
     }
 
-    func testStackOnTheTimeline() {
+    /// The chapter the burst belongs to shows it as one stack too.
+    func testStackInItsChapter() {
         let app = launch()
         XCTAssertTrue(element(app, "library.stack.demo-burst-1").waitForExistence(timeout: timeout))
-        element(app, "sidebar.timeline").click()
+        element(app, "sidebar.trips").click()
         let stack = element(app, "trips.stack.demo-burst-1")
-        XCTAssertTrue(stack.waitForExistence(timeout: timeout), "The Timeline does not show the burst as a stack")
+        let cards = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (identifier BEGINSWITH %@) AND NOT (identifier BEGINSWITH %@)", "trips.card.", "trips.card.name.", "trips.card.dates."))
+        XCTAssertTrue(cards.firstMatch.waitForExistence(timeout: timeout), "Chapters shows no cards")
+        let identifiers: [String] = cards.allElementsBoundByIndex.map { (card: XCUIElement) -> String in card.identifier }
+        var shown = false
+        for identifier in identifiers where !shown {
+            element(app, identifier).click()
+            XCTAssertTrue(element(app, "trips.back").waitForExistence(timeout: timeout), "\(identifier) did not open")
+            shown = stack.waitForExistence(timeout: 3)
+            if !shown { element(app, "trips.back").click() }
+        }
+        XCTAssertTrue(shown, "No chapter shows the burst as a stack (looked in \(identifiers))")
         XCTAssertFalse(element(app, "trips.photo.demo-burst-2").exists)
-        capture(app, "stack-08-timeline-evidence")
+        capture(app, "stack-08-chapter-evidence")
     }
 
     private func launch(extra: [String] = []) -> XCUIApplication {

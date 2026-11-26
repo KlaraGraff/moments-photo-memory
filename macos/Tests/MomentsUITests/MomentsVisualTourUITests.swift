@@ -13,7 +13,7 @@ final class MomentsVisualTourUITests: XCTestCase {
 
     func testVisualTourEnglish() {
         let app = XCUIApplication()
-        app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(en)", "-AppleLocale", "en"]
+        app.launchArguments = ["-MomentsUITesting", "-MomentsUITestPeople", "-AppleLanguages", "(en)", "-AppleLocale", "en"]
         app.launch()
         app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: timeout))
@@ -21,6 +21,7 @@ final class MomentsVisualTourUITests: XCTestCase {
 
         let library = element(app, "sidebar.library")
         XCTAssertTrue(library.waitForExistence(timeout: timeout))
+        _ = element(app, "library.people").waitForExistence(timeout: timeout)
         capture(app, "tour-01-library-evidence")
 
         // Focused text field: the ring should read as a deeper shadow, not a bright line.
@@ -38,75 +39,67 @@ final class MomentsVisualTourUITests: XCTestCase {
             }
         }
 
-        // The smart group sheet from the screenshot report. Its button only
-        // shows while a filter is on.
-        let photosOnly = app.radioButtons["Photos"].firstMatch
-        XCTAssertTrue(photosOnly.waitForExistence(timeout: timeout))
-        photosOnly.click()
-        let save = element(app, "library.save-smart-group")
-        XCTAssertTrue(save.waitForExistence(timeout: timeout))
-        save.click()
-        XCTAssertTrue(app.sheets.firstMatch.waitForExistence(timeout: timeout))
-        Thread.sleep(forTimeInterval: 0.6)
-        capture(app, "tour-03-smart-group-sheet-evidence")
-        // Two conditions show whether rows and the label column line up.
-        let addCondition = element(app, "groupEditor.addCondition")
-        if addCondition.waitForExistence(timeout: timeout) {
-            addCondition.click()
-            addCondition.click()
-            Thread.sleep(forTimeInterval: 0.6)
-            capture(app, "tour-03b-smart-group-conditions-evidence")
-        }
-        app.typeKey(.escape, modifierFlags: [])
-        XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: timeout))
-        app.radioButtons["All"].firstMatch.click()
-
-        // A manual group from the sidebar menu.
-        let newGroup = element(app, "sidebar.new-group")
-        XCTAssertTrue(newGroup.waitForExistence(timeout: timeout))
-        newGroup.click()
-        let manual = app.menuItems["New manual group"]
-        if manual.waitForExistence(timeout: timeout) {
-            manual.click()
-            XCTAssertTrue(app.sheets.firstMatch.waitForExistence(timeout: timeout))
-            Thread.sleep(forTimeInterval: 0.6)
-            capture(app, "tour-04-manual-group-sheet-evidence")
-            app.typeKey(.escape, modifierFlags: [])
-            XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: timeout))
+        // A face over the photos: that person's photos, in place.
+        let person = element(app, "library.person.Alex")
+        if person.waitForExistence(timeout: timeout) {
+            person.click()
+            if element(app, "library.scope").waitForExistence(timeout: timeout) {
+                Thread.sleep(forTimeInterval: 0.8)
+                capture(app, "tour-03-person-photos-evidence")
+                // The small map over them opens the large one.
+                let map = element(app, "library.scope.map")
+                if map.waitForExistence(timeout: 3) {
+                    map.click()
+                    if element(app, "map.view").waitForExistence(timeout: timeout) {
+                        Thread.sleep(forTimeInterval: 1.2)
+                        capture(app, "tour-04-large-map-evidence")
+                        element(app, "map.back").click()
+                    }
+                }
+                let close = element(app, "library.scope.close")
+                if close.waitForExistence(timeout: timeout) { close.click() }
+            }
         }
 
-        for (index, step) in [
-            ("sidebar.people", "people"),
-            ("sidebar.map", "map"),
-            ("sidebar.timeline", "timeline"),
-            ("sidebar.trips", "trips"),
-        ].enumerated() {
-            let item = element(app, step.0)
-            XCTAssertTrue(item.waitForExistence(timeout: timeout), "Missing \(step.0)")
-            item.click()
-            Thread.sleep(forTimeInterval: 1.2)
-            capture(app, "tour-\(String(format: "%02d", index + 5))-\(step.1)-evidence")
+        // The large viewer, with the photo's place, faces and small map.
+        if photo.waitForExistence(timeout: timeout) {
+            photo.doubleClick()
+            if element(app, "viewer").waitForExistence(timeout: timeout) {
+                Thread.sleep(forTimeInterval: 1.0)
+                capture(app, "tour-05-viewer-evidence")
+                app.typeKey(.escape, modifierFlags: [])
+            }
         }
 
-        // Settings window.
+        let trips = element(app, "sidebar.trips")
+        XCTAssertTrue(trips.waitForExistence(timeout: timeout), "Missing sidebar.trips")
+        trips.click()
+        Thread.sleep(forTimeInterval: 1.2)
+        capture(app, "tour-06-chapters-evidence")
+        let card = element(app, "trips.card.journeyA")
+        if card.waitForExistence(timeout: timeout) {
+            card.click()
+            if element(app, "trips.back").waitForExistence(timeout: timeout) {
+                Thread.sleep(forTimeInterval: 1.2)
+                capture(app, "tour-07-chapter-evidence")
+                element(app, "trips.back").click()
+            }
+        }
+
+        // Settings: one page.
         app.typeKey(",", modifierFlags: .command)
         Thread.sleep(forTimeInterval: 1.0)
-        let settings = app.windows.element(boundBy: 0)
-        if settings.exists, app.windows.count > 1 {
-            for (index, tab) in ["General", "AI Model", "Sharing"].enumerated() {
-                let button = settings.toolbars.buttons[tab]
-                if button.exists { button.click() }
-                Thread.sleep(forTimeInterval: 0.6)
-                let attachment = XCTAttachment(screenshot: app.windows.element(boundBy: 0).screenshot())
-                attachment.name = "tour-11\(["a", "b", "c"][index])-settings-\(tab.lowercased().replacingOccurrences(of: " ", with: "-"))-evidence"
-                attachment.lifetime = .keepAlways
-                add(attachment)
-            }
+        if app.windows.count > 1 {
+            let attachment = XCTAttachment(screenshot: app.windows.element(boundBy: 0).screenshot())
+            attachment.name = "tour-08-settings-evidence"
+            attachment.lifetime = .keepAlways
+            add(attachment)
             app.typeKey("w", modifierFlags: .command)
         }
 
         // Apple Photos import sheet last: it asks for Photos access, and the
         // system prompt covers everything after it.
+        library.click()
         app.typeKey("p", modifierFlags: [.command, .shift])
         if app.sheets.firstMatch.waitForExistence(timeout: timeout) {
             Thread.sleep(forTimeInterval: 0.6)

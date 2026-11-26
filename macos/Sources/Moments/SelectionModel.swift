@@ -4,9 +4,6 @@ import Observation
 /// Sidebar destinations other screens can ask the window to switch to.
 enum SidebarDestination: Hashable {
     case library
-    case people
-    case map
-    case timeline
     case trips
 }
 
@@ -16,12 +13,30 @@ struct ViewerRequest: Equatable {
     var itemID: String
 }
 
-/// Photos another screen asked the Library to show on their own, such as one
-/// city from Footprints. It narrows only the Library grid (shown there as a
-/// removable chip); the maps keep following the regular Library filters.
+/// Photos the Library was asked to show on their own: the photos of a person
+/// whose face was clicked, the photos taken at a place whose name was clicked.
+/// The Library shows a heading for it with one button back to every photo.
 struct LibraryScope: Equatable {
     var title: String
     var itemIDs: Set<String>
+    /// The person these are the photos of, so the heading can show the face
+    /// and take a new name.
+    var personID: String? = nil
+    /// An unnamed group of faces these are the photos of: the heading asks
+    /// "Who is this?".
+    var clusterID: String? = nil
+    /// The place name these are the photos of, so the heading can take a new
+    /// name for the place.
+    var placeName: String? = nil
+}
+
+/// The photos the large map shows. A small map anywhere (on a photo, in a
+/// chapter, over the Chapters shelf, in a Library heading) opens the large
+/// one with the photos it stood for.
+struct MapScope: Equatable {
+    var title: String
+    /// `nil` for every photo.
+    var itemIDs: Set<String>?
 }
 
 /// Shared cross-screen state, injected once with `.environment(_:)` on the
@@ -46,10 +61,11 @@ final class SelectionModel {
     /// instead of the whole set.
     private(set) var visibleGeneration = 0
     /// A screen asks to switch the sidebar; the window clears it after switching.
-    /// Opening Library is a reveal request because it is used by Timeline's
-    /// place jump action.
+    /// Opening Library is a reveal request: the photo in focus is scrolled to.
     var requestedDestination: SidebarDestination? {
         didSet {
+            // Going to a page leaves the large map.
+            if requestedDestination != nil { mapScope = nil }
             if requestedDestination == .library {
                 shouldRevealSelectionInLibrary = true
                 // A reveal jump must not land in an older scope that hides
@@ -77,9 +93,6 @@ final class SelectionModel {
 
     /// Photos whose date and time the window's Adjust Date and Time sheet is open for.
     var dateAdjustmentItemIDs: [String]?
-    /// Rename or Merge Places, asked for from a Place filter. Shown by the
-    /// window, since the filters can be in a popover that closes.
-    var isShowingPlacesEditor = false
     /// The last correction to dates, places or people, while its Undo bar shows.
     var lastCorrection: CorrectionUndo?
 
@@ -141,28 +154,51 @@ final class SelectionModel {
         }
     }
 
-    /// Switches to the Library showing only `ids`, scrolled to the top.
-    func showInLibrary(_ ids: some Sequence<String>, title: String) {
+    /// Switches to the Library showing only `ids`, scrolled to the top. With
+    /// `personID` or `clusterID` the heading shows that face and its name;
+    /// with `placeName` the heading renames the place.
+    func showInLibrary(_ ids: some Sequence<String>, title: String, personID: String? = nil, clusterID: String? = nil, placeName: String? = nil) {
         let set = Set(ids)
         guard !set.isEmpty else { return }
+        viewerRequest = nil
         selectedItemIDs = []
         focusedItemID = nil
         requestedDestination = .library
-        libraryScope = LibraryScope(title: title, itemIDs: set)
+        libraryScope = LibraryScope(title: title, itemIDs: set, personID: personID, clusterID: clusterID, placeName: placeName)
         // Nothing to reveal: the scoped grid opens at its top.
         shouldRevealSelectionInLibrary = false
     }
+
+    /// The photos the large map is showing; `nil` while it is closed.
+    var mapScope: MapScope? {
+        didSet { mapScopeGeneration &+= 1 }
+    }
+    /// Changes each time `mapScope` is assigned, so the map hashes this
+    /// instead of the whole set.
+    private(set) var mapScopeGeneration = 0
 
     /// A photo the Map should fly to once it is on screen; the Map only
     /// follows focus changes while it is already showing.
     var mapFocusRequest: String?
 
-    /// Shows one photo on the Map, closing the viewer.
-    func showOnMap(_ itemID: String) {
+    /// Opens the large map on `ids` (every photo when `nil`), closing the viewer.
+    func showMap(title: String, itemIDs ids: Set<String>?) {
+        viewerRequest = nil
+        mapFocusRequest = nil
+        mapScope = MapScope(title: title, itemIDs: ids)
+    }
+
+    /// Shows one photo on the large map among every photo, closing the viewer.
+    func showOnMap(_ itemID: String, title: String) {
         viewerRequest = nil
         select(itemID)
         mapFocusRequest = itemID
-        requestedDestination = .map
+        mapScope = MapScope(title: title, itemIDs: nil)
+    }
+
+    /// True when the large map shows this photo.
+    func isOnMap(_ id: String) -> Bool {
+        mapScope?.itemIDs?.contains(id) ?? true
     }
 
     /// Opens a trip on the Trips screen, closing the viewer.
@@ -177,15 +213,6 @@ final class SelectionModel {
         viewerRequest = nil
         select(itemID)
         requestedDestination = .library
-    }
-
-    /// Opens the Library filtered to one person, as the People card does.
-    func showPhotos(ofPerson personID: String, defaults: UserDefaults = .standard) {
-        viewerRequest = nil
-        defaults.set(personID, forKey: LibraryFilterKeys.person)
-        clear()
-        requestedDestination = .library
-        shouldRevealSelectionInLibrary = false
     }
 
     func isSelected(_ id: String) -> Bool {

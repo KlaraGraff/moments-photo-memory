@@ -10,7 +10,9 @@ final class MomentsImportUITests: XCTestCase {
 
     private let timeout: TimeInterval = 15
 
-    func testFolderImportPersistsAndSupportsReviewActions() throws {
+    /// An import ends on the photos: no sheet to work through. The photos
+    /// persist, a second import adds nothing, and the video plays.
+    func testFolderImportPersistsAndOpensOnThePhotos() throws {
         guard let folderPath = ProcessInfo.processInfo.environment["MOMENTS_UI_IMPORT_FOLDER"],
               !folderPath.isEmpty else {
             throw XCTSkip("MOMENTS_UI_IMPORT_FOLDER was not supplied")
@@ -27,10 +29,12 @@ final class MomentsImportUITests: XCTestCase {
         XCTAssertEqual(initialCount, 0, "The isolated import store must start empty")
 
         try importFolder(folderURL, in: app, screenshotPrefix: "import-01")
-        // Review actions only exist on the first import; later imports find
-        // every photo already present.
-        let memoryWasAdded = exerciseReview(in: app)
-        dismissReviewIfPresent(in: app)
+        // Straight to the photos: nothing to confirm, no banner asking for work.
+        XCTAssertFalse(element(in: app, identifier: "import.review").exists, "The import review sheet is back")
+        XCTAssertFalse(element(in: app, identifier: "library.review-banner").exists, "The to-confirm banner is back")
+        let importedCount = photoCount(in: app)
+        XCTAssertGreaterThan(importedCount, initialCount, "The folder import did not add any photos")
+        capture(app, named: "import-05-photos-after-import-evidence")
 
         XCTContext.runActivity(named: "Cancel a second import when it is still running") { activity in
             guard openImportPanel(folderURL, in: app) else {
@@ -52,18 +56,10 @@ final class MomentsImportUITests: XCTestCase {
                 addNote("The second import completed before a progress indicator was exposed.", to: activity)
             }
         }
-        dismissReviewIfPresent(in: app)
 
         try importFolder(folderURL, in: app, screenshotPrefix: "import-04")
-        dismissReviewIfPresent(in: app)
         // The library card shows the empty-memory placeholder as a thin line.
         capture(app, named: "import-18-empty-memory-placeholder")
-
-        let importedCount = photoCount(in: app)
-        XCTAssertGreaterThan(importedCount, initialCount, "The folder import did not add any photos")
-
-        try importFolder(folderURL, in: app, screenshotPrefix: "import-10-reimport")
-        dismissReviewIfPresent(in: app)
         XCTAssertEqual(photoCount(in: app), importedCount, "Re-importing the same folder created duplicates")
 
         app.terminate()
@@ -77,38 +73,28 @@ final class MomentsImportUITests: XCTestCase {
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.note."))
             .firstMatch
         XCTAssertTrue(memory.waitForExistence(timeout: timeout), "An imported photo's note line was not visible after relaunch")
-        if memoryWasAdded {
-            // The memory belongs to whichever photo was first in the review list,
-            // which need not be the first card in the Library.
-            let persistedMemory = app.descendants(matching: .any)
-                .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND value CONTAINS %@", "library.memory.", "UI import memory"))
-                .firstMatch
-            // The Library grid is lazy, so scroll until that photo's card is built.
-            var found = persistedMemory.waitForExistence(timeout: 3)
-            let grid = app.scrollViews.firstMatch
-            for _ in 0..<12 where !found && grid.exists {
-                grid.scroll(byDeltaX: 0, deltaY: -500)
-                found = persistedMemory.waitForExistence(timeout: 1)
-            }
-            XCTAssertTrue(found, "The quick memory was not persisted")
-        } else {
-            recordSkipped("The quick-memory field was unavailable, so persistence of that optional edit was not asserted.")
-        }
 
         exerciseVideoPlayback(in: app)
-        exerciseToReviewList(in: app)
     }
 
     /// The imported video plays in the large viewer. Showing the player once
-    /// aborted the app, because nothing linked AVKit.
+    /// aborted the app, because nothing linked AVKit. The video is found by
+    /// the mark on its thumbnail.
     private func exerciseVideoPlayback(in app: XCUIApplication) {
         element(in: app, identifier: "sidebar.library").click()
-        let videos = app.radioButtons["Videos"].firstMatch
-        XCTAssertTrue(videos.waitForExistence(timeout: timeout), "The Library has no Videos filter")
-        videos.click()
-        let clip = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+        let mark = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.kind.video."))
             .firstMatch
+        // The Library grid is lazy, so scroll until the video's card is built.
+        var found = mark.waitForExistence(timeout: 5)
+        let grid = app.scrollViews.firstMatch
+        for _ in 0..<12 where !found && grid.exists {
+            grid.scroll(byDeltaX: 0, deltaY: -500)
+            found = mark.waitForExistence(timeout: 1)
+        }
+        XCTAssertTrue(found, "The imported video has no video mark in the Library")
+        let clipID = String(mark.identifier.dropFirst("library.kind.video.".count))
+        let clip = element(in: app, identifier: "library.photo.\(clipID)")
         XCTAssertTrue(clip.waitForExistence(timeout: timeout), "The imported video is not in the Library")
         clip.doubleClick()
         XCTAssertTrue(element(in: app, identifier: "viewer").waitForExistence(timeout: timeout), "Double click did not open the video")
@@ -123,36 +109,6 @@ final class MomentsImportUITests: XCTestCase {
         capture(app, named: "import-21-video-playing-evidence")
         let close = element(in: app, identifier: "viewer.close")
         if close.exists { close.click() } else { app.typeKey(.escape, modifierFlags: []) }
-        app.radioButtons["All"].firstMatch.click()
-    }
-
-    /// The Library's "to confirm" banner opens the review list, which
-    /// confirms a flagged photo and can take it back.
-    private func exerciseToReviewList(in app: XCUIApplication) {
-        element(in: app, identifier: "sidebar.library").click()
-        let banner = element(in: app, identifier: "library.review-banner")
-        guard banner.waitForExistence(timeout: 5) else {
-            recordSkipped("No photo was left to review after the import, so the To review actions were not exercised.")
-            return
-        }
-        banner.click()
-        let confirm = app.buttons
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "review.confirm."))
-            .firstMatch
-        guard confirm.waitForExistence(timeout: 5) else {
-            recordSkipped("No photo was left to review after the import, so the To review actions were not exercised.")
-            return
-        }
-        capture(app, named: "import-19-to-review-evidence")
-        let confirmedID = String(confirm.identifier.dropFirst("review.confirm.".count))
-        confirm.click()
-        XCTAssertTrue(element(in: app, identifier: "review.confirm.\(confirmedID)").waitForNonExistence(timeout: 5), "A confirmed photo should leave the list")
-        let undo = element(in: app, identifier: "review.undo")
-        XCTAssertTrue(undo.waitForExistence(timeout: timeout), "Confirming should offer Undo")
-        capture(app, named: "import-20-to-review-confirmed-evidence")
-        undo.click()
-        XCTAssertTrue(element(in: app, identifier: "review.confirm.\(confirmedID)").waitForExistence(timeout: timeout), "Undo should bring the photo back")
-        element(in: app, identifier: "review.done").click()
     }
 
     private func launch(storeDirectory: URL) -> XCUIApplication {
@@ -172,6 +128,10 @@ final class MomentsImportUITests: XCTestCase {
     }
 
     private func importFolder(_ folder: URL, in app: XCUIApplication, screenshotPrefix: String) throws {
+        // The app counts the folder imports that ran to the end.
+        let probe = element(in: app, identifier: "import.finished")
+        XCTAssertTrue(probe.waitForExistence(timeout: timeout), "The app does not say when an import ends")
+        let before = probe.label
         guard openImportPanel(folder, in: app) else {
             XCTFail("The folder import panel could not be opened")
             return
@@ -186,9 +146,9 @@ final class MomentsImportUITests: XCTestCase {
             }
         }
 
-        let review = element(in: app, identifier: "import.review")
-        XCTAssertTrue(review.waitForExistence(timeout: 60), "The import review sheet did not appear")
-        capture(app, named: "\(screenshotPrefix)-review")
+        let finished = NSPredicate(format: "label != %@", before)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: finished, evaluatedWith: probe)], timeout: 90), .completed, "The import did not finish (\(probe.label))")
+        capture(app, named: "\(screenshotPrefix)-finished")
     }
 
     private func openImportPanel(_ folder: URL, in app: XCUIApplication) -> Bool {
@@ -216,152 +176,6 @@ final class MomentsImportUITests: XCTestCase {
         return true
     }
 
-    private func exerciseReview(in app: XCUIApplication) -> Bool {
-        let review = element(in: app, identifier: "import.review")
-        guard review.waitForExistence(timeout: 60) else {
-            XCTContext.runActivity(named: "Review actions") { activity in
-                addNote("The import review sheet was not available for review actions.", to: activity)
-            }
-            return false
-        }
-        capture(app, named: "import-05-review-initial")
-
-        let tripName = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "import.trip.name."))
-            .firstMatch
-        let rename = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "import.trip.rename."))
-            .firstMatch
-        if tripName.waitForExistence(timeout: 3), rename.waitForExistence(timeout: 3) {
-            replaceText(in: tripName, with: "UI import trip")
-            rename.click()
-            capture(app, named: "import-06-trip-renamed")
-        } else {
-            recordSkipped("Trip rename was unavailable in this import result.")
-        }
-
-        let split = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "import.trip.split."))
-            .firstMatch
-        if split.waitForExistence(timeout: 3) {
-            split.click()
-            capture(app, named: "import-07-trip-split")
-        } else {
-            recordSkipped("Trip split was unavailable in this import result.")
-        }
-
-        let merge = element(in: app, identifier: "import.trip.merge")
-        if merge.waitForExistence(timeout: 3) {
-            merge.click()
-            capture(app, named: "import-08-trip-merged")
-        } else {
-            recordSkipped("Trip merge was unavailable because fewer than two trips were suggested.")
-        }
-
-        let confirm = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "import.trip.confirm."))
-            .firstMatch
-        if confirm.waitForExistence(timeout: 3) {
-            confirm.click()
-            capture(app, named: "import-09-trip-confirmed")
-        } else {
-            recordSkipped("Trip confirmation was unavailable in this import result.")
-        }
-
-        let confirmation = element(in: app, identifier: "import.confirmationList")
-        guard confirmation.waitForExistence(timeout: 3) else {
-            recordSkipped("No items needed confirmation in this import result.")
-            return false
-        }
-        capture(app, named: "import-12-confirmation-initial")
-
-        let accept = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "import.confirmation.accept."))
-            .firstMatch
-        if accept.waitForExistence(timeout: 3) {
-            accept.click()
-            capture(app, named: "import-13-confirmed-item")
-        } else {
-            recordSkipped("Confirmation accept action was unavailable.")
-        }
-
-        let changeDate = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "import.confirmation.date."))
-            .firstMatch
-        let useDate = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "import.confirmation.useDate."))
-            .firstMatch
-        if changeDate.waitForExistence(timeout: 3), useDate.waitForExistence(timeout: 3), changeDate.isHittable {
-            // Step the focused date segment back instead of typing a
-            // locale-specific date string.
-            changeDate.click()
-            for _ in 0..<3 { app.typeKey(.downArrow, modifierFlags: []) }
-            // The date field opens a calendar popover that covers the rows
-            // below; Escape closes it (the review sheet has no cancel action).
-            app.typeKey(.escape, modifierFlags: [])
-            if useDate.isHittable { useDate.click() }
-            capture(app, named: "import-14-date-changed")
-        } else {
-            recordSkipped("No editable date was available in the confirmation list.")
-        }
-
-        let changePlace = firstHittable(in: app, prefix: "import.confirmation.place.")
-        if let changePlace {
-            replaceText(in: changePlace, with: "UI import place")
-            changePlace.typeKey(.return, modifierFlags: [])
-            capture(app, named: "import-15-place-changed")
-        } else {
-            recordSkipped("No suggested place was available to change.")
-        }
-
-        let memory = firstHittable(in: app, prefix: "import.confirmation.memory.")
-        var memoryWasAdded = false
-        if let memory {
-            replaceText(in: memory, with: "UI import memory")
-            memory.typeKey(.return, modifierFlags: [])
-            memoryWasAdded = true
-            capture(app, named: "import-16-memory-added")
-        } else {
-            recordSkipped("No quick-memory field was available in the confirmation list.")
-        }
-
-        let ignore = firstHittable(in: app, prefix: "import.confirmation.ignore.")
-        if let ignore {
-            ignore.click()
-            capture(app, named: "import-17-ignored-item")
-        } else {
-            recordSkipped("A separate confirmation item was unavailable to ignore.")
-        }
-
-        return memoryWasAdded
-    }
-
-    /// Handled rows leave the confirmation list with an animation and other rows
-    /// may be scrolled away, so pick the first matching element that can be clicked.
-    private func firstHittable(in app: XCUIApplication, prefix: String) -> XCUIElement? {
-        let matches = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
-        guard matches.firstMatch.waitForExistence(timeout: 3) else { return nil }
-        let deadline = Date().addingTimeInterval(3)
-        repeat {
-            if let element = matches.allElementsBoundByIndex.first(where: { $0.exists && $0.isHittable }) {
-                return element
-            }
-            Thread.sleep(forTimeInterval: 0.2)
-        } while Date() < deadline
-        return nil
-    }
-
-    private func dismissReviewIfPresent(in app: XCUIApplication) {
-        let done = element(in: app, identifier: "import.review.done")
-        if done.waitForExistence(timeout: 3) {
-            done.click()
-            return
-        }
-        let titledDone = app.buttons["Done"]
-        if titledDone.waitForExistence(timeout: 2) { titledDone.click() }
-    }
-
     private func photoCount(in app: XCUIApplication) -> Int {
         let count = element(in: app, identifier: "library.photoCount")
         guard count.waitForExistence(timeout: timeout) else {
@@ -370,21 +184,6 @@ final class MomentsImportUITests: XCTestCase {
         }
         let raw = count.value as? String ?? ""
         return Int(raw.filter { $0.isNumber }) ?? -1
-    }
-
-    private func replaceText(in element: XCUIElement, with value: String) {
-        // Fields inside list rows don't always report focus to XCUITest, so
-        // type at the app level after the click has moved focus there.
-        element.doubleClick()
-        let app = XCUIApplication()
-        app.typeKey("a", modifierFlags: .command)
-        app.typeText(value)
-    }
-
-    private func recordSkipped(_ message: String) {
-        XCTContext.runActivity(named: "Skipped import UI step") { activity in
-            addNote(message, to: activity)
-        }
     }
 
     private func capture(_ app: XCUIApplication, named name: String, activity: XCTActivity? = nil) {

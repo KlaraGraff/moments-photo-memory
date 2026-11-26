@@ -49,15 +49,19 @@ final class MomentsUITests: XCTestCase {
         let text = "UI smoke memory \(UUID().uuidString)"
         memory.click()
         memory.typeText(text)
+        capture(app, named: "memory-01-typed-evidence")
+        XCTAssertTrue((memory.value as? String ?? "").contains(text), "The typed words are not in the field: \(String(describing: memory.value))")
 
         for destination in ["sidebar.map", "sidebar.timeline", "sidebar.people", "sidebar.library"] {
             let item = element(in: app, identifier: destination)
             XCTAssertTrue(item.waitForExistence(timeout: launchTimeout), "Missing sidebar item \(destination)")
             item.click()
+            if destination == "sidebar.map" { capture(app, named: "memory-02-left-evidence") }
         }
 
         XCTAssertTrue(memory.waitForExistence(timeout: launchTimeout))
-        XCTAssertTrue((memory.value as? String ?? "").contains(text), "Leaving the field did not keep the memory")
+        capture(app, named: "memory-03-back-evidence")
+        XCTAssertTrue((memory.value as? String ?? "").contains(text), "Leaving the field did not keep the memory: \(String(describing: memory.value))")
         capture(app, named: "library-02-memory-persisted")
     }
 

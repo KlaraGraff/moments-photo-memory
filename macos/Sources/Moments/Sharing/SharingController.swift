@@ -264,7 +264,16 @@ final class SharingController {
     private func refreshOwnerShare() async throws {
         guard let cloud else { return }
         let zoneID = CKRecordZone.ID(zoneName: Self.zoneName, ownerName: CKCurrentUserDefaultName)
-        guard let share = try await existingShare(in: cloud.privateCloudDatabase, zoneID: zoneID) else {
+        let found: CKShare?
+        do {
+            found = try await existingShare(in: cloud.privateCloudDatabase, zoneID: zoneID)
+        } catch {
+            // Offline or busy: keep what was known, and let the engine
+            // start; it syncs once the network is back.
+            phase = settings.partnerAccountID == nil ? .invited : .shared(isOwner: true)
+            return
+        }
+        guard let share = found else {
             // The zone and share are gone (stopped on his other Mac).
             await shareEnded()
             return

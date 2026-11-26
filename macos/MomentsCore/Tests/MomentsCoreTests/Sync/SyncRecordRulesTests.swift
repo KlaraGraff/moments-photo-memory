@@ -59,12 +59,20 @@ final class SyncSchemaTests: XCTestCase {
         XCTAssertEqual(SyncSchema.unknownFields(in: record), ["originalBookmarkData"])
     }
 
-    func testRecordNamesAreSafeOrHashed() {
+    func testRecordNamesAreSafeOrHashed() throws {
         XCTAssertEqual(SyncRecordName.make(type: .trip, id: "5D0C6F0E-1A2B-4C3D-8E9F-001122334455"), "Trip-5D0C6F0E-1A2B-4C3D-8E9F-001122334455")
         XCTAssertEqual(SyncRecordName.id(fromPlain: "Trip-t1", type: .trip), "t1")
         XCTAssertNil(SyncRecordName.id(fromPlain: "Trip-t1", type: .tag))
         // Two types with the same ID never share a CloudKit record name.
         XCTAssertNotEqual(SyncRecordName.make(type: .favorite, id: "m1:_u1"), SyncRecordName.make(type: .placeOverride, id: "m1:_u1"))
+        // A safe ID too long once its type is added is hashed, and its
+        // mapping is kept so the name leads back to it.
+        let long = String(repeating: "a", count: 198)
+        let longName: String = SyncRecordName.make(type: .trip, id: long)
+        XCTAssertTrue(SyncRecordName.isHashed(longName))
+        let store = try SyncStateStore(folder: SyncFixtures.temporaryFolder())
+        store.setBase(SyncFixtures.trip(long), recordName: longName, systemFields: nil)
+        XCTAssertEqual(store.key(type: .trip, hashedRecordName: longName), SyncRecordKey(.trip, long))
         let unsafe: String = "trip-Zürich 2023/11"
         let name: String = SyncRecordName.make(type: .trip, id: unsafe)
         XCTAssertTrue(name.hasPrefix("h-Trip-"))

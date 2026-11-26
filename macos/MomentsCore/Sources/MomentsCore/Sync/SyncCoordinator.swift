@@ -189,8 +189,12 @@ public final class SyncCoordinator {
     /// out: removing one the resolver never placed would delete their words.
     private func initialScope() -> Set<SyncRecordKey> {
         guard database == .privateDatabase else { return [] }
+        // Places, tags and chapters are left out too: one can be in the
+        // zone only because something the scope never lists points at it
+        // (a personal place name), and removing it would break that link.
+        let pulledIn: Set<SyncRecordType> = [.place, .tag, .userGroup]
         return Set(state.allBaseKeys().filter { key in
-            guard let base = state.base(for: key) else { return false }
+            guard !pulledIn.contains(key.type), let base = state.base(for: key) else { return false }
             return accounts.canEdit(base)
         })
     }
@@ -253,7 +257,8 @@ public final class SyncCoordinator {
         let server = accounts.fromWire(decodeID(serverRecord))
         guard server.key == change.key else {
             // Another record holds this name; never merge two different
-            // records. The change stays queued for a later attempt.
+            // records. Drop the change rather than resend it forever.
+            pending.markSent(change)
             return nil
         }
         let base = state.base(for: change.key)

@@ -133,6 +133,11 @@ public enum SyncRecordName {
         return "h-" + type.rawValue + "-" + SyncDigest.hex(id) + "-" + SyncDigest.hex(String(id.reversed()))
     }
 
+    /// Whether `make` hashed the ID (unsafe, or too long with its type).
+    public static func isHashed(_ name: String) -> Bool {
+        name.hasPrefix("h-")
+    }
+
     /// The ID inside a name `make` built without hashing, or nil for a
     /// hashed name (looked up in the saved name map instead).
     public static func id(fromPlain name: String, type: SyncRecordType) -> String? {

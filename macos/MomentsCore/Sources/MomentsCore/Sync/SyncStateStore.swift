@@ -142,7 +142,7 @@ public final class SyncStateStore {
         contents[Self.storageKey(record.key)] = BaseEntry(record: record, recordName: recordName, systemFields: systemFields)
         shards[index] = contents
         dirtyShards.insert(index)
-        if !SyncRecordName.isSafe(record.id) {
+        if SyncRecordName.isHashed(recordName) {
             var map = loadNames()
             if map[Self.nameKey(record.type, recordName)] != record.key {
                 map[Self.nameKey(record.type, recordName)] = record.key
@@ -158,7 +158,7 @@ public final class SyncStateStore {
         guard let removed = contents.removeValue(forKey: Self.storageKey(key)) else { return }
         shards[index] = contents
         dirtyShards.insert(index)
-        if !SyncRecordName.isSafe(key.id) {
+        if SyncRecordName.isHashed(removed.recordName) {
             var map = loadNames()
             map[Self.nameKey(key.type, removed.recordName)] = nil
             names = map

@@ -47,7 +47,7 @@ struct PhotoViewer: View {
 
     /// A text field in the column has the keyboard: Esc and the arrows are its own.
     private var isEditingText: Bool {
-        isEditingInfo || libraryState.focusedNoteItemID != nil
+        isEditingInfo || libraryState.focusedMemoryItemID != nil
     }
 
     /// A text field or text view in this window is being typed in.
@@ -881,6 +881,12 @@ final class PhotoViewerImageCache {
     /// downloads it in full.
     func load(_ item: MediaItem, allowDownload: Bool) async -> NSImage? {
         if let cached = image(for: item.id) { return cached }
+        if let preview = SharedPreviewFiles.previewURL(for: item) {
+            // A photo from the other person's Mac: its preview is all there is.
+            guard let image = NSImage(contentsOf: preview) else { return nil }
+            cache.setObject(image, forKey: item.id as NSString)
+            return image
+        }
         let descriptor = PeopleMediaDescriptor(item)
         let pixelSize = max(item.width, item.height)
         let cgImage = await Task.detached(priority: .userInitiated) {

@@ -14,7 +14,7 @@ enum EventSuggestions {
     @discardableResult
     static func suggest(
         in context: ModelContext,
-        defaults: UserDefaults = TripAssignmentLocks.store,
+        defaults: any DecisionStore = TripAssignmentLocks.store,
         calendar: Calendar = .current,
         now: Date = .now
     ) -> Int {

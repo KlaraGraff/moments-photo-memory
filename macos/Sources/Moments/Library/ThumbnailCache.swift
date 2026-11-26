@@ -87,20 +87,29 @@ struct ThumbnailSource: Sendable, Equatable {
     let id: String
     let photosLocalIdentifier: String?
     let bookmark: Data?
+    /// A photo shared from the other person's Mac has no original here,
+    /// only the preview that came with it.
+    let sharedPreview: URL?
 
-    init(id: String, photosLocalIdentifier: String? = nil, bookmark: Data? = nil) {
+    init(id: String, photosLocalIdentifier: String? = nil, bookmark: Data? = nil, sharedPreview: URL? = nil) {
         self.id = id
         self.photosLocalIdentifier = photosLocalIdentifier
         self.bookmark = bookmark
+        self.sharedPreview = sharedPreview
     }
 
     init(item: MediaItem) {
-        self.init(id: item.id, photosLocalIdentifier: item.photosLocalIdentifier, bookmark: item.originalBookmarkData)
+        self.init(
+            id: item.id,
+            photosLocalIdentifier: item.photosLocalIdentifier,
+            bookmark: item.originalBookmarkData,
+            sharedPreview: SharedPreviewFiles.previewURL(for: item)
+        )
     }
 
     /// Items with a real photo behind them never show the generated picture
     /// for good; a failed read is retried next time.
-    var hasOriginal: Bool { photosLocalIdentifier != nil || bookmark != nil }
+    var hasOriginal: Bool { photosLocalIdentifier != nil || bookmark != nil || sharedPreview != nil }
 }
 
 /// Thumbnails for every screen. Reading, scaling and decoding happen off the
@@ -200,6 +209,9 @@ final class ThumbnailCache {
         }
         if made == nil, let bookmark = source.bookmark {
             made = await fileThumbnail(bookmark: bookmark, maxPixelSize: max(width, height))
+        }
+        if made == nil, let preview = source.sharedPreview, let data = try? Data(contentsOf: preview) {
+            made = decodedImage(data: data, maxPixelSize: max(width, height))
         }
         if let made {
             if let diskURL { writeJPEG(made, to: diskURL) }

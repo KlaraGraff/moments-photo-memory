@@ -29,7 +29,7 @@ final class MomentsUITests: XCTestCase {
         navigateAndCapture(app, prefix: "de-dark-small", settleMap: true)
     }
 
-    func testNoteIsSavedWhenLeavingTheField() {
+    func testMemoryIsSavedWhenLeavingTheField() {
         let app = launch(language: "en")
         let library = element(in: app, identifier: "sidebar.library")
         XCTAssertTrue(library.waitForExistence(timeout: launchTimeout))
@@ -42,28 +42,30 @@ final class MomentsUITests: XCTestCase {
         let photoID = String(photo.identifier.dropFirst("library.photo.".count))
         photo.click()
 
-        // The ruled line under each photo is the note field. Like a caption in
-        // Photos, leaving the field (here: clicking the sidebar) saves it.
-        let note = element(in: app, identifier: "library.note.\(photoID)")
-        XCTAssertTrue(note.waitForExistence(timeout: launchTimeout))
-        let text = "UI smoke note \(UUID().uuidString)"
-        note.click()
-        note.typeText(text)
+        // The ruled line under each photo is your memory. Like a caption in
+        // Photos, leaving the field (here: clicking the sidebar) keeps it.
+        let memory = element(in: app, identifier: "library.memory.\(photoID)")
+        XCTAssertTrue(memory.waitForExistence(timeout: launchTimeout))
+        let text = "UI smoke memory \(UUID().uuidString)"
+        memory.click()
+        memory.typeText(text)
+        capture(app, named: "memory-01-typed-evidence")
+        XCTAssertTrue((memory.value as? String ?? "").contains(text), "The typed words are not in the field: \(String(describing: memory.value))")
 
         for destination in ["sidebar.map", "sidebar.timeline", "sidebar.people", "sidebar.library"] {
             let item = element(in: app, identifier: destination)
             XCTAssertTrue(item.waitForExistence(timeout: launchTimeout), "Missing sidebar item \(destination)")
             item.click()
+            if destination == "sidebar.map" { capture(app, named: "memory-02-left-evidence") }
         }
 
-        XCTAssertTrue(note.waitForExistence(timeout: launchTimeout))
-        let badge = element(in: app, identifier: "library.note.badge.\(photoID)")
-        XCTAssertTrue(badge.waitForExistence(timeout: launchTimeout), "Leaving the field did not save the note")
-        XCTAssertFalse((note.value as? String ?? "").contains(text), "The note line was not cleared after saving")
+        XCTAssertTrue(memory.waitForExistence(timeout: launchTimeout))
+        capture(app, named: "memory-03-back-evidence")
+        XCTAssertTrue((memory.value as? String ?? "").contains(text), "Leaving the field did not keep the memory: \(String(describing: memory.value))")
         capture(app, named: "library-02-memory-persisted")
     }
 
-    func testSavingANoteKeepsTheWordsUnderThePhoto() {
+    func testReturnSavesTheWordsAsTheMemoryUnderThePhoto() {
         let app = launch(language: "en")
         let photo = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
@@ -71,21 +73,24 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
         let photoID = String(photo.identifier.dropFirst("library.photo.".count))
 
-        let note = element(in: app, identifier: "library.note.\(photoID)")
-        XCTAssertTrue(note.waitForExistence(timeout: launchTimeout))
-        note.click()
-        note.typeText("Synthetic note about this spot\r")
+        let memory = element(in: app, identifier: "library.memory.\(photoID)")
+        XCTAssertTrue(memory.waitForExistence(timeout: launchTimeout))
+        memory.click()
+        memory.typeText("Synthetic memory about this spot\r")
 
-        // Return saves: the line clears and a mark appears on the place line.
-        let badge = element(in: app, identifier: "library.note.badge.\(photoID)")
-        XCTAssertTrue(badge.waitForExistence(timeout: launchTimeout), "Return did not save the note")
-        XCTAssertFalse((note.value as? String ?? "").contains("Synthetic note"), "The note line was not cleared after saving")
+        // Return ends typing; the words stay right there as the memory, with
+        // no AI step in between (AI is off by default).
+        XCTAssertTrue((memory.value as? String ?? "").contains("Synthetic memory about this spot"), "Return did not keep the words under the photo")
 
-        // Whatever model is available, the popover keeps the original words.
-        badge.click()
-        let original = app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Synthetic note about this spot", "Synthetic note about this spot")).firstMatch
-        XCTAssertTrue(original.waitForExistence(timeout: launchTimeout), "The popover did not show the original words")
-        capture(app, named: "library-03-note-saved")
+        // The viewer's column shows the same memory.
+        photo.doubleClick()
+        let viewer = element(in: app, identifier: "viewer")
+        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout))
+        let inViewer = viewer.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == %@ AND value CONTAINS %@", "library.memory.\(photoID)", "Synthetic memory about this spot"))
+            .firstMatch
+        XCTAssertTrue(inViewer.waitForExistence(timeout: launchTimeout), "The viewer did not show the memory")
+        capture(app, named: "library-03-memory-saved")
     }
 
     func testClickSelectsSecondClickDeselectsDoubleClickOpensTheViewer() {
@@ -193,9 +198,9 @@ final class MomentsUITests: XCTestCase {
         expectation(for: gone, evaluatedWith: viewer)
         waitForExpectations(timeout: launchTimeout)
 
-        // ⌘− twice: the dense grid has photos only, no note lines.
+        // ⌘− twice: the dense grid has photos only, no memory lines.
         let photoID = String(first.identifier.dropFirst("library.photo.".count))
-        let note = element(in: app, identifier: "library.note.\(photoID)")
+        let note = element(in: app, identifier: "library.memory.\(photoID)")
         XCTAssertTrue(note.exists)
         app.typeKey("-", modifierFlags: .command)
         app.typeKey("-", modifierFlags: .command)
@@ -427,6 +432,28 @@ final class MomentsUITests: XCTestCase {
             add(attachment)
             app.terminate()
         }
+    }
+
+    /// Settings › General › Library shows the automatic backup and the one
+    /// button there is, also at the small window size. The in-memory test
+    /// store has no backups, so the row says so.
+    func testSettingsShowAutomaticBackup() {
+        let app = launch(language: "en", smallWindow: true, extraArguments: ["-moments.settings.tab", "general"])
+        app.typeKey(",", modifierFlags: .command)
+        let status = element(in: app, identifier: "settings.backup-status")
+        XCTAssertTrue(status.waitForExistence(timeout: launchTimeout), "Settings › General has no backup row")
+        let restore = element(in: app, identifier: "settings.backup-restore")
+        XCTAssertTrue(restore.exists, "The backup row has no Restore from Backup button")
+        let window = app.windows.containing(.any, identifier: "settings.backup-status").firstMatch
+        let texts: [String] = window.staticTexts.allElementsBoundByIndex.flatMap { (text: XCUIElement) -> [String] in
+            [text.label, text.value as? String ?? ""]
+        }
+        XCTAssertTrue(texts.contains("No backup yet"), "The backup row reads \(texts)")
+        let attachment = XCTAttachment(screenshot: window.screenshot())
+        attachment.name = "settings-03-backup-evidence"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        app.terminate()
     }
 
     func testFootprintsGlobeOpens() {

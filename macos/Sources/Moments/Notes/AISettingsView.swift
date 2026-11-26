@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// Settings › AI Model: which model organizes notes. The on-device Apple model
-/// is the default; a cloud model is optional and uses the person's own key.
+/// Settings › AI Model: AI is off until the person turns it on; then which
+/// model fixes places from memories. The on-device Apple model is the
+/// default; a cloud model is optional and uses the person's own key.
 struct AISettingsView: View {
+    @AppStorage(AISettings.enabledKey) private var enabled = false
     @AppStorage(AISettings.engineKey) private var engineRaw = AISettings.defaultEngine.rawValue
     @AppStorage(AISettings.providerKey) private var providerRaw = CloudProvider.claude.rawValue
     @AppStorage(AISettings.modelKey) private var model = CloudProvider.claude.defaultModel
@@ -27,6 +29,13 @@ struct AISettingsView: View {
 
     var body: some View {
         Form {
+            Section {
+                Toggle(String(localized: "Let AI fix places from memories"), isOn: $enabled)
+                    .accessibilityIdentifier("settings.ai-enabled")
+            } footer: {
+                Text(String(localized: "Off, your memories are just the words you write and nothing is sent anywhere. On, after you write, AI corrects the photo's place and notes what the place is like. Your words are never changed."))
+            }
+
             Section {
                 Picker(String(localized: "Model for organizing notes"), selection: $engineRaw) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -58,7 +67,7 @@ struct AISettingsView: View {
                 }
                 .font(.callout)
             } footer: {
-                Text(String(localized: "Whichever you choose, the result is written right away. Click the mark next to a photo's place to change or undo it."))
+                Text(String(localized: "Whichever you choose, a corrected place can still be changed by hand in the photo's details."))
             }
 
             Section(String(localized: "Cloud model")) {

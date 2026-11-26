@@ -6,7 +6,7 @@ import SwiftUI
 /// invisible: no Dock icon, no window, no focus change, so a test run never
 /// interrupts whoever is using the Mac. UI tests (-MomentsUITesting or
 /// -MomentsUITestStoreDirectory) are not affected; they need the real window.
-final class UnitTestHostDelegate: NSObject, NSApplicationDelegate {
+final class UnitTestHostDelegate: MomentsAppDelegate {
     static let isUnitTestHost: Bool = {
         let process = ProcessInfo.processInfo
         return process.environment["XCTestConfigurationFilePath"] != nil
@@ -14,17 +14,17 @@ final class UnitTestHostDelegate: NSObject, NSApplicationDelegate {
             && !process.arguments.contains("-MomentsUITestStoreDirectory")
     }()
 
-    func applicationWillFinishLaunching(_ notification: Notification) {
+    // @objc: the delegate conformance is declared on the superclass, so
+    // without it AppKit would not see these methods.
+    @objc func applicationWillFinishLaunching(_ notification: Notification) {
         guard Self.isUnitTestHost else { return }
         NSApp.setActivationPolicy(.prohibited)
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    @objc func applicationDidFinishLaunching(_ notification: Notification) {
         if ProcessInfo.processInfo.arguments.contains("-MomentsUITesting") {
-            // Each UI test starts from the demo store; trip locks and covers
-            // from the test before must not carry over (they live in a test suite).
-            TripAssignmentLocks.store.removeObject(forKey: TripAssignmentLocks.defaultsKey)
-            TripAssignmentLocks.store.removeObject(forKey: TripCoverChoice.defaultsKey)
+            // Each UI test starts from the demo store, and its choices (trip
+            // locks, covers, People answers) live in that in-memory store.
             ensureUITestWindow()
             return
         }

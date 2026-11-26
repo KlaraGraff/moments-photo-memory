@@ -172,7 +172,8 @@ public enum SyncSchema {
                 SyncFieldSpec("width", .int),
                 SyncFieldSpec("height", .int),
                 SyncFieldSpec("isScreenshot", .bool),
-                SyncFieldSpec("title", .string),
+                // No title: for imported photos it is the original file
+                // name, which stays on this Mac.
                 SyncFieldSpec("tripID", .reference, target: .trip),
                 SyncFieldSpec("placeID", .reference, target: .place),
                 SyncFieldSpec("originalContentHash", .string, .immutable),

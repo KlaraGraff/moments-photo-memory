@@ -53,8 +53,9 @@ struct TripsScreen: View {
     @State private var itemByID: [String: MediaItem] = [:]
     /// The last change, with its Undo.
     @State private var notice: TripNotice?
-    /// Covers chosen by hand, by trip id; kept on this Mac.
-    @AppStorage(TripCoverChoice.defaultsKey, store: TripAssignmentLocks.store) private var coverStore = ""
+    /// Covers chosen by hand, by trip id; a library decision. This screen is
+    /// the only place that changes them.
+    @State private var coverStore = TripAssignmentLocks.store.string(forKey: TripCoverChoice.defaultsKey) ?? ""
     @State private var isCreatingTrip = false
     /// Chapters that are not trips, built like trips, by "chapter.<id>".
     @State private var chapterDocs: [String: TimelineTrip] = [:]
@@ -681,6 +682,7 @@ struct TripsScreen: View {
                 var choices = TripCoverChoice.decode(coverStore)
                 choices[tripID] = itemID
                 coverStore = TripCoverChoice.encode(choices)
+                TripAssignmentLocks.store.set(coverStore, forKey: TripCoverChoice.defaultsKey)
             }
         )
     }
@@ -1069,6 +1071,7 @@ private struct TripCoverCard: View {
     let onOpen: () -> Void
     @Environment(\.locale) private var locale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(SharingController.self) private var sharing: SharingController?
     @State private var isHovering = false
     @State private var isPickingCover = false
 
@@ -1096,6 +1099,11 @@ private struct TripCoverCard: View {
         .padding(.vertical, 16)
         .frame(maxWidth: 880, alignment: .leading)
         .background(trip.isUnsorted ? Paper.well.opacity(0.6) : Paper.raised, in: shape)
+        .overlay(alignment: .topTrailing) {
+            if sharing?.isShared(tripID: trip.id) == true {
+                SharedTripBadge().padding(8)
+            }
+        }
         .contentShape(shape)
         .onTapGesture(perform: onOpen)
         .shadow(color: Paper.shadow.opacity(isHovering ? 0.07 : 0.04), radius: 1, y: 1)
@@ -1321,6 +1329,7 @@ private struct TripDetailView: View {
     let actions: TripActions
     let onBack: () -> Void
     @Environment(SelectionModel.self) private var selection
+    @Environment(SharingController.self) private var sharing: SharingController?
     @Environment(\.modelContext) private var modelContext
     @Environment(\.locale) private var locale
 
@@ -1454,6 +1463,11 @@ private struct TripDetailView: View {
                 .help(String(localized: "All chapters"))
                 .keyboardShortcut("[", modifiers: .command)
                 .accessibilityIdentifier("trips.back")
+            }
+            if let model, let sharing, sharing.canOfferSharing {
+                ToolbarItem {
+                    TripShareButton(tripID: model.id, tripName: TripText.name(trip))
+                }
             }
             if let target {
                 ToolbarItem {
@@ -1685,6 +1699,8 @@ struct TripPlaceBlock: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks
     @Environment(\.locale) private var locale
+    @AppStorage(AuthorNames.myNameKey) private var myName = ""
+    @AppStorage(AuthorNames.partnerNameKey) private var partnerName = ""
 
     private let columns = [GridItem(.adaptive(minimum: 128, maximum: 200), spacing: 8, alignment: .top)]
 
@@ -1698,8 +1714,10 @@ struct TripPlaceBlock: View {
 
     private var placeName: String { place.name ?? String(localized: "Unknown place") }
 
-    /// Photo memories written before notes existed stay readable here.
-    private var photoMemories: [TimelineMemorySnippet] { place.items.flatMap(\.memories) }
+    /// Both people's memories on the photos at this place.
+    private var photoMemories: [TimelineMemorySnippet] {
+        place.items.flatMap(\.memories).filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1754,11 +1772,20 @@ struct TripPlaceBlock: View {
 
             if !photoMemories.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
+                    // Once someone else wrote here, each line says whose it is.
+                    let showsNames = photoMemories.contains { !$0.isOwn }
                     ForEach(photoMemories) { memory in
-                        Text(memory.text)
-                            .font(.system(.callout, design: .serif))
-                            .foregroundStyle(Paper.ink)
-                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(memory.text)
+                                .font(.system(.callout, design: .serif))
+                                .foregroundStyle(Paper.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if showsNames {
+                                Text(verbatim: "— \(AuthorNames.label(isOwn: memory.isOwn, myName: myName, partnerName: partnerName))")
+                                    .font(.caption)
+                                    .foregroundStyle(Paper.accent)
+                            }
+                        }
                     }
                 }
                 .padding(.top, 2)

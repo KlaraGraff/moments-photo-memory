@@ -59,7 +59,7 @@ enum PhotoInfoEditing {
     }
 
     /// Moves the photo into another trip, or out of every trip.
-    static func setTrip(_ trip: Trip?, on item: MediaItem, now: Date = .now, defaults: UserDefaults = TripAssignmentLocks.store, logsCorrection: Bool = true) {
+    static func setTrip(_ trip: Trip?, on item: MediaItem, now: Date = .now, defaults: any DecisionStore = TripAssignmentLocks.store, logsCorrection: Bool = true) {
         guard item.trip?.id != trip?.id || item.tripID != trip?.id else { return }
         let log: TripCorrectionSnapshotBuilder? = logsCorrection
             ? (item.modelContext ?? trip?.modelContext).map { (context: ModelContext) -> TripCorrectionSnapshotBuilder in
@@ -88,7 +88,7 @@ enum PhotoInfoEditing {
 
     /// Starts a trip with this photo in it, spanning the photo's day.
     @discardableResult
-    static func moveToNewTrip(named name: String, item: MediaItem, context: ModelContext, now: Date = .now, defaults: UserDefaults = TripAssignmentLocks.store) -> Trip? {
+    static func moveToNewTrip(named name: String, item: MediaItem, context: ModelContext, now: Date = .now, defaults: any DecisionStore = TripAssignmentLocks.store) -> Trip? {
         let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
         let date = item.effectiveCaptureDate

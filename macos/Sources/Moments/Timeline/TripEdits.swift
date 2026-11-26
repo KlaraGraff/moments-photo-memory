@@ -157,12 +157,12 @@ enum TripEdits {
         let now: Date
         let calendar: Calendar
         private(set) var undo: Undo
-        private let defaults: UserDefaults
+        private let defaults: any DecisionStore
         /// A change that hands off to another one (a new trip also sets its
         /// dates) logs only its own action.
         private var correctionLogPaused = false
 
-        init(context: ModelContext, now: Date = .now, calendar: Calendar = .current, defaults: UserDefaults = TripAssignmentLocks.store, continuing undo: Undo = Undo()) {
+        init(context: ModelContext, now: Date = .now, calendar: Calendar = .current, defaults: any DecisionStore = TripAssignmentLocks.store, continuing undo: Undo = Undo()) {
             self.context = context
             self.now = now
             self.calendar = calendar
@@ -253,7 +253,7 @@ enum TripEdits {
 
     /// Puts back the dates, names, photos and memories one change touched.
     @MainActor
-    static func undo(_ undo: Undo, context: ModelContext, defaults: UserDefaults = TripAssignmentLocks.store, now: Date = .now) {
+    static func undo(_ undo: Undo, context: ModelContext, defaults: any DecisionStore = TripAssignmentLocks.store, now: Date = .now) {
         let log = TripCorrectionSnapshotBuilder(context: context)
         // The entry this undo reverses names the trips or chapters it put back.
         let tripIDs: [String] = undo.trips.keys.sorted()

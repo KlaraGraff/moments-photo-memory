@@ -21,7 +21,7 @@ enum ChapterReorganize {
     @MainActor
     static func run(
         context: ModelContext,
-        defaults: UserDefaults = TripAssignmentLocks.store
+        defaults: any DecisionStore = TripAssignmentLocks.store
     ) throws -> Outcome {
         // The same two lists `TripRegrouping.runOnce` reads, so a manual run
         // keeps what an automatic one keeps.

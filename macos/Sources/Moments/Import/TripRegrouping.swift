@@ -29,7 +29,7 @@ enum TripRegrouping {
     /// Regroups once per rules version; later calls with the same version do nothing.
     @MainActor
     @discardableResult
-    static func runOnce(context: ModelContext, defaults: UserDefaults = TripAssignmentLocks.store) throws -> Outcome? {
+    static func runOnce(context: ModelContext, defaults: any DecisionStore = TripAssignmentLocks.store) throws -> Outcome? {
         guard defaults.integer(forKey: versionKey) < currentVersion else { return nil }
         let covered = Set(TripCoverChoice.decode(defaults.string(forKey: TripCoverChoice.defaultsKey) ?? "").keys)
         let outcome = try regroup(context: context, locked: TripAssignmentLocks.lockedIDs(defaults: defaults), covered: covered)

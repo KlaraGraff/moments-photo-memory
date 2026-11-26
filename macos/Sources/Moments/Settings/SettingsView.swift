@@ -20,7 +20,7 @@ struct SettingsView: View {
             AISettingsView()
                 .tabItem { Label(String(localized: "AI Model"), systemImage: "sparkles") }
                 .tag(SettingsTab.aiModel)
-            SharingSettingsView()
+            SharingSettingsView(hasStore: hasStore)
                 .tabItem { Label(String(localized: "Sharing"), systemImage: "person.2") }
                 .tag(SettingsTab.sharing)
         }
@@ -70,8 +70,8 @@ struct GeneralSettingsView: View {
 
             Section(String(localized: "Library")) {
                 folderRow(String(localized: "Library location"), url: ImportSettings.libraryFolder, identifier: "settings.library-folder")
-                folderRow(String(localized: "Backups"), url: ImportSettings.backupsFolder, identifier: "settings.backups-folder")
-                Text(String(localized: "Your original photos stay where they are; the library keeps notes, people and places. Backups are made when the library can't be opened."))
+                BackupSettingsRow()
+                Text(String(localized: "Your original photos stay where they are; the library keeps memories, people and places. It is backed up every day, and the last 14 days are kept."))
                     .font(.caption)
                     .foregroundStyle(Paper.muted)
             }
@@ -194,27 +194,12 @@ struct CorrectionLogSettingsSection: View {
     }
 }
 
-/// Sharing with a partner is not built yet; this tab says what it will hold.
+/// Settings > Sharing; the page itself lives with the rest of sharing.
 struct SharingSettingsView: View {
+    var hasStore = true
+
     var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "person.2")
-                .font(.system(size: 30))
-                .foregroundStyle(Paper.accent)
-            Text(String(localized: "Sharing is coming"))
-                .font(.system(.title3, design: .serif).weight(.medium))
-                .foregroundStyle(Paper.ink)
-            Text(String(localized: "Share your library with your partner, see who is connected and choose which changes notify you."))
-                .font(.callout)
-                .foregroundStyle(Paper.muted)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
-        }
-        .padding(.horizontal, 40)
-        .padding(.top, 48)
-        .frame(width: SettingsLayout.width, height: SettingsLayout.height, alignment: .top)
-        .background(Paper.canvas)
-        .accessibilityIdentifier("settings.sharing")
+        SharingSettingsPage(hasStore: hasStore)
     }
 }
 

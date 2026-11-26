@@ -35,7 +35,6 @@ enum SyncFixtures {
             "width": .int(4000),
             "height": .int(3000),
             "isScreenshot": .bool(false),
-            "title": .string(""),
             "localDayKey": .string(day),
             "updatedAt": .date(t0)
         ])

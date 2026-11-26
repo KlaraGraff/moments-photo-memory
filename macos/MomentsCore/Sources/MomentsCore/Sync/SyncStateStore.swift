@@ -20,15 +20,35 @@ public enum SyncDatabaseScope: String, Sendable, Codable, CaseIterable {
 /// Every write goes to a temporary file first and is then renamed into
 /// place, so a crash leaves the old file or the new one, never half of one.
 public final class SyncStateStore {
+    /// Which side of the share this account is on.
+    public enum Role: String, Equatable, Sendable, Codable {
+        /// Made the share; syncs the private database.
+        case owner
+        /// Accepted the other person's share; syncs the shared database.
+        case participant
+    }
+
     public struct Settings: Equatable, Sendable, Codable {
         public var scope: SharingScope
         public var partnerAccountID: String?
         public var zoneName: String
+        public var role: Role?
+        /// The zone owner's record name, which the participant needs to
+        /// address the zone in the shared database.
+        public var zoneOwnerName: String?
 
-        public init(scope: SharingScope = .selectedTrips([]), partnerAccountID: String? = nil, zoneName: String = SyncStateStore.defaultZoneName) {
+        public init(
+            scope: SharingScope = .selectedTrips([]),
+            partnerAccountID: String? = nil,
+            zoneName: String = SyncStateStore.defaultZoneName,
+            role: Role? = nil,
+            zoneOwnerName: String? = nil
+        ) {
             self.scope = scope
             self.partnerAccountID = partnerAccountID
             self.zoneName = zoneName
+            self.role = role
+            self.zoneOwnerName = zoneOwnerName
         }
     }
 

@@ -287,6 +287,12 @@ final class SyncStateStoreTests: XCTestCase {
         XCTAssertNil(second.engineState(for: .sharedDatabase))
         XCTAssertEqual(second.loadPending(), queue)
         XCTAssertEqual(second.loadSettings().scope, .selectedTrips(["t1"]))
+        XCTAssertNil(second.loadSettings().role)
+        var settings: SyncStateStore.Settings = second.loadSettings()
+        settings.role = .participant
+        settings.zoneOwnerName = SyncFixtures.ownerAccount
+        try second.saveSettings(settings)
+        XCTAssertEqual(try SyncStateStore(folder: folder).loadSettings(), settings)
         XCTAssertEqual(second.base(for: trip.key), trip)
         XCTAssertEqual(second.baseEntry(for: trip.key)?.systemFields, Data("tag-1".utf8))
         XCTAssertEqual(second.key(type: .trip, hashedRecordName: hashed), unsafe.key)

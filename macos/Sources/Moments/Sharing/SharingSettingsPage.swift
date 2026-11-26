@@ -3,27 +3,50 @@ import CloudKit
 import SwiftData
 import SwiftUI
 
-/// Settings > Sharing: invite the other person, choose which trips are
-/// shared, see how syncing is going, and stop sharing. Follows the approved
-/// mock-up (handoff/sharing-mock-2026-11-26.html).
+/// Settings > Sharing as a page of its own: the sections below in a Form.
 struct SharingSettingsPage: View {
+    /// Without a library there is nothing to share (and no store to query).
+    var hasStore = true
+
+    var body: some View {
+        Form {
+            SharingSettingsSections(hasStore: hasStore)
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .frame(width: SettingsLayout.width, height: SettingsLayout.height)
+        .background(Paper.canvas)
+        .tint(Paper.accent)
+        .accessibilityIdentifier("settings.sharing")
+    }
+}
+
+/// Sharing in settings: invite the other person, choose which trips are
+/// shared, see how syncing is going, and stop sharing. Follows the approved
+/// mock-up (handoff/sharing-mock-2026-11-26.html). Only sections, so it can
+/// sit in any settings Form.
+struct SharingSettingsSections: View {
     @Environment(SharingController.self) private var sharing
     /// Without a library there is nothing to share (and no store to query).
     var hasStore = true
 
     var body: some View {
-        Group {
-            switch hasStore ? sharing.phase : .unavailable {
-            case .unavailable:
-                SharingMessage(
+        switch hasStore ? sharing.phase : .unavailable {
+        case .unavailable:
+            Section(String(localized: "Sharing")) {
+                SharingMessageRow(
                     symbol: "icloud.slash",
                     title: String(localized: "Sharing isn't available in this copy"),
                     detail: String(localized: "This copy of Moments is not signed for iCloud. Install the signed version to share with your partner.")
                 )
-            case .checking:
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .signedOut:
-                SharingMessage(
+            }
+        case .checking:
+            Section(String(localized: "Sharing")) {
+                ProgressView().controlSize(.small).frame(maxWidth: .infinity)
+            }
+        case .signedOut:
+            Section(String(localized: "Sharing")) {
+                SharingMessageRow(
                     symbol: "icloud",
                     title: String(localized: "Sign in to iCloud first"),
                     detail: String(localized: "Shared memories are kept in your own iCloud, and only the two of you can see them. Sign in under System Settings > Apple Account, then come back here."),
@@ -33,51 +56,45 @@ struct SharingSettingsPage: View {
                         }
                     })
                 )
-            case .notShared, .invited, .shared:
-                // Only reached with a store: the controller is configured
-                // with the app's model container.
-                SharingLibraryPage()
             }
+        case .notShared, .invited, .shared:
+            // Only reached with a store: the controller is configured with
+            // the app's model container.
+            SharingLibrarySections()
         }
-        .frame(width: SettingsLayout.width, height: SettingsLayout.height)
-        .background(Paper.canvas)
-        .tint(Paper.accent)
-        .accessibilityIdentifier("settings.sharing")
     }
 }
 
-/// A centered message for the states without a library page.
-private struct SharingMessage: View {
+/// One row with an icon, a short title and an explanation.
+private struct SharingMessageRow: View {
     let symbol: String
     let title: String
     let detail: String
     var action: (String, () -> Void)?
 
     var body: some View {
-        VStack(spacing: 10) {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: symbol)
-                .font(.system(size: 30))
+                .font(.system(size: 20))
                 .foregroundStyle(Paper.accent)
-            Text(title)
-                .font(.system(.title3, design: .serif).weight(.medium))
-                .foregroundStyle(Paper.ink)
-            Text(detail)
-                .font(.callout)
-                .foregroundStyle(Paper.muted)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 380)
-            if let action {
-                Button(action.0, action: action.1).padding(.top, 6)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).foregroundStyle(Paper.ink)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(Paper.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let action {
+                    Button(action.0, action: action.1).padding(.top, 4)
+                }
             }
         }
-        .padding(.horizontal, 40)
-        .padding(.top, 48)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.vertical, 2)
     }
 }
 
-/// The pages that list trips: invite, owner and partner.
-private struct SharingLibraryPage: View {
+/// The sections that list trips: invite, owner and partner.
+private struct SharingLibrarySections: View {
     @Environment(SharingController.self) private var sharing
     @Query(sort: \Trip.startDate, order: .reverse) private var trips: [Trip]
     @State private var chosen: Set<String> = []
@@ -89,49 +106,53 @@ private struct SharingLibraryPage: View {
     @State private var anchor = SharingPickerAnchor.Holder()
 
     var body: some View {
-        Group {
-            switch sharing.phase {
-            case .notShared:
-                invitePage
-            case .invited:
-                ownerPage(waiting: true)
-            case .shared(let isOwner):
-                if isOwner { ownerPage(waiting: false) } else { partnerPage }
-            default:
-                EmptyView()
+        switch sharing.phase {
+        case .notShared:
+            invitePage
+        case .invited:
+            ownerPage(waiting: true)
+        case .shared(let isOwner):
+            if isOwner { ownerPage(waiting: false) } else { partnerPage }
+        default:
+            EmptyView()
+        }
+    }
+
+    /// Sheets and confirmations hang off the first row, so they are attached
+    /// once however the sections are laid out.
+    private func withDialogs<Content: View>(_ content: Content) -> some View {
+        content
+            .onAppear { chosen.formUnion(sharing.preselectedTripIDs) }
+            .sheet(isPresented: $showingAddTrips) { addTripsSheet }
+            .confirmationDialog(unshareTitle, isPresented: Binding(get: { tripToUnshare != nil }, set: { if !$0 { tripToUnshare = nil } })) {
+                Button(String(localized: "Stop sharing this trip"), role: .destructive) {
+                    if let trip = tripToUnshare { sharing.setTrip(trip.id, shared: false) }
+                    tripToUnshare = nil
+                }
+            } message: {
+                Text(String(localized: "Your partner will no longer see this trip's photos and memories. What your partner wrote stays on this Mac, and nothing of yours is deleted. You can share it again later."))
             }
-        }
-        .onAppear { chosen.formUnion(sharing.preselectedTripIDs) }
-        .sheet(isPresented: $showingAddTrips) { addTripsSheet }
-        .confirmationDialog(unshareTitle, isPresented: Binding(get: { tripToUnshare != nil }, set: { if !$0 { tripToUnshare = nil } })) {
-            Button(String(localized: "Stop sharing this trip"), role: .destructive) {
-                if let trip = tripToUnshare { sharing.setTrip(trip.id, shared: false) }
-                tripToUnshare = nil
+            .confirmationDialog(String(localized: "Stop sharing with your partner?"), isPresented: $confirmStop) {
+                Button(String(localized: "Stop sharing"), role: .destructive) { Task { await sharing.stopSharing() } }
+            } message: {
+                Text(String(localized: "Your partner is removed and every shared trip disappears on their Mac. What they wrote stays on this Mac, and your photos and memories are not deleted. To record together again, send a new invitation."))
             }
-        } message: {
-            Text(String(localized: "Your partner will no longer see this trip's photos and memories. What your partner wrote stays on this Mac, and nothing of yours is deleted. You can share it again later."))
-        }
-        .confirmationDialog(String(localized: "Stop sharing with your partner?"), isPresented: $confirmStop) {
-            Button(String(localized: "Stop sharing"), role: .destructive) { Task { await sharing.stopSharing() } }
-        } message: {
-            Text(String(localized: "Your partner is removed and every shared trip disappears on their Mac. What they wrote stays on this Mac, and your photos and memories are not deleted. To record together again, send a new invitation."))
-        }
-        .confirmationDialog(String(localized: "Leave the share?"), isPresented: $confirmLeave) {
-            Button(String(localized: "Leave"), role: .destructive) { Task { await sharing.leave() } }
-        } message: {
-            Text(String(localized: "The shared trips disappear from this Mac. What you wrote has already been synced and stays with your partner. To join again, ask for a new invitation."))
-        }
+            .confirmationDialog(String(localized: "Leave the share?"), isPresented: $confirmLeave) {
+                Button(String(localized: "Leave"), role: .destructive) { Task { await sharing.leave() } }
+            } message: {
+                Text(String(localized: "The shared trips disappear from this Mac. What you wrote has already been synced and stays with your partner. To join again, ask for a new invitation."))
+            }
     }
 
     // MARK: Pages
 
     private var invitePage: some View {
-        Form {
+        Group {
             Section {
-                Text(String(localized: "Choose the trips to share, then invite your partner. Once they join, they can see these trips' photos and memories and keep writing. Trips you don't choose stay on this Mac. Originals are never uploaded, only a smaller preview."))
+                withDialogs(Text(String(localized: "Choose the trips to share, then invite your partner. Once they join, they can see these trips' photos and memories and keep writing. Trips you don't choose stay on this Mac. Originals are never uploaded, only a smaller preview."))
                     .font(.callout)
                     .foregroundStyle(Paper.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .fixedSize(horizontal: false, vertical: true))
             } header: {
                 Text(String(localized: "Record together"))
             }
@@ -151,14 +172,12 @@ private struct SharingLibraryPage: View {
             }
             errorSection
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
     }
 
     private func ownerPage(waiting: Bool) -> some View {
-        Form {
+        Group {
             Section(String(localized: "Recording together with")) {
-                HStack(spacing: 10) {
+                withDialogs(HStack(spacing: 10) {
                     avatar(waiting ? "?" : String(partnerName.prefix(1)), color: Paper.partner)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(waiting ? String(localized: "Invitation sent") : partnerName)
@@ -170,7 +189,7 @@ private struct SharingLibraryPage: View {
                     }
                     Spacer()
                     pill(waiting ? String(localized: "Waiting") : String(localized: "Joined"), positive: !waiting)
-                }
+                })
                 if waiting {
                     HStack(spacing: 14) {
                         inviteButton(title: String(localized: "Send the invitation again…"))
@@ -207,14 +226,12 @@ private struct SharingLibraryPage: View {
             }
             errorSection
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
     }
 
     private var partnerPage: some View {
-        Form {
+        Group {
             Section(String(localized: "Recording together with")) {
-                HStack(spacing: 10) {
+                withDialogs(HStack(spacing: 10) {
                     avatar(String(partnerName.prefix(1)), color: Paper.accent)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(String(localized: "\(partnerName) shares \(receivedTrips.count) trips with you"))
@@ -225,7 +242,7 @@ private struct SharingLibraryPage: View {
                     }
                     Spacer()
                     pill(String(localized: "Joined"), positive: true)
-                }
+                })
             }
             syncSection(allowSyncNow: false)
             Section {
@@ -249,8 +266,6 @@ private struct SharingLibraryPage: View {
             }
             errorSection
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
     }
 
     private var addTripsSheet: some View {

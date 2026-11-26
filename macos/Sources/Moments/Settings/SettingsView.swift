@@ -9,7 +9,7 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            SharingSettingsSection()
+            SharingSettingsSections(hasStore: hasStore)
             if hasStore { BackupSettingsSection() }
         }
         .formStyle(.grouped)
@@ -33,25 +33,6 @@ enum SettingsTab: String {
     case general
     case imports
     case aiModel
-    case sharing
 
     static func select(_ tab: SettingsTab) {}
-}
-
-/// Sharing with a partner is not built yet; this says what it will hold.
-struct SharingSettingsSection: View {
-    var body: some View {
-        Section(String(localized: "Sharing")) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(String(localized: "Sharing is coming"))
-                    .foregroundStyle(Paper.ink)
-                Text(String(localized: "Share your library with your partner, see who is connected and choose which changes notify you."))
-                    .font(.caption)
-                    .foregroundStyle(Paper.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("settings.sharing")
-        }
-    }
 }

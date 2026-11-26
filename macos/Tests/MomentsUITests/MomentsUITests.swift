@@ -454,10 +454,13 @@ final class MomentsUITests: XCTestCase {
             print("SIDEBAR-GEAR frame=\(gear.frame) hittable=\(gear.isHittable) window=\(app.windows.firstMatch.frame)")
         }
         XCTAssertGreaterThan(app.windows.count, windowsBefore, "The settings window did not open")
-        XCTAssertTrue(element(in: app, identifier: "settings.sharing").waitForExistence(timeout: launchTimeout), "Settings has no sharing section")
+        // Sharing and the backup sit on the same page.
+        XCTAssertTrue(element(in: app, identifier: "settings.backup-status").waitForExistence(timeout: launchTimeout), "Settings has no backup section")
+        let window = app.windows.containing(.any, identifier: "settings.backup-status").firstMatch
+        let aboutSharing = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Sharing", "Sharing")
+        XCTAssertTrue(window.staticTexts.matching(aboutSharing).firstMatch.waitForExistence(timeout: launchTimeout), "Settings has no sharing section")
         XCTAssertFalse(element(in: app, identifier: "settings.language").exists, "The language picker is back in Settings")
         XCTAssertFalse(element(in: app, identifier: "settings.auto-organize").exists, "The organize switch is back in Settings")
-        let window = app.windows.containing(.any, identifier: "settings.sharing").firstMatch
         XCTAssertEqual(window.toolbars.buttons.count, 0, "Settings has tabs again")
         let attachment = XCTAttachment(screenshot: window.screenshot())
         attachment.name = "settings-01-one-page-evidence"

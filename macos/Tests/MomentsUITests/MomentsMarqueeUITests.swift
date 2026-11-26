@@ -111,6 +111,19 @@ final class MomentsMarqueeUITests: XCTestCase {
         probeHold(count: "600", smallWindow: true)
     }
 
+    /// Temporary: the hanging drag again, since it does not hang every time.
+    func testProbeHoldingAtTheBottomEdgeAgain1() {
+        probeHold(count: "26", smallWindow: true)
+    }
+
+    func testProbeHoldingAtTheBottomEdgeAgain2() {
+        probeHold(count: "26", smallWindow: true)
+    }
+
+    func testProbeHoldingAtTheBottomEdgeAgain3() {
+        probeHold(count: "26", smallWindow: true)
+    }
+
     private func probeHold(count: String, smallWindow: Bool) {
         let folder: String? = ProcessInfo.processInfo.environment["MOMENTS_MARQUEE_DIR"]
             .flatMap { (value: String) -> String? in value.hasPrefix("/") ? value : nil }

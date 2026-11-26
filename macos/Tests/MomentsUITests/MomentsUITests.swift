@@ -372,6 +372,27 @@ final class MomentsUITests: XCTestCase {
         element(in: app, identifier: "library.scope.close").click()
         XCTAssertTrue(element(in: app, identifier: "library.person.Robin").waitForExistence(timeout: launchTimeout), "The named group did not join the row of faces")
         XCTAssertTrue(unnamed.waitForNonExistence(timeout: launchTimeout), "The group still asks for a name")
+
+        // A name someone else has: the app asks before joining the two, and
+        // then shows both people's photos as one person's.
+        alex.click()
+        XCTAssertTrue(name.waitForExistence(timeout: launchTimeout), "Alex's heading has no name field")
+        XCTAssertEqual(libraryPhotoCount(app), 2)
+        name.click()
+        name.typeKey("a", modifierFlags: .command)
+        name.typeText("Robin\r")
+        let merge = app.buttons["Merge"].firstMatch
+        XCTAssertTrue(merge.waitForExistence(timeout: launchTimeout), "Typing another person's name did not ask before merging")
+        XCTAssertEqual(libraryPhotoCount(app), 2, "The two people were joined before the question was answered")
+        capture(app, named: "\(prefix)-04-merge-question-evidence")
+        merge.click()
+        XCTAssertTrue(merge.waitForNonExistence(timeout: launchTimeout))
+        let joined: Int = libraryPhotoCount(app)
+        XCTAssertEqual(joined, 7, "After the merge the heading should show both people's photos: Alex's two and the group's five")
+        capture(app, named: "\(prefix)-05-merged-evidence")
+        element(in: app, identifier: "library.scope.close").click()
+        XCTAssertTrue(alex.waitForNonExistence(timeout: launchTimeout), "Alex is still in the row of faces after joining Robin")
+        XCTAssertTrue(element(in: app, identifier: "library.person.Robin").waitForExistence(timeout: launchTimeout), "Robin left the row of faces")
     }
 
     /// The search field finds people by name, as it finds places and trips.
@@ -441,7 +462,7 @@ final class MomentsUITests: XCTestCase {
     }
 
     /// Settings are reachable from the sidebar, not only via ⌘,, and are one
-    /// page: no tabs, no language picker, no AI model.
+    /// page: no tabs and no language picker; AI organizing is rows of it.
     func testSidebarOpensSettingsAsOnePage() {
         let app = launch(language: "en")
         let gear = element(in: app, identifier: "sidebar.settings")

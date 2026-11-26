@@ -1120,7 +1120,6 @@ private struct LibraryPhotoCell: View {
         // trip heading scrolling in under a held rubber band sent SwiftUI's
         // layout round and round and the app stopped answering.
         .modifier(LibraryPhotoMenu(item: item, state: state, stackCount: stackCount, open: open))
-        .onDrag { NSItemProvider(object: item.id as NSString) }
     }
 
     @ViewBuilder

@@ -42,8 +42,8 @@ struct MapScope: Equatable {
 /// Shared cross-screen state, injected once with `.environment(_:)` on the
 /// window and read with `@Environment(SelectionModel.self)`.
 ///
-/// - Library owns `visibleItemIDs` (the result of its filters) and writes it
-///   whenever filters change; the Map and Timeline only read it.
+/// - Library owns `visibleItemIDs` (what its search or scope leaves) and
+///   writes it whenever they change; it trims the selection to them.
 /// - Any screen may change the selection; `focusedItemID` is the one item the
 ///   other screens should reveal (fly the map to it, scroll to it).
 @MainActor

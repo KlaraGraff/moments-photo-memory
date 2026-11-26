@@ -18512,6 +18512,50 @@
           }
         }
       }
+    },
+    "Rename this place for every photo taken here. Return saves." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Benennt diesen Ort für alle hier aufgenommenen Fotos um. Der Zeilenschalter sichert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rename this place for every photo taken here. Return saves."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "给这个地点改名，在这里拍的照片都会跟着改。按回车保存。"
+          }
+        }
+      }
+    },
+    "Stop ignoring" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht mehr ignorieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop ignoring"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不再忽略"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

@@ -69,7 +69,7 @@ struct PhotoInfoPanel: View {
                     }
                 }
                 row(String(localized: "Trip")) { tripField }
-                if !visibleFaces.isEmpty {
+                if !visibleFaces.isEmpty || !ignoredFaces.isEmpty {
                     row(String(localized: "People")) { peopleList }
                 }
                 row(String(localized: "Memory")) {
@@ -293,6 +293,15 @@ struct PhotoInfoPanel: View {
         faces.filter { face in face.personID.map { !hiddenPersonIDs.contains($0) } ?? true }
     }
 
+    /// Faces of groups the person chose to ignore. They are listed last, so
+    /// that choice can be taken back from any photo the face is in.
+    private var ignoredFaces: [FaceObservation] {
+        let ignoredIDs: Set<String> = Set(PeopleStoreActions.ignoredPeople(people).map { (person: Person) -> String in person.id })
+        return faces.filter { (face: FaceObservation) -> Bool in
+            face.personID.map { (id: String) -> Bool in ignoredIDs.contains(id) } ?? false
+        }
+    }
+
     private var namedPeople: [Person] {
         people
             .filter { !$0.hidden && $0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
@@ -344,7 +353,35 @@ struct PhotoInfoPanel: View {
                     }
                 }
             }
+            ForEach(ignoredFaces, id: \.id) { face in
+                HStack(spacing: 8) {
+                    FaceCropView(data: face.cropData, cacheKey: face.id, size: 30)
+                        .opacity(0.55)
+                    ignoredMenu(face)
+                }
+            }
         }
+    }
+
+    /// An ignored face reads "Ignored"; its one choice brings the whole group
+    /// back as faces nobody has named yet.
+    private func ignoredMenu(_ face: FaceObservation) -> some View {
+        Menu {
+            Button(String(localized: "Stop ignoring")) { stopIgnoring(face) }
+        } label: {
+            InlineMenuLabel(text: String(localized: "Ignored"), isPlaceholder: true)
+        }
+        .inlineMenuStyle()
+        .accessibilityIdentifier("viewer.face.ignored.\(face.id)")
+    }
+
+    private func stopIgnoring(_ face: FaceObservation) {
+        guard let personID = face.personID else { return }
+        let observations: [FaceObservation] = (try? modelContext.fetch(FetchDescriptor<FaceObservation>())) ?? []
+        PeopleStoreActions.restoreIgnored(personID: personID, observations: observations, context: modelContext)
+        save()
+        // The released faces are grouped again by the next scan.
+        NotificationCenter.default.post(name: .momentsPeopleScanRequested, object: nil)
     }
 
     private func faceMenu(_ face: FaceObservation) -> some View {

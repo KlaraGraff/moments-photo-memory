@@ -243,8 +243,9 @@ struct LibraryPeopleStrip: View {
 
 /// The row over the photos while the Library shows only some of them: whose
 /// or where they are, how many, a small map of them, and the way back to
-/// every photo. A person's or a place's name is typed right here; a name
-/// another one already has joins the two.
+/// every photo. A person's or a place's name is typed right here. A name
+/// another place already has joins the two places; a name another person
+/// already has asks first, since two people can share a name.
 struct LibraryScopeHeading: View {
     let scope: LibraryScope
     let photoCount: Int
@@ -254,7 +255,16 @@ struct LibraryScopeHeading: View {
     @Query(sort: \Person.name) private var people: [Person]
     @State private var nameText = ""
     @State private var stops: [TripRouteStop] = []
+    @State private var pendingMerge: PendingMerge?
     @FocusState private var isNaming: Bool
+
+    /// A typed name that another person already has, waiting for the answer
+    /// to "merge or keep separate?".
+    private struct PendingMerge: Equatable {
+        let name: String
+        let targetID: String
+        let targetName: String
+    }
 
     private var isPerson: Bool { scope.personID != nil || scope.clusterID != nil }
     private var isPlace: Bool { scope.placeName != nil }
@@ -300,7 +310,7 @@ struct LibraryScopeHeading: View {
                     .onChange(of: isNaming) { _, focused in
                         if !focused { commitPlaceName() }
                     }
-                    .help(String(localized: "Type a place name. Return saves; empty goes back to the place found when importing."))
+                    .help(String(localized: "Rename this place for every photo taken here. Return saves."))
                     .accessibilityIdentifier("library.scope.place")
             } else {
                 Text(scope.title)
@@ -341,6 +351,19 @@ struct LibraryScopeHeading: View {
         .padding(.bottom, 4)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("library.scope")
+        .alert(
+            String(format: String(localized: "Merge with existing %@?"), pendingMerge?.targetName ?? ""),
+            isPresented: Binding(get: { pendingMerge != nil }, set: { if !$0 { pendingMerge = nil } }),
+            presenting: pendingMerge
+        ) { pending in
+            Button(String(localized: "Merge")) { resolve(pending, merge: true) }
+                .keyboardShortcut(.defaultAction)
+            Button(String(localized: "Keep separate")) { resolve(pending, merge: false) }
+            Button(String(localized: "Cancel"), role: .cancel) {
+                pendingMerge = nil
+                resetName()
+            }
+        }
         .task(id: scope) {
             nameText = scope.personID != nil || scope.placeName != nil ? scope.title : ""
             let items: [MediaItem] = scope.itemIDs.compactMap { (id: String) -> MediaItem? in store.itemsByID[id] }
@@ -359,38 +382,84 @@ struct LibraryScopeHeading: View {
     }
 
     /// Typing a name: an unnamed group becomes that person; a person takes
-    /// the new name. A name another person already has joins the two, so
-    /// "merge" is never a separate step.
+    /// the new name. A name another person already has asks whether the two
+    /// are the same person before anything is joined.
     private func commitName() {
         let value: String = nameText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
+        // The question is on screen: the field losing focus to it is not a
+        // second answer.
+        guard !value.isEmpty, pendingMerge == nil else { return }
         if let personID = scope.personID {
             guard let person = people.first(where: { (person: Person) -> Bool in person.id == personID }),
                   person.name != value else { return }
-            var shownID: String = personID
             if let target = PeopleStoreActions.mergeCandidate(forName: value, people: people, excluding: personID) {
-                PeopleStoreActions.merge(sourceID: personID, into: target.id, people: people, observations: store.faces, context: modelContext)
-                shownID = target.id
-            } else {
-                person.name = value
-                person.updatedAt = .now
+                pendingMerge = PendingMerge(name: value, targetID: target.id, targetName: target.name ?? value)
+                return
             }
-            try? modelContext.save()
-            selection.libraryScope = LibraryScope(title: value, itemIDs: scope.itemIDs, personID: shownID)
-        } else if let clusterID = scope.clusterID {
-            let group: [FaceObservation] = faces
-            guard !group.isEmpty else { return }
-            let target: Person? = PeopleStoreActions.mergeCandidate(forName: value, people: people)
-            let shownID: String? = PeopleStoreActions.name(
-                faces: group,
-                as: value,
-                mergingInto: target,
-                keepSeparate: false,
-                people: people,
-                observations: store.faces,
-                context: modelContext
-            )
-            try? modelContext.save()
+            rename(person, to: value, keepSeparate: false)
+        } else if scope.clusterID != nil {
+            if let target = PeopleStoreActions.mergeCandidate(forName: value, people: people) {
+                pendingMerge = PendingMerge(name: value, targetID: target.id, targetName: target.name ?? value)
+                return
+            }
+            nameGroup(as: value, mergingInto: nil, keepSeparate: false)
+        }
+    }
+
+    /// The answer to "Merge with existing …?".
+    private func resolve(_ pending: PendingMerge, merge: Bool) {
+        pendingMerge = nil
+        let target: Person? = merge
+            ? people.first(where: { (person: Person) -> Bool in person.id == pending.targetID && !person.hidden })
+            : nil
+        // The other person went away while the question was up.
+        guard !merge || target != nil else {
+            resetName()
+            return
+        }
+        if let personID = scope.personID {
+            guard let person = people.first(where: { (person: Person) -> Bool in person.id == personID }) else { return }
+            if let target {
+                let shownName: String = target.name ?? pending.name
+                PeopleStoreActions.merge(sourceID: personID, into: target.id, people: people, observations: store.faces, context: modelContext)
+                try? modelContext.save()
+                // Both people's photos, now one person's.
+                PersonClue.showPhotos(ofPerson: target.id, name: shownName, store: store, selection: selection)
+            } else {
+                rename(person, to: pending.name, keepSeparate: true)
+            }
+        } else if scope.clusterID != nil {
+            nameGroup(as: pending.name, mergingInto: target, keepSeparate: !merge)
+        }
+    }
+
+    private func rename(_ person: Person, to value: String, keepSeparate: Bool) {
+        person.name = value
+        person.updatedAt = .now
+        // Otherwise a later naming would offer to fold the two together again.
+        if keepSeparate { PeopleStoreActions.setKeepSeparate(person.id, true) }
+        try? modelContext.save()
+        selection.libraryScope = LibraryScope(title: value, itemIDs: scope.itemIDs, personID: person.id)
+    }
+
+    private func nameGroup(as value: String, mergingInto target: Person?, keepSeparate: Bool) {
+        guard let clusterID = scope.clusterID else { return }
+        let group: [FaceObservation] = faces
+        guard !group.isEmpty else { return }
+        let shownID: String? = PeopleStoreActions.name(
+            faces: group,
+            as: value,
+            mergingInto: target,
+            keepSeparate: keepSeparate,
+            people: people,
+            observations: store.faces,
+            context: modelContext
+        )
+        try? modelContext.save()
+        if let target, let shownID {
+            // Joined someone: their photos and these, together.
+            PersonClue.showPhotos(ofPerson: shownID, name: target.name ?? value, store: store, selection: selection)
+        } else {
             selection.libraryScope = LibraryScope(
                 title: value,
                 itemIDs: scope.itemIDs,
@@ -398,6 +467,11 @@ struct LibraryScopeHeading: View {
                 clusterID: shownID == nil ? clusterID : nil
             )
         }
+    }
+
+    /// Back to the name the heading had before typing.
+    private func resetName() {
+        nameText = scope.personID != nil ? scope.title : ""
     }
 
     /// Typing over a place's name renames the place for every photo taken

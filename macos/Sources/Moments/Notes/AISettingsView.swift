@@ -84,7 +84,7 @@ struct AISettingsSections: View {
                         .accessibilityIdentifier("settings.ai-model")
                     SecureField(String(localized: "API key"), text: Binding(
                         get: { apiKey },
-                        set: { apiKey = $0; keyEdited = true; fieldsEdited = true }
+                        set: { apiKey = $0; keyEdited = true; markEdited() }
                     ))
                     .onSubmit { storeKey() }
                     .accessibilityIdentifier("settings.ai-key")
@@ -98,7 +98,14 @@ struct AISettingsSections: View {
     }
 
     private func edited(_ binding: Binding<String>) -> Binding<String> {
-        Binding(get: { binding.wrappedValue }, set: { binding.wrappedValue = $0; fieldsEdited = true })
+        Binding(get: { binding.wrappedValue }, set: { binding.wrappedValue = $0; markEdited() })
+    }
+
+    /// What the person types here is the custom model from now on, even if
+    /// an old Anthropic setup could not be moved over yet.
+    private func markEdited() {
+        fieldsEdited = true
+        UserDefaults.standard.set(CloudProvider.openAICompatible.rawValue, forKey: AISettings.providerKey)
     }
 
     private var footer: String {

@@ -86,6 +86,7 @@ final class LibraryMarquee {
     // MARK: Photo frames
 
     func report(_ id: String, frame: CGRect) {
+        marqueeCount(8)
         frames[id] = Frame(rect: frame, layout: layout)
         framesChanged = true
     }
@@ -94,6 +95,7 @@ final class LibraryMarquee {
     /// reports no frame, so its last one counts again; if it moved, `report`
     /// follows with the new one.
     func appeared(_ id: String) {
+        marqueeCount(13)
         live[id, default: 0] += 1
         if frames[id]?.layout != layout {
             frames[id]?.layout = layout
@@ -102,6 +104,7 @@ final class LibraryMarquee {
     }
 
     func disappeared(_ id: String) {
+        marqueeCount(14)
         let count = (live[id] ?? 0) - 1
         live[id] = count > 0 ? count : nil
     }
@@ -110,6 +113,7 @@ final class LibraryMarquee {
     /// not show may now be somewhere else, so their frames stop counting
     /// until they report again. Shown ones report if they moved.
     func layoutChanged() {
+        marqueeCount(9)
         layout += 1
         for id in live.keys {
             frames[id]?.layout = layout
@@ -122,6 +126,7 @@ final class LibraryMarquee {
     /// Called for every change of the background's drag gesture, from the
     /// mouse-down on.
     func dragChanged(_ value: DragGesture.Value, selection: SelectionModel, order: @escaping () -> [String]) {
+        marqueeCount(11)
         if press == nil, endedEarlyStart == value.startLocation {
             // Late events of a press a display frame already ended. Starting
             // again here made a Command-drag flip its photos twice. A new
@@ -273,6 +278,8 @@ final class LibraryMarquee {
         lastTick = now
         #if DEBUG
         MarqueeProbe.frame(at: now, scrolledTo: scrollView.contentView.bounds.origin.y)
+        MarqueeCounters.bump(10)
+        MarqueeCounters.set(12, to: Int(scrollView.contentView.bounds.origin.y))
         #endif
         if let pointer = pointerInDocument() {
             let clip = scrollView.contentView
@@ -536,7 +543,62 @@ private struct LibraryMarqueeAnchor: NSViewRepresentable {
     }
 }
 
+/// Counts one event for the marquee watchdog's report (DEBUG, UI tests only).
+@inline(__always)
+func marqueeCount(_ index: Int) {
+    #if DEBUG
+    MarqueeCounters.bump(index)
+    #endif
+}
+
 #if DEBUG
+/// UI-test-only, with `-MomentsUITestMarqueeProbe`: how often the Library's
+/// parts ran, read by the watchdog when the main thread stops answering, to
+/// tell which of them keeps the layout going round.
+enum MarqueeCounters {
+    static let names: [String] = [
+        "scroll id read", "scroll id reported", "scroll id kept", "results body",
+        "section body", "photo body", "photo hover change", "regroup",
+        "frame report", "layout change", "display frame", "drag change",
+        "last offset", "photo appeared", "photo disappeared", "library body",
+    ]
+    private static let values: UnsafeMutablePointer<Int> = {
+        let pointer = UnsafeMutablePointer<Int>.allocate(capacity: 16)
+        pointer.initialize(repeating: 0, count: 16)
+        return pointer
+    }()
+    static let isOn: Bool = ProcessInfo.processInfo.arguments.contains("-MomentsUITestMarqueeProbe")
+    private static let lock = NSLock()
+    private static var recent: [String] = []
+
+    static func bump(_ index: Int) {
+        if isOn { values[index] &+= 1 }
+    }
+
+    static func set(_ index: Int, to value: Int) {
+        if isOn { values[index] = value }
+    }
+
+    static func snapshot() -> [Int] {
+        (0..<names.count).map { values[$0] }
+    }
+
+    /// Keeps the last few notes (the scroll ids the scroll view reported).
+    static func note(_ text: String) {
+        guard isOn else { return }
+        lock.lock()
+        recent.append(text)
+        if recent.count > 24 { recent.removeFirst(recent.count - 24) }
+        lock.unlock()
+    }
+
+    static func notes() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recent
+    }
+}
+
 /// UI-test-only, enabled by `-MomentsUITestMarqueeProbe <folder>`: records
 /// every display frame of a rubber-band drag (late frames mean the main
 /// thread was busy) and writes `marquee-report.txt` when the drag ends.
@@ -575,7 +637,7 @@ enum MarqueeProbe {
 
     /// From the first press on, a background thread asks the main thread to
     /// answer once a second. When it has not answered for three seconds the
-    /// thread writes the main thread's stack to `marquee-report-stuck-N.txt`:
+    /// thread writes the main thread's stack to `marquee-report-stuck-<pid>-N.txt`:
     /// a drag report is written on the main thread, so a main thread that
     /// stopped answering could never say where it is.
     private static func startWatchdogIfNeeded() {
@@ -595,8 +657,16 @@ enum MarqueeProbe {
                 guard silent > 3 else { continue }
                 written += 1
                 var text = String(format: "marquee stuck %d: the main thread has not answered for %.1f s\n", written, silent)
+                text += "  launched with: \(ProcessInfo.processInfo.arguments.dropFirst().joined(separator: " "))\n"
+                let before: [Int] = MarqueeCounters.snapshot()
+                usleep(1_000_000)
+                let after: [Int] = MarqueeCounters.snapshot()
+                for (index, name) in MarqueeCounters.names.enumerated() {
+                    text += "  \(name): \(after[index]) (+\(after[index] - before[index]) in 1 s)\n"
+                }
+                text += "  scroll ids reported last: \(MarqueeCounters.notes().joined(separator: " | "))\n"
                 text += MainThreadSampler.stuckStacks()
-                try? text.write(to: folder.appending(path: "marquee-report-stuck-\(written).txt"), atomically: true, encoding: .utf8)
+                try? text.write(to: folder.appending(path: "marquee-report-stuck-\(ProcessInfo.processInfo.processIdentifier)-\(written).txt"), atomically: true, encoding: .utf8)
                 usleep(4_000_000)
             }
         }

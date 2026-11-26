@@ -99,6 +99,38 @@ final class MomentsMarqueeUITests: XCTestCase {
         XCTAssertTrue(text.contains("scrolled back by something else: 0 times"), String(text.prefix(600)))
     }
 
+    /// Temporary, while the hang in the test above is looked into: the same
+    /// drag in a large window.
+    func testProbeHoldingAtTheBottomEdgeInALargeWindow() {
+        probeHold(count: "26", smallWindow: false)
+    }
+
+    /// Temporary: the same drag in a small window over many months, where the
+    /// demo chapters are far below.
+    func testProbeHoldingAtTheBottomEdgeOverManyMonths() {
+        probeHold(count: "600", smallWindow: true)
+    }
+
+    private func probeHold(count: String, smallWindow: Bool) {
+        let folder: String? = ProcessInfo.processInfo.environment["MOMENTS_MARQUEE_DIR"]
+            .flatMap { (value: String) -> String? in value.hasPrefix("/") ? value : nil }
+        var arguments: [String] = [
+            "-MomentsUITestStressCount", count, "-MomentsUITestStressSpacing", "200000",
+            "-MomentsUITestStressNoTrip",
+        ]
+        if let folder { arguments += ["-MomentsUITestMarqueeProbe", folder] }
+        let app = launch(smallWindow: smallWindow, extraArguments: arguments)
+        let visible = visiblePhotos(app)
+        guard let first = visible.first else { return XCTFail("No photo on screen") }
+        let window = app.windows.firstMatch.frame
+        let lastColumn: CGFloat = visible.map(\.frame.midX).max() ?? first.frame.midX
+        let start = point(app, x: first.frame.minX - 12, y: first.frame.minY - 4)
+        let edge = point(app, x: lastColumn, y: window.maxY - 8)
+        start.click(forDuration: 0.1, thenDragTo: edge, withVelocity: .default, thenHoldForDuration: 2.5)
+        let selected: Int = Int(selectionCount(app)) ?? 0
+        XCTAssertGreaterThan(selected, visible.count, "Holding at the edge did not keep scrolling and selecting (\(selected) selected)")
+    }
+
     /// Held at the bottom edge over a Library of small month sections, the
     /// rectangle selects every photo it scrolls over: the rows just below
     /// the window too, which the grid may have built before the drag, and

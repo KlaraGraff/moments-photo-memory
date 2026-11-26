@@ -246,6 +246,7 @@ struct LibraryView: View {
     }
 
     var body: some View {
+        let _ = marqueeCount(15)
         Group {
             if LibraryLaunchState.shouldShowImportFlow(hasCompletedFirstLaunch: firstLaunchCompleted, itemCount: store.items.count) {
                 FirstLaunchImportView {
@@ -345,6 +346,7 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var results: some View {
+        let _ = marqueeCount(3)
         ScrollViewReader { proxy in
             ScrollView {
                 // Headings and section grids space themselves (LibrarySectionView).
@@ -383,8 +385,16 @@ struct LibraryView: View {
                 // grid back at the heading it had just passed. And never
                 // nil (a section's photos at the top), which did the same;
                 // the last heading is where the Library opens again.
-                id: Binding(get: { state.topSectionScrollID }, set: { id in
+                id: Binding<String?>(get: { () -> String? in
+                    marqueeCount(0)
+                    return state.topSectionScrollID
+                }, set: { (id: String?) in
+                    marqueeCount(1)
+                    #if DEBUG
+                    MarqueeCounters.note(id ?? "nil")
+                    #endif
                     guard let id, !state.marquee.isDragging, state.topSectionScrollID != id else { return }
+                    marqueeCount(2)
                     state.topSectionScrollID = id
                 }),
                 anchor: .top
@@ -449,6 +459,7 @@ struct LibraryView: View {
     }
 
     private func regroup() {
+        marqueeCount(7)
         // Taken before anything is read: these are the inputs this pass uses,
         // and a change during it must not be stored under a newer key.
         let key = groupingKey
@@ -782,6 +793,7 @@ private struct LibrarySectionView: View {
     /// (One HStack per row instead of a grid scrolled with several times
     /// more stalls on 2,000 photos.)
     var body: some View {
+        let _ = marqueeCount(4)
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 // Like a moment title in Photos: click selects the section's
@@ -905,6 +917,7 @@ private struct LibraryPhotoCell: View {
     }
 
     var body: some View {
+        let _ = marqueeCount(5)
         VStack(alignment: .leading, spacing: 9) {
             ZStack(alignment: .topLeading) {
                 Button {
@@ -980,7 +993,10 @@ private struct LibraryPhotoCell: View {
                     .opacity(showsNoteLine ? 1 : 0)
             }
         }
-        .onHover { isHovering = $0 }
+        .onHover {
+            marqueeCount(6)
+            isHovering = $0
+        }
         .modifier(LibraryPhotoMenu(item: item, state: state, stackCount: stackCount, open: open))
         .onDrag { NSItemProvider(object: item.id as NSString) }
     }

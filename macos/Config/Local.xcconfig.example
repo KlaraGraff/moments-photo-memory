@@ -1,8 +1,13 @@
 // Copy to Local.xcconfig (gitignored) to build a signed app on your Mac.
 // Find your Team ID in Xcode > Settings > Accounts, or on developer.apple.com.
+// scripts/release_mac.sh switches the identity to Developer ID by itself.
 
 DEVELOPMENT_TEAM = YOUR_TEAM_ID
-MOMENTS_BUNDLE_ID = org.example.Moments
 CODE_SIGNING_ALLOWED = YES
 CODE_SIGNING_REQUIRED = YES
 CODE_SIGN_IDENTITY = Apple Development
+
+// Uncomment to try iCloud sharing in your own builds (needs Xcode signed in
+// to the team and -allowProvisioningUpdates on the command line).
+// MOMENTS_ENTITLEMENTS = Config/Moments.entitlements
+// MOMENTS_HARDENED_RUNTIME = YES

@@ -24,7 +24,7 @@ Moments is a private macOS app for two people to organize photos, places and sha
 - A large request gets a planning thread first. The planning thread only plans. The plan is split into work packages that do not overlap (different screens, files or modules); each package gets its own thread and branch. Run 2 to 4 code threads at a time, and never give one module to two threads at once.
 - Model and effort when starting a thread: lookups, checks and setup guidance: Sonnet 5.5 medium; documentation and copy: Sonnet 5.5 high; ordinary bug fixes and small features: Opus 5.5 medium; cross-module work, performance, algorithms and planning: Opus 5.5 xhigh. A mixed task takes the highest tier it needs. The independent review (see Review) is a separate job at Opus 5.5 high. Do not use Fable unless the owner names it.
 - After a thread's PR merges, reset its branch to the latest `main` before the next PR on that branch.
-- Helper services outside the project (for example a delegated coding agent on a third-party relay) may only receive content that is already in this public repository. Never send them photos, EXIF, GPS, real paths, Apple Photos data, personal memories or credentials, and strip gitignored files such as `macos/Config/Local.xcconfig` from anything handed over.
+- Each thread writes, tests and checks its own code; work is not handed to coding agents or services outside the project. Should any outside service ever see project content, it may only receive what is already in this public repository: never photos, EXIF, GPS, real paths, Apple Photos data, personal memories or credentials, and never gitignored files such as `macos/Config/Local.xcconfig`.
 
 ## Pull requests
 
@@ -64,7 +64,8 @@ Default quality comes from the author's self-test plus CI. An extra independent 
 - The log API returns only about the last 5,000 lines: look for the `FAILURES-BEGIN`/`FAILURES-END` block, and rerun a single test with `only_testing`. Artifact zips may fail to download.
 - Logic that needs no AppKit, SwiftUI, SwiftData, CoreGraphics or ImageIO belongs in the `MomentsCore` package (`macos/MomentsCore`) with its tests there, so Linux checks it in minutes. Guard any Apple-only API in the package with `#if canImport(...)`.
 - Hosted Macs are scarce: no extra macOS jobs or workflows without a reason; prefer adding steps to `macos.yml`. A temporary switch to another runner image to reproduce a problem is fine; switch back afterwards.
-- CI builds without signing. Signing and packaging happen locally on the Mac.
+- CI builds without signing. Signing and packaging happen locally on the Mac with `scripts/release_mac.sh` (Developer ID, optional notarization, arm64 only; `--dry-run` prints the plan). Entitlements and the hardened runtime are off in committed builds, because CI signs UI-test builds ad hoc and macOS kills an ad-hoc app that claims iCloud; the script and `Local.xcconfig` turn them on. Developer credentials stay in the Mac's keychain and the gitignored `Local.xcconfig`.
+- The bundle identifier `com.momentsphotomemory.Moments` and the iCloud container `iCloud.com.momentsphotomemory.Moments` are registered with Apple and final; never rename them. Code reads the container from the Info.plist key `MomentsCloudKitContainerIdentifier`.
 
 ## Verification before handing over
 

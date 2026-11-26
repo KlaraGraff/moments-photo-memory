@@ -24,7 +24,7 @@ Moments is a private macOS app for two people to organize photos, places and sha
 - A large request gets a planning thread first. The planning thread only plans. The plan is split into work packages that do not overlap (different screens, files or modules); each package gets its own thread and branch. Run 2 to 4 code threads at a time, and never give one module to two threads at once.
 - Model and effort when starting a thread: lookups, checks and setup guidance: Sonnet 5.5 medium; documentation and copy: Sonnet 5.5 high; ordinary bug fixes and small features: Opus 5.5 medium; cross-module work, performance, algorithms and planning: Opus 5.5 xhigh. A mixed task takes the highest tier it needs. The independent review (see Review) is a separate job at Opus 5.5 high. Do not use Fable unless the owner names it.
 - After a thread's PR merges, reset its branch to the latest `main` before the next PR on that branch.
-- Helper services outside the project (for example a delegated coding agent on a third-party relay) may only receive content that is already in this public repository. Never send them photos, EXIF, GPS, real paths, Apple Photos data, personal memories or credentials, and strip gitignored files such as `macos/Config/Local.xcconfig` from anything handed over.
+- Each thread writes, tests and checks its own code; work is not handed to coding agents or services outside the project. Should any outside service ever see project content, it may only receive what is already in this public repository: never photos, EXIF, GPS, real paths, Apple Photos data, personal memories or credentials, and never gitignored files such as `macos/Config/Local.xcconfig`.
 
 ## Pull requests
 

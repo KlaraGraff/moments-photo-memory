@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// Settings is one page: sharing with your partner, what the two of you
-/// are called, and backups. Everything
-/// else the app decides on its own (the language follows the Mac, photos are
-/// organized after every import), so there is nothing else to set.
+/// are called, the AI switch, and backups. Everything else the app decides
+/// on its own (the language follows the Mac, photos are organized after
+/// every import), so there is nothing else to set.
 struct SettingsView: View {
     /// Without a store there is nothing to share or back up yet.
     var hasStore = true
@@ -12,6 +12,7 @@ struct SettingsView: View {
         Form {
             SharingSettingsSections(hasStore: hasStore)
             AuthorNamesSection()
+            AISettingsSections()
             if hasStore { BackupSettingsSection() }
         }
         .formStyle(.grouped)
@@ -26,7 +27,8 @@ struct SettingsView: View {
 /// Settings is its own window, as on every Mac, at one fixed size.
 enum SettingsLayout {
     static let width: CGFloat = 600
-    static let height: CGFloat = 470
+    /// Tall enough for the page with sharing unavailable and AI off.
+    static let height: CGFloat = 580
 }
 
 /// What the two of you are called next to what you write.

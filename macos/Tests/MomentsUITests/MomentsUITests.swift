@@ -464,6 +464,9 @@ final class MomentsUITests: XCTestCase {
         let window = app.windows.containing(.any, identifier: "settings.backup-status").firstMatch
         let aboutSharing = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Sharing", "Sharing")
         XCTAssertTrue(window.staticTexts.matching(aboutSharing).firstMatch.waitForExistence(timeout: launchTimeout), "Settings has no sharing section")
+        // AI is one switch here, off; the key is asked for only when it is on.
+        XCTAssertTrue(element(in: app, identifier: "settings.ai-enabled").waitForExistence(timeout: launchTimeout), "Settings has no AI switch")
+        XCTAssertFalse(element(in: app, identifier: "settings.ai-key").exists, "The AI key field shows while AI is off")
         XCTAssertFalse(element(in: app, identifier: "settings.language").exists, "The language picker is back in Settings")
         XCTAssertFalse(element(in: app, identifier: "settings.auto-organize").exists, "The organize switch is back in Settings")
         XCTAssertEqual(window.toolbars.buttons.count, 0, "Settings has tabs again")

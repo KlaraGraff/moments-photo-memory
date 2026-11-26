@@ -1,5 +1,4 @@
 import Foundation
-import Security
 import SwiftData
 
 /// What is left of the AI note organizer, which is gone: the words a person
@@ -51,24 +50,10 @@ enum PhotoNoteService {
         "moments.ai.fallback"
     ]
 
-    /// The Keychain service the AI organizer stored cloud API keys under.
-    static let aiKeychainService = "Moments AI"
-
-    /// Forgets the AI organizer's settings and any API key it saved, so no
-    /// key is left behind in the Keychain for a feature that is gone. Looks
-    /// first (reading only attributes, which never asks), and deletes only
-    /// when a key is there.
+    /// Forgets the settings the AI organizer kept. An API key it may have
+    /// saved stays in the Keychain ("Moments AI"); the person can delete it
+    /// in Keychain Access.
     static func forgetAISettings(defaults: UserDefaults = .standard) {
         for key in aiSettingKeys { defaults.removeObject(forKey: key) }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: aiKeychainService
-        ]
-        var lookup = query
-        lookup[kSecReturnAttributes as String] = true
-        lookup[kSecMatchLimit as String] = kSecMatchLimitAll
-        var found: AnyObject?
-        guard SecItemCopyMatching(lookup as CFDictionary, &found) == errSecSuccess else { return }
-        SecItemDelete(query as CFDictionary)
     }
 }

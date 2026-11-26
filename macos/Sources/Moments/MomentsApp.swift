@@ -154,8 +154,8 @@ struct MomentsApp: App {
             }
             #endif
             // Tidy up after the AI organizer: words saved before they became
-            // memories right away, and its settings and API key. Test stores
-            // start empty, and must not touch the real Mac's flag or Keychain.
+            // memories right away, and its settings. Test stores start empty,
+            // and must not touch the real Mac's flag or settings.
             #if DEBUG
             if !isUITesting && testStoreURL == nil {
                 PhotoNoteService.writeEarlierWords(context: container.mainContext)

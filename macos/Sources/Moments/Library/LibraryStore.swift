@@ -721,7 +721,8 @@ final class LibraryStore {
 
     private func upsertPhoto(_ id: PersistentIdentifier, model: MediaItem, touched: inout Touched) {
         if let old = itemHash[id] { itemSum &-= old }
-        if let old = layoutHash[id] { layoutSum &-= old }
+        let oldLayout: Int? = layoutHash[id]
+        if let oldLayout { layoutSum &-= oldLayout }
         // `itemKeys` still holds the keys before this save, so it says whether
         // the photo was live before; the model itself may already be trashed.
         let wasLive: Bool = itemKeys[id]?.deletedAt == nil
@@ -738,6 +739,11 @@ final class LibraryStore {
         itemHash[id] = hash
         layoutHash[id] = layout
         stackHash[id] = stack
+        #if DEBUG
+        // How many existing photos a batch really moved in a page's layout:
+        // the size a page would have to patch instead of rebuilding.
+        if let oldLayout, oldLayout != layout { PageProbe.tally("photos with moved layout") }
+        #endif
         itemSum &+= hash
         layoutSum &+= layout
         stackSum &+= stack

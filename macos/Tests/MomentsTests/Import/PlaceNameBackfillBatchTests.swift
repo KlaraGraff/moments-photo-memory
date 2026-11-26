@@ -177,7 +177,7 @@ final class PlaceNameBackfillBatchTests: XCTestCase {
         XCTAssertLessThanOrEqual(
             batchedSaves,
             perCitySaves - 20,
-            "A three-quarter-hour interval must not save per city: \(batchedSaves) vs \(perCitySaves)"
+            "A one-hour interval must not save per city: \(batchedSaves) vs \(perCitySaves)"
         )
         XCTAssertEqual(perCityNames.count, 25)
         XCTAssertEqual(batchedNames.count, 25)

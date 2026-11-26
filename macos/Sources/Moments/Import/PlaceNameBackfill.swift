@@ -52,9 +52,9 @@ struct PlaceNameBackfill: Sendable {
         var lastSave: ContinuousClock.Instant = runStart
         // Names arrive in batches: a save happens once every `saveInterval`, and
         // before the trip pass reads the store through its own context. A quit
-        // therefore loses at most that many seconds of lookups, and the geocode
-        // cache keeps their results anyway, so the next run re-applies them
-        // without a network call.
+        // therefore loses the names of the current batch (about `saveInterval`
+        // plus any lookup waits); the geocode cache is persisted only when a
+        // run ends, so the next run looks those cities up again.
         do {
             for city in pending {
                 try Task.checkCancellation()

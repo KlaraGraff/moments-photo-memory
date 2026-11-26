@@ -26,7 +26,8 @@ from pathlib import Path
 # A reference to an operator named >= or <=, e.g.
 #   decl="Swift.(file).Comparable extension.>="
 #   decl="Foundation.(file).Date.<=@/path/Date.swift:12:3"
-OPERATOR = re.compile(r'decl="[^"]*\.(>=|<=)(?:@[^"]*)?"')
+#   decl="Swift.(file).Comparable extension.>= [with (substitution_map ... Self -> Date)]"
+OPERATOR = re.compile(r'decl="[^"]*?\.(>=|<=)(?:[@ ][^"]*)?"')
 # ...whose operands are Dates, read from the reference's (substituted) type
 # or its substitution map.
 DATE_OPERANDS = re.compile(

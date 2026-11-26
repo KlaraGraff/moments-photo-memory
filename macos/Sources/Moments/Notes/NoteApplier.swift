@@ -185,7 +185,10 @@ public enum NoteApplier {
         let record = note.undoRecord
         if !record.collectionMemoryIDs.isEmpty {
             let ids = Set(record.collectionMemoryIDs)
-            for memory in try context.fetch(FetchDescriptor<CollectionMemory>()) where ids.contains(memory.id) {
+            // A line the person rewrote is theirs now (editing clears its
+            // source note), so it stays.
+            for memory in try context.fetch(FetchDescriptor<CollectionMemory>())
+            where ids.contains(memory.id) && memory.sourceNoteID == note.id {
                 context.delete(memory)
             }
         }
@@ -222,12 +225,13 @@ public enum NoteApplier {
                 } else {
                     placeNote.text = change.previousText ?? ""
                     placeNote.updatedAt = now
+                    if placeNote.sourceNoteID == note.id { placeNote.sourceNoteID = nil }
                 }
             }
         }
         if !record.overrides.isEmpty {
-            let ids = Set(record.overrides.map(\.mediaID))
-            let items = try context.fetch(FetchDescriptor<MediaItem>()).filter { ids.contains($0.id) }
+            let ids = Array(Set(record.overrides.map(\.mediaID)))
+            let items = try context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { ids.contains($0.id) }))
             for change in record.overrides.reversed() {
                 guard let target = items.first(where: { $0.id == change.mediaID }),
                       let override = target.localPlaceOverride,
@@ -279,6 +283,8 @@ public enum NoteApplier {
             let previous = mine.text
             mine.text = appending(text, to: mine.text)
             mine.updatedAt = now
+            // The newest AI addition is the one its Undo takes back.
+            mine.sourceNoteID = noteID
             return PhotoNoteUndoRecord.TextChange(recordID: mine.id, previousText: previous, created: false, writtenText: mine.text)
         }
         let placeNote = PlaceNote(placeName: place, text: text, updatedAt: now, sourceNoteID: noteID)
@@ -298,11 +304,19 @@ public enum NoteApplier {
     }
 
     /// What the AI's result adds once the words are already the photo's
-    /// memory: the place fixes. A memory it suggests would only repeat the
-    /// person's words (or put them a second time on the day or trip), so it
-    /// is dropped.
-    public static func suggestionsAfterWords(_ suggestions: [NoteSuggestion]) -> [NoteSuggestion] {
-        suggestions.filter { $0.kind != .memory }
+    /// memory: the place fixes, and what was said about the whole day or
+    /// trip, put under that day or trip. A memory about this photo would only
+    /// repeat the person's words, so it is dropped, as is a day or trip line
+    /// for a photo with no date or no trip.
+    public static func suggestionsAfterWords(_ suggestions: [NoteSuggestion], item: MediaItem) -> [NoteSuggestion] {
+        suggestions.filter { suggestion in
+            guard suggestion.kind == .memory else { return true }
+            switch suggestion.scope ?? .photo {
+            case .photo: return false
+            case .day: return PhotoNoteDay.key(for: item) != nil
+            case .trip: return item.tripID?.isEmpty == false
+            }
+        }
     }
 
     /// Adds to this person's own memory on the photo, or starts one. A

@@ -65,6 +65,14 @@ final class PhotoNoteTests: XCTestCase {
         return container.mainContext
     }
 
+    /// A throwaway defaults domain, removed after the test.
+    private func makeDefaults() throws -> UserDefaults {
+        let name = "PhotoNoteTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+        return defaults
+    }
+
     override func tearDown() {
         container = nil
         super.tearDown()
@@ -346,28 +354,146 @@ final class PhotoNoteTests: XCTestCase {
         XCTAssertNil(service.organize("   ", for: item, context: context), "Blank words are not organized")
     }
 
-    func testOrganizeWritesPlaceCorrectionAtOnceAndDropsEveryMemory() async throws {
+    func testOrganizeWritesPlaceDescriptionAndDayLineAtOnceAndUndoTakesThemBack() async throws {
         let context = try makeContext()
         let harbor = Place(name: "Harbor")
         context.insert(harbor)
         let item = insertItem("a", place: harbor, tripID: "trip-1", in: context)
+        context.insert(Memory(text: "Old Lane, steep steps, best day", author: .me, authorAccountID: MomentsAccount.localID, mediaItem: item))
         try context.save()
         let service = PhotoNoteService(makeOrganizers: {
             [StubOrganizer(outcome: .success(NoteOrganizerResult(placeName: "Old Lane", placeDescription: "Steep steps.", memory: "Best day", memoryScope: "day")))]
         })
         let note = try XCTUnwrap(service.organize("Old Lane, steep steps, best day", for: item, context: context))
+        XCTAssertTrue(service.isOrganizing(item), "The photo shows that AI is reading its words")
         await waitUntilDone(note, service)
+        XCTAssertFalse(service.isOrganizing(item))
 
-        XCTAssertEqual(Set(note.suggestions.map(\.kind)), [.placeCorrection, .placeDescription])
-        XCTAssertEqual(note.suggestions.map(\.decision), [.accepted, .accepted], "Nothing waits for a choice")
+        XCTAssertEqual(Set(note.suggestions.map(\.kind)), [.placeCorrection, .placeDescription, .memory])
+        XCTAssertEqual(note.suggestions.map(\.decision), [.accepted, .accepted, .accepted], "Nothing waits for a choice")
         XCTAssertEqual(note.status, .done)
         XCTAssertEqual(item.effectivePlaceName, "Old Lane")
-        XCTAssertEqual(try context.fetch(FetchDescriptor<PlaceNote>()).map(\.text), ["Steep steps."])
-        XCTAssertTrue(try context.fetch(FetchDescriptor<CollectionMemory>()).isEmpty, "No day memory is added from the words")
-        XCTAssertTrue(item.memories.isEmpty, "The AI never writes a memory")
+        XCTAssertEqual(service.placeFix(for: item)?.noteID, note.id, "The place line can mark the fix AI")
+        XCTAssertEqual(try context.fetch(FetchDescriptor<PlaceNote>()).map(\.sourceNoteID), [note.id])
+        let dayLines = try context.fetch(FetchDescriptor<CollectionMemory>())
+        XCTAssertEqual(dayLines.map(\.text), ["Best day"])
+        XCTAssertEqual(dayLines.map(\.scope), [.day])
+        XCTAssertEqual(dayLines.map(\.sourceNoteID), [note.id])
+        XCTAssertEqual(item.memories.map(\.text), ["Old Lane, steep steps, best day"], "The person's words are never rewritten")
+
+        // After a relaunch the place line still knows the fix was AI's.
+        let reloaded = PhotoNoteService(makeOrganizers: { [] })
+        reloaded.loadPlaceFixes(context: context)
+        XCTAssertEqual(reloaded.placeFix(for: item)?.writtenName, "Old Lane", "Fixes are read back after a relaunch")
+
+        service.undo(noteID: note.id, context: context)
+        XCTAssertEqual(item.effectivePlaceName, "Harbor")
+        XCTAssertNil(service.placeFix(for: item))
+        XCTAssertTrue(try context.fetch(FetchDescriptor<PlaceNote>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CollectionMemory>()).isEmpty)
+        XCTAssertEqual(item.memories.map(\.text), ["Old Lane, steep steps, best day"], "Undo never touches the person's words")
+        XCTAssertFalse(note.suggestions.contains { $0.decision == .pending }, "Nothing is offered again")
+        XCTAssertEqual(note.status, .done)
     }
 
-    func testAIOffDoesNothingAndSendsNothing() throws {
+    func testUndoNeverTouchesAMemoryAnOlderNoteWrote() throws {
+        let context = try makeContext()
+        let harbor = Place(name: "Harbor")
+        context.insert(harbor)
+        let item = insertItem("a", place: harbor, in: context)
+        try context.save()
+        // From before words were saved as typed: the note wrote the photo
+        // memory (the only copy of those words) and fixed the place.
+        let note = PhotoNote(mediaID: "a", text: "This is Old Lane, lovely", createdAt: base, status: .ready)
+        note.suggestions = [
+            NoteSuggestion(id: "c", kind: .placeCorrection, text: "Old Lane", previousPlaceName: "Harbor"),
+            NoteSuggestion(id: "m", kind: .memory, text: "Lovely", scope: .photo)
+        ]
+        context.insert(note)
+        try NoteApplier.accept(["c", "m"], of: note, item: item, context: context)
+        try context.save()
+        XCTAssertEqual(item.ownMemory?.text, "Lovely")
+
+        let service = PhotoNoteService(makeOrganizers: { [] })
+        service.loadPlaceFixes(context: context)
+        XCTAssertEqual(service.placeFix(for: item)?.noteID, note.id)
+        service.undo(noteID: note.id, context: context)
+        XCTAssertEqual(item.effectivePlaceName, "Harbor", "The AI place fix is taken back")
+        XCTAssertEqual(item.ownMemory?.text, "Lovely", "The person's memory is never taken back")
+    }
+
+    func testUndoTakesBackTheNewestDescriptionAndLeavesThePartnersNotesAlone() async throws {
+        let context = try makeContext()
+        let lane = Place(name: "Old Lane")
+        context.insert(lane)
+        let item = insertItem("a", place: lane, in: context)
+        context.insert(PlaceNote(placeName: "Old Lane", text: "Written by hand."))
+        try context.save()
+        let service = PhotoNoteService(makeOrganizers: {
+            [StubOrganizer(outcome: .success(NoteOrganizerResult(placeDescription: "Steep steps.")))]
+        })
+        let note = try XCTUnwrap(service.organize("Steep steps", for: item, context: context))
+        await waitUntilDone(note, service)
+        let placeNote = try XCTUnwrap(try context.fetch(FetchDescriptor<PlaceNote>()).first)
+        XCTAssertEqual(placeNote.text, "Written by hand.\nSteep steps.")
+        XCTAssertEqual(placeNote.sourceNoteID, note.id, "The newest AI addition is what its Undo takes back")
+
+        service.undo(noteID: note.id, context: context)
+        XCTAssertEqual(placeNote.text, "Written by hand.")
+        XCTAssertNil(placeNote.sourceNoteID, "Nothing AI-made is left to mark")
+
+        // A note from the other person is theirs; this Mac doesn't undo it.
+        let theirs = PhotoNote(mediaID: "a", authorAccountID: "partner-account", text: "Theirs", createdAt: base, status: .done)
+        context.insert(theirs)
+        try context.save()
+        let before = theirs.updatedAt
+        service.undo(noteID: theirs.id, context: context)
+        XCTAssertEqual(theirs.updatedAt, before)
+    }
+
+    func testAnOldAnthropicKeyMovesToTheCustomModelOnlyWhenTheKeychainAnswers() throws {
+        // Found: the key and Anthropic's address move over.
+        let found = try makeDefaults()
+        found.set("https://models.example.com/v1", forKey: AISettings.baseURLKey)
+        var stored: [(String, CloudProvider)] = []
+        AISettings.moveOldAnthropicSetup(defaults: found, lookup: { $0 == .claude ? .found("old-key") : .notFound }, store: { stored.append(($0, $1)); return true })
+        XCTAssertEqual(stored.map { $0.0 }, ["old-key"])
+        XCTAssertEqual(stored.map { $0.1 }, [.openAICompatible])
+        XCTAssertEqual(found.string(forKey: AISettings.baseURLKey), "https://api.anthropic.com/v1", "A stale address from trying another service is replaced")
+        XCTAssertEqual(found.string(forKey: AISettings.modelKey), CloudProvider.claude.defaultModel)
+        XCTAssertEqual(found.string(forKey: AISettings.providerKey), CloudProvider.openAICompatible.rawValue)
+
+        // No key: just the custom model from now on.
+        let none = try makeDefaults()
+        AISettings.moveOldAnthropicSetup(defaults: none, lookup: { _ in .notFound }, store: { _, _ in XCTFail("Nothing to store"); return false })
+        XCTAssertEqual(none.string(forKey: AISettings.providerKey), CloudProvider.openAICompatible.rawValue)
+        XCTAssertNil(none.string(forKey: AISettings.baseURLKey))
+
+        // Keychain locked or access denied: nothing changes, tried again later.
+        let locked = try makeDefaults()
+        AISettings.moveOldAnthropicSetup(defaults: locked, lookup: { _ in .failed }, store: { _, _ in XCTFail("Nothing to store"); return false })
+        XCTAssertNil(locked.string(forKey: AISettings.providerKey))
+
+        // Already moved: left alone.
+        let moved = try makeDefaults()
+        moved.set(CloudProvider.openAICompatible.rawValue, forKey: AISettings.providerKey)
+        AISettings.moveOldAnthropicSetup(defaults: moved, lookup: { _ in XCTFail("No lookup needed"); return .notFound }, store: { _, _ in false })
+    }
+
+    func testOnlyDayAndTripLinesThatHaveAPlaceToGoAreKept() {
+        let dated = MediaItem(id: "dated", captureDate: base, title: "dated", tripID: "trip-1")
+        let undated = MediaItem(id: "undated", title: "undated")
+        let suggestions = [
+            NoteSuggestion(id: "p", kind: .placeCorrection, text: "Old Lane"),
+            NoteSuggestion(id: "photo", kind: .memory, text: "Lovely", scope: .photo),
+            NoteSuggestion(id: "day", kind: .memory, text: "Best day", scope: .day),
+            NoteSuggestion(id: "trip", kind: .memory, text: "Best trip", scope: .trip)
+        ]
+        XCTAssertEqual(NoteApplier.suggestionsAfterWords(suggestions, item: dated).map(\.id), ["p", "day", "trip"])
+        XCTAssertEqual(NoteApplier.suggestionsAfterWords(suggestions, item: undated).map(\.id), ["p"])
+    }
+
+    func testAIStartsOnAndTurnsOffCompletely() throws {
         let context = try makeContext()
         let item = insertItem("a", in: context)
         let service = PhotoNoteService(makeOrganizers: { [] })
@@ -375,10 +501,13 @@ final class PhotoNoteTests: XCTestCase {
         XCTAssertTrue(try context.fetch(FetchDescriptor<PhotoNote>()).isEmpty)
 
         var settings = AISettings()
-        XCTAssertFalse(settings.enabled, "AI starts turned off")
-        XCTAssertTrue(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in "k" }).isEmpty)
-        settings.enabled = true
-        XCTAssertEqual(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in "k" }).count, 1)
+        XCTAssertTrue(settings.enabled, "AI starts turned on")
+        let defaults = try makeDefaults()
+        XCTAssertTrue(AISettings.load(from: defaults).enabled)
+        defaults.set(false, forKey: AISettings.enabledKey)
+        XCTAssertFalse(AISettings.load(from: defaults).enabled)
+        settings.enabled = false
+        XCTAssertTrue(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in "k" }).isEmpty, "Off sends nothing")
     }
 
     func testUnavailableOrKeylessModelsDropTheNoteAndFallbackIsTried() async throws {
@@ -466,7 +595,7 @@ final class PhotoNoteTests: XCTestCase {
         context.insert(placeOnly)
         context.insert(PhotoNote(mediaID: "partner", authorAccountID: "partner-account", text: "Theirs", createdAt: base, status: .waiting))
         try context.save()
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PhotoNoteTests.\(UUID().uuidString)"))
+        let defaults = try makeDefaults()
 
         XCTAssertEqual(PhotoNoteService.writeEarlierWords(context: context, defaults: defaults), 3)
         XCTAssertEqual(placeOnlyItem.ownMemory?.text, "This is Old Lane", "A note that only fixed the place kept its words nowhere else")
@@ -487,7 +616,7 @@ final class PhotoNoteTests: XCTestCase {
         XCTAssertEqual(AuthorNames.label(isOwn: false, myName: "Alex", partnerName: ""), String(localized: "Partner"))
         XCTAssertEqual(AuthorNames.label(isOwn: true, myName: " Alex ", partnerName: "Sam"), "Alex")
         XCTAssertEqual(AuthorNames.label(isOwn: false, myName: "Alex", partnerName: "Sam"), "Sam")
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PhotoNoteTests.\(UUID().uuidString)"))
+        let defaults = try makeDefaults()
         defaults.set("Sam", forKey: AuthorNames.partnerNameKey)
         XCTAssertEqual(AuthorNames.label(isOwn: false, defaults: defaults), "Sam")
         XCTAssertTrue(AuthorNames.isLocal(nil))
@@ -516,15 +645,30 @@ final class PhotoNoteTests: XCTestCase {
         XCTAssertEqual(shared.ownMemory?.text, "Cold hands", "Your own field shows your words, never the partner's")
     }
 
-    func testFactoryOrderFollowsSettings() {
+    func testFactoryTriesThisMacThenTheCustomModel() {
         var settings = AISettings()
-        settings.enabled = true
-        XCTAssertEqual(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in nil }).count, 1)
-        settings.fallback = .useCloud
-        XCTAssertEqual(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in nil }).count, 2)
+        XCTAssertEqual(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in nil }).count, 2, "On this Mac first, then the custom model")
         settings.engine = .cloud
-        let cloudOnly = NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in "k" })
-        XCTAssertEqual(cloudOnly.map(\.label), ["Anthropic"])
+        XCTAssertEqual(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in "k" }).map(\.label), ["Anthropic"], "A key from before the custom model keeps working")
+
+        // A custom model is any address; Anthropic's own gets its own API.
+        // An address left from once trying another service is not used for
+        // a key set up for Anthropic before the custom model.
+        settings.baseURL = "https://models.example.com/v1"
+        var legacyAsked: [CloudProvider] = []
+        let legacy = NoteOrganizerFactory.organizers(settings: settings, apiKey: { legacyAsked.append($0); return "k" })
+        XCTAssertEqual(legacy.map(\.label), ["Anthropic"])
+        XCTAssertEqual(legacyAsked, [.claude])
+
+        settings.provider = .openAICompatible
+        settings.model = "some-model"
+        var asked: [CloudProvider] = []
+        let custom = NoteOrganizerFactory.organizers(settings: settings, apiKey: { asked.append($0); return "k" })
+        XCTAssertEqual(custom.map(\.label), ["some-model"])
+        XCTAssertEqual(asked, [.openAICompatible])
+        settings.baseURL = "https://api.anthropic.com/v1"
+        XCTAssertEqual(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in "k" }).map(\.label), ["Anthropic"])
+        XCTAssertFalse(NoteOrganizerFactory.isAnthropic("https://anthropic.com.example.org/v1"))
     }
 
     func testOpenAICompatibleEndpoint() {
@@ -569,7 +713,7 @@ final class PhotoNoteTests: XCTestCase {
         let custom = ClaudeOrganizer.requestBody(model: "claude-haiku-4-5", context: context)
         XCTAssertNil(custom["fallbacks"])
         XCTAssertNil((custom["output_config"] as? [String: Any])?["effort"])
-        XCTAssertEqual(AISettings().model, ClaudeModel.haiku.rawValue)
+        XCTAssertEqual(CloudProvider.claude.defaultModel, ClaudeModel.haiku.rawValue)
     }
 
     func testClaudeReadsTextAfterThinkingBlocks() async throws {
@@ -583,35 +727,6 @@ final class PhotoNoteTests: XCTestCase {
         let organizer = ClaudeOrganizer(apiKey: "k", model: ClaudeModel.opus.rawValue, session: StubURLProtocol.session())
         let result = try await organizer.organize(NoteOrganizerContext(noteText: "x"))
         XCTAssertEqual(result, NoteOrganizerResult(placeName: nil, placeDescription: "Quiet in the afternoon.", memory: "We sat by the river.", memoryScope: "photo"))
-    }
-
-    func testAnthropicModelListReadsIDsAndNames() async throws {
-        StubURLProtocol.failure = nil
-        StubURLProtocol.status = 200
-        StubURLProtocol.body = try JSONSerialization.data(withJSONObject: [
-            "data": [
-                ["type": "model", "id": "claude-opus-5-5", "display_name": "Claude Opus 5.5"],
-                ["type": "model", "id": "claude-haiku-5-5", "display_name": ""],
-                ["type": "model", "display_name": "No id"],
-                ["type": "model", "id": "claude-old", "capabilities": ["structured_outputs": ["supported": false]]]
-            ],
-            "has_more": false
-        ])
-        let models = try await AnthropicModelList.fetch(apiKey: "k", session: StubURLProtocol.session())
-        XCTAssertEqual(models, [
-            CloudModelOption(id: "claude-opus-5-5", displayName: "Claude Opus 5.5"),
-            CloudModelOption(id: "claude-haiku-5-5", displayName: "claude-haiku-5-5")
-        ])
-
-        StubURLProtocol.status = 401
-        StubURLProtocol.body = try JSONSerialization.data(withJSONObject: ["type": "error", "error": ["type": "authentication_error", "message": "invalid x-api-key"]])
-        do {
-            _ = try await AnthropicModelList.fetch(apiKey: "bad", session: StubURLProtocol.session())
-            XCTFail("Expected a 401")
-        } catch {
-            guard case .http(401, let message)? = error as? NoteOrganizerError else { return XCTFail("\(error)") }
-            XCTAssertTrue(message.contains("Settings"), message)
-        }
     }
 
     func testClaudeExplainsKeyRegionAndNetworkFailures() async throws {

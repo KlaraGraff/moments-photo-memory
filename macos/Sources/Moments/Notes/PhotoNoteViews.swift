@@ -72,20 +72,69 @@ private struct EndTextEditingOnOutsideClick: ViewModifier {
     }
 }
 
+/// Shown at a memory field's corner while a model reads the words just written.
+struct AIOrganizingMark: View {
+    var body: some View {
+        Label(String(localized: "AI is organizing…"), systemImage: "sparkles")
+            .font(.caption2)
+            .foregroundStyle(LibraryPalette.muted)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(Capsule().fill(LibraryPalette.well))
+            .transition(.opacity)
+    }
+}
+
+/// What AI added, marked as such, with a way to take it back.
+struct AIAddedMark: View {
+    var text: String?
+    let undo: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "sparkles")
+                .accessibilityLabel(Text(verbatim: "AI"))
+            if let text {
+                Text(text).lineLimit(1)
+            }
+            Button(String(localized: "Undo"), action: undo)
+                .buttonStyle(.plain)
+                .underline()
+                .help(String(localized: "Take back what AI added from this memory"))
+        }
+        .font(.caption)
+        .foregroundStyle(LibraryPalette.muted)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1)
+        .background(Capsule().fill(LibraryPalette.well))
+    }
+}
+
 /// Place and time under a photo, with the place's description when one was written.
 struct PhotoPlaceLine: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(LibraryStore.self) private var store
+    @Environment(PhotoNoteService.self) private var notes
+    @Environment(\.modelContext) private var modelContext
     let item: MediaItem
     let placeNotes: [PlaceNote]
     @State private var showingDescription = false
     @State private var showingDateEditor = false
 
-    private var description: String? {
-        guard let name = item.namedPlace else { return nil }
+    private var describing: [PlaceNote] {
+        guard let name = item.namedPlace else { return [] }
         let key = PlaceNote.key(for: name)
-        let texts = placeNotes.filter { $0.placeKey == key }.map(\.text).filter { !$0.isEmpty }
+        return placeNotes.filter { $0.placeKey == key && !$0.text.isEmpty }
+    }
+
+    private var description: String? {
+        let texts = describing.map(\.text)
         return texts.isEmpty ? nil : texts.joined(separator: "\n")
+    }
+
+    /// The note whose AI pass wrote this description, to undo it.
+    private var describedByNoteID: String? {
+        describing.filter { AuthorNames.isLocal($0.authorAccountID) }.compactMap(\.sourceNoteID).last
     }
 
     private var correctedFrom: String? {
@@ -123,7 +172,12 @@ struct PhotoPlaceLine: View {
                         PhotoDateEditor(items: [item]) { showingDateEditor = false }
                     }
                 }
-                if let correctedFrom {
+                if let correctedFrom, let fix = notes.placeFix(for: item) {
+                    AIAddedMark(text: String(localized: "AI · was \(correctedFrom)")) {
+                        notes.undo(noteID: fix.noteID, context: modelContext)
+                    }
+                    .accessibilityIdentifier("library.place.ai.\(item.id)")
+                } else if let correctedFrom {
                     Text(String(localized: "Corrected, was \(correctedFrom)"))
                         .foregroundStyle(LibraryPalette.muted)
                         .lineLimit(1)
@@ -141,11 +195,19 @@ struct PhotoPlaceLine: View {
                     .foregroundStyle(LibraryPalette.accent)
                     .accessibilityLabel(String(localized: "About this place"))
                     .popover(isPresented: $showingDescription) {
-                        Text(description)
-                            .font(.system(.body, design: .serif))
-                            .padding(14)
-                            .frame(maxWidth: 320, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(description)
+                                .font(.system(.body, design: .serif))
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let noteID = describedByNoteID {
+                                AIAddedMark {
+                                    showingDescription = false
+                                    notes.undo(noteID: noteID, context: modelContext)
+                                }
+                            }
+                        }
+                        .padding(14)
+                        .frame(maxWidth: 320, alignment: .leading)
                     }
                 }
             }
@@ -154,9 +216,11 @@ struct PhotoPlaceLine: View {
     }
 }
 
-/// Day and trip memories written from notes, shown under a Library section's title.
+/// Day and trip memories, shown under a Library section's title: written
+/// by hand, or by AI from what a photo's memory said about the day or trip.
 struct CollectionMemoryLines: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(PhotoNoteService.self) private var notes
     @AppStorage(AuthorNames.myNameKey) private var myName = ""
     @AppStorage(AuthorNames.partnerNameKey) private var partnerName = ""
     let memories: [CollectionMemory]
@@ -173,6 +237,12 @@ struct CollectionMemoryLines: View {
                         Text(verbatim: "— \(label(for: memory))")
                             .font(.caption)
                             .foregroundStyle(LibraryPalette.accent)
+                        // Put here by AI from a photo's memory.
+                        if let noteID = memory.sourceNoteID, AuthorNames.isLocal(memory.authorAccountID) {
+                            AIAddedMark {
+                                notes.undo(noteID: noteID, context: modelContext)
+                            }
+                        }
                     }
                     .contextMenu {
                         if AuthorNames.isLocal(memory.authorAccountID) {

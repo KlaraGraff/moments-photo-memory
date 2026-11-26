@@ -13,7 +13,7 @@ struct MomentsApp: App {
     @State private var selection = SelectionModel()
     @State private var libraryState = LibraryViewState()
     @State private var importController = ImportController()
-    @State private var noteService = PhotoNoteService()
+    @State private var noteService: PhotoNoteService
     @State private var peopleController = PeopleScanController()
     @State private var photoStacks = PhotoStackModel()
     @State private var stackAnalyzer = PhotoStackAnalyzer()
@@ -95,6 +95,15 @@ struct MomentsApp: App {
         #endif
         let backups = BackupController()
         _backups = State(initialValue: backups)
+        #if DEBUG
+        // UI tests write synthetic memories; none of them goes to a model.
+        let noteService = ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
+            ? PhotoNoteService(makeOrganizers: { [] })
+            : PhotoNoteService()
+        #else
+        let noteService = PhotoNoteService()
+        #endif
+        _noteService = State(initialValue: noteService)
         do {
             #if DEBUG
             // Tests must never touch the user's store: -MomentsUITesting
@@ -158,6 +167,7 @@ struct MomentsApp: App {
             #else
             PhotoNoteService.writeEarlierWords(context: container.mainContext)
             #endif
+            noteService.loadPlaceFixes(context: container.mainContext)
             modelContainer = container
             // The store is ready before the first page body runs, so no page
             // sees an empty library (which would flash the import screen and

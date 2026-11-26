@@ -79,7 +79,7 @@ final class MomentsUITests: XCTestCase {
         memory.typeText("Synthetic memory about this spot\r")
 
         // Return ends typing; the words stay right there as the memory, with
-        // no AI step in between (AI is off by default).
+        // no AI step in between (UI tests hand nothing to a model).
         XCTAssertTrue((memory.value as? String ?? "").contains("Synthetic memory about this spot"), "Return did not keep the words under the photo")
 
         // The viewer's column shows the same memory.
@@ -464,9 +464,8 @@ final class MomentsUITests: XCTestCase {
         let window = app.windows.containing(.any, identifier: "settings.backup-status").firstMatch
         let aboutSharing = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Sharing", "Sharing")
         XCTAssertTrue(window.staticTexts.matching(aboutSharing).firstMatch.waitForExistence(timeout: launchTimeout), "Settings has no sharing section")
-        // AI is one switch here, off; the key is asked for only when it is on.
+        // AI organizing is a few rows of the same page.
         XCTAssertTrue(element(in: app, identifier: "settings.ai-enabled").waitForExistence(timeout: launchTimeout), "Settings has no AI switch")
-        XCTAssertFalse(element(in: app, identifier: "settings.ai-key").exists, "The AI key field shows while AI is off")
         XCTAssertFalse(element(in: app, identifier: "settings.language").exists, "The language picker is back in Settings")
         XCTAssertFalse(element(in: app, identifier: "settings.auto-organize").exists, "The organize switch is back in Settings")
         XCTAssertEqual(window.toolbars.buttons.count, 0, "Settings has tabs again")
@@ -475,6 +474,25 @@ final class MomentsUITests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
         app.typeKey("w", modifierFlags: .command)
+    }
+
+    /// Settings: AI starts on, and a custom model is an address, a model
+    /// name and a key, tied to no one provider.
+    func testAISettingsStartOnAndACustomModelIsJustThreeFields() {
+        let app = launch(language: "en", extraArguments: ["-moments.ai.engine", "cloud"])
+        app.typeKey(",", modifierFlags: .command)
+        let toggle = element(in: app, identifier: "settings.ai-enabled")
+        XCTAssertTrue(toggle.waitForExistence(timeout: launchTimeout), "Settings has no AI switch")
+        let value: String = String(describing: toggle.value ?? "nil")
+        XCTAssertTrue(["1", "true"].contains(value), "AI does not start on: \(value)")
+        for identifier in ["settings.ai-engine", "settings.ai-address", "settings.ai-model", "settings.ai-key"] {
+            XCTAssertTrue(element(in: app, identifier: identifier).exists, "\(identifier) is missing")
+        }
+        let window = app.windows.containing(.any, identifier: "settings.ai-enabled").firstMatch
+        let attachment = XCTAttachment(screenshot: window.screenshot())
+        attachment.name = "settings-03-ai-custom-evidence"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     /// The app follows the Mac's language: the sidebar comes from the

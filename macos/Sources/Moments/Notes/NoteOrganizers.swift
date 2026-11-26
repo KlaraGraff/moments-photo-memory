@@ -31,37 +31,14 @@ public enum CloudProvider: String, CaseIterable, Sendable {
     }
 }
 
-/// The Claude models offered in Settings › AI Model before the key's own
-/// list arrives, the default first.
+/// Claude models the app knows, for the request options only they take.
 public enum ClaudeModel: String, CaseIterable, Sendable {
     case haiku = "claude-haiku-5-5"
     case sonnet = "claude-sonnet-5-5"
     case opus = "claude-opus-5-5"
 
-    public var displayName: String {
-        switch self {
-        case .opus: return "Claude Opus 5.5"
-        case .sonnet: return "Claude Sonnet 5.5"
-        case .haiku: return "Claude Haiku 5.5"
-        }
-    }
-
-    public var summary: String {
-        switch self {
-        case .opus: return String(localized: "Best at understanding notes")
-        case .sonnet: return String(localized: "Good, about half the cost")
-        case .haiku: return String(localized: "Fastest and cheapest")
-        }
-    }
-
     /// Haiku has no server-side fallback model; a declined note stays declined.
     var supportsServerFallback: Bool { self != .haiku }
-}
-
-public enum OnDeviceFallback: String, CaseIterable, Sendable {
-    /// Keep the words and organize them later.
-    case keepForLater
-    case useCloud
 }
 
 /// The AI model choice, kept in UserDefaults. The API key lives in the Keychain.
@@ -70,17 +47,17 @@ public struct AISettings: Equatable, Sendable {
     public static let providerKey = "moments.ai.cloudProvider"
     public static let modelKey = "moments.ai.cloudModel"
     public static let baseURLKey = "moments.ai.cloudBaseURL"
-    public static let fallbackKey = "moments.ai.fallback"
-    /// AI is an extra the person turns on; off, nothing is sent anywhere and
-    /// memories are only the words typed.
+    /// On unless the person turns it off. The words are the memory either
+    /// way; AI only adds next to them, marked and undoable.
     public static let enabledKey = "moments.ai.enabled"
 
-    public var enabled = false
+    public var enabled = true
     public var engine: AIEngine = .onDevice
+    /// `.claude` only for a key saved before the custom model; a custom
+    /// model is `.openAICompatible`, whatever service its address names.
     public var provider: CloudProvider = .claude
-    public var model: String = CloudProvider.claude.defaultModel
+    public var model: String = ""
     public var baseURL: String = ""
-    public var fallback: OnDeviceFallback = .keepForLater
 
     public init() {}
 
@@ -90,14 +67,40 @@ public struct AISettings: Equatable, Sendable {
         AppleOnDeviceOrganizer.unavailableReason() == nil ? .onDevice : .cloud
     }
 
+    /// A key saved for Anthropic before the custom model becomes the custom
+    /// model's, with Anthropic's address, so nothing has to be typed again.
+    /// Nothing changes when the Keychain can't be read (it is tried again
+    /// next time), so a working setup is never dropped.
+    public static func moveOldAnthropicSetup(
+        defaults: UserDefaults = .standard,
+        lookup: (CloudProvider) -> AIKeychain.Lookup = AIKeychain.lookup(for:),
+        store: (String, CloudProvider) -> Bool = AIKeychain.setKey(_:for:)
+    ) {
+        let provider = defaults.string(forKey: providerKey).flatMap(CloudProvider.init(rawValue:)) ?? .claude
+        guard provider == .claude else { return }
+        switch lookup(.claude) {
+        case .failed:
+            return
+        case .notFound:
+            break
+        case .found(let key):
+            guard store(key, .openAICompatible) else { return }
+            defaults.set(anthropicAddress, forKey: baseURLKey)
+            let model = defaults.string(forKey: modelKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if model.isEmpty { defaults.set(CloudProvider.claude.defaultModel, forKey: modelKey) }
+        }
+        defaults.set(CloudProvider.openAICompatible.rawValue, forKey: providerKey)
+    }
+
+    static let anthropicAddress = "https://api.anthropic.com/v1"
+
     public static func load(from defaults: UserDefaults = .standard) -> AISettings {
         var settings = AISettings()
-        settings.enabled = defaults.bool(forKey: enabledKey)
+        settings.enabled = defaults.object(forKey: enabledKey) as? Bool ?? true
         settings.engine = defaults.string(forKey: engineKey).flatMap(AIEngine.init(rawValue:)) ?? defaultEngine
         settings.provider = defaults.string(forKey: providerKey).flatMap(CloudProvider.init(rawValue:)) ?? .claude
-        settings.model = defaults.string(forKey: modelKey) ?? settings.provider.defaultModel
+        settings.model = defaults.string(forKey: modelKey) ?? ""
         settings.baseURL = defaults.string(forKey: baseURLKey) ?? ""
-        settings.fallback = defaults.string(forKey: fallbackKey).flatMap(OnDeviceFallback.init(rawValue:)) ?? .keepForLater
         return settings
     }
 }
@@ -106,16 +109,29 @@ public struct AISettings: Equatable, Sendable {
 public enum AIKeychain {
     static let service = "Moments AI"
 
-    public static func key(for provider: CloudProvider) -> String? {
+    /// A key, no key, or a Keychain that could not be read (locked, or
+    /// access denied), which is not the same as no key.
+    public enum Lookup: Equatable, Sendable {
+        case found(String)
+        case notFound
+        case failed
+    }
+
+    public static func lookup(for provider: CloudProvider) -> Lookup {
         var query = baseQuery(provider)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let value = String(data: data, encoding: .utf8),
-              !value.isEmpty else { return nil }
-        return value
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return .notFound }
+        guard status == errSecSuccess, let data = result as? Data,
+              let value = String(data: data, encoding: .utf8) else { return .failed }
+        return value.isEmpty ? .notFound : .found(value)
+    }
+
+    public static func key(for provider: CloudProvider) -> String? {
+        if case .found(let value) = lookup(for: provider) { return value }
+        return nil
     }
 
     @discardableResult
@@ -141,7 +157,10 @@ public enum AIKeychain {
 
 public enum NoteOrganizerFactory {
     /// The organizers to try, in order: none while AI is turned off. An
-    /// `.unavailable` error from one moves on to the next; any other error stops.
+    /// `.unavailable` or `.missingKey` error from one moves on to the next;
+    /// any other error stops. With the on-device model chosen, the custom
+    /// model is tried when this Mac can't run Apple's (it fails as missing
+    /// a key or an address when none was set up).
     public static func organizers(
         settings: AISettings = .load(),
         apiKey: (CloudProvider) -> String? = AIKeychain.key(for:)
@@ -152,21 +171,32 @@ public enum NoteOrganizerFactory {
         case .cloud:
             return [cloud]
         case .onDevice:
-            var list: [any NoteOrganizing] = [AppleOnDeviceOrganizer()]
-            if settings.fallback == .useCloud { list.append(cloud) }
-            return list
+            return [AppleOnDeviceOrganizer(), cloud]
         }
     }
 
+    /// The custom model: an address, a model name and a key the person typed,
+    /// spoken to as an OpenAI-compatible chat API, or as Anthropic's own API
+    /// when the address is Anthropic's. A key saved for Anthropic before the
+    /// custom model keeps working until Settings moves it over.
     static func cloudOrganizer(settings: AISettings, apiKey: (CloudProvider) -> String?) -> any NoteOrganizing {
-        let key = apiKey(settings.provider)
         let model = settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch settings.provider {
-        case .claude:
-            return ClaudeOrganizer(apiKey: key, model: model.isEmpty ? CloudProvider.claude.defaultModel : model)
-        case .openAICompatible:
-            return OpenAICompatibleOrganizer(apiKey: key, model: model, baseURL: settings.baseURL)
+        let base = settings.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if settings.provider == .claude {
+            // Set up before the custom model; an address left from trying
+            // another service then was never in use.
+            return ClaudeOrganizer(apiKey: apiKey(.claude), model: model.isEmpty ? CloudProvider.claude.defaultModel : model)
         }
+        let key = apiKey(.openAICompatible)
+        if isAnthropic(base) {
+            return ClaudeOrganizer(apiKey: key, model: model.isEmpty ? CloudProvider.claude.defaultModel : model)
+        }
+        return OpenAICompatibleOrganizer(apiKey: key, model: model, baseURL: base)
+    }
+
+    static func isAnthropic(_ address: String) -> Bool {
+        guard let host = URL(string: address)?.host?.lowercased() else { return false }
+        return host == "anthropic.com" || host.hasSuffix(".anthropic.com")
     }
 }
 
@@ -231,7 +261,7 @@ struct GeneratedNote {
     var placeName: String
     @Guide(description: "What the place is like or tips about it, one or two neutral sentences; otherwise empty")
     var placeDescription: String
-    @Guide(description: "The person's own experience in their voice and mostly their own words; otherwise empty")
+    @Guide(description: "The person's own experience in their voice and mostly their own words; when part of the note is about the whole day or trip, only that part; otherwise empty")
     var memory: String
     @Guide(description: "photo, day or trip: what the memory is about")
     var memoryScope: String
@@ -289,7 +319,7 @@ struct ClaudeOrganizer: NoteOrganizing {
         do {
             return try await CloudHTTP.send(request, session: session)
         } catch NoteOrganizerError.http(401, _) {
-            throw NoteOrganizerError.http(401, String(localized: "The API key was not accepted. Check it in Settings › AI Model."))
+            throw NoteOrganizerError.http(401, String(localized: "The API key was not accepted. Check it in Settings."))
         } catch NoteOrganizerError.http(403, let detail) {
             // Anthropic turns away requests from regions it doesn't serve.
             let hint = String(localized: "Anthropic doesn't accept requests from this network. Turn on a proxy for the whole Mac, then try again.")
@@ -304,38 +334,6 @@ struct ClaudeOrganizer: NoteOrganizing {
         let blocks = object["content"] as? [[String: Any]] ?? []
         let text = blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined()
         return try NoteOrganizerParser.parse(text)
-    }
-}
-
-/// A model the person can pick in Settings › AI Model.
-public struct CloudModelOption: Identifiable, Equatable, Sendable {
-    public var id: String
-    public var displayName: String
-}
-
-/// Lists the models an Anthropic API key can use (newest first), so the
-/// person picks from what their account actually has.
-enum AnthropicModelList {
-    static let endpoint = URL(string: "https://api.anthropic.com/v1/models?limit=1000")!
-
-    static func fetch(apiKey: String, session: URLSession = .shared) async throws -> [CloudModelOption] {
-        var request = URLRequest(url: endpoint)
-        request.timeoutInterval = 30
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.setValue("2026-10-21", forHTTPHeaderField: "anthropic-version")
-        return parse(try await ClaudeOrganizer.send(request, session: session))
-    }
-
-    static func parse(_ object: [String: Any]) -> [CloudModelOption] {
-        let data = object["data"] as? [[String: Any]] ?? []
-        return data.compactMap { entry in
-            guard let id = entry["id"] as? String, !id.isEmpty else { return nil }
-            // Notes need structured output; leave out models that say they lack it.
-            let capabilities = entry["capabilities"] as? [String: Any]
-            if (capabilities?["structured_outputs"] as? [String: Any])?["supported"] as? Bool == false { return nil }
-            let name = (entry["display_name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id
-            return CloudModelOption(id: id, displayName: name)
-        }
     }
 }
 
@@ -358,7 +356,7 @@ struct OpenAICompatibleOrganizer: NoteOrganizing {
     func organize(_ context: NoteOrganizerContext) async throws -> NoteOrganizerResult {
         guard let apiKey else { throw NoteOrganizerError.missingKey }
         guard let url = Self.endpoint(from: baseURL), !model.isEmpty else {
-            throw NoteOrganizerError.unavailable(String(localized: "Fill in the endpoint and model in Settings › AI Model."))
+            throw NoteOrganizerError.unavailable(String(localized: "Fill in the address, model name and API key in Settings."))
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

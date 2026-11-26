@@ -88,8 +88,9 @@ public final class InMemorySyncServer {
         log.append((sequence, change))
     }
 
+    /// Like CloudKit, a record name is unique in the zone whatever its type.
     private static func slot(_ type: SyncRecordType, _ name: String) -> String {
-        type.rawValue + "/" + name
+        name
     }
 
     private static func systemFields(_ tag: Int) -> Data {

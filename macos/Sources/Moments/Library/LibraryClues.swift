@@ -37,19 +37,25 @@ enum PeopleStrip {
             let name: String = person.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !name.isEmpty { names[person.id] = name }
         }
+        // A face is a SwiftData model, so each property is read once.
         var byPerson: [String: [FaceObservation]] = [:]
         var byCluster: [String: [FaceObservation]] = [:]
+        var photos: [String: Set<String>] = [:]
         for face in faces {
-            guard let item = itemsByID[face.mediaID], !item.isScreenshot else { continue }
+            let mediaID: String = face.mediaID
+            guard let item = itemsByID[mediaID], !item.isScreenshot else { continue }
             if let personID = face.personID {
-                if names[personID] != nil { byPerson[personID, default: []].append(face) }
+                guard names[personID] != nil else { continue }
+                byPerson[personID, default: []].append(face)
+                photos["person." + personID, default: []].insert(mediaID)
             } else if let clusterID = face.clusterID, !clusterID.hasPrefix("loose-") {
                 byCluster[clusterID, default: []].append(face)
+                photos["cluster." + clusterID, default: []].insert(mediaID)
             }
         }
         var named: [PeopleStripEntry] = []
         for (personID, group) in byPerson {
-            let mediaIDs: Set<String> = Set(group.map { (face: FaceObservation) -> String in face.mediaID })
+            let mediaIDs: Set<String> = photos["person." + personID] ?? []
             let cover: FaceObservation? = PeopleFacePicker.cover(group, keyFaceID: PeopleStoreActions.keyFaceID(for: personID))
             named.append(PeopleStripEntry(
                 id: "person." + personID,
@@ -67,7 +73,7 @@ enum PeopleStrip {
         var unnamed: [PeopleStripEntry] = []
         for (clusterID, group) in byCluster {
             guard group.count >= PeopleStoreActions.minimumCardFaces else { continue }
-            let mediaIDs: Set<String> = Set(group.map { (face: FaceObservation) -> String in face.mediaID })
+            let mediaIDs: Set<String> = photos["cluster." + clusterID] ?? []
             guard mediaIDs.count >= minimumUnnamedPhotos else { continue }
             unnamed.append(PeopleStripEntry(
                 id: "cluster." + clusterID,

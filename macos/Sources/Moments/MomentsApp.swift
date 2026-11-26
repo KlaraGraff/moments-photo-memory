@@ -69,6 +69,9 @@ struct MomentsApp: App {
     #endif
 
     init() {
+        // First, before anything reads user defaults: settings from the
+        // builds that used a placeholder bundle identifier.
+        AppIdentityMigration.runAtLaunch()
         _ = AppLanguage.atLaunch
         #if DEBUG
         // Each UI test starts at the default photos per row (or its launch

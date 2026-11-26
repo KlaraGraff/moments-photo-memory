@@ -72,14 +72,16 @@ enum SharedPreview {
     }
 }
 
-/// Preview files on disk, one per photo, under the app's Application
-/// Support folder (never in the repository, never in the library folder).
+/// Preview files on disk, one per photo, in the library's folder under
+/// Application Support (never in the repository, never next to the
+/// original photos). Backups copy only the store, not these files.
 struct SharedPreviewFiles {
     let folder: URL
 
+    /// Next to the library, like the sync state: the previews belong to the
+    /// trips that library shares or receives.
     static var defaultFolder: URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appending(path: "Moments", directoryHint: .isDirectory)
+        MomentsPersistence.defaultStoreFolder()
             .appending(path: "SharedPreviews", directoryHint: .isDirectory)
     }
 

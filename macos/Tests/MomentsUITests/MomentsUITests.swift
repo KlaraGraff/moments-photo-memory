@@ -385,7 +385,10 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(merge.waitForExistence(timeout: launchTimeout), "Typing another person's name did not ask before merging")
         XCTAssertEqual(libraryPhotoCount(app), 2, "The two people were joined before the question was answered")
         capture(app, named: "\(prefix)-04-merge-question-evidence")
-        merge.click()
+        // Return takes the default answer, Merge. Not a click: the first
+        // match can be the Touch Bar's copy of the button, which cannot be
+        // clicked.
+        app.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(merge.waitForNonExistence(timeout: launchTimeout))
         let joined: Int = libraryPhotoCount(app)
         XCTAssertEqual(joined, 7, "After the merge the heading should show both people's photos: Alex's two and the group's five")

@@ -238,7 +238,7 @@ struct MomentsApp: App {
                         stackAnalyzer.analyzeIfNeeded()
                         // A face scan cut short by quitting picks up here;
                         // there is no People page or button to start it.
-                        peopleController.scanIfNeeded()
+                        peopleController.resumeIfInterrupted()
                         photoStacks.refresh(container: modelContainer)
                         #if DEBUG
                         PageProbe.attach(container: modelContainer, selection: selection, people: peopleController, stacks: stackAnalyzer)

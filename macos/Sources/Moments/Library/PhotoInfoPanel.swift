@@ -377,8 +377,7 @@ struct PhotoInfoPanel: View {
 
     private func stopIgnoring(_ face: FaceObservation) {
         guard let personID = face.personID else { return }
-        let observations: [FaceObservation] = (try? modelContext.fetch(FetchDescriptor<FaceObservation>())) ?? []
-        PeopleStoreActions.restoreIgnored(personID: personID, observations: observations, context: modelContext)
+        PeopleStoreActions.restoreIgnored(personID: personID, observations: store.faces, context: modelContext)
         save()
         // The released faces are grouped again by the next scan.
         NotificationCenter.default.post(name: .momentsPeopleScanRequested, object: nil)

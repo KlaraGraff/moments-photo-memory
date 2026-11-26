@@ -445,7 +445,11 @@ struct LibraryScopeHeading: View {
     private func nameGroup(as value: String, mergingInto target: Person?, keepSeparate: Bool) {
         guard let clusterID = scope.clusterID else { return }
         let group: [FaceObservation] = faces
-        guard !group.isEmpty else { return }
+        // A scan regrouped these faces meanwhile: nothing here to name.
+        guard !group.isEmpty else {
+            resetName()
+            return
+        }
         let shownID: String? = PeopleStoreActions.name(
             faces: group,
             as: value,

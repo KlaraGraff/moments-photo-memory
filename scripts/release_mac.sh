@@ -6,27 +6,38 @@ set -euo pipefail
 # zipped. Run it on the owner's Mac; CI never signs.
 #
 # Usage:
-#   scripts/release_mac.sh [--notarize] [--cloudkit-env development|production]
-#                          [--out DIR.noindex] [--dry-run]
+#   scripts/release_mac.sh [--notarize] [--out DIR.noindex] [--dry-run]
 #
 #   --notarize      send the app to Apple's notary service, wait, and staple
 #                   the ticket, so Gatekeeper opens it on a Mac that has never
 #                   seen it. Without it the app is signed but not notarized.
-#   --cloudkit-env  which CloudKit environment the app talks to (default
-#                   development). production only works once the CloudKit
-#                   schema has been deployed to production, which is one-way
-#                   and needs the owner's go-ahead.
 #   --out           output folder; must sit inside a *.noindex folder so
 #                   Spotlight never indexes build products (default
 #                   ~/Moments-Builds.noindex/<version>-<build>).
 #   --dry-run       print the commands instead of running them.
 #
+# A Developer ID app always talks to the Production CloudKit environment and
+# production push: Apple's Developer ID profiles allow nothing else, and
+# export refuses iCloudContainerEnvironment=Development. Sharing in such a
+# build works only once the CloudKit schema is deployed to Production, which
+# is one-way and needs the owner's go-ahead. To try sharing against the
+# Development environment, use a development-signed build instead
+# (MOMENTS_ENTITLEMENTS in Local.xcconfig).
+#
 # One-time setup on the Mac (none of this is ever committed):
 #   1. Xcode › Settings › Accounts: sign in with the Apple developer account.
 #   2. In the same pane, Manage Certificates › + › Developer ID Application.
-#   3. macos/Config/Local.xcconfig (copy Local.xcconfig.example) with
+#      If it lists an Apple Development certificate marked "Not in Keychain"
+#      (made on a previous install), revoke it so Xcode can make a new one.
+#   3. Register this Mac on developer.apple.com › Devices (platform macOS,
+#      Device ID = "Provisioning UDID" from System Information › Hardware).
+#      The archive is signed with a development profile, which needs at
+#      least one registered device; xcodebuild cannot register the Mac it
+#      runs on. Apple refuses all of this until the latest Program License
+#      Agreement is accepted on developer.apple.com.
+#   4. macos/Config/Local.xcconfig (copy Local.xcconfig.example) with
 #      DEVELOPMENT_TEAM set, or export MOMENTS_TEAM_ID.
-#   4. For --notarize, once:
+#   5. For --notarize, once:
 #        xcrun notarytool store-credentials moments-notary \
 #          --apple-id <Apple ID> --team-id <team id>
 #      It asks for an app-specific password and keeps it in the login
@@ -35,19 +46,15 @@ set -euo pipefail
 # This script never tags, pushes or publishes anything.
 
 usage() {
-  sed -n '7,22p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '8,17p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 notarize=0
-cloudkit_env=development
 out=""
 dry_run=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --notarize) notarize=1 ;;
-    --cloudkit-env)
-      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
-      cloudkit_env="$2"; shift ;;
     --out)
       [[ $# -ge 2 ]] || { usage >&2; exit 2; }
       out="$2"; shift ;;
@@ -58,11 +65,9 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-case "$cloudkit_env" in
-  development) export_env=Development; aps_env=development ;;
-  production) export_env=Production; aps_env=production ;;
-  *) echo "release: --cloudkit-env must be development or production" >&2; exit 2 ;;
-esac
+# Developer ID: Production only (see the header).
+export_env=Production
+aps_env=production
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 macos="$root/macos"
@@ -131,7 +136,7 @@ app="$export_dir/Moments.app"
 export_options="$out/ExportOptions.plist"
 profile="${MOMENTS_NOTARY_PROFILE:-moments-notary}"
 
-echo "release: Moments $version ($build, $commit), $bundle_id, CloudKit $cloudkit_env, into $out"
+echo "release: Moments $version ($build, $commit), $bundle_id, CloudKit Production, into $out"
 mkdir -p "$out"
 
 if [[ $dry_run -eq 0 ]]; then
@@ -174,8 +179,6 @@ cat > "$export_options" <<PLIST
 	<string>automatic</string>
 	<key>teamID</key>
 	<string>$team</string>
-	<key>iCloudContainerEnvironment</key>
-	<string>$export_env</string>
 </dict>
 </plist>
 PLIST
@@ -217,7 +220,8 @@ if [[ $dry_run -eq 0 ]]; then
     exit 1
   fi
   if [[ "$signed_aps_env" != "$aps_env" ]]; then
-    echo "release: warning: push environment is $signed_aps_env, asked for $aps_env (set by the provisioning profile)." >&2
+    echo "release: the signed app uses push environment $signed_aps_env, expected $aps_env" >&2
+    exit 1
   fi
   built_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
   [[ "$built_id" == "$bundle_id" ]] \
@@ -236,9 +240,9 @@ if [[ $notarize -eq 1 ]]; then
     run xcrun notarytool submit "$upload" --keychain-profile "$profile" --wait --output-format json
   else
     # --wait can exit 0 on a rejected upload, so read the status itself.
-    submission="$(xcrun notarytool submit "$upload" --keychain-profile "$profile" --wait --output-format json)"
-    status="$(plutil -extract status raw - <<<"$submission" 2>/dev/null || true)"
-    submission_id="$(plutil -extract id raw - <<<"$submission" 2>/dev/null || true)"
+    submission="$(xcrun notarytool submit "$upload" --keychain-profile "$profile" --wait --output-format json || true)"
+    status="$(plutil -extract status raw -o - - <<<"$submission" 2>/dev/null || true)"
+    submission_id="$(plutil -extract id raw -o - - <<<"$submission" 2>/dev/null || true)"
     if [[ "$status" != "Accepted" ]]; then
       echo "release: notarization status '${status:-unknown}' for submission ${submission_id:-?}" >&2
       [[ -z "$submission_id" ]] || xcrun notarytool log "$submission_id" --keychain-profile "$profile" >&2 || true

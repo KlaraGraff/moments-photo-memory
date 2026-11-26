@@ -12,8 +12,8 @@
 CODE_SIGN_STYLE = Automatic
 MOMENTS_BUNDLE_ID = com.momentsphotomemory.Moments
 MOMENTS_ICLOUD_CONTAINER = iCloud.com.momentsphotomemory.Moments
-// Push environment for CloudKit change notifications. The release script
-// passes production when it exports for the production CloudKit environment.
+// Push environment for CloudKit change notifications in development-signed
+// builds. Developer ID builds (scripts/release_mac.sh) always use production.
 MOMENTS_APS_ENVIRONMENT = development
 PRODUCT_BUNDLE_IDENTIFIER = $(MOMENTS_BUNDLE_ID)
 // iCloud and push entitlements need a provisioning profile from a real team;

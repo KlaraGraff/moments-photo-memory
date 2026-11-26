@@ -108,7 +108,8 @@ class ReleaseScriptTests(unittest.TestCase):
             plan = result.stdout
             self.assertIn("xcodebuild archive", plan)
             self.assertIn("ARCHS=arm64", plan)
-            self.assertIn("MOMENTS_APS_ENVIRONMENT=development", plan)
+            # Developer ID allows only the Production CloudKit environment.
+            self.assertIn("MOMENTS_APS_ENVIRONMENT=production", plan)
             self.assertIn("MOMENTS_ENTITLEMENTS=Config/Moments.entitlements", plan)
             self.assertIn("MOMENTS_HARDENED_RUNTIME=YES", plan)
             self.assertIn("DEVELOPMENT_TEAM=ABCDE12345", plan)
@@ -124,7 +125,8 @@ class ReleaseScriptTests(unittest.TestCase):
                 options = plistlib.load(handle)
             self.assertEqual(options["method"], "developer-id")
             self.assertEqual(options["teamID"], "ABCDE12345")
-            self.assertEqual(options["iCloudContainerEnvironment"], "Development")
+            # Export refuses "Development" for developer-id; leave it to the profile.
+            self.assertNotIn("iCloudContainerEnvironment", options)
 
     def test_without_notarize_nothing_goes_to_apple(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -132,15 +134,6 @@ class ReleaseScriptTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertNotIn("notarytool", result.stdout)
             self.assertIn("notarized: no", result.stdout)
-
-    def test_production_switches_push_and_cloudkit_environment(self):
-        with tempfile.TemporaryDirectory() as directory:
-            out = Path(directory) / "b.noindex"
-            result = self.run_script("--cloudkit-env", "production", "--out", str(out))
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("MOMENTS_APS_ENVIRONMENT=production", result.stdout)
-            with open(out / "ExportOptions.plist", "rb") as handle:
-                self.assertEqual(plistlib.load(handle)["iCloudContainerEnvironment"], "Production")
 
     def test_refuses_output_outside_a_noindex_folder(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -155,8 +148,8 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("DEVELOPMENT_TEAM", result.stderr)
 
-    def test_refuses_an_unknown_cloudkit_environment(self):
-        result = self.run_script("--cloudkit-env", "staging")
+    def test_rejects_the_removed_cloudkit_environment_option(self):
+        result = self.run_script("--cloudkit-env", "development")
         self.assertEqual(result.returncode, 2)
 
     def test_script_holds_no_credentials(self):

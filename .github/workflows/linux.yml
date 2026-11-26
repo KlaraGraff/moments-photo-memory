@@ -24,6 +24,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test MomentsCore package
         run: swift test --package-path macos/MomentsCore
+      - name: Check MomentsCore does not compare Dates with >= or <=
+        run: bash scripts/check_date_operators.sh MomentsCore macos/MomentsCore/Sources/MomentsCore
 
   repo:
     name: Repository checks

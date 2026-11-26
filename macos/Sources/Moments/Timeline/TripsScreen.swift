@@ -53,8 +53,9 @@ struct TripsScreen: View {
     @State private var itemByID: [String: MediaItem] = [:]
     /// The last change, with its Undo.
     @State private var notice: TripNotice?
-    /// Covers chosen by hand, by trip id; kept on this Mac.
-    @AppStorage(TripCoverChoice.defaultsKey, store: TripAssignmentLocks.store) private var coverStore = ""
+    /// Covers chosen by hand, by trip id; a library decision. This screen is
+    /// the only place that changes them.
+    @State private var coverStore = TripAssignmentLocks.store.string(forKey: TripCoverChoice.defaultsKey) ?? ""
     @State private var isCreatingTrip = false
     /// Chapters that are not trips, built like trips, by "chapter.<id>".
     @State private var chapterDocs: [String: TimelineTrip] = [:]
@@ -681,6 +682,7 @@ struct TripsScreen: View {
                 var choices = TripCoverChoice.decode(coverStore)
                 choices[tripID] = itemID
                 coverStore = TripCoverChoice.encode(choices)
+                TripAssignmentLocks.store.set(coverStore, forKey: TripCoverChoice.defaultsKey)
             }
         )
     }

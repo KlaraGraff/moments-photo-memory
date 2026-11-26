@@ -16708,6 +16708,50 @@
           }
         }
       }
+    },
+    "Backup" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sicherung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Backup"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "备份"
+          }
+        }
+      }
+    },
+    "Moments backs up the library each day it changes and keeps the last 14 backups. Original photos are not in the backup." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moments sichert die Mediathek an jedem Tag, an dem sie sich ändert, und bewahrt die letzten 14 Sicherungen auf. Originalfotos sind nicht in der Sicherung."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moments backs up the library each day it changes and keeps the last 14 backups. Original photos are not in the backup."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moments 在资料库有改动的日子自动备份，保留最近 14 份。备份里没有原图。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

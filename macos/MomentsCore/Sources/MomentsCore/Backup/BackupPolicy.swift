@@ -168,6 +168,13 @@ public enum BackupPolicy {
         storeExists && lastOpenedSchema != currentSchema
     }
 
+    /// True when `version` is an older schema than `other`, compared as
+    /// numbers ("10.0.0" is newer than "9.0.0"). Unreadable text is never older.
+    public static func isSchema(_ version: String, olderThan other: String) -> Bool {
+        guard let lhs = SchemaVersionNumber(version), let rhs = SchemaVersionNumber(other) else { return false }
+        return lhs < rhs
+    }
+
     public static func restoreCheck(_ manifest: BackupManifest, currentSchema: String) -> RestoreCheck {
         guard manifest.format <= BackupManifest.currentFormat,
               let backup = SchemaVersionNumber(manifest.schemaVersion),

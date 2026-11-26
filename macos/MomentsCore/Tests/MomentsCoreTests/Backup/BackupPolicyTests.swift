@@ -105,6 +105,13 @@ final class BackupPolicyTests: XCTestCase {
         XCTAssertEqual(BackupPolicy.restoreCheck(future, currentSchema: "8.0.0"), .unreadable)
     }
 
+    func testSchemaOrderIsNumeric() {
+        XCTAssertTrue(BackupPolicy.isSchema("8.0.0", olderThan: "9.0.0"))
+        XCTAssertTrue(BackupPolicy.isSchema("9.0.0", olderThan: "10.0.0"))
+        XCTAssertFalse(BackupPolicy.isSchema("9.0.0", olderThan: "9.0.0"))
+        XCTAssertFalse(BackupPolicy.isSchema("x", olderThan: "9.0.0"))
+    }
+
     func testManifestRoundTrips() throws {
         let original = BackupManifest(kind: .beforeRestore, createdAt: Date(timeIntervalSince1970: 1_790_000_000), appVersion: "1.2", schemaVersion: "8.0.0", photoCount: 1_240, memoryCount: 86, sourceModifiedAt: Date(timeIntervalSince1970: 1_789_999_000))
         let decoded = try BackupManifest.decode(original.encoded())

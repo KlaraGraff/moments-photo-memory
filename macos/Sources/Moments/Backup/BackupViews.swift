@@ -2,8 +2,24 @@ import AppKit
 import MomentsCore
 import SwiftUI
 
-/// "Automatic backup: last today 09:12" and the one button there is, in
-/// Settings > General > Library. Backups need no setting: they always run.
+/// Settings' "Backup" section, ready to drop into any `Form`: the automatic
+/// backup's state and "Restore from Backup…".
+struct BackupSettingsSection: View {
+    var body: some View {
+        Section {
+            BackupSettingsRow()
+        } header: {
+            Text(String(localized: "Backup"))
+        } footer: {
+            Text(String(localized: "Moments backs up the library every day and keeps the last 14 days. Original photos are not in the backup."))
+                .font(.caption)
+                .foregroundStyle(Paper.muted)
+        }
+    }
+}
+
+/// "Automatic backup: last today 09:12" and the one button there is.
+/// Backups need no setting: they always run.
 struct BackupSettingsRow: View {
     @Environment(BackupController.self) private var backups
     @State private var showingRestore = false

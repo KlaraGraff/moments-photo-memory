@@ -88,6 +88,9 @@ def self_test():
     if lines != [4, 5]:
         print(f"date operator check: self-test flagged lines {lines}, expected [4, 5]", file=sys.stderr)
         print("date operator check: the -dump-ast format changed; update the patterns", file=sys.stderr)
+        for line in (result.stdout + result.stderr).splitlines():
+            if ">=" in line or "<=" in line:
+                print("  " + line.strip()[:400], file=sys.stderr)
         return 1
     print("date operator check: self-test OK")
     return 0

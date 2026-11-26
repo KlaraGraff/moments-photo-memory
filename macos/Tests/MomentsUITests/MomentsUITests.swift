@@ -554,10 +554,12 @@ final class MomentsUITests: XCTestCase {
         let restore = element(in: app, identifier: "settings.backup-restore")
         XCTAssertTrue(restore.exists, "The backup row has no Restore from Backup button")
         let window = app.windows.containing(.any, identifier: "settings.backup-status").firstMatch
-        let texts: [String] = window.staticTexts.allElementsBoundByIndex.flatMap { (text: XCUIElement) -> [String] in
-            [text.label, text.value as? String ?? ""]
-        }
-        XCTAssertTrue(texts.contains("No backup yet"), "The backup row reads \(texts)")
+        // The row's own text, not a walk over every text on the page: the
+        // AI rows above gain a status line a moment after the page opens,
+        // and a list taken by index then misses its last entry.
+        let reads = NSPredicate(format: "label == %@ OR value == %@", "No backup yet", "No backup yet")
+        let settled = XCTWaiter.wait(for: [expectation(for: reads, evaluatedWith: status)], timeout: launchTimeout)
+        XCTAssertEqual(settled, .completed, "The backup row reads \(status.label) / \(status.value as? String ?? "")")
         let attachment = XCTAttachment(screenshot: window.screenshot())
         attachment.name = "settings-03-backup-evidence"
         attachment.lifetime = .keepAlways

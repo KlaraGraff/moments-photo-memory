@@ -248,11 +248,13 @@ final class TwoPersonSyncTests: XCTestCase {
     }
 
     /// Her personal place name on m1, then a relaunch with `trips` shared.
-    private func relaunchAfterHerPlaceName(sharing trips: Set<String>) throws {
-        let override = SyncRecord(type: .placeOverride, id: "m1:" + SyncAccountMap.localAlias, fields: [
-            "mediaID": .reference("m1"), "placeID": .reference("p-spot"), "accountID": .string(SyncAccountMap.localAlias),
+    private func relaunchAfterHerPlaceName(sharing trips: Set<String>, wholePlace: Bool = false) throws {
+        var fields: [String: SyncValue] = [
+            "placeID": .reference("p-spot"), "accountID": .string(SyncAccountMap.localAlias),
             "nameOverride": .string("Our bench"), "updatedAt": .date(SyncFixtures.at(9))
-        ])
+        ]
+        if !wholePlace { fields["mediaID"] = .reference("m1") }
+        let override = SyncRecord(type: .placeOverride, id: (wholePlace ? "p-spot:" : "m1:") + SyncAccountMap.localAlias, fields: fields)
         partner.edit(override)
         partner.driver.send()
         owner.driver.fetch()
@@ -276,6 +278,11 @@ final class TwoPersonSyncTests: XCTestCase {
         XCTAssertTrue(zoneHas(.place, "p-spot"))
         XCTAssertTrue(zoneHas(.place, "p-city"))
         XCTAssertTrue(zoneHas(.placeOverride, "m1:" + SyncFixtures.partnerAccount))
+    }
+
+    func testARelaunchAfterUnsharingRemovesHerNameForAWholePlaceToo() throws {
+        try relaunchAfterHerPlaceName(sharing: [], wholePlace: true)
+        XCTAssertEqual(server.recordCount, 0)
     }
 
     func testARelaunchAfterUnsharingRemovesHerRecordsAndTheirPlacesToo() throws {

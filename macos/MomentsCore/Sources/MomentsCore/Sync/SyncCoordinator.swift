@@ -106,8 +106,12 @@ public final class SyncCoordinator {
         switch record.type {
         case .mediaItem:
             return ref(record, "tripID").map { [SyncRecordKey(.trip, $0)] } ?? []
-        case .previewAsset, .memory, .mediaTag, .favorite, .userGroupItem, .photoNote, .placeOverride:
+        case .previewAsset, .memory, .mediaTag, .favorite, .userGroupItem, .photoNote:
             return ref(record, "mediaID").map { [SyncRecordKey(.mediaItem, $0)] } ?? []
+        case .placeOverride:
+            // Per photo, or (with no photo) a whole place.
+            if let mediaID = ref(record, "mediaID") { return [SyncRecordKey(.mediaItem, mediaID)] }
+            return ref(record, "placeID").map { [SyncRecordKey(.place, $0)] } ?? []
         case .memoryRevision:
             let id = ref(record, "memoryID")
             let types: [SyncRecordType] = [.memory, .photoNote, .placeNote, .collectionMemory]

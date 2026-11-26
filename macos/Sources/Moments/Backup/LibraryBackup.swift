@@ -164,8 +164,8 @@ enum LibraryBackup {
             let copiedSupport = incoming.appending(path: location.supportName, directoryHint: .isDirectory)
             // External blobs are copied before and after the database: a blob
             // deleted while the snapshot is taken is in the first pass, one
-            // added meanwhile in the second, so the snapshot finds every blob
-            // it refers to.
+            // added meanwhile in the second, so the snapshot finds its blobs
+            // (short of one created and deleted again between the passes).
             if fileManager.fileExists(atPath: support.path) {
                 try fileManager.copyItem(at: support, to: copiedSupport)
             }
@@ -396,7 +396,12 @@ enum LibraryBackup {
                 try fileManager.moveItem(at: location.folder.appending(path: name), to: aside.appending(path: name))
                 movedAside.append(name)
             }
-            for name in try fileManager.contentsOfDirectory(atPath: staging.path) {
+            // The store goes in last: once it is in place the swap is done,
+            // which is what `cleanUpLeftovers` relies on after a crash.
+            let staged = try fileManager.contentsOfDirectory(atPath: staging.path).sorted { lhs, rhs in
+                (lhs == location.storeName ? 1 : 0, lhs) < (rhs == location.storeName ? 1 : 0, rhs)
+            }
+            for name in staged {
                 try fileManager.moveItem(at: staging.appending(path: name), to: location.folder.appending(path: name))
                 movedIn.append(name)
             }
@@ -434,7 +439,11 @@ enum LibraryBackup {
             let asideStore = aside.appending(path: location.storeName)
             if !fileManager.fileExists(atPath: location.storeURL.path), fileManager.fileExists(atPath: asideStore.path) {
                 for item in (try? fileManager.contentsOfDirectory(atPath: aside.path)) ?? [] {
-                    try? fileManager.moveItem(at: aside.appending(path: item), to: location.folder.appending(path: item))
+                    // Anything already in its place came from the backup (the
+                    // store goes in last), and the backup still has it.
+                    let target = location.folder.appending(path: item)
+                    if fileManager.fileExists(atPath: target.path) { try? fileManager.removeItem(at: target) }
+                    try? fileManager.moveItem(at: aside.appending(path: item), to: target)
                 }
                 logger.error("Moved the library back after an interrupted restore")
             }

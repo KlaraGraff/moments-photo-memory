@@ -27,9 +27,9 @@ struct SettingsView: View {
 /// Settings is its own window, as on every Mac, at one fixed size.
 enum SettingsLayout {
     static let width: CGFloat = 600
-    /// Tall enough for the page with sharing unavailable and AI on with the
-    /// model on this Mac; with a custom model's fields the page scrolls.
-    static let height: CGFloat = 680
+    /// Tall enough for the whole page with sharing unavailable and AI on
+    /// with a custom model's fields, its longest form. A longer page scrolls.
+    static let height: CGFloat = 750
 }
 
 /// What the two of you are called next to what you write.

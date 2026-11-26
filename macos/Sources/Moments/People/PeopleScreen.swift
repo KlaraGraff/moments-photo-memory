@@ -186,7 +186,8 @@ final class PeopleScanController {
     }
 
     /// Set while a scan runs and cleared when it ends on its own, so a scan
-    /// cut short by quitting can be told from one that finished.
+    /// cut short by quitting can be told from one that finished. Kept with
+    /// the library, next to the grouping version, not in the app's settings.
     static let unfinishedKey = "moments.people.scanUnfinished"
     /// A scan was asked for while one was running: the running one took its
     /// list of photos before, so another look follows it.
@@ -200,6 +201,8 @@ final class PeopleScanController {
         }
         Task { @MainActor [weak self] in
             let hasWork = (try? await Self.hasWork(container: container)) ?? false
+            // Nothing left of a scan that was cut short: stop asking at launch.
+            if !hasWork { LibraryDecisions.shared.removeObject(forKey: Self.unfinishedKey) }
             guard hasWork, let self, self.task == nil else { return }
             self.start()
         }
@@ -212,7 +215,8 @@ final class PeopleScanController {
     func resumeIfInterrupted() {
         let groupedWith: Int = LibraryDecisions.shared.integer(forKey: PeopleScanStore.groupingVersionKey)
         let outdated: Bool = groupedWith < PeopleScanStore.groupingVersion
-        guard UserDefaults.standard.bool(forKey: Self.unfinishedKey) || outdated else { return }
+        let unfinished: Bool = LibraryDecisions.shared.bool(forKey: Self.unfinishedKey)
+        guard unfinished || outdated else { return }
         scanIfNeeded()
     }
 
@@ -266,7 +270,7 @@ final class PeopleScanController {
         let scanID = UUID()
         activeScanID = scanID
         state = .scanning
-        UserDefaults.standard.set(true, forKey: Self.unfinishedKey)
+        LibraryDecisions.shared.set(true, forKey: Self.unfinishedKey)
         progress = PeopleScanDisplayProgress(completed: 0, total: 0, skippedUnavailable: 0, isPaused: false)
         let embedder = self.embedder
         let coordinator = self.coordinator
@@ -346,7 +350,7 @@ final class PeopleScanController {
             // The grouping version moves only after the write-back succeeded,
             // so an interrupted run regroups on the next start.
             LibraryDecisions.shared.set(PeopleScanStore.groupingVersion, forKey: PeopleScanStore.groupingVersionKey)
-            UserDefaults.standard.removeObject(forKey: Self.unfinishedKey)
+            LibraryDecisions.shared.removeObject(forKey: Self.unfinishedKey)
             guard activeScanID == scanID else { return }
             activePipeline = nil
             state = .finished
@@ -356,7 +360,7 @@ final class PeopleScanController {
             state = .idle
         } catch {
             // It ended on its own; the next import tries again, not every launch.
-            UserDefaults.standard.removeObject(forKey: Self.unfinishedKey)
+            LibraryDecisions.shared.removeObject(forKey: Self.unfinishedKey)
             guard activeScanID == scanID else { return }
             activePipeline = nil
             state = .failed

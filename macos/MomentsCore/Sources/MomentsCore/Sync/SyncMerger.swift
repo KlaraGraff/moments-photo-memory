@@ -117,7 +117,8 @@ public enum SyncMerger {
     private static func later(_ a: SyncValue?, _ b: SyncValue?) -> SyncValue? {
         guard let aDate = a?.dateValue else { return b ?? a }
         guard let bDate = b?.dateValue else { return a }
-        return aDate >= bDate ? a : b
+        // `<` only: some macOS 27.2 seeds lack Date.>= (see scripts/check_date_operators.py).
+        return aDate < bDate ? b : a
     }
 
     private static func larger(_ a: SyncValue?, _ b: SyncValue?) -> SyncValue? {

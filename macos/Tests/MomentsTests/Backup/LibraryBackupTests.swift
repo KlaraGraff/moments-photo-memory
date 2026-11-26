@@ -249,6 +249,28 @@ final class LibraryBackupTests: XCTestCase {
         XCTAssertEqual(leftovers, [])
     }
 
+    /// Sharing's sync state belongs to the library being replaced: a restore
+    /// drops it (so the next sync fetches again instead of deleting records
+    /// made after the backup) and a backup never carries it.
+    func testRestoreDropsTheSyncStateAndBackupsLeaveItOut() throws {
+        try addItems(["synthetic-a"])
+        let sync = location.syncStateFolder
+        try FileManager.default.createDirectory(at: sync, withIntermediateDirectories: true)
+        try Data("synthetic sync state".utf8).write(to: sync.appending(path: "state.json"))
+        let previews = folder.appending(path: "SharedPreviews", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: previews, withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: previews.appending(path: "synthetic.jpg"))
+
+        let backup = try LibraryBackup.makeBackup(.daily, location: location, defaults: defaults, now: origin)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backup.appending(path: "Sync").path))
+
+        try LibraryBackup.scheduleRestore(from: backup, location: location)
+        XCTAssertNil(LibraryBackup.performPendingRestore(location: location, defaults: defaults, now: origin.addingTimeInterval(3_600))?.failure)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sync.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: previews.appending(path: "synthetic.jpg").path), "shared previews stay")
+        XCTAssertEqual(try storedIDs(at: location.storeURL), ["synthetic-a"])
+    }
+
     func testRestoreOntoANewMacWithoutALibrary() throws {
         try addItems(["synthetic-a"])
         try Data("{\"synthetic\":1}\n".utf8).write(to: location.correctionLogURL)

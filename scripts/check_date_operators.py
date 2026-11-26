@@ -49,7 +49,7 @@ def findings(dump):
         # Newer compilers print the substitution map on the lines after it.
         context = [line]
         for following in lines[index + 1:index + 6]:
-            if "substitution" not in following:
+            if "substitution" not in following or "_expr" in following:
                 break
             context.append(following)
         context = "\n".join(context)

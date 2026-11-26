@@ -4568,15 +4568,25 @@ public enum MomentsPersistence {
         return folder.appending(path: "Moments.store")
     }
 
-    /// Chooses the store root without touching the filesystem, so the path
+    /// Chooses the store root without creating anything, so the path
     /// compatibility rule can be tested without opening a user's store.
+    /// The rule itself lives in ``AppIdentityMigration/storeFolderName``.
     static func defaultStoreFolder(
         applicationSupportDirectory: URL = URL.applicationSupportDirectory,
-        bundleIdentifier: String? = Bundle.main.bundleIdentifier
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        defaults: UserDefaults = .standard
     ) -> URL {
-        let folderName = bundleIdentifier?.hasSuffix(".peoplepreview") == true
-            ? "Moments People Preview"
-            : "Moments"
+        let folderName = AppIdentityMigration.storeFolderName(
+            bundleIdentifier: bundleIdentifier,
+            defaults: defaults,
+            storeExists: { folder in
+                FileManager.default.fileExists(
+                    atPath: applicationSupportDirectory
+                        .appending(path: folder, directoryHint: .isDirectory)
+                        .appending(path: "Moments.store").path
+                )
+            }
+        )
         return applicationSupportDirectory.appending(path: folderName, directoryHint: .isDirectory)
     }
 

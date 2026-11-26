@@ -43,6 +43,19 @@ targets:
     settings:
       base:
         INFOPLIST_KEY_CFBundleDisplayName: Moments
+        # Version shown in Moments › About Moments. Bump MARKETING_VERSION by
+        # the rules in AGENTS.md (Releases); scripts/release_mac.sh sets the
+        # build number from the commit count, so it only ever goes up.
+        MARKETING_VERSION: "0.9.0"
+        CURRENT_PROJECT_VERSION: "1"
+        # Extra keys merged into the generated Info.plist (CloudKit container,
+        # share invitations). Identity and container live in Signing.xcconfig.
+        INFOPLIST_FILE: Config/Moments-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Config/Moments.entitlements
+        # Required for notarization; Photos access is declared in the
+        # entitlements because the hardened runtime blocks it otherwise.
+        ENABLE_HARDENED_RUNTIME: "YES"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # The app's accent (terracotta) for selection, focus and controls,
         # unless the person picked a fixed accent colour in System Settings.
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor

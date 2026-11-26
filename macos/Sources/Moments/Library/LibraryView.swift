@@ -166,6 +166,14 @@ struct LibraryView: View {
         let publishedIDs: Set<String>
         /// The ids of `filtered`, for the focused-id check on the hit path.
         let filteredIDs: Set<String>
+        /// The sections before bursts were folded, for `patchRegroup`.
+        let unfolded: [LibrarySection]
+        /// What this regroup was built from besides the photos, the store's
+        /// photo revision and the stack model's generation, so a later save
+        /// that only moved a few photos can be patched in.
+        let baseKey: Int
+        let photoFaceRevision: Int
+        let stackGeneration: Int
     }
 
     /// The last finished regroup, kept across visits to the page: SwiftUI drops
@@ -253,6 +261,13 @@ struct LibraryView: View {
     /// trip/place names, and overrides come from their own queries so this
     /// token never faults `item.memories` for every media item during a render.
     private var groupingKey: Int {
+        groupingKey(includingPhotos: true)
+    }
+
+    /// Without the photos, `groupingKey` minus `store.photoFaceRevision`:
+    /// what decides whether a save that moved only some photos can be patched
+    /// into the last regroup.
+    private func groupingKey(includingPhotos: Bool) -> Int {
         #if DEBUG
         ScrollProbe.count("library.groupingKey")
         #endif
@@ -269,7 +284,7 @@ struct LibraryView: View {
         hasher.combine(state.focusedMemoryItemID)
         hasher.combine(selection.libraryScope?.itemIDs)
         // All photos and faces the pages group by, as one revision.
-        hasher.combine(store.photoFaceRevision)
+        if includingPhotos { hasher.combine(store.photoFaceRevision) }
         // Sections read place names only when grouped by place, filtered by a
         // place, or searched; a place-only save regroups only then.
         let readsPlaceNames: Bool = groupingRaw == LibraryGrouping.place.rawValue || !placeFilterID.isEmpty || !query.isEmpty
@@ -807,6 +822,8 @@ struct LibraryView: View {
         // Taken before anything is read: these are the inputs this pass uses,
         // and a change during it must not be stored under a newer key.
         let key = groupingKey
+        let baseKey: Int = groupingKey(includingPhotos: false)
+        let photoFaceRevision: Int = store.photoFaceRevision
         #if DEBUG
         var stepStarted: CFTimeInterval = CACurrentMediaTime()
         let step: (String) -> Void = { (name: String) -> Void in
@@ -864,6 +881,10 @@ struct LibraryView: View {
             #if DEBUG
             PageProbe.tally("regroup step: reused last regroup", seconds: 0)
             #endif
+            return
+        }
+        if let cached = Self.lastRegroup,
+           patchRegroup(cached.result, key: key, baseKey: baseKey, photoFaceRevision: photoFaceRevision) {
             return
         }
         // `allItems` builds a new array each time it is read.
@@ -1007,7 +1028,11 @@ struct LibraryView: View {
             sectionItems: sectionItemsByID,
             sectionDayKeys: sectionDayKeys,
             publishedIDs: passes.publishedIDs,
-            filteredIDs: Set(filtered.map(\.id))
+            filteredIDs: Set(filtered.map(\.id)),
+            unfolded: unfolded,
+            baseKey: baseKey,
+            photoFaceRevision: photoFaceRevision,
+            stackGeneration: stacks.generation
         )
         Self.lastRegroup = (key: key, result: result)
     }
@@ -1028,6 +1053,151 @@ struct LibraryView: View {
             return (try? modelContext.fetch(FetchDescriptor<UserGroupItem>())) ?? []
         }
     }
+
+    /// A save that moved only a few photos (a place name found, a time zone
+    /// repaired) is patched into the last regroup: only the sections those
+    /// photos left or joined are built, folded and read again. Every other
+    /// input must be what the last regroup used, no filter or scope may be
+    /// on, and the store must name the photos; otherwise this returns false
+    /// and the full regroup runs. `LibrarySectionPatchTests` hold the
+    /// sections to a full rebuild.
+    private func patchRegroup(
+        _ old: LibraryRegroupResult,
+        key: Int,
+        baseKey: Int,
+        photoFaceRevision: Int
+    ) -> Bool {
+        guard old.baseKey == baseKey,
+              old.photoFaceRevision != photoFaceRevision,
+              !criteria.isFiltered,
+              selection.libraryScope == nil,
+              typeRaw != LibraryMediaTypeFilter.screenshot.rawValue,
+              old.visibleCount == items.count,
+              let changed = store.changedPhotoIDs(sincePhotoFaceRevision: old.photoFaceRevision),
+              changed.count <= Self.patchLimit
+        else { return false }
+        #if DEBUG
+        let started: CFTimeInterval = CACurrentMediaTime()
+        #endif
+        let all = allItems
+        // The stack model is shared; a change in its folding is a full regroup.
+        let stackIndex = stacks.update(
+            items: all,
+            decisions: stackRecords,
+            photosKey: stackPhotosKey,
+            photoCount: stackPhotoCount
+        )
+        guard stacks.generation == old.stackGeneration else { return false }
+
+        // Only photos the grid shows; a trashed or screenshot photo that
+        // changed is not in any section.
+        var itemByID: [String: MediaItem] = old.itemByID
+        var shownChanged = Set<String>()
+        for id in changed where itemByID[id] != nil {
+            guard let model = store.itemsByID[id] else { return false }
+            itemByID[id] = model
+            shownChanged.insert(id)
+        }
+        guard let patch = LibrarySectionPatch.sections(
+            old.unfolded,
+            itemByID: itemByID,
+            changedIDs: shownChanged,
+            grouping: grouping,
+            sortOrder: .newestFirst
+        ) else { return false }
+        let folded = LibrarySectionPatch.folding(
+            unfolded: patch.sections,
+            oldFolded: old.sections,
+            oldStackCounts: old.stackCounts,
+            affectedIDs: patch.affectedIDs,
+            with: stackIndex
+        )
+
+        cachedReviewCount = all.reduce(into: 0) { (count: inout Int, item: MediaItem) in
+            if item.needsImportReview, !reviewNoise.isNoise(item.id) { count += 1 }
+        }
+        cachedPersonIndex = old.personIndex
+        cachedItemByID = itemByID
+        cachedSections = folded.sections
+        var unfoldedItems: [String: [String]] = old.unfoldedSectionItems
+        for id in patch.affectedIDs { unfoldedItems[id] = nil }
+        for section in patch.sections where patch.affectedIDs.contains(section.id) {
+            unfoldedItems[section.id] = section.itemIDs
+        }
+        cachedUnfoldedSectionItems = unfoldedItems
+        cachedStackCounts = folded.stackCounts
+        cachedVisibleCount = old.visibleCount
+        let gridSections: [[String]] = folded.sections.map(\.itemIDs)
+        let viewerItemIDs: [String] = patch.sections.flatMap(\.itemIDs)
+        state.gridSections = gridSections
+        state.viewerItemIDs = viewerItemIDs
+        hasGrouped = true
+        cachedFilterOptions = LibraryFilterOptionsCache.options(
+            for: store.items,
+            key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips),
+            sourceKey: LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
+        )
+        var sectionItemsByID: [String: [MediaItem]] = old.sectionItems
+        var sectionDayKeys: [String: Set<String>] = old.sectionDayKeys
+        for id in patch.affectedIDs {
+            sectionItemsByID[id] = nil
+            sectionDayKeys[id] = nil
+        }
+        for section in folded.sections where patch.affectedIDs.contains(section.id) {
+            let sectionItems: [MediaItem] = section.itemIDs.compactMap { itemByID[$0] }
+            sectionItemsByID[section.id] = sectionItems
+            sectionDayKeys[section.id] = Set(sectionItems.compactMap { PhotoNoteDay.key(for: $0) })
+        }
+        cachedSectionItems = sectionItemsByID
+        let memories: [String: [CollectionMemory]] = LibrarySectionMemories.make(
+            sections: folded.sections,
+            dayKeysBySection: sectionDayKeys,
+            memories: collectionMemories
+        )
+        if sectionDayKeys != cachedSectionDayKeys {
+            cachedSectionDayKeys = sectionDayKeys
+        }
+        applySectionMemories(memories)
+        // No photo came or went and no filter is on, so the published and
+        // filtered ids are the last regroup's.
+        if selection.visibleItemIDs != old.publishedIDs { selection.visibleItemIDs = old.publishedIDs }
+        selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
+        if let focus = selection.focusedItemID,
+           !old.filteredIDs.contains(focus),
+           !selection.shouldRevealSelectionInLibrary {
+            selection.focusedItemID = selection.selectedItemIDs.first
+        }
+        let result = LibraryRegroupResult(
+            reviewCount: cachedReviewCount,
+            personIndex: old.personIndex,
+            itemByID: itemByID,
+            sections: folded.sections,
+            unfoldedSectionItems: unfoldedItems,
+            stackCounts: folded.stackCounts,
+            visibleCount: old.visibleCount,
+            gridSections: gridSections,
+            viewerItemIDs: viewerItemIDs,
+            sectionItems: sectionItemsByID,
+            sectionDayKeys: sectionDayKeys,
+            publishedIDs: old.publishedIDs,
+            filteredIDs: old.filteredIDs,
+            unfolded: patch.sections,
+            baseKey: baseKey,
+            photoFaceRevision: photoFaceRevision,
+            stackGeneration: stacks.generation
+        )
+        Self.lastRegroup = (key: key, result: result)
+        #if DEBUG
+        // The count in the milliseconds column: one "ms" per patched photo.
+        PageProbe.tally("regroup patched photos", seconds: Double(shownChanged.count) / 1_000)
+        PageProbe.tally("regroup patched", seconds: CACurrentMediaTime() - started)
+        #endif
+        return true
+    }
+
+    /// More changed photos than this regroup in full: patching that many
+    /// sections is no cheaper.
+    private static let patchLimit = 2_000
 
     /// Writes newly matched section memories, but only when the ids a section
     /// shows differ. A regroup that finds the same memories must not redraw the

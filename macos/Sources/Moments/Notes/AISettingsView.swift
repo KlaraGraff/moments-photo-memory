@@ -1,230 +1,188 @@
 import SwiftUI
 
-/// Settings › AI Model: AI is off until the person turns it on; then which
-/// model fixes places from memories. The on-device Apple model is the
-/// default; a cloud model is optional and uses the person's own key.
+/// Settings › AI Model as a page of its own.
 struct AISettingsView: View {
-    @AppStorage(AISettings.enabledKey) private var enabled = false
-    @AppStorage(AISettings.engineKey) private var engineRaw = AISettings.defaultEngine.rawValue
-    @AppStorage(AISettings.providerKey) private var providerRaw = CloudProvider.claude.rawValue
-    @AppStorage(AISettings.modelKey) private var model = CloudProvider.claude.defaultModel
-    @AppStorage(AISettings.baseURLKey) private var baseURL = ""
-    @AppStorage(AISettings.fallbackKey) private var fallbackRaw = OnDeviceFallback.keepForLater.rawValue
-    @State private var apiKey = ""
-    /// Only a key the person typed is ever written, so a failed keychain read
-    /// can't erase the stored key.
-    @State private var keyEdited = false
-    @State private var testResult: String?
-    @State private var isTesting = false
-    /// Models the Anthropic key can use, fetched as soon as a key is there.
-    @State private var fetchedModels: [CloudModelOption] = []
-    @State private var isLoadingModels = false
-    @State private var modelsError: String?
-
-    private let onDeviceAvailable = AppleOnDeviceOrganizer.unavailableReason() == nil
-
-    private var provider: CloudProvider {
-        CloudProvider(rawValue: providerRaw) ?? .claude
-    }
-
     var body: some View {
         Form {
-            Section {
-                Toggle(String(localized: "Let AI fix places from memories"), isOn: $enabled)
-                    .accessibilityIdentifier("settings.ai-enabled")
-            } footer: {
-                Text(String(localized: "Off, your memories are just the words you write and nothing is sent anywhere. On, after you write, AI corrects the photo's place and notes what the place is like. Your words are never changed."))
-            }
-
-            Section {
-                Picker(String(localized: "Model for organizing notes"), selection: $engineRaw) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(onDeviceAvailable
-                             ? String(localized: "On-device Apple model (recommended)")
-                             : String(localized: "On-device Apple model"))
-                        Text(String(localized: "Runs on this Mac; your words never leave it. Free, nothing to set up. Needs Apple Intelligence."))
-                            .font(.caption)
-                            .foregroundStyle(Paper.muted)
-                    }
-                    .tag(AIEngine.onDevice.rawValue)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(String(localized: "Cloud model"))
-                        Text(String(localized: "Better with long notes. Uses your own API key; the provider bills you."))
-                            .font(.caption)
-                            .foregroundStyle(Paper.muted)
-                    }
-                    .tag(AIEngine.cloud.rawValue)
-                }
-                .pickerStyle(.radioGroup)
-
-                LabeledContent(String(localized: "On-device model")) {
-                    if let reason = AppleOnDeviceOrganizer.unavailableReason() {
-                        Text(reason).foregroundStyle(Paper.muted)
-                    } else {
-                        Label(String(localized: "Ready"), systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    }
-                }
-                .font(.callout)
-            } footer: {
-                Text(String(localized: "Whichever you choose, a corrected place can still be changed by hand in the photo's details."))
-            }
-
-            Section(String(localized: "Cloud model")) {
-                Picker(String(localized: "Provider"), selection: $providerRaw) {
-                    Text(verbatim: "Anthropic").tag(CloudProvider.claude.rawValue)
-                    Text(String(localized: "OpenAI-compatible API")).tag(CloudProvider.openAICompatible.rawValue)
-                }
-                SecureField(String(localized: "API key"), text: Binding(
-                    get: { apiKey },
-                    set: { apiKey = $0; keyEdited = true }
-                ))
-                    .onSubmit { storeKey(for: provider) }
-                HStack(alignment: .firstTextBaseline) {
-                    Text(String(localized: "The key is kept in your Mac's keychain."))
-                        .font(.caption)
-                        .foregroundStyle(Paper.muted)
-                    if provider == .claude {
-                        Link(String(localized: "Get a key"), destination: URL(string: "https://platform.claude.com/settings/keys")!)
-                            .font(.caption)
-                    }
-                    Spacer()
-                    if isTesting { ProgressView().controlSize(.small) }
-                    Button(String(localized: "Test connection")) { test() }
-                        .disabled(isTesting || apiKey.isEmpty)
-                }
-                if provider == .claude {
-                    Picker(String(localized: "Model"), selection: $model) {
-                        ForEach(anthropicOptions) { option in
-                            Text(verbatim: modelLabel(option)).tag(option.id)
-                        }
-                    }
-                    if isLoadingModels {
-                        ProgressView().controlSize(.small)
-                    } else if let modelsError {
-                        Text(modelsError)
-                            .font(.caption)
-                            .foregroundStyle(Paper.muted)
-                    }
-                } else {
-                    TextField(String(localized: "Model"), text: $model, prompt: Text(verbatim: "model-name"))
-                    TextField(String(localized: "Endpoint"), text: $baseURL, prompt: Text(verbatim: "https://example.com/v1"))
-                }
-                if let testResult {
-                    Text(testResult)
-                        .font(.caption)
-                        .foregroundStyle(Paper.muted)
-                }
-                Text(String(localized: "Only the words you wrote, the photo's date and its place name are sent. Never the photo itself or GPS coordinates."))
-                    .font(.caption)
-                    .foregroundStyle(Paper.muted)
-            }
-
-            Section {
-                Picker(String(localized: "When the on-device model can't run"), selection: $fallbackRaw) {
-                    Text(String(localized: "Keep my words and organize them later")).tag(OnDeviceFallback.keepForLater.rawValue)
-                    Text(String(localized: "Use the cloud model")).tag(OnDeviceFallback.useCloud.rawValue)
-                }
-            }
+            AISettingsSections()
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .background(Paper.canvas)
         .tint(Paper.accent)
         .frame(width: SettingsLayout.width, height: SettingsLayout.height)
-        .onAppear {
-            loadKey(for: provider)
-            // An empty model from the old text field already meant the default.
-            if provider == .claude, model.trimmingCharacters(in: .whitespaces).isEmpty {
-                model = CloudProvider.claude.defaultModel
+    }
+}
+
+/// AI organizing, in a few rows: on or off, which model, and for a custom
+/// model its address, name and key. On by default with the on-device model;
+/// a custom model is whatever service the person points it at. Only
+/// sections, so it can sit in any settings Form.
+struct AISettingsSections: View {
+    @AppStorage(AISettings.enabledKey) private var enabled = true
+    @AppStorage(AISettings.engineKey) private var engineRaw = AISettings.defaultEngine.rawValue
+    @AppStorage(AISettings.modelKey) private var model = ""
+    @AppStorage(AISettings.baseURLKey) private var baseURL = ""
+    @State private var apiKey = ""
+    /// Only a key the person typed is ever written, so a failed keychain read
+    /// can't erase the stored key.
+    @State private var keyEdited = false
+    /// The connection is tested only after the person changes something
+    /// here, never just because Settings opened.
+    @State private var fieldsEdited = false
+    @State private var status: ConnectionStatus = .idle
+
+    private enum ConnectionStatus: Equatable {
+        case idle
+        case incomplete
+        case testing
+        case connected
+        case failed(String)
+    }
+
+    private var engine: AIEngine {
+        AIEngine(rawValue: engineRaw) ?? .onDevice
+    }
+
+    var body: some View {
+        Section {
+            Toggle(String(localized: "Organize memories with AI after you write"), isOn: $enabled)
+                .accessibilityIdentifier("settings.ai-enabled")
+                // On one row, not the Section: a Form applies a Section's
+                // modifiers to each of its rows.
+                .onAppear {
+                    AISettings.moveOldAnthropicSetup()
+                    apiKey = AIKeychain.key(for: .openAICompatible) ?? ""
+                    keyEdited = false
+                }
+                .onDisappear { storeKey() }
+                // Saves the key and checks the connection once typing
+                // settles; a newer edit cancels the wait.
+                .task(id: "\(enabled)|\(engineRaw)|\(baseURL)|\(model)|\(apiKey)") { await checkConnection() }
+            if enabled {
+                Picker(String(localized: "Model"), selection: $engineRaw) {
+                    Text(String(localized: "On this Mac")).tag(AIEngine.onDevice.rawValue)
+                    Text(String(localized: "Custom")).tag(AIEngine.cloud.rawValue)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("settings.ai-engine")
+                switch engine {
+                case .onDevice:
+                    LabeledContent(String(localized: "Status")) {
+                        if let reason = AppleOnDeviceOrganizer.unavailableReason() {
+                            Text(reason).foregroundStyle(Paper.muted)
+                        } else {
+                            Label(String(localized: "Ready"), systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        }
+                    }
+                    .font(.callout)
+                case .cloud:
+                    TextField(String(localized: "Address"), text: edited($baseURL), prompt: Text(verbatim: "https://example.com/v1"))
+                        .accessibilityIdentifier("settings.ai-address")
+                    TextField(String(localized: "Model name"), text: edited($model), prompt: Text(verbatim: "model-name"))
+                        .accessibilityIdentifier("settings.ai-model")
+                    SecureField(String(localized: "API key"), text: Binding(
+                        get: { apiKey },
+                        set: { apiKey = $0; keyEdited = true; markEdited() }
+                    ))
+                    .onSubmit { storeKey() }
+                    .accessibilityIdentifier("settings.ai-key")
+                    LabeledContent(String(localized: "Status")) { statusView }
+                        .font(.callout)
+                }
             }
+        } footer: {
+            Text(footer)
         }
-        .onChange(of: providerRaw) { oldValue, newValue in
-            if let old = CloudProvider(rawValue: oldValue) { storeKey(for: old) }
-            let new = CloudProvider(rawValue: newValue) ?? .claude
-            loadKey(for: new)
-            switch new {
-            case .claude where !model.hasPrefix("claude-"): model = new.defaultModel
-            case .openAICompatible where model.hasPrefix("claude-"): model = new.defaultModel
-            default: break
+    }
+
+    private func edited(_ binding: Binding<String>) -> Binding<String> {
+        Binding(get: { binding.wrappedValue }, set: { binding.wrappedValue = $0; markEdited() })
+    }
+
+    /// What the person types here is the custom model from now on, even if
+    /// an old Anthropic setup could not be moved over yet.
+    private func markEdited() {
+        fieldsEdited = true
+        UserDefaults.standard.set(CloudProvider.openAICompatible.rawValue, forKey: AISettings.providerKey)
+    }
+
+    private var footer: String {
+        let words = String(localized: "Your words are never changed. What AI adds is marked AI and can be undone.")
+        guard enabled else { return words }
+        switch engine {
+        case .onDevice:
+            return String(localized: "Runs on this Mac when it can, and then your words never leave it. When it can't, a custom model is used if you set one up.") + " " + words
+        case .cloud:
+            return String(localized: "Only the words you wrote, the photo's date and its place name are sent. Never the photo itself or GPS coordinates.")
+                + " " + String(localized: "The key is kept in your Mac's keychain.") + " " + words
+        }
+    }
+
+    @ViewBuilder
+    private var statusView: some View {
+        switch status {
+        case .idle:
+            EmptyView()
+        case .incomplete:
+            Text(String(localized: "Fill in the address, model name and API key.")).foregroundStyle(Paper.muted)
+        case .testing:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(String(localized: "Testing…")).foregroundStyle(Paper.muted)
             }
-            testResult = nil
+        case .connected:
+            Label(String(localized: "Connected."), systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .failed(let message):
+            Text(message).foregroundStyle(Paper.muted)
         }
-        .onDisappear { storeKey(for: provider) }
-        .task(id: provider == .claude ? apiKey : "") { await loadModels() }
     }
 
-    /// The fetched list, or our own short list before there is a key. The
-    /// chosen model always stays in it.
-    private var anthropicOptions: [CloudModelOption] {
-        var options = fetchedModels.isEmpty
-            ? ClaudeModel.allCases.map { CloudModelOption(id: $0.rawValue, displayName: $0.displayName) }
-            : fetchedModels
-        if !model.isEmpty, !options.contains(where: { $0.id == model }) {
-            options.append(CloudModelOption(id: model, displayName: model))
-        }
-        return options
+    private func storeKey() {
+        guard keyEdited else { return }
+        AIKeychain.setKey(apiKey, for: .openAICompatible)
+        keyEdited = false
     }
 
-    private func modelLabel(_ option: CloudModelOption) -> String {
-        guard let known = ClaudeModel(rawValue: option.id) else { return option.displayName }
-        return "\(option.displayName) · \(known.summary)"
-    }
-
-    private func loadModels() async {
-        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        modelsError = nil
-        guard provider == .claude, !key.isEmpty else {
-            fetchedModels = []
+    private func checkConnection() async {
+        guard enabled, engine == .cloud else {
+            status = .idle
             return
         }
-        // Wait for typing or pasting to settle; a newer key cancels this one.
-        do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
-        isLoadingModels = true
-        defer { isLoadingModels = false }
+        // Wait for typing or pasting to settle: a half-typed address must
+        // never receive the key.
+        do { try await Task.sleep(for: .milliseconds(1500)) } catch { return }
+        storeKey()
+        let filledIn = [baseURL, model, apiKey].allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard filledIn, Self.looksLikeAddress(baseURL) else {
+            status = .incomplete
+            return
+        }
+        guard fieldsEdited else {
+            status = .idle
+            return
+        }
+        status = .testing
+        var settings = AISettings.load()
+        settings.provider = .openAICompatible
+        let organizer = NoteOrganizerFactory.cloudOrganizer(settings: settings, apiKey: AIKeychain.key(for:))
         do {
-            let models = try await AnthropicModelList.fetch(apiKey: key)
+            _ = try await organizer.organize(NoteOrganizerContext(noteText: String(localized: "The café by the river was quiet in the afternoon.")))
             guard !Task.isCancelled else { return }
-            fetchedModels = models
+            status = .connected
         } catch {
             guard !Task.isCancelled else { return }
-            fetchedModels = []
-            modelsError = error.localizedDescription
+            status = .failed(error.localizedDescription)
         }
     }
 
-    private func loadKey(for provider: CloudProvider) {
-        apiKey = AIKeychain.key(for: provider) ?? ""
-        keyEdited = false
-    }
-
-    private func storeKey(for provider: CloudProvider) {
-        guard keyEdited else { return }
-        AIKeychain.setKey(apiKey, for: provider)
-        keyEdited = false
-        // Pasting a key on a Mac that can't run Apple's model means the
-        // person wants the cloud model; don't make them find a second switch.
-        let hasKey = !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if hasKey, engineRaw == AIEngine.onDevice.rawValue, AppleOnDeviceOrganizer.unavailableReason() != nil {
-            engineRaw = AIEngine.cloud.rawValue
-        }
-    }
-
-    private func test() {
-        storeKey(for: provider)
-        var settings = AISettings.load()
-        settings.provider = provider
-        let organizer = NoteOrganizerFactory.cloudOrganizer(settings: settings, apiKey: AIKeychain.key(for:))
-        isTesting = true
-        testResult = nil
-        Task {
-            do {
-                _ = try await organizer.organize(NoteOrganizerContext(noteText: String(localized: "The café by the river was quiet in the afternoon.")))
-                testResult = String(localized: "Connected.")
-            } catch {
-                testResult = error.localizedDescription
-            }
-            isTesting = false
-        }
+    /// A whole web address: http or https and a host with a dot (or localhost).
+    static func looksLikeAddress(_ text: String) -> Bool {
+        guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              let host = url.host, !host.isEmpty else { return false }
+        return host.contains(".") || host == "localhost"
     }
 }

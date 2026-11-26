@@ -1747,9 +1747,11 @@ struct PhotoMemories: View {
 /// The one field under a photo: this person's own memory, written and
 /// changed in place like a caption in Photos. It saves while typing, and
 /// again on Return or when the field is left; emptying it removes the
-/// memory. Option-Return starts a new line, Escape ends typing. When AI is
-/// turned on, the words added while editing go to it afterwards to fix the
-/// place; nothing about that shows here.
+/// memory. Option-Return starts a new line, Escape ends typing. Unless AI is
+/// turned off, the words added while editing go to it afterwards; while it
+/// reads them a small "organizing" mark sits at the field's corner, and
+/// what it adds shows where it belongs (the place line, the day or trip),
+/// marked AI with an Undo. The words themselves are never changed.
 struct MemoryEditor: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PhotoNoteService.self) private var service
@@ -1804,8 +1806,14 @@ struct MemoryEditor: View {
             .accessibilityLabel(String(localized: "Your memory of this photo"))
             .accessibilityIdentifier("library.memory.\(item.id)")
             .overlay(alignment: .topTrailing) {
-                TransientCheckmark(trigger: savedCount, label: String(localized: "Saved"))
-                    .allowsHitTesting(false)
+                ZStack(alignment: .topTrailing) {
+                    TransientCheckmark(trigger: savedCount, label: String(localized: "Saved"))
+                    // An overlay, so the grid row never changes height.
+                    if service.isOrganizing(item) && !isFocused {
+                        AIOrganizingMark()
+                    }
+                }
+                .allowsHitTesting(false)
             }
             .onAppear {
                 if state.focusedMemoryItemID == item.id { isFocused = true }

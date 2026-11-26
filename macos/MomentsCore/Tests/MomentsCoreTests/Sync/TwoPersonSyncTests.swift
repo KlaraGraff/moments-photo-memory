@@ -247,6 +247,29 @@ final class TwoPersonSyncTests: XCTestCase {
         XCTAssertNotNil(owner.local.record(for: SyncRecordKey(.trip, "t1")))
     }
 
+    func testARelaunchKeepsPlacesThePartnersRecordsPointAt() throws {
+        let override = SyncRecord(type: .placeOverride, id: "m1:" + SyncAccountMap.localAlias, fields: [
+            "mediaID": .reference("m1"), "placeID": .reference("p-spot"), "accountID": .string(SyncAccountMap.localAlias),
+            "nameOverride": .string("Our bench"), "updatedAt": .date(SyncFixtures.at(9))
+        ])
+        partner.edit(override)
+        partner.driver.send()
+        owner.driver.fetch()
+        try owner.coordinator.flush()
+        let relaunched = SyncCoordinator(
+            accounts: owner.coordinator.accounts,
+            state: try SyncStateStore(folder: owner.folder),
+            database: .privateDatabase,
+            local: owner.local
+        )
+        relaunched.updateSharedKeys(sharedKeys(of: owner, trips: []))
+        InMemorySyncDriver(coordinator: relaunched, server: server).send()
+
+        XCTAssertNotNil(server.record(type: .place, recordName: SyncRecordName.make(type: .place, id: "p-spot")))
+        XCTAssertNotNil(server.record(type: .place, recordName: SyncRecordName.make(type: .place, id: "p-city")))
+        XCTAssertNil(server.record(type: .trip, recordName: SyncRecordName.make(type: .trip, id: "t1")))
+    }
+
     func testARelaunchWithTheSameScopeSendsNothing() throws {
         try owner.coordinator.flush()
         let relaunched = SyncCoordinator(

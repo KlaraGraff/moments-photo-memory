@@ -189,14 +189,28 @@ public final class SyncCoordinator {
     /// out: removing one the resolver never placed would delete their words.
     private func initialScope() -> Set<SyncRecordKey> {
         guard database == .privateDatabase else { return [] }
-        // Places, tags and chapters are left out too: one can be in the
-        // zone only because something the scope never lists points at it
-        // (a personal place name), and removing it would break that link.
+        // A place, tag or chapter the other person's records point at is
+        // left out too (with a place's parents): it may be in the zone only
+        // because of their personal place name, which the scope never lists,
+        // and removing it would break that link.
+        var bases: [SyncRecordKey: SyncRecord] = [:]
+        for key in state.allBaseKeys() {
+            if let base = state.base(for: key) { bases[key] = base }
+        }
         let pulledIn: Set<SyncRecordType> = [.place, .tag, .userGroup]
-        return Set(state.allBaseKeys().filter { key in
-            guard !pulledIn.contains(key.type), let base = state.base(for: key) else { return false }
-            return accounts.canEdit(base)
-        })
+        var protected = Set<SyncRecordKey>()
+        for base in bases.values where !accounts.canEdit(base) {
+            for field in base.type.spec.references {
+                guard let target = field.target, pulledIn.contains(target),
+                      let id = ref(base, field.name) else { continue }
+                var next: SyncRecordKey? = SyncRecordKey(target, id)
+                while let key = next, !protected.contains(key) {
+                    protected.insert(key)
+                    next = key.type == .place ? bases[key].flatMap { ref($0, "parentID") }.map { SyncRecordKey(.place, $0) } : nil
+                }
+            }
+        }
+        return Set(bases.filter { key, base in !protected.contains(key) && accounts.canEdit(base) }.keys)
     }
 
     // MARK: Sending

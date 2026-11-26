@@ -247,7 +247,8 @@ final class TwoPersonSyncTests: XCTestCase {
         XCTAssertNotNil(owner.local.record(for: SyncRecordKey(.trip, "t1")))
     }
 
-    func testARelaunchKeepsPlacesThePartnersRecordsPointAt() throws {
+    /// Her personal place name on m1, then a relaunch with `trips` shared.
+    private func relaunchAfterHerPlaceName(sharing trips: Set<String>) throws {
         let override = SyncRecord(type: .placeOverride, id: "m1:" + SyncAccountMap.localAlias, fields: [
             "mediaID": .reference("m1"), "placeID": .reference("p-spot"), "accountID": .string(SyncAccountMap.localAlias),
             "nameOverride": .string("Our bench"), "updatedAt": .date(SyncFixtures.at(9))
@@ -262,12 +263,25 @@ final class TwoPersonSyncTests: XCTestCase {
             database: .privateDatabase,
             local: owner.local
         )
-        relaunched.updateSharedKeys(sharedKeys(of: owner, trips: []))
+        relaunched.updateSharedKeys(sharedKeys(of: owner, trips: trips))
         InMemorySyncDriver(coordinator: relaunched, server: server).send()
+    }
 
-        XCTAssertNotNil(server.record(type: .place, recordName: SyncRecordName.make(type: .place, id: "p-spot")))
-        XCTAssertNotNil(server.record(type: .place, recordName: SyncRecordName.make(type: .place, id: "p-city")))
-        XCTAssertNil(server.record(type: .trip, recordName: SyncRecordName.make(type: .trip, id: "t1")))
+    private func zoneHas(_ type: SyncRecordType, _ id: String) -> Bool {
+        server.record(type: type, recordName: SyncRecordName.make(type: type, id: id)) != nil
+    }
+
+    func testARelaunchKeepsWhatHerSharedRecordsPointAt() throws {
+        try relaunchAfterHerPlaceName(sharing: ["t1"])
+        XCTAssertTrue(zoneHas(.place, "p-spot"))
+        XCTAssertTrue(zoneHas(.place, "p-city"))
+        XCTAssertTrue(zoneHas(.placeOverride, "m1:" + SyncFixtures.partnerAccount))
+    }
+
+    func testARelaunchAfterUnsharingRemovesHerRecordsAndTheirPlacesToo() throws {
+        try relaunchAfterHerPlaceName(sharing: [])
+        XCTAssertEqual(server.recordCount, 0, "a place the partner sees no photo of is never left shared")
+        XCTAssertNotNil(owner.local.record(for: SyncRecordKey(.place, "p-spot")))
     }
 
     func testARelaunchWithTheSameScopeSendsNothing() throws {

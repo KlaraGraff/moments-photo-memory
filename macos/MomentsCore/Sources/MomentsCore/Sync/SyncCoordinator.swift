@@ -83,19 +83,7 @@ public final class SyncCoordinator {
     private func joinSharedSet(_ record: SyncRecord) -> Bool {
         guard var keys = sharedKeys else { return true }
         if keys.contains(record.key) { return true }
-        let anchors: [SyncRecordKey]
-        switch record.type {
-        case .mediaItem:
-            anchors = ref(record, "tripID").map { [SyncRecordKey(.trip, $0)] } ?? []
-        case .previewAsset, .memory, .mediaTag, .favorite, .userGroupItem, .photoNote, .placeOverride:
-            anchors = ref(record, "mediaID").map { [SyncRecordKey(.mediaItem, $0)] } ?? []
-        case .memoryRevision:
-            let id = ref(record, "memoryID")
-            let types: [SyncRecordType] = [.memory, .photoNote, .placeNote, .collectionMemory]
-            anchors = id.map { value in types.map { SyncRecordKey($0, value) } } ?? []
-        case .place, .tag, .trip, .userGroup, .placeNote, .collectionMemory:
-            anchors = []
-        }
+        let anchors = anchorKeys(of: record)
         guard anchors.contains(where: { keys.contains($0) }) else { return false }
         keys.insert(record.key)
         let pulledIn: [SyncRecordType] = [.place, .tag, .userGroup]
@@ -111,6 +99,22 @@ public final class SyncCoordinator {
         }
         sharedKeys = keys
         return true
+    }
+
+    /// What a record hangs off: its trip, photo or memory.
+    private func anchorKeys(of record: SyncRecord) -> [SyncRecordKey] {
+        switch record.type {
+        case .mediaItem:
+            return ref(record, "tripID").map { [SyncRecordKey(.trip, $0)] } ?? []
+        case .previewAsset, .memory, .mediaTag, .favorite, .userGroupItem, .photoNote, .placeOverride:
+            return ref(record, "mediaID").map { [SyncRecordKey(.mediaItem, $0)] } ?? []
+        case .memoryRevision:
+            let id = ref(record, "memoryID")
+            let types: [SyncRecordType] = [.memory, .photoNote, .placeNote, .collectionMemory]
+            return id.map { value in types.map { SyncRecordKey($0, value) } } ?? []
+        case .place, .tag, .trip, .userGroup, .placeNote, .collectionMemory:
+            return []
+        }
     }
 
     private func ref(_ record: SyncRecord, _ field: String) -> String? {
@@ -160,7 +164,7 @@ public final class SyncCoordinator {
     /// example a note about a place name the owner's Mac does not know) are
     /// left alone.
     public func updateSharedKeys(_ keys: Set<SyncRecordKey>) {
-        let oldScope = scopeKeys ?? initialScope()
+        let oldScope = scopeKeys ?? initialScope(newKeys: keys)
         let unplaced = (sharedKeys ?? []).subtracting(oldScope).filter { state.baseEntry(for: $0) != nil }
         scopeKeys = keys
         sharedKeys = keys.union(unplaced)
@@ -183,34 +187,45 @@ public final class SyncCoordinator {
         deferred.removeAll()
     }
 
-    /// The first scope after launch. The owner's previous scope is what the
-    /// zone holds of their own records, so a trip unshared just before the
-    /// app quit still leaves the zone. The other person's records are left
-    /// out: removing one the resolver never placed would delete their words.
-    private func initialScope() -> Set<SyncRecordKey> {
+    /// The first scope after launch: what the zone holds, as far as the
+    /// scope rules decide it, so a trip unshared just before the app quit
+    /// still leaves the zone. The other person's records follow what they
+    /// hang off: one whose photo (or memory) is still shared stays, with the
+    /// places, tags and chapters it points at; one whose anchor left the
+    /// scope leaves too, as during a session. Their records the scope never
+    /// placed (no anchor this Mac knows) are left alone.
+    private func initialScope(newKeys: Set<SyncRecordKey>) -> Set<SyncRecordKey> {
         guard database == .privateDatabase else { return [] }
-        // A place, tag or chapter the other person's records point at is
-        // left out too (with a place's parents): it may be in the zone only
-        // because of their personal place name, which the scope never lists,
-        // and removing it would break that link.
         var bases: [SyncRecordKey: SyncRecord] = [:]
         for key in state.allBaseKeys() {
             if let base = state.base(for: key) { bases[key] = base }
         }
         let pulledIn: Set<SyncRecordType> = [.place, .tag, .userGroup]
+        var seed = Set<SyncRecordKey>()
         var protected = Set<SyncRecordKey>()
-        for base in bases.values where !accounts.canEdit(base) {
+        for (key, base) in bases {
+            if accounts.canEdit(base) {
+                seed.insert(key)
+                continue
+            }
+            let anchors = anchorKeys(of: base)
+            let stillShared = anchors.contains { newKeys.contains($0) }
+            let neverPlaced = !anchors.contains { bases[$0] != nil }
+            guard stillShared || neverPlaced else {
+                seed.insert(key)
+                continue
+            }
             for field in base.type.spec.references {
                 guard let target = field.target, pulledIn.contains(target),
                       let id = ref(base, field.name) else { continue }
                 var next: SyncRecordKey? = SyncRecordKey(target, id)
-                while let key = next, !protected.contains(key) {
-                    protected.insert(key)
-                    next = key.type == .place ? bases[key].flatMap { ref($0, "parentID") }.map { SyncRecordKey(.place, $0) } : nil
+                while let current = next, !protected.contains(current) {
+                    protected.insert(current)
+                    next = current.type == .place ? bases[current].flatMap { ref($0, "parentID") }.map { SyncRecordKey(.place, $0) } : nil
                 }
             }
         }
-        return Set(bases.filter { key, base in !protected.contains(key) && accounts.canEdit(base) }.keys)
+        return seed.subtracting(protected)
     }
 
     // MARK: Sending

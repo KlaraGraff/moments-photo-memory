@@ -101,35 +101,39 @@ final class MomentsMarqueeUITests: XCTestCase {
 
     /// Temporary, while the hang in the test above is looked into: the same
     /// drag with one part of the Library switched off each time.
-    func testProbeAgain() {
-        probeHold(count: "26", smallWindow: true)
+    func testProbeLinkNoShape() {
+        probeHold(count: "26", smallWindow: true, switchOff: ["-MomentsProbeNoEditableTitle", "-MomentsProbeLinkNoShape"])
     }
 
-    func testProbeNoHover() {
-        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeNoHover")
+    func testProbeLinkNoHelp() {
+        probeHold(count: "26", smallWindow: true, switchOff: ["-MomentsProbeNoEditableTitle", "-MomentsProbeLinkNoHelp"])
     }
 
-    func testProbeNoEditableTitle() {
-        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeNoEditableTitle")
+    func testProbeLinkNoAX() {
+        probeHold(count: "26", smallWindow: true, switchOff: ["-MomentsProbeNoEditableTitle", "-MomentsProbeLinkNoAX"])
     }
 
-    func testProbeNoChapterLink() {
-        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeNoChapterLink")
+    func testProbeLinkAsImage() {
+        probeHold(count: "26", smallWindow: true, switchOff: ["-MomentsProbeNoEditableTitle", "-MomentsProbeLinkAsImage"])
     }
 
-    func testProbeTitleNoHelp() {
-        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeTitleNoHelp")
+    func testProbeTitleNoShape() {
+        probeHold(count: "26", smallWindow: true, switchOff: ["-MomentsProbeNoChapterLink", "-MomentsProbeTitleNoShape"])
     }
 
     func testProbeTitleNoTaps() {
-        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeTitleNoTaps")
+        probeHold(count: "26", smallWindow: true, switchOff: ["-MomentsProbeNoChapterLink", "-MomentsProbeTitleNoTaps"])
     }
 
-    func testProbePlainHeadings() {
-        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbePlainHeadings")
+    func testProbeTitleNoHelp() {
+        probeHold(count: "26", smallWindow: true, switchOff: ["-MomentsProbeNoChapterLink", "-MomentsProbeTitleNoHelp"])
     }
 
-    private func probeHold(count: String, smallWindow: Bool, switchOff: String? = nil) {
+    func testProbeTitleNoAX() {
+        probeHold(count: "26", smallWindow: true, switchOff: ["-MomentsProbeNoChapterLink", "-MomentsProbeTitleNoAX"])
+    }
+
+    private func probeHold(count: String, smallWindow: Bool, switchOff: [String] = []) {
         let folder: String? = ProcessInfo.processInfo.environment["MOMENTS_MARQUEE_DIR"]
             .flatMap { (value: String) -> String? in value.hasPrefix("/") ? value : nil }
         var arguments: [String] = [
@@ -137,7 +141,7 @@ final class MomentsMarqueeUITests: XCTestCase {
             "-MomentsUITestStressNoTrip",
         ]
         if let folder { arguments += ["-MomentsUITestMarqueeProbe", folder] }
-        if let switchOff { arguments.append(switchOff) }
+        arguments += switchOff
         let app = launch(smallWindow: smallWindow, extraArguments: arguments)
         let visible = visiblePhotos(app)
         guard let first = visible.first else { return XCTFail("No photo on screen") }

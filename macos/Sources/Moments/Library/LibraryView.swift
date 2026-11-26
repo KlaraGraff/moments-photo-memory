@@ -804,7 +804,7 @@ private struct LibrarySectionView: View {
                 HStack(spacing: 0) {
                     if let tripID = sectionTripID, section.id != "trip:unassigned", !plainTitle {
                         EditableTripTitle(tripID: tripID, title: section.title, onClick: selectSection)
-                            .accessibilityAction(named: Text(String(localized: "Select these photos"))) { selectSection() }
+                            .probeUnless("-MomentsProbeTitleNoAX") { $0.accessibilityAction(named: Text(String(localized: "Select these photos"))) { selectSection() } }
                     } else {
                         Button { selectSection() } label: {
                             Text(section.title)
@@ -829,17 +829,26 @@ private struct LibrarySectionView: View {
                 // A chapter's photos lead to the chapter: its days, places,
                 // people and map.
                 if let tripID = sectionTripID, section.id != "trip:unassigned", !noChapterLink {
-                    Button { selection.showTrip(tripID) } label: {
+                    if ProbeSwitch.on("-MomentsProbeLinkAsImage") {
                         Image(systemName: "book.pages")
                             .font(.caption)
                             .foregroundStyle(LibraryPalette.muted)
                             .frame(width: 22, height: 18)
-                            .contentShape(Rectangle())
+                    } else {
+                        Button { selection.showTrip(tripID) } label: {
+                            Image(systemName: "book.pages")
+                                .font(.caption)
+                                .foregroundStyle(LibraryPalette.muted)
+                                .frame(width: 22, height: 18)
+                                .probeUnless("-MomentsProbeLinkNoShape") { $0.contentShape(Rectangle()) }
+                        }
+                        .buttonStyle(.plain)
+                        .probeUnless("-MomentsProbeLinkNoHelp") { $0.help(String(localized: "Show Trip")) }
+                        .probeUnless("-MomentsProbeLinkNoAX") { $0
+                            .accessibilityLabel(String(localized: "Show Trip"))
+                            .accessibilityIdentifier("library.chapter-link.\(tripID)")
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .help(String(localized: "Show Trip"))
-                    .accessibilityLabel(String(localized: "Show Trip"))
-                    .accessibilityIdentifier("library.chapter-link.\(tripID)")
                 }
                 // Who is in these photos.
                 if !state.peopleEntries.isEmpty {

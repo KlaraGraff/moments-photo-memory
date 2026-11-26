@@ -11,7 +11,7 @@ struct BackupSettingsSection: View {
         } header: {
             Text(String(localized: "Backup"))
         } footer: {
-            Text(String(localized: "Moments backs up the library every day and keeps the last 14 days. Original photos are not in the backup."))
+            Text(String(localized: "Moments backs up the library each day it changes and keeps the last 14 backups. Original photos are not in the backup."))
                 .font(.caption)
                 .foregroundStyle(Paper.muted)
         }

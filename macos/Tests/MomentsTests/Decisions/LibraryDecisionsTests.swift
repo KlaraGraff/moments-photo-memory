@@ -131,6 +131,79 @@ final class LibraryDecisionsTests: XCTestCase {
         XCTAssertNil(decisions.object(forKey: EventSuggestions.suggestedDaysKey))
     }
 
+    /// Locking thousands of photos in one edit is one write to the store,
+    /// not one per photo.
+    func testABulkEditIsWrittenOnce() async throws {
+        let container: ModelContainer = try MomentsPersistence.makeContainer(url: storeURL)
+        let decisions = LibraryDecisions()
+        decisions.configure(container: container, importingFrom: nil)
+        let changes = ChangeCounter()
+        let observer = NotificationCenter.default.addObserver(forName: .libraryDecisionChanged, object: nil, queue: nil) { _ in changes.add() }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        for index in 0..<2_000 {
+            TripAssignmentLocks.lock("synthetic-\(index)", defaults: decisions)
+        }
+        await decisions.flush()
+        XCTAssertEqual(changes.count, 1, "one write for the whole edit")
+        let other = ModelContext(container)
+        let rows: [LocalDecision] = try other.fetch(FetchDescriptor<LocalDecision>())
+        let stored: Any? = rows.first.flatMap { LibraryDecisions.decode($0.value) }
+        let ids: [String] = (stored as? [String]) ?? []
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(ids.count, 2_000)
+    }
+
+    /// Writes from other threads all end up in the store with the value
+    /// memory holds last.
+    func testWritesFromOtherThreadsMatchMemory() async throws {
+        let container: ModelContainer = try MomentsPersistence.makeContainer(url: storeURL)
+        let decisions = LibraryDecisions()
+        decisions.configure(container: container, importingFrom: nil)
+        await withTaskGroup(of: Void.self) { group in
+            for index in 0..<50 {
+                group.addTask {
+                    decisions.set(index, forKey: "synthetic.thread.\(index % 5)")
+                }
+            }
+        }
+        await decisions.flush()
+        await decisions.flush()
+        let other = ModelContext(container)
+        let rows: [LocalDecision] = try other.fetch(FetchDescriptor<LocalDecision>())
+        XCTAssertEqual(rows.count, 5)
+        for row in rows {
+            let stored = LibraryDecisions.decode(row.value) as? Int
+            let inMemory = decisions.integer(forKey: row.key)
+            XCTAssertEqual(stored, inMemory, row.key)
+        }
+    }
+
+    /// A choice made before the store opened is kept and written to it.
+    func testAChangeBeforeConfigureIsKept() async throws {
+        let container: ModelContainer = try MomentsPersistence.makeContainer(url: storeURL)
+        do {
+            let earlier = LibraryDecisions()
+            earlier.configure(container: container, importingFrom: nil)
+            earlier.set(1, forKey: PeopleScanStore.groupingVersionKey)
+            earlier.set(["synthetic-day"], forKey: EventSuggestions.suggestedDaysKey)
+            await earlier.flush()
+        }
+        let decisions = LibraryDecisions()
+        decisions.set(4, forKey: PeopleScanStore.groupingVersionKey)
+        decisions.removeObject(forKey: EventSuggestions.suggestedDaysKey)
+        decisions.set(["synthetic-a"], forKey: TripAssignmentLocks.defaultsKey)
+        await decisions.flush()
+        decisions.configure(container: container, importingFrom: nil)
+        XCTAssertEqual(decisions.integer(forKey: PeopleScanStore.groupingVersionKey), 4)
+        XCTAssertEqual(decisions.stringArray(forKey: EventSuggestions.suggestedDaysKey), ["synthetic-day"], "a remove of a key not yet loaded leaves the stored value")
+        XCTAssertEqual(TripAssignmentLocks.lockedIDs(defaults: decisions), ["synthetic-a"])
+        await decisions.flush()
+        let reopened = LibraryDecisions()
+        reopened.configure(container: container, importingFrom: nil)
+        XCTAssertEqual(reopened.integer(forKey: PeopleScanStore.groupingVersionKey), 4)
+        XCTAssertEqual(TripAssignmentLocks.lockedIDs(defaults: reopened), ["synthetic-a"])
+    }
+
     /// A restored backup from before V9 brings its choices back through user
     /// defaults; the restored store copies them in when it opens.
     func testRestoredOlderBackupCopiesItsDecisionsIn() async throws {
@@ -166,16 +239,39 @@ final class LibraryDecisionsTests: XCTestCase {
             decisions.configure(container: container, importingFrom: nil)
             TripAssignmentLocks.lock("synthetic-a", defaults: decisions)
             await decisions.flush()
+            defaults.set("Synthetic editor", forKey: TripCorrectionLog.editorKey)
             backup = try LibraryBackup.makeBackup(.daily, location: location, defaults: defaults, now: Date(timeIntervalSince1970: 1_790_000_000))
             TripAssignmentLocks.lock("synthetic-later", defaults: decisions)
             await decisions.flush()
         }
+        defaults.set("Synthetic other editor", forKey: TripCorrectionLog.editorKey)
+        defaults.set(["synthetic-old-copy"], forKey: TripAssignmentLocks.defaultsKey)
         try LibraryBackup.scheduleRestore(from: backup, location: location)
         XCTAssertNil(LibraryBackup.performPendingRestore(location: location, defaults: defaults)?.failure)
+        XCTAssertEqual(defaults.string(forKey: TripCorrectionLog.editorKey), "Synthetic editor", "the editor name still lives in user defaults and comes back")
+        XCTAssertEqual(defaults.stringArray(forKey: TripAssignmentLocks.defaultsKey), ["synthetic-old-copy"], "moved choices come from the store, not from user defaults")
 
         let container: ModelContainer = try MomentsPersistence.makeContainer(url: storeURL)
         let restored = LibraryDecisions()
         restored.configure(container: container, importingFrom: defaults)
         XCTAssertEqual(TripAssignmentLocks.lockedIDs(defaults: restored), ["synthetic-a"])
+    }
+}
+
+/// Counts change notifications, which arrive on the main thread.
+private final class ChangeCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func add() {
+        lock.lock()
+        value += 1
+        lock.unlock()
     }
 }

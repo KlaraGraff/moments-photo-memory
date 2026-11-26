@@ -52,9 +52,11 @@ extension Notification.Name {
 
 /// The library's decisions, read from memory and written through to the
 /// store. Reads and writes work from any thread (People scans read rule
-/// versions off the main thread); the store is written on the main thread,
-/// in the order the writes happened, through a context of its own so a
-/// decision never saves someone's half-finished edit.
+/// versions off the main thread). Changed keys are collected and written on
+/// the main thread in one save, with the value each key holds at that moment,
+/// so a bulk edit that locks thousands of photos costs one write, and the
+/// store always ends up matching memory. The writes go through a context of
+/// its own so a decision never saves someone's half-finished edit.
 ///
 /// Until `configure` runs (unit tests without a store) it keeps values in
 /// memory only.
@@ -74,13 +76,17 @@ final class LibraryDecisions: DecisionStore, @unchecked Sendable {
 
     private let lock = NSLock()
     private var values: [String: Any] = [:]
+    /// Keys changed in memory and not yet written to the store.
+    private var dirty: Set<String> = []
+    private var writeScheduled = false
     @MainActor private var context: ModelContext?
 
     init() {}
 
     /// Loads the store's decisions; on the first open of a store that has
     /// none, copies them from `defaults` (which keep their values, as a way
-    /// back). Pass nil for test stores, which start empty.
+    /// back). Pass nil for test stores, which start empty. Anything set
+    /// before this ran wins over the store and is written to it.
     @MainActor
     func configure(container: ModelContainer, importingFrom defaults: UserDefaults?) {
         let context = ModelContext(container)
@@ -108,8 +114,17 @@ final class LibraryDecisions: DecisionStore, @unchecked Sendable {
             }
         }
         lock.lock()
+        for key in dirty {
+            if let value = values[key] {
+                loaded[key] = value
+            } else {
+                loaded.removeValue(forKey: key)
+            }
+        }
         values = loaded
+        let pending = !dirty.isEmpty
         lock.unlock()
+        if pending { scheduleWrite() }
     }
 
     func object(forKey key: String) -> Any? {
@@ -125,24 +140,28 @@ final class LibraryDecisions: DecisionStore, @unchecked Sendable {
         }
         lock.lock()
         values[key] = value
+        dirty.insert(key)
         lock.unlock()
-        persist(key: key, data: Self.encode(value))
+        scheduleWrite()
     }
 
     func removeObject(forKey key: String) {
         lock.lock()
         let existed = values.removeValue(forKey: key) != nil
+        if existed { dirty.insert(key) }
         lock.unlock()
-        if existed { persist(key: key, data: nil) }
+        if existed { scheduleWrite() }
     }
 
-    /// Writes one key on the main thread, after every write queued before it.
-    private func persist(key: String, data: Data?) {
+    /// Queues one write on the main thread for everything changed until it runs.
+    private func scheduleWrite() {
+        lock.lock()
+        let alreadyScheduled = writeScheduled
+        writeScheduled = true
+        lock.unlock()
+        guard !alreadyScheduled else { return }
         DispatchQueue.main.async {
-            MainActor.assumeIsolated {
-                self.write(key: key, data: data)
-                NotificationCenter.default.post(name: .libraryDecisionChanged, object: key)
-            }
+            MainActor.assumeIsolated { self.writeDirty() }
         }
     }
 
@@ -155,24 +174,55 @@ final class LibraryDecisions: DecisionStore, @unchecked Sendable {
     }
 
     @MainActor
-    private func write(key: String, data: Data?) {
+    private func writeDirty() {
+        lock.lock()
+        writeScheduled = false
+        guard context != nil else {
+            // No store yet: `configure` writes these when it runs.
+            lock.unlock()
+            return
+        }
+        let keys = dirty
+        dirty = []
+        var current: [String: Any] = [:]
+        for key in keys {
+            if let value = values[key] { current[key] = value }
+        }
+        lock.unlock()
+        guard !keys.isEmpty else { return }
+        for key in keys.sorted() {
+            write(key: key, value: current[key])
+        }
+        do {
+            try context?.save()
+        } catch {
+            Self.logger.error("Could not save decisions: \(error.localizedDescription, privacy: .public)")
+        }
+        for key in keys.sorted() {
+            NotificationCenter.default.post(name: .libraryDecisionChanged, object: key)
+        }
+    }
+
+    @MainActor
+    private func write(key: String, value: Any?) {
         guard let context else { return }
         let descriptor = FetchDescriptor<LocalDecision>(predicate: #Predicate { $0.key == key })
         let existing: LocalDecision? = (try? context.fetch(descriptor))?.first
-        if let data {
-            if let existing {
-                existing.value = data
-                existing.updatedAt = .now
-            } else {
-                context.insert(LocalDecision(key: key, value: data))
-            }
-        } else if let existing {
-            context.delete(existing)
+        guard let value else {
+            if let existing { context.delete(existing) }
+            return
         }
-        do {
-            try context.save()
-        } catch {
-            Self.logger.error("Could not save a decision: \(error.localizedDescription, privacy: .public)")
+        guard let data = Self.encode(value) else {
+            // Not a property list: keep what the store had rather than lose it.
+            assertionFailure("A library decision must be a property list: \(key)")
+            Self.logger.error("Could not encode the decision \(key, privacy: .public); the stored value was kept")
+            return
+        }
+        if let existing {
+            existing.value = data
+            existing.updatedAt = .now
+        } else {
+            context.insert(LocalDecision(key: key, value: data))
         }
     }
 

@@ -16731,24 +16731,24 @@
         }
       }
     },
-    "Moments backs up the library every day and keeps the last 14 days. Original photos are not in the backup." : {
+    "Moments backs up the library each day it changes and keeps the last 14 backups. Original photos are not in the backup." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moments sichert die Mediathek täglich und bewahrt die letzten 14 Tage auf. Originalfotos sind nicht in der Sicherung."
+            "value" : "Moments sichert die Mediathek an jedem Tag, an dem sie sich ändert, und bewahrt die letzten 14 Sicherungen auf. Originalfotos sind nicht in der Sicherung."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moments backs up the library every day and keeps the last 14 days. Original photos are not in the backup."
+            "value" : "Moments backs up the library each day it changes and keeps the last 14 backups. Original photos are not in the backup."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moments 每天自动备份资料库，保留最近 14 天。备份里没有原图。"
+            "value" : "Moments 在资料库有改动的日子自动备份，保留最近 14 份。备份里没有原图。"
           }
         }
       }

@@ -33,9 +33,11 @@ struct LibraryLocation: Sendable {
     }
 }
 
-/// Library choices that still live in user defaults rather than in the store.
-/// A backup carries a copy of them, and a restore puts that copy back, so a
-/// restored library keeps its covers, hand-placed photos and People answers.
+/// Library choices that lived in user defaults before schema V9. A backup
+/// carries a copy of them. Restoring a backup from before V9 puts the copy
+/// back, so the restored store copies its covers, hand-placed photos and
+/// People answers in when it opens; from V9 on these are in the store, and
+/// only the keys still in user defaults (the editor name) come back.
 enum LibraryDecisionKeys {
     static var all: [String] {
         [
@@ -65,8 +67,8 @@ enum LibraryDecisionKeys {
 
     /// Makes `defaults` hold exactly the snapshot: keys missing from it are
     /// removed, so the restored library doesn't keep answers made after it.
-    static func apply(_ values: [String: Any], to defaults: UserDefaults) {
-        for key in all {
+    static func apply(_ values: [String: Any], to defaults: UserDefaults, keys: [String] = LibraryDecisionKeys.all) {
+        for key in keys {
             if let value = values[key] {
                 defaults.set(value, forKey: key)
             } else {
@@ -118,8 +120,11 @@ enum LibraryBackup {
     static let logger = Logger(subsystem: "org.example.Moments", category: "Backup")
     static let decisionsFileName = "decisions.plist"
     static let correctionLogFileName = "trip-corrections.jsonl"
+    /// The schema from which covers, hand-placed photos and People answers
+    /// are kept in the store rather than in user defaults.
+    static let decisionsInStoreSchema = "9.0.0"
 
-    /// The schema the running app opens stores with, "8.0.0".
+    /// The schema the running app opens stores with, "9.0.0".
     static var currentSchemaVersion: String {
         let version = MomentsMigrationPlan.schemas.last?.versionIdentifier ?? SchemaV8.versionIdentifier
         return "\(version.major).\(version.minor).\(version.patch)"
@@ -161,8 +166,8 @@ enum LibraryBackup {
             let copiedSupport = incoming.appending(path: location.supportName, directoryHint: .isDirectory)
             // External blobs are copied before and after the database: a blob
             // deleted while the snapshot is taken is in the first pass, one
-            // added meanwhile in the second, so the snapshot finds every blob
-            // it refers to.
+            // added meanwhile in the second, so the snapshot finds its blobs
+            // (short of one created and deleted again between the passes).
             if fileManager.fileExists(atPath: support.path) {
                 try fileManager.copyItem(at: support, to: copiedSupport)
             }
@@ -336,10 +341,26 @@ enum LibraryBackup {
             if fileManager.fileExists(atPath: location.storeURL.path) {
                 try makeBackup(.beforeRestore, location: location, defaults: defaults, now: now, schemaVersion: lastOpenedSchema(location) ?? schemaVersion, protecting: protected)
             }
-            try swapIn(backupFolder: backupFolder, location: location)
+            // Before V9 these choices lived only in user defaults, and a
+            // restored V8 store copies them in when it opens; from V9 on they
+            // are in the restored store, and only what is still in user
+            // defaults comes back. Applied before the swap, so a crash in
+            // between never leaves a restored older store to copy in today's
+            // choices; a failed swap puts the previous values back.
+            let keys: [String] = BackupPolicy.isSchema(manifest.schemaVersion, olderThan: LibraryBackup.decisionsInStoreSchema)
+                ? LibraryDecisionKeys.all
+                : LibraryDecisionKeys.all.filter { !LibraryDecisions.movedKeys.contains($0) }
+            var previous: [String: Any]?
             if let decisions = try? Data(contentsOf: backupFolder.appending(path: decisionsFileName)),
                let values = try? PropertyListSerialization.propertyList(from: decisions, format: nil) as? [String: Any] {
-                LibraryDecisionKeys.apply(values, to: defaults)
+                previous = LibraryDecisionKeys.snapshot(defaults)
+                LibraryDecisionKeys.apply(values, to: defaults, keys: keys)
+            }
+            do {
+                try swapIn(backupFolder: backupFolder, location: location)
+            } catch {
+                if let previous { LibraryDecisionKeys.apply(previous, to: defaults, keys: keys) }
+                throw error
             }
             // A new Mac has no correction log yet; an existing one keeps its
             // newer entries.
@@ -389,7 +410,12 @@ enum LibraryBackup {
                 try fileManager.moveItem(at: location.folder.appending(path: name), to: aside.appending(path: name))
                 movedAside.append(name)
             }
-            for name in try fileManager.contentsOfDirectory(atPath: staging.path) {
+            // The store goes in last: once it is in place the swap is done,
+            // which is what `cleanUpLeftovers` relies on after a crash.
+            let staged = try fileManager.contentsOfDirectory(atPath: staging.path).sorted { lhs, rhs in
+                (lhs == location.storeName ? 1 : 0, lhs) < (rhs == location.storeName ? 1 : 0, rhs)
+            }
+            for name in staged {
                 try fileManager.moveItem(at: staging.appending(path: name), to: location.folder.appending(path: name))
                 movedIn.append(name)
             }
@@ -427,7 +453,11 @@ enum LibraryBackup {
             let asideStore = aside.appending(path: location.storeName)
             if !fileManager.fileExists(atPath: location.storeURL.path), fileManager.fileExists(atPath: asideStore.path) {
                 for item in (try? fileManager.contentsOfDirectory(atPath: aside.path)) ?? [] {
-                    try? fileManager.moveItem(at: aside.appending(path: item), to: location.folder.appending(path: item))
+                    // Anything already in its place came from the backup (the
+                    // store goes in last), and the backup still has it.
+                    let target = location.folder.appending(path: item)
+                    if fileManager.fileExists(atPath: target.path) { try? fileManager.removeItem(at: target) }
+                    try? fileManager.moveItem(at: aside.appending(path: item), to: target)
                 }
                 logger.error("Moved the library back after an interrupted restore")
             }

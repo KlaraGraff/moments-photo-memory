@@ -182,6 +182,13 @@ final class LibraryBackupTests: XCTestCase {
         for name in try FileManager.default.contentsOfDirectory(atPath: folder.path) where name.hasPrefix("Moments.store") {
             try FileManager.default.moveItem(at: folder.appending(path: name), to: aside.appending(path: name))
         }
+        // The backup's blob folder had already arrived when the crash came.
+        let partial = folder.appending(path: ".Moments_SUPPORT/_EXTERNAL_DATA", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: partial, withIntermediateDirectories: true)
+        try Data("synthetic backup blob".utf8).write(to: partial.appending(path: "from-backup"))
+        let asideSupport = aside.appending(path: ".Moments_SUPPORT/_EXTERNAL_DATA", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: asideSupport, withIntermediateDirectories: true)
+        try Data("synthetic old blob".utf8).write(to: asideSupport.appending(path: "old"))
         let incoming = location.backupsFolder.appending(path: ".incoming-synthetic", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
 
@@ -189,6 +196,9 @@ final class LibraryBackupTests: XCTestCase {
         XCTAssertEqual(try storedIDs(at: location.storeURL), ["synthetic-a"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: aside.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: incoming.path))
+        let blobs = folder.appending(path: ".Moments_SUPPORT/_EXTERNAL_DATA", directoryHint: .isDirectory)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: blobs.appending(path: "old").path), "the old library's blobs came back with it")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: blobs.appending(path: "from-backup").path))
     }
 
     func testTheScheduleNeverStartsWithoutALibrary() {
@@ -211,7 +221,9 @@ final class LibraryBackupTests: XCTestCase {
     func testRestoreBringsBackTheLibraryAndItsChoicesAndKeepsTheCurrentOne() throws {
         try addItems(["synthetic-a"])
         defaults.set(["synthetic-a"], forKey: TripAssignmentLocks.defaultsKey)
-        let backup = try LibraryBackup.makeBackup(.daily, location: location, defaults: defaults, now: origin)
+        // Labelled V8: before V9 these choices lived in user defaults, and a
+        // restore puts the backup's copy of them back there.
+        let backup = try LibraryBackup.makeBackup(.daily, location: location, defaults: defaults, now: origin, schemaVersion: "8.0.0")
 
         // Later work that the restore undoes.
         try addItems(["synthetic-b"])

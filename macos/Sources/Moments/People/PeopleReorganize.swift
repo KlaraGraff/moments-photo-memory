@@ -11,7 +11,7 @@ enum PeopleReorganize {
     /// Releases every face that is not on a named person and deletes the
     /// unnamed people left without faces. Returns how many faces were released.
     @MainActor
-    static func reset(context: ModelContext, defaults: UserDefaults = .standard) throws -> Int {
+    static func reset(context: ModelContext, defaults: any DecisionStore = LibraryDecisions.shared) throws -> Int {
         let people: [Person] = try context.fetch(FetchDescriptor<Person>())
         var namedPersonIDs = Set<String>()
         namedPersonIDs.reserveCapacity(people.count)

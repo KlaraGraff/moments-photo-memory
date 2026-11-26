@@ -7,9 +7,9 @@ import SwiftUI
 /// A named group of people, such as Family or Friends. A person can be in
 /// several groups.
 ///
-/// Groups live in `UserDefaults`, not in the store: a group is a label the
-/// owner puts on people, so this feature needs no schema change and no
-/// migration. The name is the owner's own text and stays on this Mac.
+/// Groups are library decisions (`LibraryDecisions`): rows in the local
+/// store under the keys below, so they travel with backups. The name is the
+/// owner's own text and stays on this Mac.
 struct PeopleGroup: Codable, Equatable, Identifiable {
     let id: String
     var name: String
@@ -35,7 +35,7 @@ enum PeopleGroupStore {
 
     /// The groups, seeding Family, Friends and Work once. Reading never
     /// duplicates a group the owner renamed or deleted.
-    static func groups(defaults: UserDefaults = .standard) -> [PeopleGroup] {
+    static func groups(defaults: any DecisionStore = LibraryDecisions.shared) -> [PeopleGroup] {
         var stored = storedGroups(defaults)
         guard !defaults.bool(forKey: seededKey) else { return stored }
         let known = Set(stored.map { (group: PeopleGroup) -> String in group.name.lowercased() })
@@ -50,7 +50,7 @@ enum PeopleGroupStore {
     /// Adds a group at the end and returns it. An empty name is ignored by the
     /// caller's disabled button; it becomes "New group" here as a last resort.
     @discardableResult
-    static func create(name: String, defaults: UserDefaults = .standard) -> PeopleGroup {
+    static func create(name: String, defaults: any DecisionStore = LibraryDecisions.shared) -> PeopleGroup {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let group = PeopleGroup(
             id: UUID().uuidString,
@@ -63,7 +63,7 @@ enum PeopleGroupStore {
     }
 
     /// Renames a group. People keep their membership; an empty name is ignored.
-    static func rename(_ groupID: String, to name: String, defaults: UserDefaults = .standard) {
+    static func rename(_ groupID: String, to name: String, defaults: any DecisionStore = LibraryDecisions.shared) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         var stored = storedGroups(defaults)
@@ -74,7 +74,7 @@ enum PeopleGroupStore {
 
     /// Deletes a group and its member list. The people themselves never are
     /// touched; they simply no longer carry this label.
-    static func delete(_ groupID: String, defaults: UserDefaults = .standard) {
+    static func delete(_ groupID: String, defaults: any DecisionStore = LibraryDecisions.shared) {
         var stored = storedGroups(defaults)
         guard stored.contains(where: { (group: PeopleGroup) -> Bool in group.id == groupID }) else { return }
         stored.removeAll { (group: PeopleGroup) -> Bool in group.id == groupID }
@@ -84,12 +84,12 @@ enum PeopleGroupStore {
     }
 
     /// The people in one group.
-    static func members(of groupID: String, defaults: UserDefaults = .standard) -> Set<String> {
+    static func members(of groupID: String, defaults: any DecisionStore = LibraryDecisions.shared) -> Set<String> {
         storedMembers(defaults)[groupID] ?? []
     }
 
     /// The groups one person is in.
-    static func groups(of personID: String, defaults: UserDefaults = .standard) -> Set<String> {
+    static func groups(of personID: String, defaults: any DecisionStore = LibraryDecisions.shared) -> Set<String> {
         let members = storedMembers(defaults)
         return Set(members.compactMap { (groupID: String, personIDs: Set<String>) -> String? in
             personIDs.contains(personID) ? groupID : nil
@@ -97,7 +97,7 @@ enum PeopleGroupStore {
     }
 
     /// Adds the person to the group, or takes them out when already in it.
-    static func toggle(personID: String, in groupID: String, defaults: UserDefaults = .standard) {
+    static func toggle(personID: String, in groupID: String, defaults: any DecisionStore = LibraryDecisions.shared) {
         var members = storedMembers(defaults)
         var personIDs = members[groupID] ?? []
         if personIDs.contains(personID) {
@@ -114,20 +114,20 @@ enum PeopleGroupStore {
     }
 
     /// Every group's members at once, so a view reads the defaults once.
-    static func allMembers(defaults: UserDefaults = .standard) -> [String: Set<String>] {
+    static func allMembers(defaults: any DecisionStore = LibraryDecisions.shared) -> [String: Set<String>] {
         storedMembers(defaults)
     }
 
     // MARK: Raw storage
 
-    private static func storedGroups(_ defaults: UserDefaults) -> [PeopleGroup] {
+    private static func storedGroups(_ defaults: any DecisionStore) -> [PeopleGroup] {
         guard let data = defaults.data(forKey: groupsKey),
               let decoded = try? JSONDecoder().decode([PeopleGroup].self, from: data)
         else { return [] }
         return decoded
     }
 
-    private static func writeGroups(_ groups: [PeopleGroup], _ defaults: UserDefaults) {
+    private static func writeGroups(_ groups: [PeopleGroup], _ defaults: any DecisionStore) {
         guard !groups.isEmpty else {
             defaults.removeObject(forKey: groupsKey)
             return
@@ -136,14 +136,14 @@ enum PeopleGroupStore {
         defaults.set(data, forKey: groupsKey)
     }
 
-    private static func storedMembers(_ defaults: UserDefaults) -> [String: Set<String>] {
+    private static func storedMembers(_ defaults: any DecisionStore) -> [String: Set<String>] {
         guard let data = defaults.data(forKey: membersKey),
               let decoded = try? JSONDecoder().decode([String: [String]].self, from: data)
         else { return [:] }
         return decoded.mapValues { (personIDs: [String]) -> Set<String> in Set(personIDs) }
     }
 
-    private static func writeMembers(_ members: [String: Set<String>], _ defaults: UserDefaults) {
+    private static func writeMembers(_ members: [String: Set<String>], _ defaults: any DecisionStore) {
         guard !members.isEmpty else {
             defaults.removeObject(forKey: membersKey)
             return

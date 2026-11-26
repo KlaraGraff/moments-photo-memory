@@ -197,7 +197,7 @@ final class PeopleScanController {
     /// Makes the store inside the detached task that uses it and returns only
     /// the answer, so nothing on the main actor holds the last reference and
     /// the store's context and objects are freed off the main thread.
-    nonisolated static func hasWork(container: ModelContainer, defaults: UserDefaults = .standard) async throws -> Bool {
+    nonisolated static func hasWork(container: ModelContainer, defaults: any DecisionStore = LibraryDecisions.shared) async throws -> Bool {
         try await Task.detached(priority: .utility) {
             let store = PeopleScanStore(modelContainer: container)
             return try await store.hasWork(defaults: defaults)
@@ -318,7 +318,7 @@ final class PeopleScanController {
             PeopleStoreActions.storeQuestions(assignments.questions)
             // The grouping version moves only after the write-back succeeded,
             // so an interrupted run regroups on the next start.
-            UserDefaults.standard.set(PeopleScanStore.groupingVersion, forKey: PeopleScanStore.groupingVersionKey)
+            LibraryDecisions.shared.set(PeopleScanStore.groupingVersion, forKey: PeopleScanStore.groupingVersionKey)
             guard activeScanID == scanID else { return }
             activePipeline = nil
             state = .finished
@@ -444,11 +444,11 @@ enum PeopleStoreActions {
     /// Pair keys the user answered "no". A "no" is never asked again.
     static let declinedPairsKey = "moments.people.declinedPairs"
 
-    static func keyFaceID(for personID: String, defaults: UserDefaults = .standard) -> String? {
+    static func keyFaceID(for personID: String, defaults: any DecisionStore = LibraryDecisions.shared) -> String? {
         (defaults.dictionary(forKey: keyFacesKey) as? [String: String])?[personID]
     }
 
-    static func setKeyFace(_ faceID: String?, for personID: String, defaults: UserDefaults = .standard) {
+    static func setKeyFace(_ faceID: String?, for personID: String, defaults: any DecisionStore = LibraryDecisions.shared) {
         var faces = (defaults.dictionary(forKey: keyFacesKey) as? [String: String]) ?? [:]
         faces[personID] = faceID
         if faces.isEmpty { defaults.removeObject(forKey: keyFacesKey) } else { defaults.set(faces, forKey: keyFacesKey) }
@@ -463,11 +463,11 @@ enum PeopleStoreActions {
         return left.compare(right, options: [.caseInsensitive, .widthInsensitive]) == .orderedSame
     }
 
-    static func keepSeparateIDs(_ defaults: UserDefaults = .standard) -> Set<String> {
+    static func keepSeparateIDs(_ defaults: any DecisionStore = LibraryDecisions.shared) -> Set<String> {
         Set(defaults.stringArray(forKey: keepSeparateKey) ?? [])
     }
 
-    static func setKeepSeparate(_ personID: String, _ isSeparate: Bool, defaults: UserDefaults = .standard) {
+    static func setKeepSeparate(_ personID: String, _ isSeparate: Bool, defaults: any DecisionStore = LibraryDecisions.shared) {
         var ids = keepSeparateIDs(defaults)
         let changed = isSeparate ? ids.insert(personID).inserted : ids.remove(personID) != nil
         guard changed else { return }
@@ -476,12 +476,12 @@ enum PeopleStoreActions {
 
     // MARK: - "Same person?" questions
 
-    static func storedQuestions(_ defaults: UserDefaults = .standard) -> [String] {
+    static func storedQuestions(_ defaults: any DecisionStore = LibraryDecisions.shared) -> [String] {
         defaults.stringArray(forKey: questionsKey) ?? []
     }
 
     /// Saves the planner's questions as pair keys: same order, no duplicates.
-    static func storeQuestions(_ questions: [PeoplePlannerQuestion], defaults: UserDefaults = .standard) {
+    static func storeQuestions(_ questions: [PeoplePlannerQuestion], defaults: any DecisionStore = LibraryDecisions.shared) {
         var seen = Set<String>()
         let keys: [String] = questions.compactMap { (question: PeoplePlannerQuestion) -> String? in
             let key = PeopleAssignmentPlanner.pairKey(question.first, question.second)
@@ -490,7 +490,7 @@ enum PeopleStoreActions {
         if keys.isEmpty { defaults.removeObject(forKey: questionsKey) } else { defaults.set(keys, forKey: questionsKey) }
     }
 
-    static func declinedPairs(_ defaults: UserDefaults = .standard) -> Set<String> {
+    static func declinedPairs(_ defaults: any DecisionStore = LibraryDecisions.shared) -> Set<String> {
         Set(defaults.stringArray(forKey: declinedPairsKey) ?? [])
     }
 
@@ -526,7 +526,7 @@ enum PeopleStoreActions {
     ///   clusterID (still unconfirmed).
     /// - Person + person never happens; ignore it.
     /// Then the key leaves the stored questions. Save.
-    static func answerSame(_ pairKey: String, observations: [FaceObservation], context: ModelContext, defaults: UserDefaults = .standard) {
+    static func answerSame(_ pairKey: String, observations: [FaceObservation], context: ModelContext, defaults: any DecisionStore = LibraryDecisions.shared) {
         if let (first, second) = sides(of: pairKey) {
             switch (first, second) {
             case let (.person(personID), .cluster(clusterID)),
@@ -556,7 +556,7 @@ enum PeopleStoreActions {
     }
 
     /// "No". The key joins declinedPairs and leaves the stored questions.
-    static func answerDifferent(_ pairKey: String, defaults: UserDefaults = .standard) {
+    static func answerDifferent(_ pairKey: String, defaults: any DecisionStore = LibraryDecisions.shared) {
         var declined = declinedPairs(defaults)
         declined.insert(pairKey)
         defaults.set(declined.sorted(), forKey: declinedPairsKey)
@@ -564,7 +564,7 @@ enum PeopleStoreActions {
     }
 
     /// "Skip for now": the key moves to the end of the stored questions.
-    static func skip(_ pairKey: String, defaults: UserDefaults = .standard) {
+    static func skip(_ pairKey: String, defaults: any DecisionStore = LibraryDecisions.shared) {
         var stored = storedQuestions(defaults)
         stored.removeAll { (key: String) -> Bool in key == pairKey }
         stored.append(pairKey)
@@ -575,7 +575,7 @@ enum PeopleStoreActions {
     /// visible person with at least one face. A cluster side needs at least
     /// ``minimumCardFaces`` faces with that clusterID and no person: a card
     /// that shrank below that is loose faces now, so its question is not asked.
-    static func liveQuestions(observations: [FaceObservation], people: [Person], defaults: UserDefaults = .standard) -> [String] {
+    static func liveQuestions(observations: [FaceObservation], people: [Person], defaults: any DecisionStore = LibraryDecisions.shared) -> [String] {
         let visible = Set(people.filter { (person: Person) -> Bool in !person.hidden }.map(\.id))
         var peopleWithFaces = Set<String>()
         var clusterFaceCounts: [String: Int] = [:]
@@ -601,7 +601,7 @@ enum PeopleStoreActions {
         }
     }
 
-    private static func removeFromStoredQuestions(_ pairKey: String, defaults: UserDefaults) {
+    private static func removeFromStoredQuestions(_ pairKey: String, defaults: any DecisionStore) {
         var stored = storedQuestions(defaults)
         stored.removeAll { (key: String) -> Bool in key == pairKey }
         if stored.isEmpty { defaults.removeObject(forKey: questionsKey) } else { defaults.set(stored, forKey: questionsKey) }
@@ -613,7 +613,7 @@ enum PeopleStoreActions {
 
     /// The visible person a new name should merge into: the oldest non-hidden
     /// person with an equal name that the user has not kept separate.
-    static func mergeCandidate(forName name: String, people: [Person], excluding excludedID: String? = nil, defaults: UserDefaults = .standard) -> Person? {
+    static func mergeCandidate(forName name: String, people: [Person], excluding excludedID: String? = nil, defaults: any DecisionStore = LibraryDecisions.shared) -> Person? {
         let separate = keepSeparateIDs(defaults)
         return people
             .filter { !$0.hidden && $0.id != excludedID && !separate.contains($0.id) && namesMatch($0.name, name) }
@@ -632,7 +632,7 @@ enum PeopleStoreActions {
         people: [Person],
         observations: [FaceObservation],
         context: ModelContext,
-        defaults: UserDefaults = .standard
+        defaults: any DecisionStore = LibraryDecisions.shared
     ) -> String? {
         let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, !faces.isEmpty else { return nil }
@@ -722,7 +722,7 @@ enum PeopleStoreActions {
     /// Merges visible people whose names are equal into the oldest of them,
     /// skipping anyone the user kept separate. Returns how many were merged.
     @discardableResult
-    static func mergeDuplicateNames(people: [Person], observations: [FaceObservation], context: ModelContext, defaults: UserDefaults = .standard) -> Int {
+    static func mergeDuplicateNames(people: [Person], observations: [FaceObservation], context: ModelContext, defaults: any DecisionStore = LibraryDecisions.shared) -> Int {
         let separate = keepSeparateIDs(defaults)
         let candidates = people
             .filter { !$0.hidden && !separate.contains($0.id) && $0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
@@ -740,7 +740,7 @@ enum PeopleStoreActions {
         return merged
     }
 
-    static func merge(sourceID: String, into targetID: String, people: [Person], observations: [FaceObservation], context: ModelContext, defaults: UserDefaults = .standard) {
+    static func merge(sourceID: String, into targetID: String, people: [Person], observations: [FaceObservation], context: ModelContext, defaults: any DecisionStore = LibraryDecisions.shared) {
         guard sourceID != targetID else { return }
         for face in observations where face.personID == sourceID {
             face.personID = targetID
@@ -765,9 +765,12 @@ enum PeopleStoreActions {
             }
             if changed { group.rules = rules; group.updatedAt = .now }
         }
+        // The Library's person filter is a view setting, kept in user
+        // defaults (a test passes its own suite as `defaults`).
+        let filters: UserDefaults = (defaults as? UserDefaults) ?? .standard
         let key = "moments.library.person"
-        if defaults.string(forKey: key) == sourceID {
-            defaults.set(targetID, forKey: key)
+        if filters.string(forKey: key) == sourceID {
+            filters.set(targetID, forKey: key)
         }
         setKeepSeparate(sourceID, false, defaults: defaults)
         setKeyFace(nil, for: sourceID, defaults: defaults)
@@ -818,7 +821,7 @@ actor PeopleScanStore {
     static let groupingVersionKey = "moments.people.groupingVersion"
     static let groupingVersion = 2
 
-    func hasWork(defaults: UserDefaults = .standard) throws -> Bool {
+    func hasWork(defaults: any DecisionStore = LibraryDecisions.shared) throws -> Bool {
         if defaults.integer(forKey: Self.groupingVersionKey) < Self.groupingVersion { return true }
         var recordsDescriptor = FetchDescriptor<FaceScanRecord>()
         recordsDescriptor.propertiesToFetch = [\.id]

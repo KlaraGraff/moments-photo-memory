@@ -490,6 +490,28 @@ final class MomentsUITests: XCTestCase {
         }
     }
 
+    /// Settings shows the automatic backup and the one button there is, also
+    /// at the small window size. The in-memory test
+    /// store has no backups, so the row says so.
+    func testSettingsShowAutomaticBackup() {
+        let app = launch(language: "en", smallWindow: true)
+        app.typeKey(",", modifierFlags: .command)
+        let status = element(in: app, identifier: "settings.backup-status")
+        XCTAssertTrue(status.waitForExistence(timeout: launchTimeout), "Settings has no backup row")
+        let restore = element(in: app, identifier: "settings.backup-restore")
+        XCTAssertTrue(restore.exists, "The backup row has no Restore from Backup button")
+        let window = app.windows.containing(.any, identifier: "settings.backup-status").firstMatch
+        let texts: [String] = window.staticTexts.allElementsBoundByIndex.flatMap { (text: XCUIElement) -> [String] in
+            [text.label, text.value as? String ?? ""]
+        }
+        XCTAssertTrue(texts.contains("No backup yet"), "The backup row reads \(texts)")
+        let attachment = XCTAttachment(screenshot: window.screenshot())
+        attachment.name = "settings-03-backup-evidence"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        app.terminate()
+    }
+
     func testFootprintsGlobeOpens() {
         let app = launch(language: "en")
         assertGlobeFullyVisible(app, screenshot: "map-04-globe-evidence")

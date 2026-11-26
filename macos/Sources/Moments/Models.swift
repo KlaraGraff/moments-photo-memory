@@ -4223,7 +4223,7 @@ public enum SchemaV7: VersionedSchema {
     ]
 }
 
-/// Current live schema: V7 plus Recently Deleted (`MediaItem.deletedAt`,
+/// V7 plus Recently Deleted (`MediaItem.deletedAt`,
 /// `deletedBy`), who added a photo (`ownerAccountID`) and the import sources
 /// a photo came from (`importSourceIDsRaw`, `ImportSource`). Every new field
 /// is optional, so the stage is lightweight.
@@ -4251,8 +4251,19 @@ public enum SchemaV8: VersionedSchema {
     ]
 }
 
+/// Current live schema: V8 plus `LocalDecision`, the choices that used to
+/// live in user defaults (trip covers, photos placed in a trip by hand,
+/// People answers and groups, suggested event days, rule versions). The
+/// V8 entities are unchanged and only a table is added, so the stage is
+/// lightweight; the values are copied over from user defaults once, after
+/// the store opens (`LibraryDecisions.configure`).
+public enum SchemaV9: VersionedSchema {
+    public static let versionIdentifier = Schema.Version(9, 0, 0)
+    public static let models: [any PersistentModel.Type] = SchemaV8.models + [LocalDecision.self]
+}
+
 public enum MomentsMigrationPlan: SchemaMigrationPlan {
-    public static let schemas: [any VersionedSchema.Type] = [SchemaV1.self, SchemaV2.self, SchemaV3.self, SchemaV4.self, SchemaV5.self, SchemaV6.self, SchemaV7.self, SchemaV8.self]
+    public static let schemas: [any VersionedSchema.Type] = [SchemaV1.self, SchemaV2.self, SchemaV3.self, SchemaV4.self, SchemaV5.self, SchemaV6.self, SchemaV7.self, SchemaV8.self, SchemaV9.self]
 
     /// Legacy v1 stores are handled by the launch-time safety gate below.
     /// Each post-v2 change is additive and therefore lightweight. V5 is a
@@ -4264,7 +4275,8 @@ public enum MomentsMigrationPlan: SchemaMigrationPlan {
         .lightweight(fromVersion: SchemaV4.self, toVersion: SchemaV5.self),
         .lightweight(fromVersion: SchemaV5.self, toVersion: SchemaV6.self),
         .lightweight(fromVersion: SchemaV6.self, toVersion: SchemaV7.self),
-        .lightweight(fromVersion: SchemaV7.self, toVersion: SchemaV8.self)
+        .lightweight(fromVersion: SchemaV7.self, toVersion: SchemaV8.self),
+        .lightweight(fromVersion: SchemaV8.self, toVersion: SchemaV9.self)
     ]
 }
 
@@ -4390,7 +4402,7 @@ public enum MomentsPersistence {
         if inMemory {
             let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
             return try ModelContainer(
-                for: Schema(versionedSchema: SchemaV8.self),
+                for: Schema(versionedSchema: SchemaV9.self),
                 migrationPlan: MomentsMigrationPlan.self,
                 configurations: configuration
             )
@@ -4414,12 +4426,12 @@ public enum MomentsPersistence {
 
         let configuration = ModelConfiguration(
             "Moments",
-            schema: Schema(versionedSchema: SchemaV8.self),
+            schema: Schema(versionedSchema: SchemaV9.self),
             url: storeURL,
             cloudKitDatabase: .none
         )
         return try ModelContainer(
-            for: Schema(versionedSchema: SchemaV8.self),
+            for: Schema(versionedSchema: SchemaV9.self),
             migrationPlan: MomentsMigrationPlan.self,
             configurations: configuration
         )
@@ -4552,6 +4564,26 @@ public enum MomentsPersistence {
         )
         return try ModelContainer(
             for: Schema(versionedSchema: SchemaV7.self),
+            configurations: configuration
+        )
+    }
+
+    /// Creates a V8 store for the V8 -> V9 migration test without opening the
+    /// live schema. V8's entities are the live ones; only `LocalDecision` is
+    /// missing. Production stores are opened through ``makeContainer``.
+    public static func makeV8Container(url: URL) throws -> ModelContainer {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let configuration = ModelConfiguration(
+            "Moments-v8",
+            schema: Schema(versionedSchema: SchemaV8.self),
+            url: url,
+            cloudKitDatabase: .none
+        )
+        return try ModelContainer(
+            for: Schema(versionedSchema: SchemaV8.self),
             configurations: configuration
         )
     }

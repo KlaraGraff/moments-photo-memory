@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 /// Settings is one page: sharing with your partner, and backups. Everything
@@ -11,6 +10,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             SharingSettingsSection()
+            if hasStore { BackupSettingsSection() }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
@@ -53,15 +53,5 @@ struct SharingSettingsSection: View {
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("settings.sharing")
         }
-    }
-}
-
-enum ImportSettings {
-    static var libraryFolder: URL? {
-        try? MomentsPersistence.defaultStoreURL().deletingLastPathComponent()
-    }
-
-    static var backupsFolder: URL? {
-        libraryFolder?.appending(path: "Backups", directoryHint: .isDirectory)
     }
 }

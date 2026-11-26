@@ -14,7 +14,7 @@ EXACT={'.gitignore','README.md','AGENTS.md','demo/sample-data.json','docs/design
        'scripts/apple_photos_bridge.swift','scripts/apple_photos_host.swift',
        'scripts/run-ui-smoke.sh','scripts/run-ui-import-check.sh','scripts/check_date_symbols.sh','scripts/check_app_archs.sh','scripts/release_mac.sh','scripts/make_synthetic_import_fixtures.swift','scripts/ui_core_tests.txt',
        'vendor/leaflet/leaflet.js','vendor/leaflet/leaflet.css','vendor/leaflet/LICENSE',
-       'vendor/leaflet/manifest.json','docs/sharing-design.md',
+       'vendor/leaflet/manifest.json','docs/sharing-design.md','docs/app-icon.svg',
        'macos/Config/Signing.xcconfig','macos/Config/Local.xcconfig.example',
        'macos/Config/Moments.entitlements','macos/Config/Moments-Info.plist',
        'macos/Sources/Moments/Assets.xcassets/Contents.json',
@@ -30,6 +30,14 @@ PINNED={
  # Country outlines for trip route maps: Natural Earth 1:50m (public domain),
  # simplified and packed by hand; see WorldOutline.swift for the format.
  'macos/Sources/Moments/Resources/WorldOutline.bin':'fced4d2ac26d2c30e25ff10421ff7f196bc8f240c4b56e20516592100f9b8881',
+ # App icon, rendered from docs/app-icon.svg (synthetic artwork, no photo).
+ 'macos/Sources/Moments/Assets.xcassets/AppIcon.appiconset/icon_16.png':'9e10786a4abe304a044dc81dd8b90a941e27905ff8090590c4a44adffcea50bb',
+ 'macos/Sources/Moments/Assets.xcassets/AppIcon.appiconset/icon_32.png':'853a811073a09665b2528329c999b74db925288f69a9bc1470beca2a366adbda',
+ 'macos/Sources/Moments/Assets.xcassets/AppIcon.appiconset/icon_64.png':'50ed4af3861d3506f5f05ed364ba9274c15448f64bbb332dc7d5fb47b0d9f048',
+ 'macos/Sources/Moments/Assets.xcassets/AppIcon.appiconset/icon_128.png':'4999658129438d6d85131ac1312884b5df6417d0a58ed11bf9539e2a4937609c',
+ 'macos/Sources/Moments/Assets.xcassets/AppIcon.appiconset/icon_256.png':'02d2fbdb51ce5818dd4ebdc1c679c033ef84e664de71de9ef27d30a418156e5f',
+ 'macos/Sources/Moments/Assets.xcassets/AppIcon.appiconset/icon_512.png':'2835ccb7b212aef0db7b7a8ab1e41931c9002ced46f7b7120988f49d7d0a0032',
+ 'macos/Sources/Moments/Assets.xcassets/AppIcon.appiconset/icon_1024.png':'0f463b389a36cfc3d51322662bf52835cef6bdbf55c5b35169089238dbcdea21',
 }
 # Gitignored per-developer files: skipped when scanning the working tree, and
 # never allowlisted, so staging one fails the --staged check.

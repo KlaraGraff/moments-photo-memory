@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+<!-- Moments app icon source. The PNGs in macos/Sources/Moments/Assets.xcassets/AppIcon.appiconset
+     are this file rendered at 16-1024 px with a transparent background (Chromium);
+     re-render them and update their hashes in scripts/check_privacy.py together. -->
+<defs><linearGradient id="paper" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FDF6F0"/><stop offset="1" stop-color="#F3E2D6"/></linearGradient><linearGradient id="clay" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#C45E40"/><stop offset="1" stop-color="#9C3F27"/></linearGradient></defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#paper)"/>
+  <g transform="rotate(-9 470 520)"><rect x="250" y="250" width="420" height="500" rx="22" fill="#fff" stroke="#E6CDBD" stroke-width="6"/><rect x="285" y="285" width="350" height="330" rx="10" fill="#E9C9B5"/></g>
+  <g transform="rotate(7 560 540)"><rect x="370" y="290" width="420" height="500" rx="22" fill="#fff" stroke="#E6CDBD" stroke-width="6"/><rect x="405" y="325" width="350" height="330" rx="10" fill="url(#clay)"/>
+   <circle cx="660" cy="410" r="38" fill="#F7D9B8"/><path d="M405 600 L520 470 L600 560 L650 510 L755 620 L755 655 L405 655Z" fill="#7E2F1C"/></g>
+ </svg>

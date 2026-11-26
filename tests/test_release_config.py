@@ -87,6 +87,14 @@ class ReleaseConfigurationTests(unittest.TestCase):
         slots = {(image["size"], image["scale"]) for image in contents["images"] if image["idiom"] == "mac"}
         expected = {(f"{p}x{p}", f"{s}x") for p in (16, 32, 128, 256, 512) for s in (1, 2)}
         self.assertEqual(slots, expected)
+        folder = MACOS / "Sources/Moments/Assets.xcassets/AppIcon.appiconset"
+        for image in contents["images"]:
+            points = int(image["size"].split("x")[0])
+            pixels = points * int(image["scale"][0])
+            data = (folder / image["filename"]).read_bytes()
+            self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n", image["filename"])
+            width, height = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+            self.assertEqual((width, height), (pixels, pixels), image["filename"])
 
 
 class ReleaseScriptTests(unittest.TestCase):

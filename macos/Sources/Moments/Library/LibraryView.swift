@@ -153,6 +153,8 @@ struct LibraryView: View {
     /// a later visit can show the same result without walking the photos again.
     private struct LibraryRegroupResult {
         let reviewCount: Int
+        /// The photos behind `reviewCount`, so a patch can adjust it.
+        let reviewIDs: Set<String>
         let personIndex: [String: Set<String>]
         let itemByID: [String: MediaItem]
         let sections: [LibrarySection]
@@ -892,9 +894,12 @@ struct LibraryView: View {
         #if DEBUG
         step("allItems")
         #endif
-        cachedReviewCount = all.reduce(into: 0) { (count: inout Int, item: MediaItem) in
-            if item.needsImportReview, !reviewNoise.isNoise(item.id) { count += 1 }
+        var reviewIDs = Set<String>()
+        for item in all where item.needsImportReview {
+            let id: String = item.id
+            if !reviewNoise.isNoise(id) { reviewIDs.insert(id) }
         }
+        cachedReviewCount = reviewIDs.count
         #if DEBUG
         step("review count")
         #endif
@@ -1017,6 +1022,7 @@ struct LibraryView: View {
         // finished regroup is ever reused.
         let result = LibraryRegroupResult(
             reviewCount: cachedReviewCount,
+            reviewIDs: reviewIDs,
             personIndex: personIndex,
             itemByID: cachedItemByID,
             sections: cachedSections,
@@ -1113,9 +1119,16 @@ struct LibraryView: View {
             with: stackIndex
         )
 
-        cachedReviewCount = all.reduce(into: 0) { (count: inout Int, item: MediaItem) in
-            if item.needsImportReview, !reviewNoise.isNoise(item.id) { count += 1 }
+        // Only a changed photo can have joined or left the review count.
+        var reviewIDs: Set<String> = old.reviewIDs
+        for id in changed {
+            if let model = store.itemsByID[id], model.needsImportReview, !reviewNoise.isNoise(id) {
+                reviewIDs.insert(id)
+            } else {
+                reviewIDs.remove(id)
+            }
         }
+        cachedReviewCount = reviewIDs.count
         cachedPersonIndex = old.personIndex
         cachedItemByID = itemByID
         cachedSections = folded.sections
@@ -1169,6 +1182,7 @@ struct LibraryView: View {
         }
         let result = LibraryRegroupResult(
             reviewCount: cachedReviewCount,
+            reviewIDs: reviewIDs,
             personIndex: old.personIndex,
             itemByID: itemByID,
             sections: folded.sections,

@@ -5,6 +5,8 @@ import SwiftData
 struct MomentsApp: App {
     #if DEBUG
     @NSApplicationDelegateAdaptor(UnitTestHostDelegate.self) private var unitTestHostDelegate
+    #else
+    @NSApplicationDelegateAdaptor(MomentsAppDelegate.self) private var appDelegate
     #endif
     private let modelContainer: ModelContainer?
     private let storeError: MomentsStoreError?
@@ -19,6 +21,7 @@ struct MomentsApp: App {
     @State private var libraryStore = LibraryStore()
     @State private var photosImportController = PhotosImportController(importer: PhotosImporter(source: PhotoKitAssetSource()))
     @State private var showingPhotosImport = false
+    @State private var sharing = SharingController()
     @State private var backups = BackupController()
 
     #if DEBUG
@@ -211,8 +214,10 @@ struct MomentsApp: App {
                     .environment(libraryStore)
                     .environment(reorganize)
                     .environment(photosImportController)
+                    .environment(sharing)
                     .modelContainer(modelContainer)
                     .onAppear {
+                        sharing.configure(container: modelContainer)
                         importController.configure(container: modelContainer)
                         peopleController.configure(container: modelContainer)
                         photosImportController.configure(container: modelContainer)
@@ -316,6 +321,7 @@ struct MomentsApp: App {
             }
             .environment(peopleController)
             .environment(photosImportController)
+            .environment(sharing)
             .environment(backups)
             .preferredColorScheme(.light)
         }

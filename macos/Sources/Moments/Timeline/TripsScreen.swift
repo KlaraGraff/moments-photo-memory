@@ -1071,6 +1071,7 @@ private struct TripCoverCard: View {
     let onOpen: () -> Void
     @Environment(\.locale) private var locale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(SharingController.self) private var sharing: SharingController?
     @State private var isHovering = false
     @State private var isPickingCover = false
 
@@ -1098,6 +1099,11 @@ private struct TripCoverCard: View {
         .padding(.vertical, 16)
         .frame(maxWidth: 880, alignment: .leading)
         .background(trip.isUnsorted ? Paper.well.opacity(0.6) : Paper.raised, in: shape)
+        .overlay(alignment: .topTrailing) {
+            if sharing?.isShared(tripID: trip.id) == true {
+                SharedTripBadge().padding(8)
+            }
+        }
         .contentShape(shape)
         .onTapGesture(perform: onOpen)
         .shadow(color: Paper.shadow.opacity(isHovering ? 0.07 : 0.04), radius: 1, y: 1)
@@ -1323,6 +1329,7 @@ private struct TripDetailView: View {
     let actions: TripActions
     let onBack: () -> Void
     @Environment(SelectionModel.self) private var selection
+    @Environment(SharingController.self) private var sharing: SharingController?
     @Environment(\.modelContext) private var modelContext
     @Environment(\.locale) private var locale
 
@@ -1456,6 +1463,11 @@ private struct TripDetailView: View {
                 .help(String(localized: "All chapters"))
                 .keyboardShortcut("[", modifiers: .command)
                 .accessibilityIdentifier("trips.back")
+            }
+            if let model, let sharing, sharing.canOfferSharing {
+                ToolbarItem {
+                    TripShareButton(tripID: model.id, tripName: TripText.name(trip))
+                }
             }
             if let target {
                 ToolbarItem {

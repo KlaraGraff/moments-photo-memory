@@ -124,9 +124,27 @@ public struct SyncAccountMap: Equatable, Sendable {
 public enum SyncRecordName {
     public static let maxLength = 200
 
+    /// CloudKit record names are unique within a zone across all record
+    /// types, and two types can share an ID (a favorite and a personal place
+    /// name are both "photo:person"), so every name starts with its type.
     public static func make(type: SyncRecordType, id: String) -> String {
-        if isSafe(id) { return id }
+        let plain = type.rawValue + "-" + id
+        if isSafe(id), plain.utf8.count <= maxLength { return plain }
         return "h-" + type.rawValue + "-" + SyncDigest.hex(id) + "-" + SyncDigest.hex(String(id.reversed()))
+    }
+
+    /// Whether `make` hashed the ID (unsafe, or too long with its type).
+    public static func isHashed(_ name: String) -> Bool {
+        name.hasPrefix("h-")
+    }
+
+    /// The ID inside a name `make` built without hashing, or nil for a
+    /// hashed name (looked up in the saved name map instead).
+    public static func id(fromPlain name: String, type: SyncRecordType) -> String? {
+        let prefix = type.rawValue + "-"
+        guard name.hasPrefix(prefix) else { return nil }
+        let id = String(name.dropFirst(prefix.count))
+        return isSafe(id) ? id : nil
     }
 
     public static func isSafe(_ id: String) -> Bool {

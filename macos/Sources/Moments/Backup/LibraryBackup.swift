@@ -118,6 +118,9 @@ enum LibraryBackup {
     static let logger = Logger(subsystem: "org.example.Moments", category: "Backup")
     static let decisionsFileName = "decisions.plist"
     static let correctionLogFileName = "trip-corrections.jsonl"
+    /// The schema from which covers, hand-placed photos and People answers
+    /// are kept in the store rather than in user defaults.
+    static let decisionsInStoreSchema = "9.0.0"
 
     /// The schema the running app opens stores with, "8.0.0".
     static var currentSchemaVersion: String {
@@ -337,7 +340,11 @@ enum LibraryBackup {
                 try makeBackup(.beforeRestore, location: location, defaults: defaults, now: now, schemaVersion: lastOpenedSchema(location) ?? schemaVersion, protecting: protected)
             }
             try swapIn(backupFolder: backupFolder, location: location)
-            if let decisions = try? Data(contentsOf: backupFolder.appending(path: decisionsFileName)),
+            // Before V9 these choices lived only in user defaults; from V9 on
+            // they are in the restored store itself, and a V8 store copies
+            // them in from user defaults when it opens.
+            if BackupPolicy.isSchema(manifest.schemaVersion, olderThan: LibraryBackup.decisionsInStoreSchema),
+               let decisions = try? Data(contentsOf: backupFolder.appending(path: decisionsFileName)),
                let values = try? PropertyListSerialization.propertyList(from: decisions, format: nil) as? [String: Any] {
                 LibraryDecisionKeys.apply(values, to: defaults)
             }

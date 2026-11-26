@@ -121,6 +121,15 @@ struct MomentsApp: App {
             #else
             let container = try Self.openUserStore(backups: backups)
             #endif
+            // Covers, hand-placed photos and People answers live in the store
+            // (V9). The user's store copies them from user defaults once; test
+            // stores start empty.
+            #if DEBUG
+            let importsDecisions = !(isUITesting || testStoreURL != nil)
+            #else
+            let importsDecisions = true
+            #endif
+            LibraryDecisions.shared.configure(container: container, importingFrom: importsDecisions ? .standard : nil)
             #if DEBUG
             // The on-disk UI-test store holds only what the test imports.
             if Self.uiTestStoreDirectory == nil {

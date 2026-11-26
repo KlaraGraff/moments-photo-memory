@@ -211,7 +211,9 @@ final class LibraryBackupTests: XCTestCase {
     func testRestoreBringsBackTheLibraryAndItsChoicesAndKeepsTheCurrentOne() throws {
         try addItems(["synthetic-a"])
         defaults.set(["synthetic-a"], forKey: TripAssignmentLocks.defaultsKey)
-        let backup = try LibraryBackup.makeBackup(.daily, location: location, defaults: defaults, now: origin)
+        // Labelled V8: before V9 these choices lived in user defaults, and a
+        // restore puts the backup's copy of them back there.
+        let backup = try LibraryBackup.makeBackup(.daily, location: location, defaults: defaults, now: origin, schemaVersion: "8.0.0")
 
         // Later work that the restore undoes.
         try addItems(["synthetic-b"])

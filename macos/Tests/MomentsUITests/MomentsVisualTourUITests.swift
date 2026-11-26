@@ -29,7 +29,7 @@ final class MomentsVisualTourUITests: XCTestCase {
             .firstMatch
         if photo.waitForExistence(timeout: timeout) {
             let photoID = String(photo.identifier.dropFirst("library.photo.".count))
-            let note = element(app, "library.note.\(photoID)")
+            let note = element(app, "library.memory.\(photoID)")
             if note.waitForExistence(timeout: timeout) {
                 note.click()
                 note.typeText("Focus")

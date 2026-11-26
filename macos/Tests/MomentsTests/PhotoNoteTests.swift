@@ -315,44 +315,88 @@ final class PhotoNoteTests: XCTestCase {
 
     // MARK: Service
 
-    func testSaveKeepsWordsAndTurnsResultIntoSuggestions() async throws {
+    private func waitUntilDone(_ note: PhotoNote, _ service: PhotoNoteService) async {
+        for _ in 0..<1000 where service.isRunning(note) { await Task.yield() }
+    }
+
+    func testOrganizeSendsOnlyTheWordsAndWritesPlaceFixesButNoMemory() async throws {
         let context = try makeContext()
         let harbor = Place(name: "Harbor")
         context.insert(harbor)
         let item = insertItem("a", place: harbor, latitude: 0.001, longitude: 0.002, in: context)
+        context.insert(Memory(text: "It was Old Lane", author: .me, authorAccountID: MomentsAccount.localID, mediaItem: item))
         try context.save()
         let capture = CapturingOrganizer()
         let service = PhotoNoteService(makeOrganizers: { [capture] })
 
-        let note = try XCTUnwrap(service.save("  It was Old Lane  ", for: item, context: context))
+        let note = try XCTUnwrap(service.organize("  It was Old Lane  ", for: item, context: context))
         XCTAssertEqual(note.text, "It was Old Lane")
-        XCTAssertTrue(service.isRunning(note), "A just-saved note counts as organizing at once")
-        for _ in 0..<1000 where service.isRunning(note) { await Task.yield() }
+        XCTAssertTrue(service.isRunning(note), "A just-handed note counts as organizing at once")
+        await waitUntilDone(note, service)
         XCTAssertFalse(service.isRunning(note))
 
         XCTAssertEqual(capture.received?.noteText, "It was Old Lane")
         XCTAssertEqual(capture.received?.placeName, "Harbor")
         XCTAssertEqual(note.organizerLabel, "Capture")
-        XCTAssertEqual(note.suggestions.map(\.kind), [.memory])
-        XCTAssertEqual(note.status, .done, "The result is written without asking")
-        XCTAssertEqual(note.suggestions.map(\.decision), [.accepted])
-        XCTAssertEqual(item.memories.map(\.text), ["ok"])
-        XCTAssertFalse(note.undoRecord.isEmpty, "What was written can be undone")
-        XCTAssertNil(service.save("   ", for: item, context: context), "Blank words are not saved")
+        // The model answered only with a memory: the words already are one.
+        XCTAssertTrue(note.suggestions.isEmpty)
+        XCTAssertEqual(note.status, .nothingFound)
+        XCTAssertEqual(item.memories.map(\.text), ["It was Old Lane"], "The person's words are never rewritten")
+        XCTAssertNil(service.organize("   ", for: item, context: context), "Blank words are not organized")
     }
 
-    func testUnavailableModelsLeaveNoteWaitingAndFallbackIsTried() async throws {
+    func testOrganizeWritesPlaceCorrectionAtOnceAndDropsEveryMemory() async throws {
+        let context = try makeContext()
+        let harbor = Place(name: "Harbor")
+        context.insert(harbor)
+        let item = insertItem("a", place: harbor, tripID: "trip-1", in: context)
+        try context.save()
+        let service = PhotoNoteService(makeOrganizers: {
+            [StubOrganizer(outcome: .success(NoteOrganizerResult(placeName: "Old Lane", placeDescription: "Steep steps.", memory: "Best day", memoryScope: "day")))]
+        })
+        let note = try XCTUnwrap(service.organize("Old Lane, steep steps, best day", for: item, context: context))
+        await waitUntilDone(note, service)
+
+        XCTAssertEqual(Set(note.suggestions.map(\.kind)), [.placeCorrection, .placeDescription])
+        XCTAssertEqual(note.suggestions.map(\.decision), [.accepted, .accepted], "Nothing waits for a choice")
+        XCTAssertEqual(note.status, .done)
+        XCTAssertEqual(item.effectivePlaceName, "Old Lane")
+        XCTAssertEqual(try context.fetch(FetchDescriptor<PlaceNote>()).map(\.text), ["Steep steps."])
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CollectionMemory>()).isEmpty, "No day memory is added from the words")
+        XCTAssertTrue(item.memories.isEmpty, "The AI never writes a memory")
+    }
+
+    func testAIOffDoesNothingAndSendsNothing() throws {
+        let context = try makeContext()
+        let item = insertItem("a", in: context)
+        let service = PhotoNoteService(makeOrganizers: { [] })
+        XCTAssertNil(service.organize("Lovely evening", for: item, context: context))
+        XCTAssertTrue(try context.fetch(FetchDescriptor<PhotoNote>()).isEmpty)
+
+        var settings = AISettings()
+        XCTAssertFalse(settings.enabled, "AI starts turned off")
+        XCTAssertTrue(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in "k" }).isEmpty)
+        settings.enabled = true
+        XCTAssertEqual(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in "k" }).count, 1)
+    }
+
+    func testUnavailableOrKeylessModelsLeaveNoteWaitingAndFallbackIsTried() async throws {
         let context = try makeContext()
         let item = insertItem("a", in: context)
 
-        let waiting = PhotoNote(mediaID: "a", text: "Lovely")
-        context.insert(waiting)
         let offline = PhotoNoteService(makeOrganizers: {
             [StubOrganizer(outcome: .failure(.unavailable("Apple Intelligence is off")))]
         })
-        await offline.organize(waiting, item: item, context: context)
+        let waiting = try XCTUnwrap(offline.organize("Lovely", for: item, context: context))
+        await waitUntilDone(waiting, offline)
         XCTAssertEqual(waiting.status, .waiting)
         XCTAssertEqual(waiting.failureReason, "Apple Intelligence is off")
+
+        // No key is a model that isn't set up, not a failure.
+        let keyless = PhotoNoteService(makeOrganizers: { [ClaudeOrganizer(apiKey: nil, model: "claude-opus-5-5")] })
+        let noKey = try XCTUnwrap(keyless.organize("Lovely", for: item, context: context))
+        await waitUntilDone(noKey, keyless)
+        XCTAssertEqual(noKey.status, .waiting)
 
         let fallback = PhotoNoteService(makeOrganizers: {
             [
@@ -360,18 +404,110 @@ final class PhotoNoteTests: XCTestCase {
                 StubOrganizer(label: "Cloud", outcome: .success(NoteOrganizerResult()))
             ]
         })
-        await fallback.organize(waiting, item: item, context: context)
-        XCTAssertEqual(waiting.status, .nothingFound)
-        XCTAssertEqual(waiting.organizerLabel, "Cloud")
+        let found = try XCTUnwrap(fallback.organize("Lovely", for: item, context: context))
+        await waitUntilDone(found, fallback)
+        XCTAssertEqual(found.status, .nothingFound)
+        XCTAssertEqual(found.organizerLabel, "Cloud")
 
         let failing = PhotoNoteService(makeOrganizers: { [StubOrganizer(outcome: .failure(.badResponse))] })
-        await failing.organize(waiting, item: item, context: context)
-        XCTAssertEqual(waiting.status, .failed)
-        XCTAssertEqual(waiting.text, "Lovely")
+        let failed = try XCTUnwrap(failing.organize("Lovely", for: item, context: context))
+        await waitUntilDone(failed, failing)
+        XCTAssertEqual(failed.status, .failed)
+        XCTAssertEqual(failed.text, "Lovely")
+    }
+
+    func testAddedWordsAreOnlyWhatIsNew() {
+        XCTAssertEqual(PhotoNoteService.addedWords(from: "", to: " Rainy morning "), "Rainy morning")
+        XCTAssertEqual(PhotoNoteService.addedWords(from: "Rainy morning", to: "Rainy morning\nThen sun at Old Lane"), "Then sun at Old Lane")
+        XCTAssertEqual(PhotoNoteService.addedWords(from: "Rainy morning", to: "Sunny morning"), "Sunny morning")
+        XCTAssertEqual(PhotoNoteService.addedWords(from: "Same", to: "Same "), "")
+        XCTAssertEqual(PhotoNoteService.addedWords(from: "Gone", to: ""), "")
+    }
+
+    // MARK: Words are the memory
+
+    func testOwnWordsAddToOwnMemoryAndNeverToThePartners() throws {
+        let context = try makeContext()
+        let item = insertItem("a", in: context)
+        context.insert(Memory(text: "Partner words", author: .partner, authorAccountID: "partner-account", createdAt: base, mediaItem: item))
+        try context.save()
+
+        XCTAssertNotNil(NoteApplier.writeOwnWords("  First  ", on: item, context: context, now: base.addingTimeInterval(60)))
+        NoteApplier.writeOwnWords("Second", on: item, context: context, now: base.addingTimeInterval(120))
+        NoteApplier.writeOwnWords("Second", on: item, context: context, now: base.addingTimeInterval(180))
+        XCTAssertNil(NoteApplier.writeOwnWords("   ", on: item, context: context))
+        try context.save()
+
+        XCTAssertEqual(item.ownMemory?.text, "First\nSecond", "Repeated words are not added twice")
+        XCTAssertEqual(item.ownMemory?.authorAccountID, MomentsAccount.localID)
+        XCTAssertEqual(item.writtenMemories.map(\.text), ["Partner words", "First\nSecond"], "Both people, oldest first")
+        XCTAssertEqual(item.writtenMemories.map(\.isOwn), [false, true])
+        XCTAssertTrue(item.hasWrittenMemory)
+    }
+
+    func testEarlierUnorganizedWordsBecomeMemoriesOnce() throws {
+        let context = try makeContext()
+        let waitingItem = insertItem("waiting", in: context)
+        let failedItem = insertItem("failed", in: context)
+        let doneItem = insertItem("done", in: context)
+        let partnerItem = insertItem("partner", in: context)
+        context.insert(PhotoNote(mediaID: "waiting", text: "No key yet", createdAt: base, status: .waiting))
+        context.insert(PhotoNote(mediaID: "failed", text: "Offline words", createdAt: base, status: .failed))
+        context.insert(PhotoNote(mediaID: "done", text: "Organized words", createdAt: base, status: .done))
+        context.insert(PhotoNote(mediaID: "partner", authorAccountID: "partner-account", text: "Theirs", createdAt: base, status: .waiting))
+        try context.save()
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PhotoNoteTests.\(UUID().uuidString)"))
+
+        XCTAssertEqual(PhotoNoteService.writeEarlierWords(context: context, defaults: defaults), 2)
+        XCTAssertEqual(waitingItem.ownMemory?.text, "No key yet")
+        XCTAssertEqual(failedItem.ownMemory?.text, "Offline words")
+        XCTAssertTrue(doneItem.memories.isEmpty, "An organized note already wrote its memory")
+        XCTAssertTrue(partnerItem.memories.isEmpty, "The partner's words are theirs to write")
+
+        // Once only: a memory cleared afterwards stays cleared.
+        context.delete(try XCTUnwrap(waitingItem.ownMemory))
+        try context.save()
+        XCTAssertEqual(PhotoNoteService.writeEarlierWords(context: context, defaults: defaults), 0)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Memory>()).filter { $0.mediaID == "waiting" }.isEmpty)
+    }
+
+    func testAuthorNamesFallBackToMeAndPartner() throws {
+        XCTAssertEqual(AuthorNames.label(isOwn: true, myName: "  ", partnerName: "Sam"), String(localized: "Me"))
+        XCTAssertEqual(AuthorNames.label(isOwn: false, myName: "Alex", partnerName: ""), String(localized: "Partner"))
+        XCTAssertEqual(AuthorNames.label(isOwn: true, myName: " Alex ", partnerName: "Sam"), "Alex")
+        XCTAssertEqual(AuthorNames.label(isOwn: false, myName: "Alex", partnerName: "Sam"), "Sam")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PhotoNoteTests.\(UUID().uuidString)"))
+        defaults.set("Sam", forKey: AuthorNames.partnerNameKey)
+        XCTAssertEqual(AuthorNames.label(isOwn: false, defaults: defaults), "Sam")
+        XCTAssertTrue(AuthorNames.isLocal(nil))
+        XCTAssertTrue(AuthorNames.isLocal(MomentsAccount.localID))
+        XCTAssertFalse(AuthorNames.isLocal("partner-account"))
+        XCTAssertTrue(Memory(text: "old", author: .me).isOwn)
+        XCTAssertFalse(Memory(text: "old", author: .partner).isOwn)
+        XCTAssertFalse(Memory(text: "x", author: .me, authorAccountID: "partner-account").isOwn, "The account wins over the old label")
+    }
+
+    func testSearchAndMemoryFilterReadBothPeoplesMemories() throws {
+        let context = try makeContext()
+        let shared = insertItem("shared", in: context)
+        let empty = insertItem("empty", in: context)
+        context.insert(Memory(text: "Lanterns by the river", author: .partner, authorAccountID: "partner-account", createdAt: base, updatedAt: base.addingTimeInterval(10), mediaItem: shared))
+        context.insert(Memory(text: "Cold hands", author: .me, authorAccountID: MomentsAccount.localID, createdAt: base, updatedAt: base, mediaItem: shared))
+        context.insert(Memory(text: "  ", author: .me, authorAccountID: MomentsAccount.localID, mediaItem: empty))
+        try context.save()
+
+        // The older memory is found too, not only the newest one.
+        XCTAssertTrue(LibraryFilterEngine.matches(shared, criteria: LibraryFilterCriteria(searchText: "cold")))
+        XCTAssertTrue(LibraryFilterEngine.matches(shared, criteria: LibraryFilterCriteria(searchText: "lanterns")))
+        XCTAssertTrue(LibraryFilterEngine.matches(shared, criteria: LibraryFilterCriteria(memoryFilter: .hasMemory)))
+        XCTAssertFalse(LibraryFilterEngine.matches(empty, criteria: LibraryFilterCriteria(memoryFilter: .hasMemory)))
+        XCTAssertTrue(LibraryFilterEngine.matches(empty, criteria: LibraryFilterCriteria(memoryFilter: .noMemory)))
+        XCTAssertEqual(shared.ownMemory?.text, "Cold hands", "Your own field shows your words, never the partner's")
     }
 
     func testFactoryOrderFollowsSettings() {
         var settings = AISettings()
+        settings.enabled = true
         XCTAssertEqual(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in nil }).count, 1)
         settings.fallback = .useCloud
         XCTAssertEqual(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in nil }).count, 2)

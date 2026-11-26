@@ -131,6 +131,15 @@ struct MomentsApp: App {
                 try? DemoSeeder.generateSyntheticLibrary(count: count, spacing: Self.uiTestStressSpacing, context: container.mainContext)
             }
             #endif
+            // Once: words saved before they became memories right away. Test
+            // stores start empty, and must not mark the real Mac's flag.
+            #if DEBUG
+            if !isUITesting && testStoreURL == nil {
+                PhotoNoteService.writeEarlierWords(context: container.mainContext)
+            }
+            #else
+            PhotoNoteService.writeEarlierWords(context: container.mainContext)
+            #endif
             modelContainer = container
             // The store is ready before the first page body runs, so no page
             // sees an empty library (which would flash the import screen and

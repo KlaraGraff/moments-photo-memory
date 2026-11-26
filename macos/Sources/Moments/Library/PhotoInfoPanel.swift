@@ -67,17 +67,8 @@ struct PhotoInfoPanel: View {
                 if !visibleFaces.isEmpty {
                     row(String(localized: "People")) { peopleList }
                 }
-                if libraryState.memoryDrafts[item.id] != nil
-                    || item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                    row(String(localized: "Memory")) {
-                        MemoryEditor(item: item, state: libraryState)
-                    }
-                }
-                row(String(localized: "Note")) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        PhotoNoteSection(item: item, state: libraryState, isLarge: true)
-                        PhotoNoteResults(item: item)
-                    }
+                row(String(localized: "Memory")) {
+                    PhotoMemories(item: item, state: libraryState, isLarge: true)
                 }
             }
             .padding(20)

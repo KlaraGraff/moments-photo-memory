@@ -16018,6 +16018,226 @@
           }
         }
       }
+    },
+    "Your name" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dein Name"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your name"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的称呼"
+          }
+        }
+      }
+    },
+    "Your partner's name" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Name deines Partners"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your partner's name"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "对方的称呼"
+          }
+        }
+      }
+    },
+    "Names" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Namen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Names"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "称呼"
+          }
+        }
+      }
+    },
+    "Shown next to what each of you writes. Kept on this Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steht neben dem, was jeder von euch schreibt. Bleibt auf diesem Mac."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shown next to what each of you writes. Kept on this Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示在你们各自写的回忆旁边，只存在这台 Mac 上。"
+          }
+        }
+      }
+    },
+    "Add a memory…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erinnerung hinzufügen…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add a memory…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写下回忆…"
+          }
+        }
+      }
+    },
+    "Write what happened, how it felt, where it was. It is saved as you type. Option-Return starts a new line." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schreib, was passiert ist, wie es sich anfühlte, wo es war. Es wird beim Tippen gesichert. Wahl-Return beginnt eine neue Zeile."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Write what happened, how it felt, where it was. It is saved as you type. Option-Return starts a new line."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写下发生了什么、感受如何、在哪里。边写边保存。Option-Return 换行。"
+          }
+        }
+      }
+    },
+    "Your memory of this photo" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deine Erinnerung an dieses Foto"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your memory of this photo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你对这张照片的回忆"
+          }
+        }
+      }
+    },
+    "Let AI fix places from memories" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "KI korrigiert Orte anhand deiner Erinnerungen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Let AI fix places from memories"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "让 AI 根据回忆修正地点"
+          }
+        }
+      }
+    },
+    "Off, your memories are just the words you write and nothing is sent anywhere. On, after you write, AI corrects the photo's place and notes what the place is like. Your words are never changed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aus: Deine Erinnerungen sind genau deine Worte, nichts wird gesendet. An: Nach dem Schreiben korrigiert die KI den Ort des Fotos und notiert, wie der Ort ist. Deine Worte bleiben unverändert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off, your memories are just the words you write and nothing is sent anywhere. On, after you write, AI corrects the photo's place and notes what the place is like. Your words are never changed."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭时，回忆就是你写下的字，不会发送到任何地方。打开后，写完时 AI 会修正照片的地点，并记下这个地方的介绍。你写的字不会被改动。"
+          }
+        }
+      }
+    },
+    "Whichever you choose, a corrected place can still be changed by hand in the photo's details." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Egal welches Modell: Ein korrigierter Ort lässt sich in den Fotodetails von Hand ändern."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whichever you choose, a corrected place can still be changed by hand in the photo's details."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无论选哪个，修正后的地点都可以在照片信息里手动再改。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

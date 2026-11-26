@@ -194,26 +194,58 @@ struct CorrectionLogSettingsSection: View {
     }
 }
 
-/// Sharing with a partner is not built yet; this tab says what it will hold.
+/// What the two of you are called next to what you write, then what
+/// sharing will hold once it is built.
 struct SharingSettingsView: View {
+    @AppStorage(AuthorNames.myNameKey) private var myName = ""
+    @AppStorage(AuthorNames.partnerNameKey) private var partnerName = ""
+
     var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "person.2")
-                .font(.system(size: 30))
-                .foregroundStyle(Paper.accent)
-            Text(String(localized: "Sharing is coming"))
-                .font(.system(.title3, design: .serif).weight(.medium))
-                .foregroundStyle(Paper.ink)
-            Text(String(localized: "Share your library with your partner, see who is connected and choose which changes notify you."))
-                .font(.callout)
-                .foregroundStyle(Paper.muted)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
+        Form {
+            Section {
+                LabeledContent(String(localized: "Your name")) {
+                    TextField(String(localized: "Me"), text: $myName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 220)
+                        .accessibilityIdentifier("settings.my-name")
+                }
+                LabeledContent(String(localized: "Your partner's name")) {
+                    TextField(String(localized: "Partner"), text: $partnerName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 220)
+                        .accessibilityIdentifier("settings.partner-name")
+                }
+            } header: {
+                Text(String(localized: "Names"))
+            } footer: {
+                Text(String(localized: "Shown next to what each of you writes. Kept on this Mac."))
+                    .font(.caption)
+                    .foregroundStyle(Paper.muted)
+            }
+
+            Section {
+                VStack(spacing: 10) {
+                    Image(systemName: "person.2")
+                        .font(.system(size: 30))
+                        .foregroundStyle(Paper.accent)
+                    Text(String(localized: "Sharing is coming"))
+                        .font(.system(.title3, design: .serif).weight(.medium))
+                        .foregroundStyle(Paper.ink)
+                    Text(String(localized: "Share your library with your partner, see who is connected and choose which changes notify you."))
+                        .font(.callout)
+                        .foregroundStyle(Paper.muted)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 360)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            }
         }
-        .padding(.horizontal, 40)
-        .padding(.top, 48)
-        .frame(width: SettingsLayout.width, height: SettingsLayout.height, alignment: .top)
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
         .background(Paper.canvas)
+        .tint(Paper.accent)
+        .frame(width: SettingsLayout.width, height: SettingsLayout.height)
         .accessibilityIdentifier("settings.sharing")
     }
 }

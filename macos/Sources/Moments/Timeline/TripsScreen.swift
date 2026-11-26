@@ -1685,6 +1685,8 @@ struct TripPlaceBlock: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks
     @Environment(\.locale) private var locale
+    @AppStorage(AuthorNames.myNameKey) private var myName = ""
+    @AppStorage(AuthorNames.partnerNameKey) private var partnerName = ""
 
     private let columns = [GridItem(.adaptive(minimum: 128, maximum: 200), spacing: 8, alignment: .top)]
 
@@ -1698,8 +1700,10 @@ struct TripPlaceBlock: View {
 
     private var placeName: String { place.name ?? String(localized: "Unknown place") }
 
-    /// Photo memories written before notes existed stay readable here.
-    private var photoMemories: [TimelineMemorySnippet] { place.items.flatMap(\.memories) }
+    /// Both people's memories on the photos at this place.
+    private var photoMemories: [TimelineMemorySnippet] {
+        place.items.flatMap(\.memories).filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1754,11 +1758,20 @@ struct TripPlaceBlock: View {
 
             if !photoMemories.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
+                    // Once someone else wrote here, each line says whose it is.
+                    let showsNames = photoMemories.contains { !$0.isOwn }
                     ForEach(photoMemories) { memory in
-                        Text(memory.text)
-                            .font(.system(.callout, design: .serif))
-                            .foregroundStyle(Paper.ink)
-                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(memory.text)
+                                .font(.system(.callout, design: .serif))
+                                .foregroundStyle(Paper.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if showsNames {
+                                Text(verbatim: "— \(AuthorNames.label(isOwn: memory.isOwn, myName: myName, partnerName: partnerName))")
+                                    .font(.caption)
+                                    .foregroundStyle(Paper.accent)
+                            }
+                        }
                     }
                 }
                 .padding(.top, 2)

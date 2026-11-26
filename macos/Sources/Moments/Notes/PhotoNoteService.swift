@@ -1,61 +1,11 @@
 import Foundation
-import Observation
+import Security
 import SwiftData
 
-/// The optional AI pass over a memory. The words a person types under a
-/// photo are their memory the moment they type them (`MemoryEditor` saves
-/// them); nothing here is needed for that. When AI is turned on in
-/// Settings, the newly added words are kept as a `PhotoNote` and a model
-/// corrects this photo's place and describes it, written at once (the place
-/// stays editable by hand). With AI off nothing happens; with no key, no
-/// network or no model the note is dropped again and nothing is shown.
-@MainActor
-@Observable
-final class PhotoNoteService {
-    private(set) var runningNoteIDs: Set<String> = []
-    private let makeOrganizers: () -> [any NoteOrganizing]
-
-    init(makeOrganizers: @escaping () -> [any NoteOrganizing] = { NoteOrganizerFactory.organizers() }) {
-        self.makeOrganizers = makeOrganizers
-    }
-
-    /// The part of a memory that is new since editing began: what was added
-    /// at the end, or the whole text when it was rewritten.
-    static func addedWords(from before: String, to after: String) -> String {
-        let after = after.trimmingCharacters(in: .whitespacesAndNewlines)
-        let before = before.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard after != before else { return "" }
-        if !before.isEmpty, after.hasPrefix(before) {
-            return String(after.dropFirst(before.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return after
-    }
-
-    /// Hands words just written into a memory to the model, when AI is on.
-    /// Returns the note it keeps for them, or nil when there was nothing to do.
-    @discardableResult
-    func organize(_ words: String, for item: MediaItem, context: ModelContext) -> PhotoNote? {
-        let trimmed = words.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let organizers = makeOrganizers()
-        guard !organizers.isEmpty else { return nil }
-        let note = PhotoNote(mediaID: item.id, text: trimmed)
-        context.insert(note)
-        do {
-            try context.save()
-        } catch {
-            context.delete(note)
-            return nil
-        }
-        runningNoteIDs.insert(note.id)
-        Task { await run(note, item: item, context: context, organizers: organizers) }
-        return note
-    }
-
-    func isRunning(_ note: PhotoNote) -> Bool {
-        runningNoteIDs.contains(note.id)
-    }
-
+/// What is left of the AI note organizer, which is gone: the words a person
+/// types under a photo are their memory (`MemoryEditor` saves them), and
+/// nothing is sent anywhere. These run once on launch to tidy up after it.
+enum PhotoNoteService {
     static let earlierWordsWrittenKey = "moments.notes.earlierWordsWritten"
 
     /// Before words became memories at once, a note became a memory only if
@@ -91,50 +41,34 @@ final class PhotoNoteService {
         return written
     }
 
-    /// Expects the note to be marked running already; clears that mark when done.
-    private func run(_ note: PhotoNote, item: MediaItem, context: ModelContext, organizers: [any NoteOrganizing]) async {
-        // Read once: the note may be deleted below.
-        let noteID = note.id
-        defer { runningNoteIDs.remove(noteID) }
-        note.status = .organizing
-        note.failureReason = nil
-        try? context.save()
+    /// The settings the AI organizer kept in UserDefaults.
+    static let aiSettingKeys = [
+        "moments.ai.enabled",
+        "moments.ai.engine",
+        "moments.ai.cloudProvider",
+        "moments.ai.cloudModel",
+        "moments.ai.cloudBaseURL",
+        "moments.ai.fallback"
+    ]
 
-        let request = NoteApplier.context(for: note, item: item)
-        for organizer in organizers {
-            do {
-                let result = try await organizer.organize(request)
-                // Only this photo's place: with nothing to confirm and no
-                // undo on screen, a wrong guess must not rename its neighbours.
-                let built = NoteSuggestionBuilder.suggestions(from: result, currentPlaceName: item.namedPlace, nearbyMediaIDs: [])
-                let suggestions = NoteApplier.suggestionsAfterWords(built)
-                note.suggestions = suggestions
-                note.organizerLabel = organizer.label
-                note.status = suggestions.isEmpty ? .nothingFound : .ready
-                note.updatedAt = .now
-                // Written at once, nothing to confirm: the place line shows
-                // what it was corrected from, and stays editable by hand.
-                if !suggestions.isEmpty {
-                    try? NoteApplier.accept(Set(suggestions.map(\.id)), of: note, item: item, context: context)
-                }
-                try? context.save()
-                return
-            } catch NoteOrganizerError.unavailable {
-                continue
-            } catch NoteOrganizerError.missingKey {
-                // No key is a model that isn't set up, not a failure.
-                continue
-            } catch {
-                note.status = .failed
-                note.failureReason = error.localizedDescription
-                note.updatedAt = .now
-                try? context.save()
-                return
-            }
-        }
-        // No model could run: nothing will retry it and the words are
-        // already the memory, so the note is not kept as a dead copy.
-        context.delete(note)
-        try? context.save()
+    /// The Keychain service the AI organizer stored cloud API keys under.
+    static let aiKeychainService = "Moments AI"
+
+    /// Forgets the AI organizer's settings and any API key it saved, so no
+    /// key is left behind in the Keychain for a feature that is gone. Looks
+    /// first (reading only attributes, which never asks), and deletes only
+    /// when a key is there.
+    static func forgetAISettings(defaults: UserDefaults = .standard) {
+        for key in aiSettingKeys { defaults.removeObject(forKey: key) }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: aiKeychainService
+        ]
+        var lookup = query
+        lookup[kSecReturnAttributes as String] = true
+        lookup[kSecMatchLimit as String] = kSecMatchLimitAll
+        var found: AnyObject?
+        guard SecItemCopyMatching(lookup as CFDictionary, &found) == errSecSuccess else { return }
+        SecItemDelete(query as CFDictionary)
     }
 }

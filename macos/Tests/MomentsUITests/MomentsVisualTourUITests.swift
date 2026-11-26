@@ -93,7 +93,7 @@ final class MomentsVisualTourUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.0)
         let settings = app.windows.element(boundBy: 0)
         if settings.exists, app.windows.count > 1 {
-            for (index, tab) in ["General", "AI Model", "Sharing"].enumerated() {
+            for (index, tab) in ["General", "Imports", "Sharing"].enumerated() {
                 let button = settings.toolbars.buttons[tab]
                 if button.exists { button.click() }
                 Thread.sleep(forTimeInterval: 0.6)

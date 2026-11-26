@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Settings in tabs, like other Mac apps: General, Imports, AI Model, Sharing.
+/// Settings in tabs, like other Mac apps: General, Imports, Sharing.
 struct SettingsView: View {
     @AppStorage(SettingsTab.storageKey) private var tab = SettingsTab.general
     /// Without a store there are no imports to list.
@@ -17,9 +17,6 @@ struct SettingsView: View {
                     .tabItem { Label(String(localized: "Imports"), systemImage: "tray.and.arrow.down") }
                     .tag(SettingsTab.imports)
             }
-            AISettingsView()
-                .tabItem { Label(String(localized: "AI Model"), systemImage: "sparkles") }
-                .tag(SettingsTab.aiModel)
             SharingSettingsView(hasStore: hasStore)
                 .tabItem { Label(String(localized: "Sharing"), systemImage: "person.2") }
                 .tag(SettingsTab.sharing)
@@ -36,12 +33,11 @@ enum SettingsLayout {
     static let height: CGFloat = 470
 }
 
-/// The open Settings tab; a link such as "AI model settings" picks its tab
+/// The open Settings tab; a link such as "Sharing settings" picks its tab
 /// before it opens the window.
 enum SettingsTab: String {
     case general
     case imports
-    case aiModel
     case sharing
 
     static let storageKey = "moments.settings.tab"

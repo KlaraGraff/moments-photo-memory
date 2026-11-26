@@ -13,7 +13,6 @@ struct MomentsApp: App {
     @State private var selection = SelectionModel()
     @State private var libraryState = LibraryViewState()
     @State private var importController = ImportController()
-    @State private var noteService = PhotoNoteService()
     @State private var peopleController = PeopleScanController()
     @State private var photoStacks = PhotoStackModel()
     @State private var stackAnalyzer = PhotoStackAnalyzer()
@@ -154,14 +153,17 @@ struct MomentsApp: App {
                 try? DemoSeeder.generateSyntheticLibrary(count: count, spacing: Self.uiTestStressSpacing, context: container.mainContext)
             }
             #endif
-            // Once: words saved before they became memories right away. Test
-            // stores start empty, and must not mark the real Mac's flag.
+            // Tidy up after the AI organizer: words saved before they became
+            // memories right away, and its settings and API key. Test stores
+            // start empty, and must not touch the real Mac's flag or Keychain.
             #if DEBUG
             if !isUITesting && testStoreURL == nil {
                 PhotoNoteService.writeEarlierWords(context: container.mainContext)
+                PhotoNoteService.forgetAISettings()
             }
             #else
             PhotoNoteService.writeEarlierWords(context: container.mainContext)
+            PhotoNoteService.forgetAISettings()
             #endif
             modelContainer = container
             // The store is ready before the first page body runs, so no page
@@ -217,7 +219,6 @@ struct MomentsApp: App {
                 ContentView(libraryState: libraryState)
                     .environment(selection)
                     .environment(importController)
-                    .environment(noteService)
                     .environment(peopleController)
                     .environment(photoStacks)
                     .environment(libraryStore)

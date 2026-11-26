@@ -374,8 +374,8 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "map-03-panel-closed")
     }
 
-    /// Settings (language, AI model) are reachable from the sidebar, not only via ⌘,.
-    func testSidebarOpensAIModelSettings() {
+    /// Settings are reachable from the sidebar, not only via ⌘,.
+    func testSidebarOpensSettings() {
         let app = launch(language: "en")
         let gear = element(in: app, identifier: "sidebar.settings")
         XCTAssertTrue(gear.waitForExistence(timeout: launchTimeout))
@@ -391,7 +391,7 @@ final class MomentsUITests: XCTestCase {
             capture(app, named: "settings-00b-gear-no-window-evidence")
             print("SIDEBAR-GEAR frame=\(gear.frame) hittable=\(gear.isHittable) window=\(app.windows.firstMatch.frame)")
         }
-        XCTAssertGreaterThan(app.windows.count, windowsBefore, "The AI model settings window did not open")
+        XCTAssertGreaterThan(app.windows.count, windowsBefore, "The Settings window did not open")
         capture(app, named: "settings-01-from-sidebar-evidence")
         app.typeKey("w", modifierFlags: .command)
     }

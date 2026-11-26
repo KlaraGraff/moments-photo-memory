@@ -1563,12 +1563,9 @@ struct PhotoMemories: View {
 /// The one field under a photo: this person's own memory, written and
 /// changed in place like a caption in Photos. It saves while typing, and
 /// again on Return or when the field is left; emptying it removes the
-/// memory. Option-Return starts a new line, Escape ends typing. When AI is
-/// turned on, the words added while editing go to it afterwards to fix the
-/// place; nothing about that shows here.
+/// memory. Option-Return starts a new line, Escape ends typing.
 struct MemoryEditor: View {
     @Environment(\.modelContext) private var modelContext
-    @Environment(PhotoNoteService.self) private var service
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let item: MediaItem
@@ -1577,7 +1574,7 @@ struct MemoryEditor: View {
     @State private var saveTask: Task<Void, Never>?
     @State private var baseline: LibraryMemorySnapshot?
     @State private var wasEdited = false
-    /// The text when typing began, to hand only new words to the AI.
+    /// The text when typing began, to show Saved only when it changed.
     @State private var textAtFocus: String?
     @State private var savedCount = 0
     @FocusState private var isFocused: Bool
@@ -1643,7 +1640,7 @@ struct MemoryEditor: View {
             }
     }
 
-    /// Saves now and, when words were added, hands them to the AI.
+    /// Saves now, and shows Saved when the words changed.
     private func finishEditing() {
         saveTask?.cancel()
         // A draft this field never typed belongs to the other field showing
@@ -1655,7 +1652,6 @@ struct MemoryEditor: View {
         textAtFocus = nil
         guard before.trimmingCharacters(in: .whitespacesAndNewlines) != text.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
         savedCount += 1
-        service.organize(PhotoNoteService.addedWords(from: before, to: text), for: item, context: modelContext)
     }
 
     private func scheduleSave(_ newText: String) {

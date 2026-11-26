@@ -63,8 +63,15 @@ final class LibrarySectionPatchTests: XCTestCase {
         }
     }
 
-    private func full(_ items: [MediaItem], sortOrder: LibrarySortOrder = .newestFirst) -> [LibrarySection] {
-        LibraryFilterEngine.sections(forVisibleItems: storeOrder(items), by: .story, sortOrder: sortOrder)
+    /// Groupings whose sections move when a photo's date or trip moves.
+    private let groupings: [LibraryGrouping] = [.trip, .month]
+
+    private func full(
+        _ items: [MediaItem],
+        by grouping: LibraryGrouping = .trip,
+        sortOrder: LibrarySortOrder = .newestFirst
+    ) -> [LibrarySection] {
+        LibraryFilterEngine.sections(forVisibleItems: storeOrder(items), by: grouping, sortOrder: sortOrder)
     }
 
     private func byID(_ items: [MediaItem]) -> [String: MediaItem] {
@@ -73,6 +80,8 @@ final class LibrarySectionPatchTests: XCTestCase {
         return result
     }
 
+    /// Runs `change` once and checks the patch against a full rebuild for
+    /// every grouping in `groupings`, from sections built before the change.
     private func assertPatchMatchesFull(
         _ fixture: Fixture,
         sortOrder: LibrarySortOrder = .newestFirst,
@@ -80,18 +89,28 @@ final class LibrarySectionPatchTests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) throws {
-        let old: [LibrarySection] = full(fixture.items, sortOrder: sortOrder)
+        var before: [LibraryGrouping: [LibrarySection]] = [:]
+        for grouping in groupings {
+            before[grouping] = full(fixture.items, by: grouping, sortOrder: sortOrder)
+        }
         let changed: Set<String> = change()
-        let expected: [LibrarySection] = full(fixture.items, sortOrder: sortOrder)
-        let patched = LibrarySectionPatch.sections(
-            old,
-            itemByID: byID(fixture.items),
-            changedIDs: changed,
-            grouping: .story,
-            sortOrder: sortOrder
-        )
-        let result = try XCTUnwrap(patched, "the patch gave up", file: file, line: line)
-        XCTAssertEqual(result.sections, expected, file: file, line: line)
+        let items: [String: MediaItem] = byID(fixture.items)
+        for grouping in groupings {
+            let old: [LibrarySection] = before[grouping] ?? []
+            let expected: [LibrarySection] = full(fixture.items, by: grouping, sortOrder: sortOrder)
+            let patched: (sections: [LibrarySection], affectedIDs: Set<String>)? = LibrarySectionPatch.sections(
+                old,
+                itemByID: items,
+                changedIDs: changed,
+                grouping: grouping,
+                sortOrder: sortOrder
+            )
+            guard let result = patched else {
+                XCTFail("the patch gave up for \(grouping)", file: file, line: line)
+                continue
+            }
+            XCTAssertEqual(result.sections, expected, "grouping \(grouping)", file: file, line: line)
+        }
     }
 
     func testNoChangeKeepsTheSections() throws {
@@ -214,11 +233,11 @@ final class LibrarySectionPatchTests: XCTestCase {
     func testUnknownPhotoGivesUp() throws {
         let fixture: Fixture = try makeFixture()
         let old: [LibrarySection] = full(fixture.items)
-        let patched = LibrarySectionPatch.sections(
+        let patched: (sections: [LibrarySection], affectedIDs: Set<String>)? = LibrarySectionPatch.sections(
             old,
             itemByID: byID(fixture.items),
             changedIDs: ["photo-not-shown"],
-            grouping: .story,
+            grouping: .trip,
             sortOrder: .newestFirst
         )
         XCTAssertNil(patched)
@@ -226,7 +245,7 @@ final class LibrarySectionPatchTests: XCTestCase {
 
     func testFoldingMatchesAFullFold() throws {
         let fixture: Fixture = try makeFixture()
-        let oldUnfolded: [LibrarySection] = full(fixture.items)
+        let oldUnfolded: [LibrarySection] = full(fixture.items, by: .month)
         // Two bursts of synthetic photos that share a section today.
         let roomy: [LibrarySection] = oldUnfolded.filter { (section: LibrarySection) -> Bool in section.count >= 3 }
         XCTAssertGreaterThanOrEqual(roomy.count, 2, "the fixture needs two sections of three photos")
@@ -239,15 +258,16 @@ final class LibrarySectionPatchTests: XCTestCase {
         let oldFolded = LibraryFilterEngine.folding(oldUnfolded, with: index)
 
         // One burst photo moves to another month.
-        let moved: MediaItem = try XCTUnwrap(fixture.items.first { $0.id == first[1] })
+        let moved: MediaItem = try XCTUnwrap(fixture.items.first { (item: MediaItem) -> Bool in item.id == first[1] })
         moved.captureDate = base.addingTimeInterval(day * 400)
-        let patched = try XCTUnwrap(LibrarySectionPatch.sections(
+        let patchedOrNil: (sections: [LibrarySection], affectedIDs: Set<String>)? = LibrarySectionPatch.sections(
             oldUnfolded,
             itemByID: byID(fixture.items),
             changedIDs: [moved.id],
-            grouping: .story,
+            grouping: .month,
             sortOrder: .newestFirst
-        ))
+        )
+        let patched: (sections: [LibrarySection], affectedIDs: Set<String>) = try XCTUnwrap(patchedOrNil)
         let folded = LibrarySectionPatch.folding(
             unfolded: patched.sections,
             oldFolded: oldFolded.sections,
@@ -255,7 +275,7 @@ final class LibrarySectionPatchTests: XCTestCase {
             affectedIDs: patched.affectedIDs,
             with: index
         )
-        let expected = LibraryFilterEngine.folding(full(fixture.items), with: index)
+        let expected = LibraryFilterEngine.folding(full(fixture.items, by: .month), with: index)
         XCTAssertEqual(folded.sections, expected.sections)
         XCTAssertEqual(folded.stackCounts, expected.stackCounts)
     }

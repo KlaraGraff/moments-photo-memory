@@ -34,17 +34,24 @@ enum AppIdentityMigration {
         return bundleIdentifier.hasPrefix("org.example.")
     }
 
-    /// Runs once per Mac, before anything reads user defaults.
-    @MainActor
-    static func runAtLaunch() {
+    /// UI tests and the unit-test host never import or record anything in
+    /// the real defaults.
+    static var isTestProcess: Bool {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
-        if arguments.contains("-MomentsUITesting")
+        return arguments.contains("-MomentsUITesting")
             || arguments.contains("-MomentsUITestStoreDirectory")
-            || UnitTestHostDelegate.isUnitTestHost {
-            return
-        }
+            || UnitTestHostDelegate.isUnitTestHost
+        #else
+        return false
         #endif
+    }
+
+    /// Runs once per Mac, before anything reads user defaults. It must stay
+    /// the first call in `MomentsApp.init`, ahead of `AppLanguage.atLaunch`.
+    @MainActor
+    static func runAtLaunch() {
+        if isTestProcess { return }
         guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return }
         importLegacyPreferences(
             into: .standard,
@@ -85,11 +92,13 @@ enum AppIdentityMigration {
     /// - Placeholder builds use `Moments`.
     /// - The release build decides once: it adopts the preview build's
     ///   library when one exists (that is the owner's real library), and
-    ///   otherwise uses `Moments`. The choice is remembered so that a
-    ///   library made later in the other folder never takes over.
+    ///   otherwise uses `Moments`. The choice is remembered (unless
+    ///   `record` is false) so that a library made later in the other
+    ///   folder never takes over.
     static func storeFolderName(
         bundleIdentifier: String?,
         defaults: UserDefaults,
+        record: Bool = true,
         storeExists: (String) -> Bool
     ) -> String {
         if bundleIdentifier?.hasSuffix(".peoplepreview") == true {
@@ -103,7 +112,9 @@ enum AppIdentityMigration {
             return recorded
         }
         let chosen = storeExists(previewStoreFolderName) ? previewStoreFolderName : storeFolderName
-        defaults.set(chosen, forKey: storeFolderKey)
+        if record {
+            defaults.set(chosen, forKey: storeFolderKey)
+        }
         return chosen
     }
 }

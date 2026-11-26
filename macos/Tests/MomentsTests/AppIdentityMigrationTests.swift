@@ -157,6 +157,52 @@ final class AppIdentityMigrationTests: XCTestCase {
         XCTAssertNil(defaults.object(forKey: AppIdentityMigration.storeFolderKey))
     }
 
+    func testNotRecordingLeavesTheChoiceOpen() {
+        let exists: (String) -> Bool = { (_: String) -> Bool in false }
+
+        let name = AppIdentityMigration.storeFolderName(
+            bundleIdentifier: releaseID, defaults: defaults, record: false, storeExists: exists
+        )
+
+        XCTAssertEqual(name, "Moments")
+        XCTAssertNil(defaults.object(forKey: AppIdentityMigration.storeFolderKey))
+    }
+
+    func testImportReadsARealLegacyDomain() throws {
+        // A second suite stands in for the preview build's domain, read the
+        // way the app reads it: through persistentDomain(forName:).
+        let legacyName: String = "AppIdentityMigrationTests-legacy-\(UUID().uuidString)"
+        let legacy: UserDefaults = try XCTUnwrap(UserDefaults(suiteName: legacyName))
+        defer { legacy.removePersistentDomain(forName: legacyName) }
+        legacy.setPersistentDomain(["trip.cover": "photo-a"], forName: legacyName)
+        let reader: (String) -> [String: Any]? = { (domain: String) -> [String: Any]? in
+            domain == "org.example.Moments.peoplepreview" ? legacy.persistentDomain(forName: legacyName) : nil
+        }
+
+        let source = AppIdentityMigration.importLegacyPreferences(
+            into: defaults, ownDomain: suiteName, readDomain: reader
+        )
+
+        XCTAssertEqual(source, "org.example.Moments.peoplepreview")
+        XCTAssertEqual(defaults.string(forKey: "trip.cover"), "photo-a")
+    }
+
+    func testPreviewFolderWithoutAStoreIsNotAdopted() throws {
+        let support = FileManager.default.temporaryDirectory
+            .appending(path: "AppIdentityMigrationTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: support) }
+        let previewFolder = support.appending(path: "Moments People Preview", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: previewFolder, withIntermediateDirectories: true)
+
+        let folder = MomentsPersistence.defaultStoreFolder(
+            applicationSupportDirectory: support,
+            bundleIdentifier: releaseID,
+            defaults: defaults
+        )
+
+        XCTAssertEqual(folder.lastPathComponent, "Moments")
+    }
+
     func testDefaultStoreFolderLooksForThePreviewStoreOnDisk() throws {
         let support = FileManager.default.temporaryDirectory
             .appending(path: "AppIdentityMigrationTests-\(UUID().uuidString)", directoryHint: .isDirectory)

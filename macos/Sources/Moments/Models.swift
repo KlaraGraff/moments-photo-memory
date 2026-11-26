@@ -4579,6 +4579,7 @@ public enum MomentsPersistence {
         let folderName = AppIdentityMigration.storeFolderName(
             bundleIdentifier: bundleIdentifier,
             defaults: defaults,
+            record: !AppIdentityMigration.isTestProcess || defaults !== UserDefaults.standard,
             storeExists: { folder in
                 FileManager.default.fileExists(
                     atPath: applicationSupportDirectory

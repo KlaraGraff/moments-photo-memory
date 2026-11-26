@@ -35,7 +35,7 @@ set -euo pipefail
 # This script never tags, pushes or publishes anything.
 
 usage() {
-  sed -n '7,21p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '7,22p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 notarize=0
@@ -90,6 +90,9 @@ container="$(xcconfig_value MOMENTS_ICLOUD_CONTAINER "$local_config")"
 case "$bundle_id" in
   ""|org.example.*)
     echo "release: bundle identifier '$bundle_id' is a placeholder; release builds use the final one." >&2
+    if [[ -n "$(xcconfig_value MOMENTS_BUNDLE_ID "$local_config")" ]]; then
+      echo "release: it comes from macos/Config/Local.xcconfig; delete its MOMENTS_BUNDLE_ID line." >&2
+    fi
     exit 1 ;;
 esac
 
@@ -193,11 +196,28 @@ if [[ $dry_run -eq 0 ]]; then
     || { echo "release: the app is not signed with Developer ID" >&2; exit 1; }
   grep -q 'flags=.*runtime' <<<"$signature" \
     || { echo "release: the hardened runtime is off" >&2; exit 1; }
-  codesign -d --entitlements - --xml "$app" > "$out/entitlements.plist" 2>/dev/null
-  for needed in "$container" com.apple.security.personal-information.photos-library com.apple.developer.aps-environment; do
-    grep -q "$needed" "$out/entitlements.plist" \
-      || { echo "release: entitlement $needed is missing from the signed app" >&2; exit 1; }
-  done
+  codesign -d --entitlements - --xml "$app" > "$out/entitlements.plist"
+  entitlement() {
+    /usr/libexec/PlistBuddy -c "Print :$1" "$out/entitlements.plist" 2>/dev/null || true
+  }
+  grep -q "<string>$container</string>" "$out/entitlements.plist" \
+    || { echo "release: the signed app does not name the container $container" >&2; exit 1; }
+  [[ "$(entitlement com.apple.security.personal-information.photos-library)" == "true" ]] \
+    || { echo "release: the signed app has no Photos entitlement" >&2; exit 1; }
+  # Export re-signs with the Developer ID profile, which may rewrite these;
+  # BUILD-INFO records what the signed app actually carries.
+  signed_container_env="$(entitlement com.apple.developer.icloud-container-environment)"
+  signed_aps_env="$(entitlement com.apple.developer.aps-environment)"
+  [[ -n "$signed_aps_env" ]] \
+    || { echo "release: the signed app has no push (aps-environment) entitlement" >&2; exit 1; }
+  # Without the key a distribution-signed app uses Production.
+  if [[ "${signed_container_env:-Production}" != "$export_env" ]]; then
+    echo "release: the signed app talks to CloudKit ${signed_container_env:-Production}, expected $export_env" >&2
+    exit 1
+  fi
+  if [[ "$signed_aps_env" != "$aps_env" ]]; then
+    echo "release: warning: push environment is $signed_aps_env, asked for $aps_env (set by the provisioning profile)." >&2
+  fi
   built_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
   [[ "$built_id" == "$bundle_id" ]] \
     || { echo "release: built bundle identifier $built_id, expected $bundle_id" >&2; exit 1; }
@@ -211,7 +231,19 @@ if [[ $notarize -eq 1 ]]; then
   run ditto -c -k --keepParent "$app" "$upload"
   # On failure, `xcrun notarytool log <submission id> --keychain-profile ...`
   # prints Apple's reasons.
-  run xcrun notarytool submit "$upload" --keychain-profile "$profile" --wait
+  if [[ $dry_run -eq 1 ]]; then
+    run xcrun notarytool submit "$upload" --keychain-profile "$profile" --wait --output-format json
+  else
+    # --wait can exit 0 on a rejected upload, so read the status itself.
+    submission="$(xcrun notarytool submit "$upload" --keychain-profile "$profile" --wait --output-format json)"
+    status="$(plutil -extract status raw - <<<"$submission" 2>/dev/null || true)"
+    submission_id="$(plutil -extract id raw - <<<"$submission" 2>/dev/null || true)"
+    if [[ "$status" != "Accepted" ]]; then
+      echo "release: notarization status '${status:-unknown}' for submission ${submission_id:-?}" >&2
+      [[ -z "$submission_id" ]] || xcrun notarytool log "$submission_id" --keychain-profile "$profile" >&2 || true
+      exit 1
+    fi
+  fi
   run xcrun stapler staple "$app"
   run xcrun stapler validate "$app"
   run spctl --assess --type execute --verbose=4 "$app"
@@ -227,7 +259,8 @@ if [[ $dry_run -eq 0 ]]; then
     echo "Moments $version ($build)"
     echo "commit: $commit"
     echo "bundle identifier: $bundle_id"
-    echo "iCloud container: $container ($cloudkit_env)"
+    echo "iCloud container: $container (signed environment: ${signed_container_env:-Production})"
+    echo "push environment: $signed_aps_env"
     echo "built with: $xcode_version"
     echo "signed: Developer ID"
     echo "notarized: $notarized"

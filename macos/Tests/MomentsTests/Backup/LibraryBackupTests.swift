@@ -89,6 +89,9 @@ final class LibraryBackupTests: XCTestCase {
         let sameDay = try LibraryBackup.backUpDailyIfDue(location: location, defaults: defaults, now: origin.addingTimeInterval(600), calendar: calendar)
         XCTAssertNil(sameDay)
         let nextDay = origin.addingTimeInterval(86_400 * 2)
+        // Opening the store for the copy may touch its log; the times say
+        // what the library's own writes would.
+        try setStoreModified(origin.addingTimeInterval(-60.4))
         let unchanged = try LibraryBackup.backUpDailyIfDue(location: location, defaults: defaults, now: nextDay, calendar: calendar)
         XCTAssertNil(unchanged, "an unchanged library is not copied again")
         try setStoreModified(nextDay.addingTimeInterval(-5))
@@ -117,6 +120,83 @@ final class LibraryBackupTests: XCTestCase {
         XCTAssertEqual(entries.filter { $0.manifest.kind == .beforeRestore }.count, 1)
         let oldestDaily: Date? = entries.filter { $0.manifest.kind == .daily }.map(\.manifest.createdAt).min()
         XCTAssertEqual(oldestDaily, origin.addingTimeInterval(3 * 86_400))
+    }
+
+    /// Restoring the oldest of the kept "before restore" copies: saving the
+    /// current library first must not prune the very backup being restored.
+    func testRestoringTheOldestBeforeRestoreCopyKeepsIt() throws {
+        try addItems(["synthetic-a"])
+        let oldest = try LibraryBackup.makeBackup(.beforeRestore, location: location, defaults: defaults, now: origin)
+        try addItems(["synthetic-b"])
+        for index in 1..<BackupPolicy.beforeRestoreKeep {
+            let date: Date = origin.addingTimeInterval(Double(index) * 86_400)
+            try LibraryBackup.makeBackup(.beforeRestore, location: location, defaults: defaults, now: date)
+        }
+        try LibraryBackup.scheduleRestore(from: oldest, location: location)
+        let later: Date = origin.addingTimeInterval(30 * 86_400)
+        let notice = try XCTUnwrap(LibraryBackup.performPendingRestore(location: location, defaults: defaults, now: later))
+        XCTAssertNil(notice.failure)
+        XCTAssertEqual(try storedIDs(at: location.storeURL), ["synthetic-a"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: oldest.path), "the restored backup is still there")
+    }
+
+    /// External-storage blobs (face crops) travel with the backup and come
+    /// back with a restore.
+    func testExternalStorageIsBackedUpAndRestored() throws {
+        let crop = Data((0..<400_000).map { (index: Int) -> UInt8 in UInt8(index % 251) })
+        do {
+            let container: ModelContainer = try MomentsPersistence.makeContainer(url: location.storeURL)
+            let face = FaceObservation(id: "synthetic-face", mediaID: "synthetic-a", rect: (x: 0.1, y: 0.1, w: 0.2, h: 0.2), embedding: Data(repeating: 7, count: 300_000), cropData: crop, quality: 0.9)
+            container.mainContext.insert(MediaItem(id: "synthetic-a"))
+            container.mainContext.insert(face)
+            try container.mainContext.save()
+        }
+        let backup = try LibraryBackup.makeBackup(.daily, location: location, defaults: defaults, now: origin)
+        // The live library loses its faces; the restore brings them back.
+        do {
+            let container: ModelContainer = try MomentsPersistence.makeContainer(url: location.storeURL)
+            for face in try container.mainContext.fetch(FetchDescriptor<FaceObservation>()) { container.mainContext.delete(face) }
+            try container.mainContext.save()
+        }
+        try LibraryBackup.scheduleRestore(from: backup, location: location)
+        XCTAssertNil(LibraryBackup.performPendingRestore(location: location, defaults: defaults)?.failure)
+        let container: ModelContainer = try MomentsPersistence.makeContainer(url: location.storeURL)
+        let faces: [FaceObservation] = try container.mainContext.fetch(FetchDescriptor<FaceObservation>())
+        XCTAssertEqual(faces.map(\.id), ["synthetic-face"])
+        XCTAssertEqual(faces.first?.cropData, crop)
+    }
+
+    func testAnUnreadableRestoreRequestIsReported() throws {
+        try Data("not json".utf8).write(to: location.pendingRestoreURL)
+        let notice = try XCTUnwrap(LibraryBackup.performPendingRestore(location: location, defaults: defaults))
+        XCTAssertNotNil(notice.failure)
+        XCTAssertFalse(LibraryBackup.hasPendingRestore(location: location))
+    }
+
+    /// A crash in the middle of a restore: the store was moved aside but the
+    /// backup's copy never arrived. The next launch moves the store back.
+    func testAnInterruptedRestoreGetsTheLibraryBack() throws {
+        try addItems(["synthetic-a"])
+        let aside = folder.appending(path: ".restore-old-synthetic", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: aside, withIntermediateDirectories: true)
+        for name in try FileManager.default.contentsOfDirectory(atPath: folder.path) where name.hasPrefix("Moments.store") {
+            try FileManager.default.moveItem(at: folder.appending(path: name), to: aside.appending(path: name))
+        }
+        let incoming = location.backupsFolder.appending(path: ".incoming-synthetic", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
+
+        LibraryBackup.cleanUpLeftovers(location: location)
+        XCTAssertEqual(try storedIDs(at: location.storeURL), ["synthetic-a"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: aside.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: incoming.path))
+    }
+
+    func testTheScheduleNeverStartsWithoutALibrary() {
+        let controller = BackupController()
+        controller.configure(location: nil)
+        controller.startSchedule()
+        XCTAssertFalse(controller.isScheduled)
+        XCTAssertTrue(controller.entries.isEmpty)
     }
 
     func testRecoveryCopiesWithoutManifestAreNeverListedOrPruned() throws {

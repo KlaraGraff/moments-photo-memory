@@ -23,6 +23,7 @@ final class BackupController {
     static let checkInterval: Duration = .seconds(3_600)
 
     var newest: BackupEntry? { BackupPolicy.newest(entries) }
+    var isScheduled: Bool { loop != nil }
 
     func configure(location: LibraryLocation?) {
         self.location = location

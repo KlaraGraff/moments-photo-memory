@@ -172,6 +172,7 @@ struct MomentsApp: App {
         let location = try? LibraryLocation.live()
         backups.configure(location: location)
         if let location {
+            LibraryBackup.cleanUpLeftovers(location: location)
             LibraryBackup.performPendingRestore(location: location, defaults: .standard)
             LibraryBackup.backUpBeforeUpgradeIfNeeded(location: location, defaults: .standard)
         }

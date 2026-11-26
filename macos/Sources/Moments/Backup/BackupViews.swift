@@ -77,46 +77,41 @@ struct RestoreBackupSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(String(localized: "Restore from Backup"))
-                .font(.headline)
-            if backups.entries.isEmpty {
-                Text(String(localized: "No backups on this Mac yet. To move to a new Mac, choose a backup copied from the old one."))
-                    .font(.callout)
-                    .foregroundStyle(Paper.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, minHeight: 80, alignment: .topLeading)
-            } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(backups.entries, id: \.folderName) { entry in
-                            row(entry)
-                            if entry.folderName != backups.entries.last?.folderName { Divider() }
+        PaperSheet(String(localized: "Restore from Backup")) {
+            VStack(alignment: .leading, spacing: 12) {
+                if backups.entries.isEmpty {
+                    Text(String(localized: "No backups on this Mac yet. To move to a new Mac, choose a backup copied from the old one."))
+                        .font(.callout)
+                        .foregroundStyle(Paper.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: 80, alignment: .topLeading)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(backups.entries, id: \.folderName) { entry in
+                                row(entry)
+                                if entry.folderName != backups.entries.last?.folderName { Divider() }
+                            }
                         }
                     }
+                    .paperWell(padding: 0)
+                    .frame(maxHeight: 260)
                 }
-                .frame(maxHeight: 260)
-                .background(Paper.raised, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Paper.line))
+                Text(String(localized: "Backups hold memories, trips, places, people and your choices, not the original photos. Before a restore, the current library is saved too."))
+                    .font(.caption)
+                    .foregroundStyle(Paper.muted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Text(String(localized: "Backups hold memories, trips, places, people and your choices, not the original photos. Before a restore, the current library is saved too."))
-                .font(.caption)
-                .foregroundStyle(Paper.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
-                Button(String(localized: "Restore from Another Location…")) { chooseFolder() }
-                    .accessibilityIdentifier("backup.restore-other")
-                Button(String(localized: "Show in Finder")) { showInFinder() }
-                    .disabled(backups.location == nil)
-                Spacer(minLength: 0)
-                Button(String(localized: "Done")) { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityIdentifier("backup.done")
-            }
+        } footer: {
+            Button(String(localized: "Restore from Another Location…")) { chooseFolder() }
+                .accessibilityIdentifier("backup.restore-other")
+            Button(String(localized: "Show in Finder")) { showInFinder() }
+                .disabled(backups.location == nil)
+            Button(String(localized: "Done")) { dismiss() }
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("backup.done")
         }
-        .padding(PaperMetrics.sheetInset)
-        .frame(width: 480)
-        .background(Paper.canvas)
+        .frame(width: 520)
         .accessibilityIdentifier("backup.restore-sheet")
         .alert(
             confirming.map { String(format: String(localized: "Restore the backup from %@?"), BackupDateText.string($0.manifest.createdAt)) } ?? "",

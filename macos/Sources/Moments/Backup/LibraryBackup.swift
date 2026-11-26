@@ -142,20 +142,34 @@ enum LibraryBackup {
         location: LibraryLocation,
         defaults: UserDefaults,
         now: Date = .now,
-        schemaVersion: String = LibraryBackup.currentSchemaVersion
+        schemaVersion: String = LibraryBackup.currentSchemaVersion,
+        protecting protected: Set<String> = []
     ) throws -> URL {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: location.storeURL.path) else { throw LibraryBackupError.noStore }
         try fileManager.createDirectory(at: location.backupsFolder, withIntermediateDirectories: true)
+        // Never fill the disk the live store writes to: a copy needs room
+        // for itself and a margin left over.
+        if let free = freeSpace(at: location.backupsFolder), free < librarySize(location) + spaceMargin {
+            throw LibraryBackupError.diskFull
+        }
         let incoming = location.backupsFolder.appending(path: ".incoming-\(UUID().uuidString)", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: incoming, withIntermediateDirectories: true)
         do {
             let modified = sourceModifiedAt(location)
+            let support = location.folder.appending(path: location.supportName, directoryHint: .isDirectory)
+            let copiedSupport = incoming.appending(path: location.supportName, directoryHint: .isDirectory)
+            // External blobs are copied before and after the database: a blob
+            // deleted while the snapshot is taken is in the first pass, one
+            // added meanwhile in the second, so the snapshot finds every blob
+            // it refers to.
+            if fileManager.fileExists(atPath: support.path) {
+                try fileManager.copyItem(at: support, to: copiedSupport)
+            }
             let copiedStore = incoming.appending(path: location.storeName)
             try copyDatabase(from: location.storeURL, to: copiedStore)
-            let support = location.folder.appending(path: location.supportName, directoryHint: .isDirectory)
             if fileManager.fileExists(atPath: support.path) {
-                try fileManager.copyItem(at: support, to: incoming.appending(path: location.supportName, directoryHint: .isDirectory))
+                try copyMissingItems(from: support, to: copiedSupport)
             }
             if fileManager.fileExists(atPath: location.correctionLogURL.path) {
                 try fileManager.copyItem(at: location.correctionLogURL, to: incoming.appending(path: correctionLogFileName))
@@ -181,7 +195,7 @@ enum LibraryBackup {
                 suffix += 1
             }
             try fileManager.moveItem(at: incoming, to: destination)
-            prune(location: location)
+            prune(location: location, protecting: protected)
             return destination
         } catch {
             // Only our own unfinished copy is removed; nothing of the library.
@@ -254,8 +268,8 @@ enum LibraryBackup {
         return try? BackupManifest.decode(data)
     }
 
-    static func prune(location: LibraryLocation) {
-        for name in BackupPolicy.foldersToPrune(list(location: location)) {
+    static func prune(location: LibraryLocation, protecting protected: Set<String> = []) {
+        for name in BackupPolicy.foldersToPrune(list(location: location), protected: protected) {
             do {
                 try FileManager.default.removeItem(at: location.backupsFolder.appending(path: name, directoryHint: .isDirectory))
             } catch {
@@ -306,13 +320,21 @@ enum LibraryBackup {
         guard let data = try? Data(contentsOf: location.pendingRestoreURL) else { return nil }
         // Removed first, so a restore that crashes is not retried at every launch.
         try? fileManager.removeItem(at: location.pendingRestoreURL)
-        guard let pending = try? JSONDecoder().decode(PendingRestore.self, from: data) else { return nil }
+        guard let pending = try? JSONDecoder().decode(PendingRestore.self, from: data) else {
+            let notice = BackupRestoreNotice(restoredBackupDate: nil, failure: LibraryBackupError.notABackup.localizedDescription)
+            BackupRestoreNotice.record(notice, in: defaults)
+            return notice
+        }
         let backupFolder = URL(fileURLWithPath: pending.backupPath, isDirectory: true)
+        // The backup being restored may be one of ours: it must survive the
+        // pruning that saving the current library triggers.
+        let ownFolder = backupFolder.standardizedFileURL.deletingLastPathComponent().path == location.backupsFolder.standardizedFileURL.path
+        let protected: Set<String> = ownFolder ? [backupFolder.lastPathComponent] : []
         let notice: BackupRestoreNotice
         do {
             let manifest = try validate(backupFolder, schemaVersion: schemaVersion)
             if fileManager.fileExists(atPath: location.storeURL.path) {
-                try makeBackup(.beforeRestore, location: location, defaults: defaults, now: now, schemaVersion: lastOpenedSchema(location) ?? schemaVersion)
+                try makeBackup(.beforeRestore, location: location, defaults: defaults, now: now, schemaVersion: lastOpenedSchema(location) ?? schemaVersion, protecting: protected)
             }
             try swapIn(backupFolder: backupFolder, location: location)
             if let decisions = try? Data(contentsOf: backupFolder.appending(path: decisionsFileName)),
@@ -326,8 +348,9 @@ enum LibraryBackup {
                 try? fileManager.createDirectory(at: location.correctionLogURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? fileManager.copyItem(at: backupLog, to: location.correctionLogURL)
             }
-            // The restored store says which schema it has; it migrates when it opens.
-            if let data = try? JSONEncoder().encode(LibraryState(lastOpenedSchema: manifest.schemaVersion)) {
+            // The backup itself is the copy from before any migration, so the
+            // restored store needs no extra "before update" backup.
+            if let data = try? JSONEncoder().encode(LibraryState(lastOpenedSchema: schemaVersion)) {
                 try? data.write(to: location.stateURL, options: .atomic)
             }
             notice = BackupRestoreNotice(restoredBackupDate: manifest.createdAt, failure: nil)
@@ -378,6 +401,89 @@ enum LibraryBackup {
         }
         // The old library is already saved as the "before restore" backup.
         try? fileManager.removeItem(at: aside)
+    }
+
+    // MARK: Leftovers
+
+    /// Runs at launch, before a restore and before the store opens. Removes
+    /// unfinished copies a quit or crash left behind (`.incoming-*`,
+    /// `.restore-staging-*`). If a crash came in the middle of a restore,
+    /// after the current store was moved aside but before the backup was in
+    /// place, the store set aside is moved back; otherwise it is removed, as
+    /// its "before restore" backup was made first.
+    static func cleanUpLeftovers(location: LibraryLocation) {
+        let fileManager = FileManager.default
+        if let names = try? fileManager.contentsOfDirectory(atPath: location.backupsFolder.path) {
+            for name in names where name.hasPrefix(".incoming-") {
+                try? fileManager.removeItem(at: location.backupsFolder.appending(path: name, directoryHint: .isDirectory))
+            }
+        }
+        guard let names = try? fileManager.contentsOfDirectory(atPath: location.folder.path) else { return }
+        for name in names where name.hasPrefix(".restore-staging-") {
+            try? fileManager.removeItem(at: location.folder.appending(path: name, directoryHint: .isDirectory))
+        }
+        for name in names.sorted() where name.hasPrefix(".restore-old-") {
+            let aside = location.folder.appending(path: name, directoryHint: .isDirectory)
+            let asideStore = aside.appending(path: location.storeName)
+            if !fileManager.fileExists(atPath: location.storeURL.path), fileManager.fileExists(atPath: asideStore.path) {
+                for item in (try? fileManager.contentsOfDirectory(atPath: aside.path)) ?? [] {
+                    try? fileManager.moveItem(at: aside.appending(path: item), to: location.folder.appending(path: item))
+                }
+                logger.error("Moved the library back after an interrupted restore")
+            }
+            if (try? fileManager.contentsOfDirectory(atPath: aside.path))?.isEmpty == true || fileManager.fileExists(atPath: location.storeURL.path) {
+                try? fileManager.removeItem(at: aside)
+            }
+        }
+    }
+
+    // MARK: Files
+
+    /// Room left over after a backup, so the live store can still write.
+    static let spaceMargin: Int64 = 200 * 1_024 * 1_024
+
+    static func freeSpace(at url: URL) -> Int64? {
+        let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage
+    }
+
+    /// The bytes a backup will take: the store, its log and external blobs.
+    static func librarySize(_ location: LibraryLocation) -> Int64 {
+        let fileManager = FileManager.default
+        var total: Int64 = 0
+        for url in [location.storeURL, URL(fileURLWithPath: location.storeURL.path + "-wal")] {
+            total += Int64((try? fileManager.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0)
+        }
+        let support = location.folder.appending(path: location.supportName, directoryHint: .isDirectory)
+        if let walker = fileManager.enumerator(at: support, includingPropertiesForKeys: [.fileSizeKey]) {
+            for case let file as URL in walker {
+                total += Int64((try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+            }
+        }
+        return total
+    }
+
+    /// Copies whatever exists under `source` but not yet under `destination`.
+    static func copyMissingItems(from source: URL, to destination: URL) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        for name in try fileManager.contentsOfDirectory(atPath: source.path) {
+            let from = source.appending(path: name)
+            let to = destination.appending(path: name)
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: from.path, isDirectory: &isDirectory) else { continue }
+            if isDirectory.boolValue {
+                try copyMissingItems(from: from, to: to)
+            } else if !fileManager.fileExists(atPath: to.path) {
+                do {
+                    try fileManager.copyItem(at: from, to: to)
+                } catch {
+                    // Deleted after it was listed: the first pass has it if
+                    // the snapshot refers to it. Any other failure counts.
+                    if fileManager.fileExists(atPath: from.path) { throw error }
+                }
+            }
+        }
     }
 
     // MARK: SQLite

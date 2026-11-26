@@ -115,8 +115,14 @@ public enum BackupPolicy {
         guard let newest else { return true }
         if calendar.isDate(newest.createdAt, inSameDayAs: now) { return false }
         guard let current = currentSourceModifiedAt, let backedUp = newest.sourceModifiedAt else { return true }
-        return current > backedUp
+        // backup.json keeps whole seconds while file times have fractions,
+        // so a change must be more than a second newer to count.
+        return current.timeIntervalSince(backedUp) > modificationTolerance
     }
+
+    /// How much newer the store must be than the backed-up copy to count as
+    /// changed: the manifest rounds dates to whole seconds.
+    public static let modificationTolerance: TimeInterval = 1
 
     /// The newest backup of any kind, by creation date.
     public static func newest(_ entries: [BackupEntry]) -> BackupEntry? {
@@ -132,12 +138,14 @@ public enum BackupPolicy {
     }
 
     /// Folder names to remove so each automatic kind keeps only its newest
-    /// copies. Folders without a manifest are not entries and never removed.
-    public static func foldersToPrune(_ entries: [BackupEntry]) -> [String] {
+    /// copies. Folders without a manifest are not entries and never removed,
+    /// nor are `protected` ones (a backup about to be restored), which also
+    /// don't count against their kind's limit.
+    public static func foldersToPrune(_ entries: [BackupEntry], protected: Set<String> = []) -> [String] {
         var doomed: [String] = []
         for kind in BackupKind.allCases {
             let keep = keepCount(for: kind)
-            let ofKind = sortedNewestFirst(entries.filter { $0.manifest.kind == kind })
+            let ofKind = sortedNewestFirst(entries.filter { $0.manifest.kind == kind && !protected.contains($0.folderName) })
             if ofKind.count > keep {
                 doomed.append(contentsOf: ofKind[keep...].map(\.folderName))
             }
@@ -176,24 +184,6 @@ public enum BackupPolicy {
         formatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime, .withDashSeparatorInDate, .withTimeZone]
         let stamp = formatter.string(from: date).replacingOccurrences(of: ":", with: "-")
         return "\(stamp) \(kind.rawValue)"
-    }
-
-    /// True for folders that a file provider copies to the internet (iCloud
-    /// Drive, Dropbox, Google Drive, OneDrive and the like). Backups hold face
-    /// data, which stays on the person's own disks, so the app never writes a
-    /// backup there. The app also checks the folder's ubiquity flag, which
-    /// covers Desktop and Documents synced to iCloud.
-    public static func isSyncedFolder(_ path: String, home: String) -> Bool {
-        let standardized = (path as NSString).standardizingPath
-        let homePath = (home as NSString).standardizingPath
-        let synced = [
-            homePath + "/Library/Mobile Documents",
-            homePath + "/Library/CloudStorage",
-            homePath + "/Dropbox",
-            homePath + "/Google Drive",
-            homePath + "/OneDrive"
-        ]
-        return synced.contains { standardized == $0 || standardized.hasPrefix($0 + "/") }
     }
 }
 

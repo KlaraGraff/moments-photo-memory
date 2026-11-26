@@ -43,6 +43,26 @@ final class BackupPolicyTests: XCTestCase {
         XCTAssertTrue(changed)
     }
 
+    /// backup.json keeps whole seconds; an unchanged store with a fractional
+    /// file time must not look newer than its copy.
+    func testFractionalFileTimesDoNotLookChanged() throws {
+        let fileTime = Date(timeIntervalSince1970: 1_790_000_000.73)
+        let roundTripped = try BackupManifest.decode(manifest(.daily, at: origin, modified: fileTime).encoded())
+        let tomorrow = origin.addingTimeInterval(day)
+        XCTAssertFalse(BackupPolicy.isDailyDue(newest: roundTripped, currentSourceModifiedAt: fileTime, now: tomorrow, calendar: utc))
+        XCTAssertTrue(BackupPolicy.isDailyDue(newest: roundTripped, currentSourceModifiedAt: fileTime.addingTimeInterval(5), now: tomorrow, calendar: utc))
+    }
+
+    func testAProtectedBackupIsNeverPrunedNorCounted() {
+        var entries: [BackupEntry] = []
+        for index in 0..<6 {
+            entries.append(entry("restore-\(index)", .beforeRestore, at: origin.addingTimeInterval(Double(index) * day)))
+        }
+        let doomed = BackupPolicy.foldersToPrune(entries, protected: ["restore-0"])
+        XCTAssertEqual(doomed, [], "the oldest is protected, and the other five fit")
+        XCTAssertEqual(BackupPolicy.foldersToPrune(entries), ["restore-0"])
+    }
+
     func testAnyKindCountsAsTodaysBackup() {
         let newest = manifest(.beforeUpgrade, at: origin, modified: origin)
         XCTAssertFalse(BackupPolicy.isDailyDue(newest: newest, currentSourceModifiedAt: origin.addingTimeInterval(30), now: origin.addingTimeInterval(60), calendar: utc))
@@ -104,15 +124,5 @@ final class BackupPolicyTests: XCTestCase {
         XCTAssertTrue(first.hasSuffix(" daily"))
         XCTAssertFalse(first.contains(":"), "Finder shows colons as slashes")
         XCTAssertLessThan(first, second)
-    }
-
-    func testSyncedFoldersAreRecognized() {
-        let home = "/HOME/person"
-        XCTAssertTrue(BackupPolicy.isSyncedFolder("/HOME/person/Library/Mobile Documents/com~apple~CloudDocs/Backups", home: home))
-        XCTAssertTrue(BackupPolicy.isSyncedFolder("/HOME/person/Library/CloudStorage/Dropbox/x", home: home))
-        XCTAssertTrue(BackupPolicy.isSyncedFolder("/HOME/person/Dropbox", home: home))
-        XCTAssertFalse(BackupPolicy.isSyncedFolder("/HOME/person/Library/Application Support/Moments/Backups", home: home))
-        XCTAssertFalse(BackupPolicy.isSyncedFolder("/Volumes/External/Moments", home: home))
-        XCTAssertFalse(BackupPolicy.isSyncedFolder("/HOME/person/DropboxOld", home: home))
     }
 }

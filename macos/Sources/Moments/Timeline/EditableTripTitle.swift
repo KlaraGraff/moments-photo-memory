@@ -43,21 +43,17 @@ struct EditableTripTitle: View {
             Text(title)
                 .font(font)
                 .foregroundStyle(Paper.ink)
-                .probeUnless("-MomentsProbeTitleNoShape") { $0.contentShape(Rectangle()) }
-                .probeUnless("-MomentsProbeTitleNoTaps") { $0
-                    .onTapGesture(count: 2) {
-                        draft = title
-                        isEditing = true
-                    }
-                    .onTapGesture(count: 1) { onClick?() }
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) {
+                    draft = title
+                    isEditing = true
                 }
-                .probeUnless("-MomentsProbeTitleNoHelp") { $0.help(String(localized: "Double-click to rename")) }
-                .probeUnless("-MomentsProbeTitleNoAX") { $0
-                    .accessibilityIdentifier("trip.title.\(tripID)")
-                    .accessibilityAction(named: Text(String(localized: "Rename"))) {
-                        draft = title
-                        isEditing = true
-                    }
+                .onTapGesture(count: 1) { onClick?() }
+                .help(String(localized: "Double-click to rename"))
+                .accessibilityIdentifier("trip.title.\(tripID)")
+                .accessibilityAction(named: Text(String(localized: "Rename"))) {
+                    draft = title
+                    isEditing = true
                 }
         }
     }

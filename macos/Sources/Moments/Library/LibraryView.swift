@@ -244,7 +244,6 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        let _ = marqueeCount(15)
         Group {
             if LibraryLaunchState.shouldShowImportFlow(hasCompletedFirstLaunch: firstLaunchCompleted, itemCount: store.items.count) {
                 FirstLaunchImportView {
@@ -344,14 +343,13 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var results: some View {
-        let _ = marqueeCount(3)
         ScrollViewReader { proxy in
             ScrollView {
                 // Headings and section grids space themselves (LibrarySectionView).
                 LazyVStack(alignment: .leading, spacing: 0) {
                     // The people in these photos, before the photos: it
                     // scrolls away with them. Not while only some photos show.
-                    if selection.libraryScope == nil && query.isEmpty && !ProbeSwitch.on("-MomentsProbeNoStrip") {
+                    if selection.libraryScope == nil && query.isEmpty {
                         LibraryPeopleStrip(entries: state.peopleEntries)
                     }
                     ForEach(cachedSections) { section in
@@ -375,7 +373,7 @@ struct LibraryView: View {
             // The scroll view opens at the section that was at the top when
             // the user left, in its first layout. Scrolling there after
             // onAppear showed the top first and then jumped.
-            .probeUnless("-MomentsProbeNoScrollPosition") { $0.scrollPosition(
+            .scrollPosition(
                 // Written only when the top section really changes: the scroll
                 // view reports it on every layout, and each write would
                 // rebuild the whole Library while the sidebar moves. Not
@@ -383,20 +381,12 @@ struct LibraryView: View {
                 // grid back at the heading it had just passed. And never
                 // nil (a section's photos at the top), which did the same;
                 // the last heading is where the Library opens again.
-                id: Binding<String?>(get: { () -> String? in
-                    marqueeCount(0)
-                    return state.topSectionScrollID
-                }, set: { (id: String?) in
-                    marqueeCount(1)
-                    #if DEBUG
-                    MarqueeCounters.note(id ?? "nil")
-                    #endif
+                id: Binding(get: { state.topSectionScrollID }, set: { id in
                     guard let id, !state.marquee.isDragging, state.topSectionScrollID != id else { return }
-                    marqueeCount(2)
                     state.topSectionScrollID = id
                 }),
                 anchor: .top
-            ) }
+            )
             .libraryGridInteraction(state: state, proxy: proxy)
             .environment(\.photoDeletionScope, deletionScope)
             .onChange(of: selection.focusedItemID) { _, _ in
@@ -457,7 +447,6 @@ struct LibraryView: View {
     }
 
     private func regroup() {
-        marqueeCount(7)
         // Taken before anything is read: these are the inputs this pass uses,
         // and a change during it must not be stored under a newer key.
         let key = groupingKey
@@ -791,20 +780,15 @@ private struct LibrarySectionView: View {
     /// (One HStack per row instead of a grid scrolled with several times
     /// more stalls on 2,000 photos.)
     var body: some View {
-        let _ = marqueeCount(4)
-        let _ = marqueeNote("section " + section.id)
-        let plainHeadings: Bool = ProbeSwitch.on("-MomentsProbePlainHeadings")
-        let plainTitle: Bool = plainHeadings || ProbeSwitch.on("-MomentsProbeNoEditableTitle")
-        let noChapterLink: Bool = plainHeadings || ProbeSwitch.on("-MomentsProbeNoChapterLink")
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 // Like a moment title in Photos: click selects the section's
                 // photos, and the menu goes to the trip or the map. A trip's
                 // name also changes in place on double-click.
                 HStack(spacing: 0) {
-                    if let tripID = sectionTripID, section.id != "trip:unassigned", !plainTitle {
+                    if let tripID = sectionTripID, section.id != "trip:unassigned" {
                         EditableTripTitle(tripID: tripID, title: section.title, onClick: selectSection)
-                            .probeUnless("-MomentsProbeTitleNoAX") { $0.accessibilityAction(named: Text(String(localized: "Select these photos"))) { selectSection() } }
+                            .accessibilityAction(named: Text(String(localized: "Select these photos"))) { selectSection() }
                     } else {
                         Button { selectSection() } label: {
                             Text(section.title)
@@ -828,27 +812,18 @@ private struct LibrarySectionView: View {
                     .foregroundStyle(LibraryPalette.muted)
                 // A chapter's photos lead to the chapter: its days, places,
                 // people and map.
-                if let tripID = sectionTripID, section.id != "trip:unassigned", !noChapterLink {
-                    if ProbeSwitch.on("-MomentsProbeLinkAsImage") {
+                if let tripID = sectionTripID, section.id != "trip:unassigned" {
+                    Button { selection.showTrip(tripID) } label: {
                         Image(systemName: "book.pages")
                             .font(.caption)
                             .foregroundStyle(LibraryPalette.muted)
                             .frame(width: 22, height: 18)
-                    } else {
-                        Button { selection.showTrip(tripID) } label: {
-                            Image(systemName: "book.pages")
-                                .font(.caption)
-                                .foregroundStyle(LibraryPalette.muted)
-                                .frame(width: 22, height: 18)
-                                .probeUnless("-MomentsProbeLinkNoShape") { $0.contentShape(Rectangle()) }
-                        }
-                        .buttonStyle(.plain)
-                        .probeUnless("-MomentsProbeLinkNoHelp") { $0.help(String(localized: "Show Trip")) }
-                        .probeUnless("-MomentsProbeLinkNoAX") { $0
-                            .accessibilityLabel(String(localized: "Show Trip"))
-                            .accessibilityIdentifier("library.chapter-link.\(tripID)")
-                        }
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Show Trip"))
+                    .accessibilityLabel(String(localized: "Show Trip"))
+                    .accessibilityIdentifier("library.chapter-link.\(tripID)")
                 }
                 // Who is in these photos.
                 if !state.peopleEntries.isEmpty {
@@ -912,10 +887,8 @@ private struct LibraryPhotoCell: View {
     var stackCount = 1
     /// The page probe phase this cell was built in (DEBUG only).
     var probeToken: UInt64? = nil
-    @State private var isHovering = false
 
     var body: some View {
-        let _ = marqueeCount(5)
         VStack(alignment: .leading, spacing: 9) {
             ZStack(alignment: .topLeading) {
                 Button {
@@ -973,7 +946,7 @@ private struct LibraryPhotoCell: View {
                     }
                 }
 
-                LibraryPhotoMarks(item: item, isCompact: isCompact, isHovering: isHovering)
+                LibraryPhotoMarks(item: item, isCompact: isCompact)
             }
 
             if !isCompact {
@@ -983,10 +956,9 @@ private struct LibraryPhotoCell: View {
                 PhotoMemories(item: item, state: state)
             }
         }
-        .probeUnless("-MomentsProbeNoHover") { $0.onHover {
-            marqueeCount(6)
-            isHovering = $0
-        } }
+        // No hover handler here. With one on every lazily built photo, a
+        // trip heading scrolling in under a held rubber band sent SwiftUI's
+        // layout round and round and the app stopped answering.
         .modifier(LibraryPhotoMenu(item: item, state: state, stackCount: stackCount, open: open))
         .onDrag { NSItemProvider(object: item.id as NSString) }
     }
@@ -1031,7 +1003,6 @@ private struct LibraryPhotoMarks: View {
     @Environment(SelectionModel.self) private var selection
     let item: MediaItem
     let isCompact: Bool
-    let isHovering: Bool
 
     var body: some View {
         HStack(spacing: 6) {
@@ -1051,8 +1022,9 @@ private struct LibraryPhotoMarks: View {
             Spacer()
         }
         .padding(isCompact ? 6 : 11)
-        // In the dense grid the marks show on hover, or when they mean something.
-        .opacity(!isCompact || isHovering || selection.isSelected(item.id) ? 1 : 0)
+        // The dense grid is photos only: the circle shows on selected ones.
+        // Command-click and the rubber band select there, as in the Finder.
+        .opacity(!isCompact || selection.isSelected(item.id) ? 1 : 0)
     }
 }
 

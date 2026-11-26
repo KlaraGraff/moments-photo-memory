@@ -70,7 +70,8 @@ struct TimelineItemSnapshot: Identifiable, Equatable, Sendable {
             TimelineMemorySnippet(
                 id: "\(itemID)-memory-\(index)",
                 text: memory.text,
-                authorRaw: memory.authorRaw
+                authorRaw: memory.authorRaw,
+                isOwn: memory.isOwn
             )
         }
     }
@@ -108,6 +109,8 @@ struct TimelineMemorySnippet: Identifiable, Equatable, Sendable {
     let id: String
     let text: String
     let authorRaw: String
+    /// Written by the person using this Mac (see `Memory.isOwn`).
+    var isOwn = true
 }
 
 struct TimelineSourceTrip: Identifiable, Equatable, Sendable {

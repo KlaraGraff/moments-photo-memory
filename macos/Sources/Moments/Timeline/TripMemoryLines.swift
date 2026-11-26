@@ -10,6 +10,8 @@ import SwiftData
 struct TripMemoryLines: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(AuthorNames.myNameKey) private var myName = ""
+    @AppStorage(AuthorNames.partnerNameKey) private var partnerName = ""
     let scope: NoteMemoryScope
     let key: String
     let memories: [CollectionMemory]
@@ -87,13 +89,13 @@ struct TripMemoryLines: View {
     }
 
     private func memoryRow(_ memory: CollectionMemory) -> some View {
-        let isOwn = memory.authorAccountID == MomentsAccount.localID
+        let isOwn = AuthorNames.isLocal(memory.authorAccountID)
         return HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(memory.text)
                 .font(.system(.body, design: .serif))
                 .foregroundStyle(Paper.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(verbatim: "— \(isOwn ? String(localized: "Me") : String(localized: "Partner"))")
+            Text(verbatim: "— \(AuthorNames.label(isOwn: isOwn, myName: myName, partnerName: partnerName))")
                 .font(.caption)
                 .foregroundStyle(Paper.accent)
             Spacer(minLength: 0)

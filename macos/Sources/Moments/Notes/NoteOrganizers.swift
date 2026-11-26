@@ -71,7 +71,11 @@ public struct AISettings: Equatable, Sendable {
     public static let modelKey = "moments.ai.cloudModel"
     public static let baseURLKey = "moments.ai.cloudBaseURL"
     public static let fallbackKey = "moments.ai.fallback"
+    /// AI is an extra the person turns on; off, nothing is sent anywhere and
+    /// memories are only the words typed.
+    public static let enabledKey = "moments.ai.enabled"
 
+    public var enabled = false
     public var engine: AIEngine = .onDevice
     public var provider: CloudProvider = .claude
     public var model: String = CloudProvider.claude.defaultModel
@@ -88,6 +92,7 @@ public struct AISettings: Equatable, Sendable {
 
     public static func load(from defaults: UserDefaults = .standard) -> AISettings {
         var settings = AISettings()
+        settings.enabled = defaults.bool(forKey: enabledKey)
         settings.engine = defaults.string(forKey: engineKey).flatMap(AIEngine.init(rawValue:)) ?? defaultEngine
         settings.provider = defaults.string(forKey: providerKey).flatMap(CloudProvider.init(rawValue:)) ?? .claude
         settings.model = defaults.string(forKey: modelKey) ?? settings.provider.defaultModel
@@ -135,12 +140,13 @@ public enum AIKeychain {
 // MARK: - Choosing a model
 
 public enum NoteOrganizerFactory {
-    /// The organizers to try, in order. An `.unavailable` error from one moves
-    /// on to the next; any other error stops.
+    /// The organizers to try, in order: none while AI is turned off. An
+    /// `.unavailable` error from one moves on to the next; any other error stops.
     public static func organizers(
         settings: AISettings = .load(),
         apiKey: (CloudProvider) -> String? = AIKeychain.key(for:)
     ) -> [any NoteOrganizing] {
+        guard settings.enabled else { return [] }
         let cloud = cloudOrganizer(settings: settings, apiKey: apiKey)
         switch settings.engine {
         case .cloud:

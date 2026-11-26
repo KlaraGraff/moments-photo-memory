@@ -266,7 +266,9 @@ struct LibraryView: View {
         hasher.combine(memoryFilterRaw)
         hasher.combine(personFilterID)
         hasher.combine(query)
-        hasher.combine(state.focusedMemoryItemID)
+        // The photo being written on stays in a memory filter's results
+        // until it is left; without that filter, focus changes nothing.
+        if memoryFilterRaw != LibraryMemoryFilter.all.rawValue { hasher.combine(state.focusedMemoryItemID) }
         hasher.combine(selection.libraryScope?.itemIDs)
         // All photos and faces the pages group by, as one revision.
         hasher.combine(store.photoFaceRevision)
@@ -319,7 +321,7 @@ struct LibraryView: View {
         filters.combine(memoryFilterRaw)
         filters.combine(personFilterID)
         filters.combine(query)
-        filters.combine(state.focusedMemoryItemID)
+        if memoryFilterRaw != LibraryMemoryFilter.all.rawValue { filters.combine(state.focusedMemoryItemID) }
         filters.combine(selection.libraryScope?.itemIDs)
         var trips = Hasher()
         for trip in allTrips {
@@ -1275,19 +1277,6 @@ private struct LibraryPhotoCell: View {
     var probeToken: UInt64? = nil
     @State private var isHovering = false
 
-    private var showsMemoryEditor: Bool {
-        state.memoryDrafts[item.id] != nil
-            || item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-    }
-
-    /// A photo with a memory shows just that memory; its note line appears
-    /// while the pointer is over the photo or the line is in use. It keeps
-    /// its space, so the grid never shifts.
-    private var showsNoteLine: Bool {
-        !showsMemoryEditor || isHovering || state.focusedNoteItemID == item.id
-            || !(state.noteDrafts[item.id] ?? "").isEmpty
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             ZStack(alignment: .topLeading) {
@@ -1336,18 +1325,10 @@ private struct LibraryPhotoCell: View {
             }
 
             if !isCompact {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    PhotoPlaceLine(item: item, placeNotes: placeNotes)
-                    Spacer(minLength: 0)
-                    PhotoNoteBadge(item: item)
-                }
-                // A written memory stays editable here; the ruled line below is
-                // where new words go, so an empty photo shows only that one line.
-                if showsMemoryEditor {
-                    MemoryEditor(item: item, state: state)
-                }
-                PhotoNoteSection(item: item, state: state)
-                    .opacity(showsNoteLine ? 1 : 0)
+                PhotoPlaceLine(item: item, placeNotes: placeNotes)
+                // The other person's memories, then the one ruled line where
+                // your own is written and changed.
+                PhotoMemories(item: item, state: state)
             }
         }
         .onHover { isHovering = $0 }
@@ -1534,37 +1515,83 @@ private struct LibraryPhotoMenu: ViewModifier {
     }
 }
 
+/// Every memory on a photo, oldest first, from both people: the other
+/// person's read-only, then your own in the one field where you write.
+/// Names show once someone else has written on the photo, so a photo with
+/// only your words reads as before.
+struct PhotoMemories: View {
+    @AppStorage(AuthorNames.myNameKey) private var myName = ""
+    @AppStorage(AuthorNames.partnerNameKey) private var partnerName = ""
+    let item: MediaItem
+    let state: LibraryViewState
+    /// The viewer's column: a box of several lines instead of a ruled line.
+    var isLarge = false
+
+    var body: some View {
+        let ownID = item.ownMemory?.id
+        let others = item.writtenMemories.filter { $0.id != ownID }
+        let showsNames = others.contains { !$0.isOwn }
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(others, id: \.id) { memory in
+                VStack(alignment: .leading, spacing: 2) {
+                    if showsNames { nameLabel(isOwn: memory.isOwn) }
+                    Text(memory.text)
+                        .font(.system(.body, design: .serif))
+                        .foregroundStyle(LibraryPalette.ink)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("library.memory.other.\(memory.id)")
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                if showsNames { nameLabel(isOwn: true) }
+                MemoryEditor(item: item, state: state, isLarge: isLarge)
+            }
+        }
+    }
+
+    private func nameLabel(isOwn: Bool) -> some View {
+        Text(AuthorNames.label(isOwn: isOwn, myName: myName, partnerName: partnerName))
+            .font(.caption)
+            .foregroundStyle(LibraryPalette.accent)
+            .lineLimit(1)
+    }
+}
+
+/// The one field under a photo: this person's own memory, written and
+/// changed in place like a caption in Photos. It saves while typing, and
+/// again on Return or when the field is left; emptying it removes the
+/// memory. Option-Return starts a new line, Escape ends typing. When AI is
+/// turned on, the words added while editing go to it afterwards to fix the
+/// place; nothing about that shows here.
 struct MemoryEditor: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(PhotoNoteService.self) private var service
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let item: MediaItem
     let state: LibraryViewState
+    var isLarge = false
     @State private var saveTask: Task<Void, Never>?
     @State private var baseline: LibraryMemorySnapshot?
     @State private var wasEdited = false
+    /// The text when typing began, to hand only new words to the AI.
+    @State private var textAtFocus: String?
+    @State private var savedCount = 0
     @FocusState private var isFocused: Bool
 
+    /// Only ever this person's own: the other person's memories are shown
+    /// read-only by `PhotoMemories` and never edited here.
     private var storedMemory: Memory? {
-        item.latestMemory
-    }
-
-    private var isPartnerMemory: Bool {
-        guard let memory = storedMemory else { return false }
-        if let authorAccountID = memory.authorAccountID {
-            return authorAccountID != MomentsAccount.localID
-        }
-        return memory.author == .partner
-    }
-
-    private var hasMemory: Bool {
-        storedMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        item.ownMemory
     }
 
     private var textBinding: Binding<String> {
         Binding(
             get: { state.draft(for: item) },
             set: { newValue in
-                guard !isPartnerMemory else { return }
                 guard newValue != state.draft(for: item) else { return }
                 if !wasEdited {
                     baseline = storedMemory.map(LibraryMemorySnapshot.init(memory:))
@@ -1577,41 +1604,58 @@ struct MemoryEditor: View {
     }
 
     var body: some View {
-        TextEditor(text: textBinding)
-            .font(.system(.body, design: hasMemory ? .serif : .default))
+        TextField("", text: textBinding, prompt: Text(String(localized: "Add a memory…")), axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.system(.body, design: .serif))
             .foregroundStyle(LibraryPalette.ink)
-            .frame(minHeight: hasMemory ? 42 : 24, maxHeight: hasMemory ? 110 : 28)
-            .scrollContentBackground(.hidden)
-            .padding(.horizontal, 0)
-            .padding(.vertical, 0)
-            .background(Color.clear)
+            .lineLimit(isLarge ? 4...20 : 1...8)
             .focused($isFocused)
-            .disabled(isPartnerMemory)
-            .overlay(alignment: .bottom) {
-                if !hasMemory {
-                    Rectangle()
-                        .fill(LibraryPalette.rule)
-                        .frame(height: 1)
-                }
-            }
+            .modifier(MemoryFieldChrome(isLarge: isLarge, isFocused: isFocused, reduceMotion: reduceMotion))
+            // Return ends typing and Option-Return inserts a line break (the
+            // vertical field's own behavior), so Return that confirms an input
+            // method's candidate never ends half-typed words.
+            .onSubmit { isFocused = false }
+            .onExitCommand { isFocused = false }
+            .help(String(localized: "Write what happened, how it felt, where it was. It is saved as you type. Option-Return starts a new line."))
+            .accessibilityLabel(String(localized: "Your memory of this photo"))
             .accessibilityIdentifier("library.memory.\(item.id)")
+            .overlay(alignment: .topTrailing) {
+                TransientCheckmark(trigger: savedCount, label: String(localized: "Saved"))
+                    .allowsHitTesting(false)
+            }
             .onAppear {
                 if state.focusedMemoryItemID == item.id { isFocused = true }
             }
             .onChange(of: isFocused) { _, focused in
                 if focused {
                     state.focusedMemoryItemID = item.id
-                } else if state.focusedMemoryItemID == item.id {
-                    state.focusedMemoryItemID = nil
+                    textAtFocus = state.draft(for: item)
+                } else {
+                    if state.focusedMemoryItemID == item.id {
+                        state.focusedMemoryItemID = nil
+                    }
+                    finishEditing()
                 }
             }
             .onDisappear {
-                saveTask?.cancel()
-                if !isPartnerMemory {
-                    persist(state.draft(for: item))
-                }
+                finishEditing()
                 if state.focusedMemoryItemID == item.id { state.focusedMemoryItemID = nil }
             }
+    }
+
+    /// Saves now and, when words were added, hands them to the AI.
+    private func finishEditing() {
+        saveTask?.cancel()
+        // A draft this field never typed belongs to the other field showing
+        // the same photo (grid and viewer), which saves it itself.
+        guard wasEdited else { return }
+        let text = state.draft(for: item)
+        persist(text)
+        guard let before = textAtFocus else { return }
+        textAtFocus = nil
+        guard before.trimmingCharacters(in: .whitespacesAndNewlines) != text.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+        savedCount += 1
+        service.organize(PhotoNoteService.addedWords(from: before, to: text), for: item, context: modelContext)
     }
 
     private func scheduleSave(_ newText: String) {

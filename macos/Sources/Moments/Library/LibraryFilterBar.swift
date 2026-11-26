@@ -424,7 +424,10 @@ struct LibraryFilterPublisher: View {
         if criteria.favoritesOnly { hasher.combine(store.favoriteRevision) }
         if readsText {
             for item in items {
-                hasher.combine(item.latestMemory?.text)
+                // Both people's memories, in whatever order the store lists them.
+                var memories = 0
+                for memory in item.memories { memories ^= memory.text.hashValue }
+                hasher.combine(memories)
                 hasher.combine(item.trip?.effectiveName)
             }
         }

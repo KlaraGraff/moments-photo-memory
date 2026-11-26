@@ -203,6 +203,35 @@ struct SharingSettingsView: View {
     }
 }
 
+/// What the two of you are called next to what you write.
+struct AuthorNamesSection: View {
+    @AppStorage(AuthorNames.myNameKey) private var myName = ""
+    @AppStorage(AuthorNames.partnerNameKey) private var partnerName = ""
+
+    var body: some View {
+        Section {
+            LabeledContent(String(localized: "Your name")) {
+                TextField(String(localized: "Me"), text: $myName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 220)
+                    .accessibilityIdentifier("settings.my-name")
+            }
+            LabeledContent(String(localized: "Your partner's name")) {
+                TextField(String(localized: "Partner"), text: $partnerName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 220)
+                    .accessibilityIdentifier("settings.partner-name")
+            }
+        } header: {
+            Text(String(localized: "Names"))
+        } footer: {
+            Text(String(localized: "Shown next to what each of you writes. Kept on this Mac."))
+                .font(.caption)
+                .foregroundStyle(Paper.muted)
+        }
+    }
+}
+
 enum ImportSettings {
     /// When on (the default), an import is followed by a face scan and the
     /// sheet that shows how the photos were organized.

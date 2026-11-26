@@ -47,7 +47,7 @@ struct PhotoViewer: View {
 
     /// A text field in the column has the keyboard: Esc and the arrows are its own.
     private var isEditingText: Bool {
-        isEditingInfo || libraryState.focusedNoteItemID != nil
+        isEditingInfo || libraryState.focusedMemoryItemID != nil
     }
 
     /// A text field or text view in this window is being typed in.

@@ -524,7 +524,7 @@ struct ImportReviewView: View {
     private func saveMemory(for flag: ImportReviewFlag, item: MediaItem) {
         let text = memoryValues[flag.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !text.isEmpty else { return }
-        modelContext.insert(Memory(text: text, mediaItem: item))
+        modelContext.insert(Memory(text: text, authorAccountID: MomentsAccount.localID, updatedBy: MomentsAccount.localID, mediaItem: item))
         item.reviewMemoryDraft = nil
         memoryValues[flag.id] = ""
     }

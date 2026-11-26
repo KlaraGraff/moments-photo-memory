@@ -168,6 +168,33 @@ final class AppIdentityMigrationTests: XCTestCase {
         XCTAssertNil(defaults.object(forKey: AppIdentityMigration.storeFolderKey))
     }
 
+    func testARecordedFolderOfItsOwnIsHonoured() {
+        defaults.set("Moments Sharing Test", forKey: AppIdentityMigration.storeFolderKey)
+        let previewExists: (String) -> Bool = { (folder: String) -> Bool in folder == "Moments People Preview" }
+
+        let name = AppIdentityMigration.storeFolderName(
+            bundleIdentifier: "com.momentsphotomemory.Moments.sharingtest",
+            defaults: defaults,
+            storeExists: previewExists
+        )
+
+        XCTAssertEqual(name, "Moments Sharing Test")
+        XCTAssertEqual(defaults.string(forKey: AppIdentityMigration.storeFolderKey), "Moments Sharing Test")
+    }
+
+    func testARecordedPathOrHiddenNameIsReplaced() {
+        let none: (String) -> Bool = { (_: String) -> Bool in false }
+        let unsafe: [String] = ["", " ", "../Elsewhere", "a/b", ".hidden", "..", "x:y", " Moments"]
+
+        for value in unsafe {
+            defaults.set(value, forKey: AppIdentityMigration.storeFolderKey)
+            let name = AppIdentityMigration.storeFolderName(
+                bundleIdentifier: releaseID, defaults: defaults, storeExists: none
+            )
+            XCTAssertEqual(name, "Moments", "recorded value \(value.debugDescription)")
+        }
+    }
+
     func testImportReadsARealLegacyDomain() throws {
         // A second suite stands in for the preview build's domain, read the
         // way the app reads it: through persistentDomain(forName:).

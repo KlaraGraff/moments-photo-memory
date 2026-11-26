@@ -23,10 +23,8 @@ final class UnitTestHostDelegate: MomentsAppDelegate {
 
     @objc func applicationDidFinishLaunching(_ notification: Notification) {
         if ProcessInfo.processInfo.arguments.contains("-MomentsUITesting") {
-            // Each UI test starts from the demo store; trip locks and covers
-            // from the test before must not carry over (they live in a test suite).
-            TripAssignmentLocks.store.removeObject(forKey: TripAssignmentLocks.defaultsKey)
-            TripAssignmentLocks.store.removeObject(forKey: TripCoverChoice.defaultsKey)
+            // Each UI test starts from the demo store, and its choices (trip
+            // locks, covers, People answers) live in that in-memory store.
             ensureUITestWindow()
             return
         }

@@ -70,8 +70,8 @@ struct GeneralSettingsView: View {
 
             Section(String(localized: "Library")) {
                 folderRow(String(localized: "Library location"), url: ImportSettings.libraryFolder, identifier: "settings.library-folder")
-                folderRow(String(localized: "Backups"), url: ImportSettings.backupsFolder, identifier: "settings.backups-folder")
-                Text(String(localized: "Your original photos stay where they are; the library keeps notes, people and places. Backups are made when the library can't be opened."))
+                BackupSettingsRow()
+                Text(String(localized: "Your original photos stay where they are; the library keeps memories, people and places. It is backed up every day, and the last 14 days are kept."))
                     .font(.caption)
                     .foregroundStyle(Paper.muted)
             }

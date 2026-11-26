@@ -19,6 +19,7 @@ struct MomentsApp: App {
     @State private var libraryStore = LibraryStore()
     @State private var photosImportController = PhotosImportController(importer: PhotosImporter(source: PhotoKitAssetSource()))
     @State private var showingPhotosImport = false
+    @State private var backups = BackupController()
 
     #if DEBUG
     private var isUITestSmallWindow: Bool {
@@ -90,6 +91,8 @@ struct MomentsApp: App {
         PageProbe.startIfRequested()
         StressLibrary.prepareIfRequested()
         #endif
+        let backups = BackupController()
+        _backups = State(initialValue: backups)
         do {
             #if DEBUG
             // Tests must never touch the user's store: -MomentsUITesting
@@ -107,11 +110,16 @@ struct MomentsApp: App {
             let container: ModelContainer
             if isUITesting || testStoreURL != nil {
                 container = try MomentsPersistence.makeContainer(inMemory: isUITesting, url: testStoreURL)
+                // A throwaway on-disk test store lists its own backups; an
+                // in-memory one has none. Neither runs the daily schedule.
+                if let testStoreURL, let testStoreDirectory {
+                    backups.configure(location: LibraryLocation(storeURL: testStoreURL, correctionLogURL: testStoreDirectory.appending(path: "trip-corrections.jsonl")))
+                }
             } else {
-                container = try Self.openUserStore()
+                container = try Self.openUserStore(backups: backups)
             }
             #else
-            let container = try Self.openUserStore()
+            let container = try Self.openUserStore(backups: backups)
             #endif
             #if DEBUG
             // The on-disk UI-test store holds only what the test imports.
@@ -161,8 +169,23 @@ struct MomentsApp: App {
 
     /// Opens the user's store; an unreadable store is backed up and replaced
     /// with a new empty one, and the user is told once where the backup is.
-    private static func openUserStore() throws -> ModelContainer {
-        try MomentsPersistence.openWithRecovery().container
+    /// Before it opens, a restore asked for in Settings is carried out, and a
+    /// library about to be upgraded to a newer schema is backed up.
+    private static func openUserStore(backups: BackupController) throws -> ModelContainer {
+        let location = try? LibraryLocation.live()
+        backups.configure(location: location)
+        if let location {
+            LibraryBackup.cleanUpLeftovers(location: location)
+            LibraryBackup.performPendingRestore(location: location, defaults: .standard)
+            LibraryBackup.backUpBeforeUpgradeIfNeeded(location: location, defaults: .standard)
+        }
+        let container = try MomentsPersistence.openWithRecovery().container
+        if let location {
+            LibraryBackup.recordOpened(location: location)
+            backups.refresh()
+            backups.startSchedule()
+        }
+        return container
     }
 
     @ViewBuilder
@@ -243,6 +266,7 @@ struct MomentsApp: App {
                 StoreUnavailableView(isProtectedLegacyStore: storeError != nil)
             }
         }
+        .modifier(BackupRestoreAlert())
         .preferredColorScheme(.light)
     }
 
@@ -283,6 +307,7 @@ struct MomentsApp: App {
             }
             .environment(peopleController)
             .environment(photosImportController)
+            .environment(backups)
             .preferredColorScheme(.light)
         }
         .windowResizability(.contentSize)

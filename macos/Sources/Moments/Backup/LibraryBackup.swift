@@ -25,6 +25,9 @@ struct LibraryLocation: Sendable {
     /// A restore asked for in Settings, carried out at the next launch before
     /// the store opens.
     var pendingRestoreURL: URL { folder.appending(path: "restore-pending.json") }
+    /// Sharing's sync state (the server's version of each record). Never
+    /// backed up, and dropped when a backup is restored.
+    var syncStateFolder: URL { folder.appending(path: "Sync", directoryHint: .isDirectory) }
     var storeName: String { storeURL.lastPathComponent }
     var supportName: String { "." + storeURL.deletingPathExtension().lastPathComponent + "_SUPPORT" }
 
@@ -355,6 +358,15 @@ enum LibraryBackup {
                let values = try? PropertyListSerialization.propertyList(from: decisions, format: nil) as? [String: Any] {
                 previous = LibraryDecisionKeys.snapshot(defaults)
                 LibraryDecisionKeys.apply(values, to: defaults, keys: keys)
+            }
+            // The sync state describes the library being replaced. Kept with an
+            // older store, the next sync would read records made after the
+            // backup as deleted here and delete them for the other person
+            // too. Without it, sharing fetches everything again and merges;
+            // nothing is deleted. Dropped before the swap, so a crash in
+            // between can't leave the old state next to the restored store.
+            if fileManager.fileExists(atPath: location.syncStateFolder.path) {
+                try fileManager.removeItem(at: location.syncStateFolder)
             }
             do {
                 try swapIn(backupFolder: backupFolder, location: location)

@@ -62,12 +62,17 @@ public final class SyncCoordinator {
     /// This device changed a record. Changes the person may not make (a
     /// partner's memory) are never queued.
     public func localRecordChanged(_ key: SyncRecordKey) {
-        guard let record = local.record(for: key), accounts.canEdit(record) else { return }
+        guard let record = local.record(for: key) else { return }
+        consider(record)
+    }
+
+    private func consider(_ record: SyncRecord) {
+        guard accounts.canEdit(record) else { return }
         guard joinSharedSet(record) else {
-            deferred.insert(key)
+            deferred.insert(record.key)
             return
         }
-        pending.enqueueSave(key)
+        pending.enqueueSave(record.key)
     }
 
     /// Whether a changed record belongs in the shared zone, adding it to the
@@ -120,6 +125,29 @@ public final class SyncCoordinator {
         } else {
             // Never reached the server: forget the unsent save.
             pending.discard(key)
+        }
+    }
+
+    /// Compares a full snapshot of this device's records with what the
+    /// server last held and queues the differences: records changed or added
+    /// since, and records deleted here. The app calls it a moment after its
+    /// saves settle (and at launch), so it needs no per-edit hooks and also
+    /// catches edits made while sync was off. Records are in local spelling.
+    public func reconcile(localRecords: [SyncRecord]) {
+        var present = Set<SyncRecordKey>()
+        present.reserveCapacity(localRecords.count)
+        for record in localRecords {
+            present.insert(record.key)
+            guard pending.pending(record.key) == nil else { continue }
+            if let base = state.base(for: record.key),
+               Self.comparable(record).digest == Self.comparable(base).digest {
+                continue
+            }
+            consider(record)
+        }
+        for key in state.allBaseKeys() where !present.contains(key) && pending.pending(key) == nil {
+            guard let base = state.base(for: key), accounts.canEdit(base) else { continue }
+            pending.enqueueDelete(key)
         }
     }
 
@@ -294,6 +322,16 @@ public final class SyncCoordinator {
             local.apply(revision)
             pending.enqueueSave(revision.key)
         }
+    }
+
+    /// A record as reconcile compares it: dates to the millisecond, and an
+    /// empty "this device's person" field the same as `local-me`.
+    static func comparable(_ record: SyncRecord) -> SyncRecord {
+        var copy = record.normalized
+        for field in record.type.spec.accountFields where field.nilMeansLocal && copy.fields[field.name] == nil {
+            copy.fields[field.name] = .string(SyncAccountMap.localAlias)
+        }
+        return copy
     }
 
     /// Restores the Moments ID from ``SyncSchema/idField`` and drops it.

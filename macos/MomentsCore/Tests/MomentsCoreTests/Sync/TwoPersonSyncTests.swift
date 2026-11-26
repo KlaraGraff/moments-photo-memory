@@ -301,6 +301,47 @@ final class TwoPersonSyncTests: XCTestCase {
         XCTAssertEqual(owner.text(of: "mem1"), "his words")
     }
 
+    func testReconcileFindsEditsAndDeletesWithoutPerEditHooks() {
+        var renamed: SyncRecord = owner.local.record(for: SyncRecordKey(.trip, "t1"))!
+        renamed["overrideName"] = .string("Renamed quietly")
+        owner.local.write(renamed)
+        owner.local.remove(SyncRecordKey(.mediaTag, "m1:tg1"))
+        owner.local.write(SyncFixtures.memory("new-mem", media: "m1", text: "new words"))
+        owner.local.write(SyncFixtures.memory("private-new", media: "m2", text: "stays here"))
+
+        owner.coordinator.reconcile(localRecords: Array(owner.local.records.values))
+        let queued: [String] = owner.coordinator.pending.nextBatch().map { "\($0.operation.rawValue) \($0.key)" }
+        XCTAssertEqual(queued, ["save Trip/t1", "save Memory/new-mem", "delete MediaTag/m1:tg1"])
+
+        owner.driver.send()
+        owner.coordinator.reconcile(localRecords: Array(owner.local.records.values))
+        XCTAssertTrue(owner.coordinator.pending.isEmpty, "a second pass finds nothing new")
+    }
+
+    func testReconcileIgnoresSubMillisecondDateNoise() {
+        var trip: SyncRecord = owner.local.record(for: SyncRecordKey(.trip, "t1"))!
+        trip["updatedAt"] = .date(SyncFixtures.t0.addingTimeInterval(0.0001))
+        owner.local.write(trip)
+        owner.coordinator.reconcile(localRecords: Array(owner.local.records.values))
+        XCTAssertTrue(owner.coordinator.pending.isEmpty)
+    }
+
+    func testReconcileTreatsAnEmptyOwnerAsThisDevicesPerson() {
+        var item: SyncRecord = owner.local.record(for: SyncRecordKey(.mediaItem, "m1"))!
+        XCTAssertNil(item["ownerAccountID"])
+        owner.driver.fetch()
+        item["ownerAccountID"] = nil
+        owner.local.write(item)
+        owner.coordinator.reconcile(localRecords: Array(owner.local.records.values))
+        XCTAssertNil(owner.coordinator.pending.pending(item.key))
+    }
+
+    func testReconcileNeverDeletesThePartnersRecords() {
+        partner.local.remove(SyncRecordKey(.memory, "mem1"))
+        partner.coordinator.reconcile(localRecords: Array(partner.local.records.values))
+        XCTAssertTrue(partner.coordinator.pending.isEmpty)
+    }
+
     func testBothPeopleRenamingTheSameTripConverge() {
         var his: SyncRecord = owner.local.record(for: SyncRecordKey(.trip, "t1"))!
         his["overrideName"] = .string("His name")

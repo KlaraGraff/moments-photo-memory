@@ -146,6 +146,16 @@ public final class SyncStateStore {
         }
     }
 
+    /// Every record this account has a server version of. Loads all shards
+    /// once; later calls use the cached shards.
+    public func allBaseKeys() -> [SyncRecordKey] {
+        var keys: [SyncRecordKey] = []
+        for index in 0..<Self.shardCount {
+            keys.append(contentsOf: shard(index).values.map(\.record.key))
+        }
+        return keys
+    }
+
     /// The local key behind a record name made from an unsafe ID. A deletion
     /// from the server only names the record, so the mapping is remembered.
     public func key(type: SyncRecordType, hashedRecordName: String) -> SyncRecordKey? {

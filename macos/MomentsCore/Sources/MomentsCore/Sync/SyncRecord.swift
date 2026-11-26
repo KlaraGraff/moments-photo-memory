@@ -149,3 +149,50 @@ public enum SyncDigest {
         return String(repeating: "0", count: max(0, 16 - raw.count)) + raw
     }
 }
+
+// MARK: Typed access, used by the app's model coders
+
+extension SyncRecord {
+    public mutating func set(_ name: String, _ value: String?) { fields[name] = value.map { .string($0) } }
+    public mutating func set(_ name: String, _ value: Int?) { fields[name] = value.map { .int($0) } }
+    public mutating func set(_ name: String, _ value: Double?) { fields[name] = value.map { .double($0) } }
+    public mutating func set(_ name: String, _ value: Bool?) { fields[name] = value.map { .bool($0) } }
+    public mutating func set(_ name: String, _ value: Date?) { fields[name] = value.map { .date(SyncRecord.normalizedDate($0)) } }
+    public mutating func set(_ name: String, _ value: Data?) { fields[name] = value.map { .data($0) } }
+    public mutating func setReference(_ name: String, _ id: String?) { fields[name] = id.map { .reference($0) } }
+
+    public func string(_ name: String) -> String? { fields[name]?.stringValue }
+    public func int(_ name: String) -> Int? { fields[name]?.intValue }
+    public func date(_ name: String) -> Date? { fields[name]?.dateValue }
+
+    public func double(_ name: String) -> Double? {
+        if case .double(let value)? = fields[name] { return value }
+        return nil
+    }
+
+    public func bool(_ name: String) -> Bool? {
+        if case .bool(let value)? = fields[name] { return value }
+        return nil
+    }
+
+    public func data(_ name: String) -> Data? {
+        if case .data(let value)? = fields[name] { return value }
+        return nil
+    }
+
+    /// CloudKit keeps dates to the millisecond. Every date is rounded the
+    /// same way before it is compared or sent, so a record that comes back
+    /// from the server is not mistaken for a local change.
+    public static func normalizedDate(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: (date.timeIntervalSince1970 * 1000).rounded() / 1000)
+    }
+
+    /// The record with every date rounded to the millisecond.
+    public var normalized: SyncRecord {
+        var copy = self
+        for (name, value) in fields {
+            if case .date(let date) = value { copy.fields[name] = .date(SyncRecord.normalizedDate(date)) }
+        }
+        return copy
+    }
+}

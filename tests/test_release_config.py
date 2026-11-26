@@ -36,6 +36,10 @@ class ReleaseConfigurationTests(unittest.TestCase):
         self.assertEqual(values["MOMENTS_ICLOUD_CONTAINER"], CONTAINER)
         self.assertEqual(values["PRODUCT_BUNDLE_IDENTIFIER"], "$(MOMENTS_BUNDLE_ID)")
         self.assertEqual(values["CODE_SIGNING_ALLOWED"], "NO")
+        # CI signs UI-test builds ad hoc; an ad-hoc app claiming iCloud is
+        # killed at launch, so committed builds carry no entitlements.
+        self.assertEqual(values["MOMENTS_ENTITLEMENTS"], "")
+        self.assertEqual(values["MOMENTS_HARDENED_RUNTIME"], "NO")
 
     def test_local_example_does_not_override_the_identity(self):
         values = xcconfig("Local.xcconfig.example")
@@ -66,8 +70,8 @@ class ReleaseConfigurationTests(unittest.TestCase):
         app_block = project.split("  Moments:\n", 1)[1].split("\n  MomentsTests:\n", 1)[0]
         for setting in (
             "INFOPLIST_FILE: Config/Moments-Info.plist",
-            "CODE_SIGN_ENTITLEMENTS: Config/Moments.entitlements",
-            'ENABLE_HARDENED_RUNTIME: "YES"',
+            "CODE_SIGN_ENTITLEMENTS: $(MOMENTS_ENTITLEMENTS)",
+            "ENABLE_HARDENED_RUNTIME: $(MOMENTS_HARDENED_RUNTIME)",
             "ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon",
         ):
             self.assertIn(setting, app_block)
@@ -105,6 +109,8 @@ class ReleaseScriptTests(unittest.TestCase):
             self.assertIn("xcodebuild archive", plan)
             self.assertIn("ARCHS=arm64", plan)
             self.assertIn("MOMENTS_APS_ENVIRONMENT=development", plan)
+            self.assertIn("MOMENTS_ENTITLEMENTS=Config/Moments.entitlements", plan)
+            self.assertIn("MOMENTS_HARDENED_RUNTIME=YES", plan)
             self.assertIn("DEVELOPMENT_TEAM=ABCDE12345", plan)
             self.assertIn("xcodebuild -exportArchive", plan)
             self.assertIn("check_app_archs.sh", plan)

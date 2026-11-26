@@ -16,6 +16,13 @@ MOMENTS_ICLOUD_CONTAINER = iCloud.com.momentsphotomemory.Moments
 // passes production when it exports for the production CloudKit environment.
 MOMENTS_APS_ENVIRONMENT = development
 PRODUCT_BUNDLE_IDENTIFIER = $(MOMENTS_BUNDLE_ID)
+// iCloud and push entitlements need a provisioning profile from a real team;
+// an ad-hoc signed app that claims them is killed at launch. So they are off
+// by default, scripts/release_mac.sh turns them on, and Local.xcconfig can.
+// The hardened runtime (required for notarization) goes with them, because
+// the Photos entitlement in the same file is what lets it reach Photos.
+MOMENTS_ENTITLEMENTS =
+MOMENTS_HARDENED_RUNTIME = NO
 CODE_SIGNING_ALLOWED = NO
 CODE_SIGNING_REQUIRED = NO
 CODE_SIGN_IDENTITY =

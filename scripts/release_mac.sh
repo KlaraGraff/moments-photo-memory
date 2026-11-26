@@ -158,6 +158,7 @@ run xcodebuild archive \
   CODE_SIGN_STYLE=Automatic "CODE_SIGN_IDENTITY=Apple Development" \
   "DEVELOPMENT_TEAM=$team" \
   "CURRENT_PROJECT_VERSION=$build" \
+  MOMENTS_ENTITLEMENTS=Config/Moments.entitlements MOMENTS_HARDENED_RUNTIME=YES \
   "MOMENTS_APS_ENVIRONMENT=$aps_env"
 
 cat > "$export_options" <<PLIST

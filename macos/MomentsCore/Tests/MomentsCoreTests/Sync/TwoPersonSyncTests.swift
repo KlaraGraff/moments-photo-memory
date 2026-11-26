@@ -205,7 +205,7 @@ final class TwoPersonSyncTests: XCTestCase {
         laptop.driver.send()
         partner.driver.fetch()
 
-        XCTAssertNil(server.record(type: .memory, recordName: "mem1"))
+        XCTAssertNil(server.record(type: .memory, recordName: SyncRecordName.make(type: .memory, id: "mem1")))
         XCTAssertNil(laptop.text(of: "mem1"))
         XCTAssertNil(partner.text(of: "mem1"))
     }
@@ -227,6 +227,72 @@ final class TwoPersonSyncTests: XCTestCase {
         XCTAssertEqual(owner.text(of: "mem1"), "his words")
         XCTAssertEqual(owner.text(of: "her-mem"), "her words", "her words stay on his Mac")
         XCTAssertNotNil(owner.local.record(for: SyncRecordKey(.trip, "t1")))
+    }
+
+    func testUnsharingATripSticksAcrossARelaunch() throws {
+        // He unshares the trip and the app quits before the next sync.
+        try owner.coordinator.flush()
+        let relaunched = SyncCoordinator(
+            accounts: owner.coordinator.accounts,
+            state: try SyncStateStore(folder: owner.folder),
+            database: .privateDatabase,
+            local: owner.local
+        )
+        relaunched.updateSharedKeys(sharedKeys(of: owner, trips: []))
+        InMemorySyncDriver(coordinator: relaunched, server: server).send()
+        partner.driver.fetch()
+
+        XCTAssertEqual(server.recordCount, 0)
+        XCTAssertTrue(partner.local.records.isEmpty)
+        XCTAssertNotNil(owner.local.record(for: SyncRecordKey(.trip, "t1")))
+    }
+
+    func testARelaunchWithTheSameScopeSendsNothing() throws {
+        try owner.coordinator.flush()
+        let relaunched = SyncCoordinator(
+            accounts: owner.coordinator.accounts,
+            state: try SyncStateStore(folder: owner.folder),
+            database: .privateDatabase,
+            local: owner.local
+        )
+        relaunched.updateSharedKeys(sharedKeys(of: owner, trips: ["t1"]))
+        XCTAssertTrue(relaunched.pending.isEmpty)
+    }
+
+    func testAFavoriteAndAPersonalPlaceNameOnOnePhotoAreTwoRecords() {
+        let override = SyncRecord(type: .placeOverride, id: "m1:" + SyncAccountMap.localAlias, fields: [
+            "mediaID": .reference("m1"), "accountID": .string(SyncAccountMap.localAlias),
+            "nameOverride": .string("Our bench"), "updatedAt": .date(SyncFixtures.at(9))
+        ])
+        partner.edit(SyncFixtures.favorite(media: "m1", on: true, at: 8))
+        partner.edit(override)
+        partner.driver.send()
+        owner.driver.fetch()
+
+        let wireID = "m1:" + SyncFixtures.partnerAccount
+        XCTAssertEqual(owner.local.record(for: SyncRecordKey(.favorite, wireID))?["isFavorite"], .bool(true))
+        XCTAssertEqual(owner.local.record(for: SyncRecordKey(.placeOverride, wireID))?["nameOverride"], .string("Our bench"))
+        XCTAssertTrue(partner.coordinator.pending.isEmpty)
+    }
+
+    func testAFetchDoesNotOverwriteAnEditNotYetQueued() {
+        var hers: SyncRecord = partner.local.record(for: SyncRecordKey(.trip, "t1"))!
+        hers["overrideName"] = .string("Her name")
+        hers["updatedAt"] = .date(SyncFixtures.at(20))
+        partner.edit(hers)
+        partner.driver.send()
+
+        // He renames it too; the change is saved but reconcile hasn't run.
+        var his: SyncRecord = owner.local.record(for: SyncRecordKey(.trip, "t1"))!
+        his["overrideName"] = .string("His later name")
+        his["updatedAt"] = .date(SyncFixtures.at(30))
+        owner.local.apply(his)
+        owner.driver.fetch()
+
+        XCTAssertEqual(owner.local.record(for: SyncRecordKey(.trip, "t1"))?["overrideName"], .string("His later name"))
+        owner.driver.send()
+        partner.driver.fetch()
+        XCTAssertEqual(partner.local.record(for: SyncRecordKey(.trip, "t1"))?["overrideName"], .string("His later name"))
     }
 
     func testSharingASecondTripLaterUploadsIt() {

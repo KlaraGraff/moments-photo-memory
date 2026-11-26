@@ -30,6 +30,10 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
     /// What each record name was sent as, to match results to the queue.
     private var inFlight: [String: SyncPendingChange] = [:]
     private var onStatus: (@Sendable (Status) -> Void)?
+    private var onShareEnded: (@Sendable () -> Void)?
+    /// The engine's own context, so the app can tell its saves (fetched
+    /// changes) from the person's edits.
+    nonisolated let contextID: ObjectIdentifier
     private(set) var status = Status()
 
     init(
@@ -54,6 +58,7 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
         self.scope = scope
         self.zoneID = zoneID
         self.context = context
+        self.contextID = ObjectIdentifier(context)
         self.state = state
         self.store = store
         self.coordinator = SyncCoordinator(accounts: accounts, state: state, database: scope, local: store)
@@ -62,6 +67,12 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
 
     func setStatusHandler(_ handler: @escaping @Sendable (Status) -> Void) {
         onStatus = handler
+    }
+
+    /// Called when the shared zone is gone: the owner stopped sharing, or
+    /// it was stopped on another of the owner's Macs.
+    func setShareEndedHandler(_ handler: @escaping @Sendable () -> Void) {
+        onShareEnded = handler
     }
 
     /// Creates the engine from its saved state. The owner also makes sure the
@@ -84,10 +95,10 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
     /// engine to send. Called a moment after local saves settle.
     func reconcile(sharingScope: SharingScope?) async {
         do {
-            var records = try store.allRecords()
+            var records = try allRecords()
             var keys = sharedKeys(sharingScope: sharingScope, records: records)
             if await producePreviews(for: keys) > 0 {
-                records = try store.allRecords()
+                records = try allRecords()
                 keys = sharedKeys(sharingScope: sharingScope, records: records)
             }
             coordinator.updateSharedKeys(keys)
@@ -97,6 +108,17 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
             report(error: error)
         }
         mirrorPendingIntoEngine()
+    }
+
+    /// The library plus every preview in the zone whose file is here: a
+    /// preview can arrive before its photo, and must not look deleted.
+    private func allRecords() throws -> [SyncRecord] {
+        var records = try store.allRecords()
+        let listed = Set(records.lazy.filter { $0.type == .previewAsset }.map(\.key))
+        for key in state.allBaseKeys() where key.type == .previewAsset && !listed.contains(key) {
+            if let preview = store.previewRecord(id: key.id) { records.append(preview) }
+        }
+        return records
     }
 
     private func sharedKeys(sharingScope: SharingScope?, records: [SyncRecord]) -> Set<SyncRecordKey> {
@@ -178,7 +200,7 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
                 let ckRecord = modification.record
                 guard ckRecord.recordID.zoneID == zoneID,
                       let record = CloudKitRecordCoding.syncRecord(from: ckRecord, storeAsset: { url in
-                          storePreview(at: url, recordName: ckRecord.recordID.recordName)
+                          storePreview(at: url, of: ckRecord)
                       }) else { continue }
                 coordinator.fetched(
                     record,
@@ -213,18 +235,22 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
                 case .serverRecordChanged:
                     if let serverRecord = failure.error.serverRecord,
                        let record = CloudKitRecordCoding.syncRecord(from: serverRecord, storeAsset: { url in
-                           storePreview(at: url, recordName: name)
+                           storePreview(at: url, of: serverRecord)
                        }) {
                         coordinator.saveConflicted(change, serverRecord: record, recordName: name, systemFields: CloudKitRecordCoding.encodeSystemFields(serverRecord))
+                    } else {
+                        coordinator.sendRefused(change)
                     }
                 case .unknownItem:
                     coordinator.saveFailedBecauseRecordIsGone(change)
                 case .zoneNotFound:
                     if scope == .privateDatabase {
                         syncEngine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
+                    } else {
+                        shareEnded()
                     }
                 default:
-                    report(error: failure.error)
+                    handleFailure(failure.error, change: change)
                 }
             }
             for recordID in sent.deletedRecordIDs {
@@ -238,19 +264,17 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
                     // Already gone: that is what was wanted.
                     coordinator.didDelete(change)
                 } else {
-                    report(error: error)
+                    handleFailure(error, change: change)
                 }
             }
             saveLocal()
             mirrorPendingIntoEngine()
 
         case .fetchedDatabaseChanges(let changes):
-            for deletion in changes.deletions where deletion.zoneID == zoneID {
-                // The owner stopped sharing, or the partner left: forget the
-                // zone's sync state. Records the other person sent stay
-                // until the person removes them.
-                _ = deletion
-                try? state.reset()
+            if changes.deletions.contains(where: { $0.zoneID == zoneID }) {
+                // The owner stopped sharing (or, on the owner's Mac, it was
+                // stopped on his other Mac).
+                shareEnded()
             }
 
         case .didFetchChanges, .didSendChanges:
@@ -319,10 +343,33 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
         if !additions.isEmpty { engine.state.add(pendingRecordZoneChanges: additions) }
     }
 
-    /// Copies a fetched preview next to the others and describes it.
-    private func storePreview(at url: URL, recordName: String) -> SyncAssetRef? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        let mediaID = SwiftDataSyncStore.mediaID(previewID: recordName) ?? recordName
+    /// Errors CloudKit may clear by itself are left to `CKSyncEngine`,
+    /// which retries them; anything else is dropped from the queue (the next
+    /// edit queues the record again), so a refused change is not resent
+    /// forever.
+    private func handleFailure(_ error: CKError, change: SyncPendingChange) {
+        switch error.code {
+        case .networkFailure, .networkUnavailable, .serviceUnavailable, .requestRateLimited,
+             .zoneBusy, .notAuthenticated, .accountTemporarilyUnavailable, .operationCancelled:
+            break
+        default:
+            coordinator.sendRefused(change)
+        }
+        report(error: error)
+    }
+
+    private func shareEnded() {
+        engine = nil
+        inFlight.removeAll()
+        try? state.reset()
+        onShareEnded?()
+    }
+
+    /// Copies a fetched preview next to the others and describes it. The
+    /// photo it belongs to is in the record's `mediaID` field.
+    private func storePreview(at url: URL, of record: CKRecord) -> SyncAssetRef? {
+        guard let data = try? Data(contentsOf: url),
+              let mediaID = record["mediaID"] as? String else { return nil }
         _ = try? previews.write(data, mediaID: mediaID)
         return SyncAssetRef(sha256: SharedPreview.sha256(data), byteCount: data.count, pixelWidth: 0, pixelHeight: 0)
     }

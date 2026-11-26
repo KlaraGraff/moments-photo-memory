@@ -27,7 +27,6 @@ enum SyncModelCoding {
         record.set("width", item.width)
         record.set("height", item.height)
         record.set("isScreenshot", item.isScreenshot)
-        record.set("title", item.title)
         record.setReference("tripID", item.trip?.id ?? item.tripID)
         record.setReference("placeID", item.place?.id)
         record.set("originalContentHash", item.originalContentHash)

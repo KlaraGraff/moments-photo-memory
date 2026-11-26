@@ -139,7 +139,6 @@ struct SyncModelApplier {
         item.width = r.int("width") ?? 0
         item.height = r.int("height") ?? 0
         item.isScreenshot = r.bool("isScreenshot") ?? false
-        item.title = r.string("title") ?? ""
         item.originalContentHash = r.string("originalContentHash") ?? item.originalContentHash
         item.perceptualHash = r.string("perceptualHash")
         item.localTimeZoneOffsetMinutes = r.int("localTimeZoneOffsetMinutes")

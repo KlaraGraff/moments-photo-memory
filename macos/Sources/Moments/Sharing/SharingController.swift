@@ -3,6 +3,7 @@ import CloudKit
 import Foundation
 import MomentsCore
 import Observation
+import Security
 import SwiftData
 
 /// Everything the Sharing page and the trip "Share" actions need: whether
@@ -10,8 +11,9 @@ import SwiftData
 /// and how syncing is going. It owns the one `CloudSyncEngine` this Mac runs.
 ///
 /// Nothing touches iCloud until the app is built with a CloudKit container
-/// (Info.plist key `MomentsCloudKitContainerIdentifier`, set by the signed
-/// build) and the person is signed in to iCloud. Unit tests and the unsigned
+/// (Info.plist key `MomentsCloudKitContainerIdentifier` and the matching
+/// iCloud entitlement, which only the signed build carries) and the person is
+/// signed in to iCloud. Unit tests and the unsigned
 /// CI build therefore never reach CloudKit.
 @MainActor
 @Observable
@@ -50,6 +52,8 @@ final class SharingController {
     private var settingsStore: SyncStateStore?
     private var settings = SyncStateStore.Settings()
     private var engine: CloudSyncEngine?
+    /// The engine's own context: its saves are fetched changes, not edits.
+    private var engineContextID: ObjectIdentifier?
     private var saveObserver: NSObjectProtocol?
     private var pendingReconcile: Task<Void, Never>?
 
@@ -57,9 +61,24 @@ final class SharingController {
     static var configuredContainerIdentifier: String? {
         guard let value = Bundle.main.object(forInfoDictionaryKey: containerInfoKey) as? String else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("iCloud."), !trimmed.contains("$(") else { return nil }
+        guard trimmed.hasPrefix("iCloud."), !trimmed.contains("$("),
+              // Every build has the Info.plist key; only a signed one may
+              // use the container (CloudKit stops an app that isn't
+              // entitled). Tests never reach iCloud.
+              isEntitled(toContainer: trimmed),
+              NSClassFromString("XCTestCase") == nil else { return nil }
         return trimmed
     }
+
+    private static func isEntitled(toContainer identifier: String) -> Bool {
+        guard let task = SecTaskCreateFromSelf(nil),
+              let value = SecTaskCopyValueForEntitlement(task, "com.apple.developer.icloud-container-identifiers" as CFString, nil),
+              let containers = value as? [String] else { return false }
+        return containers.contains(identifier)
+    }
+
+    /// An invitation opened before the main window set the controller up.
+    static var pendingInvitation: CKShare.Metadata?
 
     static var stateRoot: URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
@@ -76,7 +95,13 @@ final class SharingController {
             return
         }
         cloud = CKContainer(identifier: identifier)
-        Task { await refresh() }
+        Task {
+            await refresh()
+            if let invitation = Self.pendingInvitation {
+                Self.pendingInvitation = nil
+                await accept(invitation)
+            }
+        }
     }
 
     /// Reads the iCloud account and the share, and starts syncing if there is
@@ -115,32 +140,68 @@ final class SharingController {
 
     // MARK: Owner
 
-    /// Creates the shared zone and the share for the chosen trips, and returns
-    /// the share for the system sharing panel (Messages, Mail, copy link).
+    /// The share for the system sharing panel (Messages, Mail, copy link),
+    /// or nil with `lastError` set.
+    func shareForInvitation(tripIDs: Set<String>) async -> CKShare? {
+        do {
+            lastError = nil
+            return try await makeShare(tripIDs: tripIDs)
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Creates the shared zone and the share. The first time, `tripIDs`
+    /// becomes the shared set; sending the invitation again reuses the share
+    /// and leaves the shared trips as they are.
     func makeShare(tripIDs: Set<String>) async throws -> CKShare {
         guard let cloud, let accounts, let store = settingsStore else { throw SharingError.notReady }
         let database = cloud.privateCloudDatabase
         let zone = CKRecordZone(zoneName: Self.zoneName)
-        _ = try await database.modifyRecordZones(saving: [zone], deleting: [])
+        let zones = try await database.modifyRecordZones(saving: [zone], deleting: [])
+        if case .failure(let error)? = zones.saveResults[zone.zoneID] { throw error }
         let share: CKShare
-        if let existing = try? await database.record(for: CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zone.zoneID)) as? CKShare {
+        if let existing = try await existingShare(in: database, zoneID: zone.zoneID) {
             share = existing
         } else {
             let created = CKShare(recordZoneID: zone.zoneID)
             created[CKShare.SystemFieldKey.title] = String(localized: "Our memories") as NSString
             created.publicPermission = .none
-            _ = try await database.modifyRecords(saving: [created], deleting: [])
-            share = created
+            let saved = try await database.modifyRecords(saving: [created], deleting: [])
+            switch saved.saveResults[created.recordID] {
+            case .success(let record)?:
+                guard let savedShare = record as? CKShare else { throw SharingError.notReady }
+                share = savedShare
+            case .failure(let error)?:
+                throw error
+            case nil:
+                throw SharingError.notReady
+            }
         }
-        settings.role = .owner
-        settings.scope = .selectedTrips(tripIDs)
-        settings.zoneOwnerName = accounts.currentAccountID
-        try store.saveSettings(settings)
-        sharedTripIDs = tripIDs
-        phase = .invited
+        if settings.role != .owner {
+            settings.role = .owner
+            settings.scope = .selectedTrips(tripIDs)
+            settings.zoneOwnerName = accounts.currentAccountID
+            try store.saveSettings(settings)
+            if case .selectedTrips(let ids) = settings.scope { sharedTripIDs = ids }
+        }
+        if phase != .shared(isOwner: true) { phase = .invited }
         try startEngine(folder: store.folder)
         scheduleSync(after: 0)
         return share
+    }
+
+    /// The zone-wide share, or nil when there is none yet. Other errors
+    /// (offline, signed out) are thrown, so a failed read never makes a
+    /// second share.
+    private func existingShare(in database: CKDatabase, zoneID: CKRecordZone.ID) async throws -> CKShare? {
+        let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zoneID)
+        do {
+            return try await database.record(for: shareID) as? CKShare
+        } catch let error as CKError where error.code == .unknownItem {
+            return nil
+        }
     }
 
     /// The item the system sharing panel needs to invite the partner.
@@ -189,6 +250,7 @@ final class SharingController {
         do {
             await engine?.forget()
             engine = nil
+            engineContextID = nil
             _ = try await cloud.privateCloudDatabase.deleteRecordZone(withID: zoneID)
             try store.reset()
             settings = SyncStateStore.Settings()
@@ -202,9 +264,9 @@ final class SharingController {
     private func refreshOwnerShare() async throws {
         guard let cloud else { return }
         let zoneID = CKRecordZone.ID(zoneName: Self.zoneName, ownerName: CKCurrentUserDefaultName)
-        let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zoneID)
-        guard let share = try? await cloud.privateCloudDatabase.record(for: shareID) as? CKShare else {
-            phase = .notShared
+        guard let share = try await existingShare(in: cloud.privateCloudDatabase, zoneID: zoneID) else {
+            // The zone and share are gone (stopped on his other Mac).
+            await shareEnded()
             return
         }
         let partner = share.participants.first { $0.role != .owner && $0.acceptanceStatus == .accepted }
@@ -253,6 +315,7 @@ final class SharingController {
         do {
             await engine?.forget()
             engine = nil
+            engineContextID = nil
             let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zoneID)
             _ = try await cloud.sharedCloudDatabase.deleteRecord(withID: shareID)
             try removeReceivedRecords()
@@ -264,6 +327,27 @@ final class SharingController {
         }
     }
 
+    /// The share ended elsewhere: the owner stopped sharing, or (on the
+    /// owner's Mac) it was stopped on his other Mac. Sync state is
+    /// forgotten; on the partner's Mac the shared trips leave too, as the
+    /// owner's confirmation said.
+    func shareEnded() async {
+        guard let store = settingsStore else { return }
+        let wasParticipant = settings.role == .participant
+        await engine?.forget()
+        engine = nil
+        engineContextID = nil
+        do {
+            if wasParticipant { try removeReceivedRecords() }
+            try store.reset()
+        } catch {
+            lastError = error.localizedDescription
+        }
+        settings = SyncStateStore.Settings()
+        sharedTripIDs = []
+        phase = .notShared
+    }
+
     /// Photos that came from the other Mac, and the trips that held only them.
     private func removeReceivedRecords() throws {
         guard let modelContainer else { return }
@@ -271,8 +355,10 @@ final class SharingController {
         let shared = SyncModelCoding.sharedSourceRaw
         let items = try context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.sourceRaw == shared }))
         var tripIDs = Set<String>()
+        let previews = SharedPreviewFiles.standard
         for item in items {
             if let trip = item.trip?.id { tripIDs.insert(trip) }
+            previews?.remove(mediaID: item.id)
             context.delete(item)
         }
         for trip in try context.fetch(FetchDescriptor<Trip>()) where tripIDs.contains(trip.id) && trip.items.allSatisfy({ $0.sourceRaw == shared }) {
@@ -297,11 +383,16 @@ final class SharingController {
             previews: SharedPreviewFiles(folder: SharedPreviewFiles.defaultFolder ?? folder.appending(path: "previews"))
         )
         self.engine = engine
+        engineContextID = engine.contextID
         let handler: @Sendable (CloudSyncEngine.Status) -> Void = { [weak self] status in
             Task { @MainActor in self?.sync = status }
         }
+        let ended: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor in await self?.shareEnded() }
+        }
         Task {
             await engine.setStatusHandler(handler)
+            await engine.setShareEndedHandler(ended)
             await engine.start()
         }
         observeSaves()
@@ -312,8 +403,12 @@ final class SharingController {
     /// so a burst of edits is sent together.
     private func observeSaves() {
         guard saveObserver == nil else { return }
-        saveObserver = NotificationCenter.default.addObserver(forName: ModelContext.didSave, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.scheduleSync(after: 2) }
+        saveObserver = NotificationCenter.default.addObserver(forName: ModelContext.didSave, object: nil, queue: .main) { [weak self] note in
+            let source = note.object.map { ObjectIdentifier($0 as AnyObject) }
+            Task { @MainActor [weak self] in
+                guard let self, source == nil || source != self.engineContextID else { return }
+                self.scheduleSync(after: 2)
+            }
         }
     }
 

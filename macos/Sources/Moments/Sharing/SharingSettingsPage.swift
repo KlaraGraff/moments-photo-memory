@@ -339,7 +339,9 @@ private struct SharingLibrarySections: View {
             isInviting = true
             Task {
                 defer { isInviting = false }
-                guard let share = try? await sharing.makeShare(tripIDs: chosen.isEmpty ? sharing.sharedTripIDs : chosen),
+                // Sending the invitation again keeps the trips as they are now.
+                let trips = sharing.phase == .notShared ? chosen : sharing.sharedTripIDs
+                guard let share = await sharing.shareForInvitation(tripIDs: trips),
                       let item = sharing.invitationItem(for: share),
                       let view = anchor.view else { return }
                 NSSharingServicePicker(items: [item]).show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
@@ -412,7 +414,7 @@ private struct SharingLibrarySections: View {
     private func tripDateLine(_ trip: Trip) -> String {
         let photos = String(localized: "\(trip.items.count) photos")
         guard let start = trip.startDate else { return photos }
-        let range = trip.endDate.map { (start...max(start, $0)).formatted(.interval.month(.abbreviated).day()) }
+        let range = trip.endDate.map { (start..<max(start, $0)).formatted(.interval.month(.abbreviated).day()) }
             ?? start.formatted(.dateTime.month(.abbreviated).day())
         return range + " · " + photos
     }

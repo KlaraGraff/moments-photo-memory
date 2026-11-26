@@ -109,9 +109,30 @@ final class SwiftDataSyncStore: SyncLocalStore {
     /// A preview is described by its file: checksum and size. Pixel sizes and
     /// time are fixed so the description does not change between reads.
     func previewRecord(id: String) -> SyncRecord? {
-        guard let mediaID = Self.mediaID(previewID: id), let data = previews?.data(mediaID: mediaID) else { return nil }
-        let asset = SyncAssetRef(sha256: SharedPreview.sha256(data), byteCount: data.count, pixelWidth: 0, pixelHeight: 0)
+        guard let mediaID = Self.mediaID(previewID: id), let asset = previewAsset(mediaID: mediaID) else { return nil }
         return SharedPreview.record(mediaID: mediaID, asset: asset, updatedAt: Date(timeIntervalSince1970: 0))
+    }
+
+    /// Checksums by file, reused while the file's size and date are the
+    /// same, so a sync does not read every preview again.
+    private var assetCache: [String: (size: Int, modified: Date, asset: SyncAssetRef)] = [:]
+
+    private func previewAsset(mediaID: String) -> SyncAssetRef? {
+        guard let previews else { return nil }
+        let url = previews.url(mediaID: mediaID)
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = (attributes[.size] as? NSNumber)?.intValue,
+              let modified = attributes[.modificationDate] as? Date else {
+            assetCache[mediaID] = nil
+            return nil
+        }
+        if let cached = assetCache[mediaID], cached.size == size, cached.modified == modified {
+            return cached.asset
+        }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let asset = SyncAssetRef(sha256: SharedPreview.sha256(data), byteCount: data.count, pixelWidth: 0, pixelHeight: 0)
+        assetCache[mediaID] = (size, modified, asset)
+        return asset
     }
 
     static func mediaID(previewID: String) -> String? {

@@ -71,7 +71,12 @@ struct SharedTripBadge: View {
 class MomentsAppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, userDidAcceptCloudKitShareWith metadata: CKShare.Metadata) {
         Task { @MainActor in
-            await SharingController.current?.accept(metadata)
+            if let sharing = SharingController.current {
+                await sharing.accept(metadata)
+            } else {
+                // Opened from the link before the main window was ready.
+                SharingController.pendingInvitation = metadata
+            }
         }
     }
 }

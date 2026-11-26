@@ -102,6 +102,7 @@ final class SyncModelCodingTests: XCTestCase {
                 XCTAssertNotEqual(value, .data(Data([0xDE, 0xAD])), "bookmarks never leave the Mac")
                 XCTAssertNotEqual(value, .string("local-photos-id"))
                 XCTAssertNotEqual(value, .string("IMG_0001.HEIC"))
+                XCTAssertNotEqual(value, .string("Synthetic photo"), "titles are file names and stay on this Mac")
             }
         }
     }

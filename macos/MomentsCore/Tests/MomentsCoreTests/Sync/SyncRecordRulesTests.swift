@@ -60,7 +60,11 @@ final class SyncSchemaTests: XCTestCase {
     }
 
     func testRecordNamesAreSafeOrHashed() {
-        XCTAssertEqual(SyncRecordName.make(type: .trip, id: "5D0C6F0E-1A2B-4C3D-8E9F-001122334455"), "5D0C6F0E-1A2B-4C3D-8E9F-001122334455")
+        XCTAssertEqual(SyncRecordName.make(type: .trip, id: "5D0C6F0E-1A2B-4C3D-8E9F-001122334455"), "Trip-5D0C6F0E-1A2B-4C3D-8E9F-001122334455")
+        XCTAssertEqual(SyncRecordName.id(fromPlain: "Trip-t1", type: .trip), "t1")
+        XCTAssertNil(SyncRecordName.id(fromPlain: "Trip-t1", type: .tag))
+        // Two types with the same ID never share a CloudKit record name.
+        XCTAssertNotEqual(SyncRecordName.make(type: .favorite, id: "m1:_u1"), SyncRecordName.make(type: .placeOverride, id: "m1:_u1"))
         let unsafe: String = "trip-Zürich 2023/11"
         let name: String = SyncRecordName.make(type: .trip, id: unsafe)
         XCTAssertTrue(name.hasPrefix("h-Trip-"))
@@ -206,12 +210,12 @@ final class SyncMergerTests: XCTestCase {
         var deletedThere = base
         deletedThere["deletedAt"] = .date(SyncFixtures.at(30))
         deletedThere["updatedAt"] = .date(SyncFixtures.at(30))
-        var retitledHere = base
-        retitledHere["title"] = .string("Synthetic title")
-        retitledHere["updatedAt"] = .date(SyncFixtures.at(10))
-        let result: SyncMergeResult = SyncMerger.merge(base: base, local: retitledHere, server: deletedThere)
+        var correctedHere = base
+        correctedHere["timeZoneIdentifier"] = .string("Etc/GMT-2")
+        correctedHere["updatedAt"] = .date(SyncFixtures.at(10))
+        let result: SyncMergeResult = SyncMerger.merge(base: base, local: correctedHere, server: deletedThere)
         XCTAssertEqual(result.merged["deletedAt"], .date(SyncFixtures.at(30)))
-        XCTAssertEqual(result.merged["title"], .string("Synthetic title"))
+        XCTAssertEqual(result.merged["timeZoneIdentifier"], .string("Etc/GMT-2"))
     }
 }
 

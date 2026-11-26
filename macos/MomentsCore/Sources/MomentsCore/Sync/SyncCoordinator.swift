@@ -160,7 +160,7 @@ public final class SyncCoordinator {
     /// example a note about a place name the owner's Mac does not know) are
     /// left alone.
     public func updateSharedKeys(_ keys: Set<SyncRecordKey>) {
-        let oldScope = scopeKeys ?? []
+        let oldScope = scopeKeys ?? initialScope()
         let unplaced = (sharedKeys ?? []).subtracting(oldScope).filter { state.baseEntry(for: $0) != nil }
         scopeKeys = keys
         sharedKeys = keys.union(unplaced)
@@ -181,6 +181,18 @@ public final class SyncCoordinator {
             }
         }
         deferred.removeAll()
+    }
+
+    /// The first scope after launch. The owner's previous scope is what the
+    /// zone holds of their own records, so a trip unshared just before the
+    /// app quit still leaves the zone. The other person's records are left
+    /// out: removing one the resolver never placed would delete their words.
+    private func initialScope() -> Set<SyncRecordKey> {
+        guard database == .privateDatabase else { return [] }
+        return Set(state.allBaseKeys().filter { key in
+            guard let base = state.base(for: key) else { return false }
+            return accounts.canEdit(base)
+        })
     }
 
     // MARK: Sending
@@ -239,6 +251,11 @@ public final class SyncCoordinator {
     @discardableResult
     public func saveConflicted(_ change: SyncPendingChange, serverRecord: SyncRecord, recordName: String, systemFields: Data?) -> SyncMergeResult? {
         let server = accounts.fromWire(decodeID(serverRecord))
+        guard server.key == change.key else {
+            // Another record holds this name; never merge two different
+            // records. The change stays queued for a later attempt.
+            return nil
+        }
         let base = state.base(for: change.key)
         state.setBase(server, recordName: recordName, systemFields: systemFields)
         guard let mine = local.record(for: change.key) else {
@@ -255,6 +272,13 @@ public final class SyncCoordinator {
             pending.markSent(change)
         }
         return result
+    }
+
+    /// The server refused the change for good (not a network or rate-limit
+    /// problem). Drop it from the queue so it is not retried forever; the
+    /// next edit of the record queues it again.
+    public func sendRefused(_ change: SyncPendingChange) {
+        pending.markSent(change)
     }
 
     /// The record is gone on the server. Never re-create it: an offline
@@ -276,6 +300,14 @@ public final class SyncCoordinator {
         let base = state.base(for: key)
         state.setBase(server, recordName: recordName, systemFields: systemFields)
         sharedKeys?.insert(key)
+        if !pending.hasPendingSave(key), pending.pending(key) == nil, let base,
+           let mine = local.record(for: key), accounts.canEdit(mine),
+           Self.comparable(mine).digest != Self.comparable(base).digest {
+            // Edited here but not queued yet (reconcile runs a moment after
+            // saves settle): treat it as a pending edit, so the fetch merges
+            // instead of overwriting it.
+            pending.enqueueSave(key)
+        }
         if pending.hasPendingSave(key), let mine = local.record(for: key) {
             let result = SyncMerger.merge(base: base, local: mine, server: server)
             local.apply(result.merged)
@@ -288,6 +320,11 @@ public final class SyncCoordinator {
             return nil
         }
         local.apply(server)
+        if local.record(for: key) == nil {
+            // The local store could not take it. Forget the server version,
+            // or the next reconcile would read the gap as a local delete.
+            state.removeBase(key)
+        }
         return nil
     }
 
@@ -305,8 +342,8 @@ public final class SyncCoordinator {
 
     /// The local key for a record name from the server.
     public func localKey(type: SyncRecordType, recordName: String) -> SyncRecordKey? {
-        if SyncRecordName.isSafe(recordName) {
-            return SyncRecordKey(type, accounts.localID(recordName, type: type))
+        if let id = SyncRecordName.id(fromPlain: recordName, type: type) {
+            return SyncRecordKey(type, accounts.localID(id, type: type))
         }
         return state.key(type: type, hashedRecordName: recordName)
     }

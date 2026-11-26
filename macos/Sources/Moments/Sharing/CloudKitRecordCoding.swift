@@ -26,7 +26,7 @@ enum CloudKitRecordCoding {
         return ckRecord
     }
 
-    private static func value(_ value: SyncValue?, assetFile: (SyncAssetRef) -> URL?) -> (any CKRecordValueProtocol)? {
+    private static func value(_ value: SyncValue?, assetFile: (SyncAssetRef) -> URL?) -> CKRecordValue? {
         guard let value else { return nil }
         switch value {
         case .string(let string), .reference(let string): return string as NSString

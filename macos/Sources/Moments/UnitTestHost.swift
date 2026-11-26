@@ -14,12 +14,14 @@ final class UnitTestHostDelegate: MomentsAppDelegate {
             && !process.arguments.contains("-MomentsUITestStoreDirectory")
     }()
 
-    func applicationWillFinishLaunching(_ notification: Notification) {
+    // @objc: the delegate conformance is declared on the superclass, so
+    // without it AppKit would not see these methods.
+    @objc func applicationWillFinishLaunching(_ notification: Notification) {
         guard Self.isUnitTestHost else { return }
         NSApp.setActivationPolicy(.prohibited)
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    @objc func applicationDidFinishLaunching(_ notification: Notification) {
         if ProcessInfo.processInfo.arguments.contains("-MomentsUITesting") {
             // Each UI test starts from the demo store; trip locks and covers
             // from the test before must not carry over (they live in a test suite).

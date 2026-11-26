@@ -23,7 +23,7 @@ final class TimelineSnapshotMemoriesTests: XCTestCase {
         let records = try context.fetch(FetchDescriptor<Memory>(sortBy: [SortDescriptor(\.updatedAt)]))
         XCTAssertFalse(records.isEmpty)
 
-        let grouped = TimelineScreen.memoriesByPhotoID(records)
+        let grouped = TripsScreen.memoriesByPhotoID(records)
         let expectedTotal: Int = photos.reduce(0) { (count: Int, item: MediaItem) -> Int in
             count + item.memories.count
         }
@@ -55,7 +55,7 @@ final class TimelineSnapshotMemoriesTests: XCTestCase {
         try context.save()
 
         let records = try context.fetch(FetchDescriptor<Memory>())
-        let grouped = TimelineScreen.memoriesByPhotoID(records)
+        let grouped = TripsScreen.memoriesByPhotoID(records)
 
         let noMemories: [Memory] = grouped[lonely.persistentModelID] ?? []
         let empty = TimelineItemSnapshot(item: lonely, placeHint: nil, memories: noMemories)

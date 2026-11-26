@@ -200,17 +200,14 @@ struct MomentsApp: App {
                     .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
                         showingPhotosImport = true
                     }
-                    // Builds the Timeline and then Chapters ahead of time
-                    // while the app is quiet, so their first visit reuses a
-                    // finished build. The trigger lives in its own tiny view,
+                    // Builds Chapters ahead of time while the app is quiet,
+                    // so the first visit reuses a finished build. The trigger lives in its own tiny view,
                     // so values that move on every import save re-evaluate
                     // only that view, not this whole root view.
                     .background {
                         PagePrebuildDriver(
                             container: modelContainer,
                             store: libraryStore,
-                            selection: selection,
-                            stacks: photoStacks,
                             importController: importController,
                             photosImportController: photosImportController,
                             stackAnalyzer: stackAnalyzer

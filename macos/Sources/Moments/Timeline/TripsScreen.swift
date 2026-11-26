@@ -403,7 +403,7 @@ struct TripsScreen: View {
         calendar: Calendar
     ) -> ChaptersBuildInputs {
         let placeIndex = NearestPlaceIndex(places: store.places)
-        let memoriesByPhotoID = TimelineScreen.memoriesByPhotoID(memories)
+        let memoriesByPhotoID = Self.memoriesByPhotoID(memories)
         let sourceItems: [TimelineItemSnapshot] = store.items.map { (item: MediaItem) -> TimelineItemSnapshot in
             TimelineItemSnapshot(item: item, placeHint: nil, memories: memoriesByPhotoID[item.persistentModelID] ?? [])
         }
@@ -446,7 +446,7 @@ struct TripsScreen: View {
         // snapshots below belong to.
         let revisionAtStart: Int = store.photoPlaceRevision
         let placeIndex = NearestPlaceIndex(places: store.places)
-        let memoriesByPhotoID = TimelineScreen.memoriesByPhotoID(memories)
+        let memoriesByPhotoID = Self.memoriesByPhotoID(memories)
         let items: [MediaItem] = store.items
         var sourceItems: [TimelineItemSnapshot] = []
         sourceItems.reserveCapacity(items.count)
@@ -585,6 +585,18 @@ struct TripsScreen: View {
                 endDate: info.endDate
             )
         }
+    }
+
+    /// The page's grouped memories: every `Memory` once, under the photo its
+    /// own inverse relationship names. A memory without a photo is left out,
+    /// exactly as `item.memories` never showed it.
+    static func memoriesByPhotoID(_ records: [Memory]) -> [PersistentIdentifier: [Memory]] {
+        var grouped: [PersistentIdentifier: [Memory]] = [:]
+        for memory in records {
+            guard let photo = memory.mediaItem else { continue }
+            grouped[photo.persistentModelID, default: []].append(memory)
+        }
+        return grouped
     }
 
     /// The place name a snapshot's photo would have been labelled with, from
@@ -1653,18 +1665,14 @@ private struct TripAroundSection: View {
     }
 }
 
-/// One day: its heading, its memory line, then its places and travel.
-/// Shared by a trip ("Day 2") and the Timeline (the date as the heading,
-/// with the trips that day belongs to).
+/// One day of a chapter: its heading ("Day 2", or the date), its memory
+/// line, then its places and travel.
 struct TripDaySection: View {
     let day: TimelineDay
     let number: Int?
     let memories: [CollectionMemory]
     let itemByID: [String: MediaItem]
     let onOpen: (String) -> Void
-    /// Trips this day belongs to, shown as links on the Timeline.
-    var trips: [TripLink] = []
-    var onOpenTrip: (String) -> Void = { _ in }
     /// Inside a trip: take the day out, or start a new trip from it.
     var dayActions: TripDayActions? = nil
     @Environment(\.locale) private var locale
@@ -1694,16 +1702,6 @@ struct TripDaySection: View {
                     Text("Date to add")
                         .font(.system(size: 21, weight: .medium, design: .serif))
                         .foregroundStyle(Paper.muted)
-                }
-                ForEach(trips) { trip in
-                    Button { onOpenTrip(trip.id) } label: {
-                        Label(trip.name, systemImage: "airplane.departure")
-                            .font(.caption)
-                            .foregroundStyle(Paper.accent)
-                    }
-                    .buttonStyle(.plain)
-                    .help(String(localized: "Open this trip"))
-                    .accessibilityIdentifier("timeline.trip.\(trip.id)")
                 }
                 Spacer()
                 Text(String(localized: "\(photoCount) photos"))

@@ -274,18 +274,6 @@ struct TripRouteStop: Equatable, Sendable {
     let longitude: Double
 }
 
-/// What the Timeline's detached build hands back to the main actor: plain
-/// values only, so nothing built off the main thread is a SwiftData model.
-struct TimelineBuildResult: Sendable {
-    let months: [TimelineMonth]
-    /// Every photo in day and place order, the order the viewer pages through.
-    let viewerOrder: [String]
-    #if DEBUG
-    /// Seconds per build step, filled in off the main thread and tallied by the page.
-    var timings: [String: Double] = [:]
-    #endif
-}
-
 /// What the Chapters build hands back: the shelf's document and one built
 /// entry per chapter.
 struct ChaptersBuildResult: Sendable {

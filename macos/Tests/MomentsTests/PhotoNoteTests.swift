@@ -315,8 +315,9 @@ final class PhotoNoteTests: XCTestCase {
 
     // MARK: Service
 
+    /// Waits on the service, not the note: a note no model could take is deleted.
     private func waitUntilDone(_ note: PhotoNote, _ service: PhotoNoteService) async {
-        for _ in 0..<1000 where service.isRunning(note) { await Task.yield() }
+        for _ in 0..<1000 where !service.runningNoteIDs.isEmpty { await Task.yield() }
     }
 
     func testOrganizeSendsOnlyTheWordsAndWritesPlaceFixesButNoMemory() async throws {
@@ -380,7 +381,7 @@ final class PhotoNoteTests: XCTestCase {
         XCTAssertEqual(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in "k" }).count, 1)
     }
 
-    func testUnavailableOrKeylessModelsLeaveNoteWaitingAndFallbackIsTried() async throws {
+    func testUnavailableOrKeylessModelsDropTheNoteAndFallbackIsTried() async throws {
         let context = try makeContext()
         let item = insertItem("a", in: context)
 
@@ -389,14 +390,13 @@ final class PhotoNoteTests: XCTestCase {
         })
         let waiting = try XCTUnwrap(offline.organize("Lovely", for: item, context: context))
         await waitUntilDone(waiting, offline)
-        XCTAssertEqual(waiting.status, .waiting)
-        XCTAssertEqual(waiting.failureReason, "Apple Intelligence is off")
-
         // No key is a model that isn't set up, not a failure.
         let keyless = PhotoNoteService(makeOrganizers: { [ClaudeOrganizer(apiKey: nil, model: "claude-opus-5-5")] })
         let noKey = try XCTUnwrap(keyless.organize("Lovely", for: item, context: context))
         await waitUntilDone(noKey, keyless)
-        XCTAssertEqual(noKey.status, .waiting)
+        // Nothing would retry them and the words are the memory already:
+        // no dead copies are kept.
+        XCTAssertTrue(try context.fetch(FetchDescriptor<PhotoNote>()).isEmpty)
 
         let fallback = PhotoNoteService(makeOrganizers: {
             [
@@ -453,15 +453,26 @@ final class PhotoNoteTests: XCTestCase {
         let partnerItem = insertItem("partner", in: context)
         context.insert(PhotoNote(mediaID: "waiting", text: "No key yet", createdAt: base, status: .waiting))
         context.insert(PhotoNote(mediaID: "failed", text: "Offline words", createdAt: base, status: .failed))
-        context.insert(PhotoNote(mediaID: "done", text: "Organized words", createdAt: base, status: .done))
+        let organized = PhotoNote(mediaID: "done", text: "Organized words", createdAt: base, status: .done)
+        var wroteMemory = PhotoNoteUndoRecord()
+        wroteMemory.memories = [PhotoNoteUndoRecord.TextChange(recordID: "m", previousText: nil, created: true, writtenText: "Organized")]
+        organized.undoRecord = wroteMemory
+        context.insert(organized)
+        let placeOnlyItem = insertItem("placeOnly", in: context)
+        let placeOnly = PhotoNote(mediaID: "placeOnly", text: "This is Old Lane", createdAt: base, status: .done)
+        var fixedPlace = PhotoNoteUndoRecord()
+        fixedPlace.overrides = [PhotoNoteUndoRecord.OverrideChange(mediaID: "placeOnly", previousName: nil, created: true, writtenName: "Old Lane")]
+        placeOnly.undoRecord = fixedPlace
+        context.insert(placeOnly)
         context.insert(PhotoNote(mediaID: "partner", authorAccountID: "partner-account", text: "Theirs", createdAt: base, status: .waiting))
         try context.save()
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "PhotoNoteTests.\(UUID().uuidString)"))
 
-        XCTAssertEqual(PhotoNoteService.writeEarlierWords(context: context, defaults: defaults), 2)
+        XCTAssertEqual(PhotoNoteService.writeEarlierWords(context: context, defaults: defaults), 3)
+        XCTAssertEqual(placeOnlyItem.ownMemory?.text, "This is Old Lane", "A note that only fixed the place kept its words nowhere else")
         XCTAssertEqual(waitingItem.ownMemory?.text, "No key yet")
         XCTAssertEqual(failedItem.ownMemory?.text, "Offline words")
-        XCTAssertTrue(doneItem.memories.isEmpty, "An organized note already wrote its memory")
+        XCTAssertTrue(doneItem.memories.isEmpty, "A note that wrote a memory is left alone")
         XCTAssertTrue(partnerItem.memories.isEmpty, "The partner's words are theirs to write")
 
         // Once only: a memory cleared afterwards stays cleared.

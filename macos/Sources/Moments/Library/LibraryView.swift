@@ -1646,6 +1646,9 @@ struct MemoryEditor: View {
     /// Saves now and, when words were added, hands them to the AI.
     private func finishEditing() {
         saveTask?.cancel()
+        // A draft this field never typed belongs to the other field showing
+        // the same photo (grid and viewer), which saves it itself.
+        guard wasEdited else { return }
         let text = state.draft(for: item)
         persist(text)
         guard let before = textAtFocus else { return }

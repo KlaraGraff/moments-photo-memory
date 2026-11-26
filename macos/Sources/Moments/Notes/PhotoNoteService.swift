@@ -6,9 +6,9 @@ import SwiftData
 /// photo are their memory the moment they type them (`MemoryEditor` saves
 /// them); nothing here is needed for that. When AI is turned on in
 /// Settings, the newly added words are kept as a `PhotoNote` and a model
-/// corrects the photo's place and describes it, written at once and
-/// recorded so it can be undone. With AI off, no key, no network or no
-/// model, nothing happens and nothing is shown.
+/// corrects this photo's place and describes it, written at once (the place
+/// stays editable by hand). With AI off nothing happens; with no key, no
+/// network or no model the note is dropped again and nothing is shown.
 @MainActor
 @Observable
 final class PhotoNoteService {
@@ -58,16 +58,19 @@ final class PhotoNoteService {
 
     static let earlierWordsWrittenKey = "moments.notes.earlierWordsWritten"
 
-    /// Before words became memories at once, a note the model never
-    /// organized (no key, offline, failed) or found nothing in left the
-    /// photo without a memory. Writes those words once into the author's
-    /// memory; an organized note already wrote its memory and is left alone.
+    /// Before words became memories at once, a note became a memory only if
+    /// the model wrote one from it; otherwise (no key, offline, failed,
+    /// nothing found, or only a place fix) the words lived only in the note,
+    /// whose popover is gone. Writes those words once into the author's
+    /// memory; a note that wrote a photo, day or trip memory is left alone.
     @discardableResult
     static func writeEarlierWords(context: ModelContext, defaults: UserDefaults = .standard, now: Date = .now) -> Int {
         guard !defaults.bool(forKey: earlierWordsWrittenKey) else { return 0 }
-        let unwritten: Set<PhotoNoteStatus> = [.organizing, .waiting, .failed, .nothingFound]
         guard let notes = try? context.fetch(FetchDescriptor<PhotoNote>(sortBy: [SortDescriptor(\.createdAt)])) else { return 0 }
-        let pending = notes.filter { unwritten.contains($0.status) && AuthorNames.isLocal($0.authorAccountID) }
+        let pending = notes.filter { note in
+            let record = note.undoRecord
+            return AuthorNames.isLocal(note.authorAccountID) && record.memories.isEmpty && record.collectionMemoryIDs.isEmpty
+        }
         var written = 0
         if !pending.isEmpty {
             let ids = Array(Set(pending.map(\.mediaID)))
@@ -90,36 +93,36 @@ final class PhotoNoteService {
 
     /// Expects the note to be marked running already; clears that mark when done.
     private func run(_ note: PhotoNote, item: MediaItem, context: ModelContext, organizers: [any NoteOrganizing]) async {
-        defer { runningNoteIDs.remove(note.id) }
+        // Read once: the note may be deleted below.
+        let noteID = note.id
+        defer { runningNoteIDs.remove(noteID) }
         note.status = .organizing
         note.failureReason = nil
         try? context.save()
 
         let request = NoteApplier.context(for: note, item: item)
-        var lastUnavailable: String?
         for organizer in organizers {
             do {
                 let result = try await organizer.organize(request)
-                let nearby = try NoteApplier.nearbyMediaIDs(for: item, among: context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.deletedAt == nil })))
-                let built = NoteSuggestionBuilder.suggestions(from: result, currentPlaceName: item.namedPlace, nearbyMediaIDs: nearby)
+                // Only this photo's place: with nothing to confirm and no
+                // undo on screen, a wrong guess must not rename its neighbours.
+                let built = NoteSuggestionBuilder.suggestions(from: result, currentPlaceName: item.namedPlace, nearbyMediaIDs: [])
                 let suggestions = NoteApplier.suggestionsAfterWords(built)
                 note.suggestions = suggestions
                 note.organizerLabel = organizer.label
                 note.status = suggestions.isEmpty ? .nothingFound : .ready
                 note.updatedAt = .now
-                // Written at once, nothing to confirm: the place shows
-                // "Corrected, was …" and stays editable by hand.
+                // Written at once, nothing to confirm: the place line shows
+                // what it was corrected from, and stays editable by hand.
                 if !suggestions.isEmpty {
                     try? NoteApplier.accept(Set(suggestions.map(\.id)), of: note, item: item, context: context)
                 }
                 try? context.save()
                 return
-            } catch NoteOrganizerError.unavailable(let reason) {
-                lastUnavailable = reason
+            } catch NoteOrganizerError.unavailable {
                 continue
             } catch NoteOrganizerError.missingKey {
                 // No key is a model that isn't set up, not a failure.
-                lastUnavailable = NoteOrganizerError.missingKey.localizedDescription
                 continue
             } catch {
                 note.status = .failed
@@ -129,9 +132,9 @@ final class PhotoNoteService {
                 return
             }
         }
-        note.status = .waiting
-        note.failureReason = lastUnavailable
-        note.updatedAt = .now
+        // No model could run: nothing will retry it and the words are
+        // already the memory, so the note is not kept as a dead copy.
+        context.delete(note)
         try? context.save()
     }
 }

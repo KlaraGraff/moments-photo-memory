@@ -75,9 +75,8 @@ final class MomentsUITests: XCTestCase {
         memory.typeText("Synthetic memory about this spot\r")
 
         // Return ends typing; the words stay right there as the memory, with
-        // no AI step and no mark to open (AI is off by default).
+        // no AI step in between (AI is off by default).
         XCTAssertTrue((memory.value as? String ?? "").contains("Synthetic memory about this spot"), "Return did not keep the words under the photo")
-        XCTAssertFalse(element(in: app, identifier: "library.note.badge.\(photoID)").exists, "No AI mark shows next to the place")
 
         // The viewer's column shows the same memory.
         photo.doubleClick()

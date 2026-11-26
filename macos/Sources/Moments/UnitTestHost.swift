@@ -6,7 +6,7 @@ import SwiftUI
 /// invisible: no Dock icon, no window, no focus change, so a test run never
 /// interrupts whoever is using the Mac. UI tests (-MomentsUITesting or
 /// -MomentsUITestStoreDirectory) are not affected; they need the real window.
-final class UnitTestHostDelegate: NSObject, NSApplicationDelegate {
+final class UnitTestHostDelegate: MomentsAppDelegate {
     static let isUnitTestHost: Bool = {
         let process = ProcessInfo.processInfo
         return process.environment["XCTestConfigurationFilePath"] != nil

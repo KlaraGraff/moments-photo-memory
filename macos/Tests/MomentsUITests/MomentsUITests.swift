@@ -396,6 +396,25 @@ final class MomentsUITests: XCTestCase {
         app.typeKey("w", modifierFlags: .command)
     }
 
+    /// Settings › AI Model: AI starts on, and a custom model is an address,
+    /// a model name and a key, tied to no one provider.
+    func testAISettingsStartOnAndACustomModelIsJustThreeFields() {
+        let app = launch(language: "en", extraArguments: ["-moments.settings.tab", "aiModel", "-moments.ai.engine", "cloud"])
+        app.typeKey(",", modifierFlags: .command)
+        let toggle = element(in: app, identifier: "settings.ai-enabled")
+        XCTAssertTrue(toggle.waitForExistence(timeout: launchTimeout), "Settings › AI Model has no switch")
+        let value: String = String(describing: toggle.value ?? "nil")
+        XCTAssertTrue(["1", "true"].contains(value), "AI does not start on: \(value)")
+        for identifier in ["settings.ai-engine", "settings.ai-address", "settings.ai-model", "settings.ai-key"] {
+            XCTAssertTrue(element(in: app, identifier: identifier).exists, "\(identifier) is missing")
+        }
+        let window = app.windows.containing(.any, identifier: "settings.ai-enabled").firstMatch
+        let attachment = XCTAttachment(screenshot: window.screenshot())
+        attachment.name = "settings-03-ai-custom-evidence"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     /// Settings › General offers the app language, readable in German at the
     /// small window size and in Chinese.
     func testSettingsOfferLanguage() {

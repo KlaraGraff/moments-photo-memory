@@ -6,10 +6,12 @@ import SwiftData
 /// saves, Option-Return starts a new line, Escape cancels, and clicking
 /// elsewhere saves. Your own memories change in place when clicked; your
 /// partner's are read-only. Stored as `CollectionMemory`, the same records
-/// AI-organized notes write, so both show up here and in the Library.
+/// AI writes from a photo's memory (marked AI, with an Undo), so both show
+/// up here and in the Library.
 struct TripMemoryLines: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(PhotoNoteService.self) private var notes
     @AppStorage(AuthorNames.myNameKey) private var myName = ""
     @AppStorage(AuthorNames.partnerNameKey) private var partnerName = ""
     let scope: NoteMemoryScope
@@ -98,6 +100,13 @@ struct TripMemoryLines: View {
             Text(verbatim: "— \(AuthorNames.label(isOwn: isOwn, myName: myName, partnerName: partnerName))")
                 .font(.caption)
                 .foregroundStyle(Paper.accent)
+            // Put here by AI from what a photo's memory said about the day or trip.
+            if let noteID = memory.sourceNoteID {
+                AIAddedMark {
+                    if editingID == memory.id { editingID = nil }
+                    notes.undo(noteID: noteID, context: modelContext)
+                }
+            }
             Spacer(minLength: 0)
         }
         .padding(.vertical, 2)

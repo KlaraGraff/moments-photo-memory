@@ -109,7 +109,8 @@ public enum NotePrompt {
     - placeDescription: what the place itself is like or useful tips about it, in one or two \
     neutral sentences. Otherwise empty.
     - memory: the person's own experience and feelings, in their voice and mostly their own \
-    words, lightly tidied. Otherwise empty.
+    words, lightly tidied. When part of the note is about the whole day or the whole trip, \
+    only that part. Otherwise empty.
     - memoryScope: "photo" if the memory is about this moment, "day" if about the whole day, \
     "trip" if about the whole trip.
     Use only what the note says; never add facts. Write every field in the language of the note.

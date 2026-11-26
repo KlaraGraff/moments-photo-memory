@@ -298,11 +298,19 @@ public enum NoteApplier {
     }
 
     /// What the AI's result adds once the words are already the photo's
-    /// memory: the place fixes. A memory it suggests would only repeat the
-    /// person's words (or put them a second time on the day or trip), so it
-    /// is dropped.
-    public static func suggestionsAfterWords(_ suggestions: [NoteSuggestion]) -> [NoteSuggestion] {
-        suggestions.filter { $0.kind != .memory }
+    /// memory: the place fixes, and what was said about the whole day or
+    /// trip, put under that day or trip. A memory about this photo would only
+    /// repeat the person's words, so it is dropped, as is a day or trip line
+    /// for a photo with no date or no trip.
+    public static func suggestionsAfterWords(_ suggestions: [NoteSuggestion], item: MediaItem) -> [NoteSuggestion] {
+        suggestions.filter { suggestion in
+            guard suggestion.kind == .memory else { return true }
+            switch suggestion.scope ?? .photo {
+            case .photo: return false
+            case .day: return PhotoNoteDay.key(for: item) != nil
+            case .trip: return item.tripID?.isEmpty == false
+            }
+        }
     }
 
     /// Adds to this person's own memory on the photo, or starts one. A

@@ -103,6 +103,37 @@ final class LibraryStore {
     /// place overrides, or could not say what it touched. The sidebar's group
     /// counts follow it instead of querying those five entities themselves.
     private(set) var groupSourcesRevision = 0
+    /// The photos each recent `photoFaceRevision` bump changed, newest last.
+    /// An entry with nil ids means the bump could not be described as "these
+    /// existing photos changed" (a photo added, removed, trashed or restored,
+    /// a face moved, a full fetch), and a page must rebuild in full.
+    @ObservationIgnored private var photoChangeLog: [(revision: Int, ids: Set<String>?)] = []
+    /// What the batch being applied changed, handed to the bump that follows.
+    @ObservationIgnored private var pendingPhotoChange: Set<String>?
+    /// How many bumps the log keeps, and how many photo ids at most.
+    static let photoChangeLogLength = 16
+    static let photoChangeLogMaximumIDs = 2_000
+
+    /// The string ids of the photos that changed between `photoFaceRevision`
+    /// `from` and the current one, when every bump in between only changed
+    /// photos that already existed (their dates, places, trips or other
+    /// fields), with none added, removed, trashed or restored and no face
+    /// moved. Nil when that is not known: the caller rebuilds in full. An
+    /// empty set when `from` is the current revision.
+    func changedPhotoIDs(sincePhotoFaceRevision from: Int) -> Set<String>? {
+        if from == photoFaceRevision { return [] }
+        guard from < photoFaceRevision else { return nil }
+        var result = Set<String>()
+        var expected = from &+ 1
+        for entry in photoChangeLog where entry.revision > from {
+            // A gap means an entry fell out of the log.
+            guard entry.revision == expected, let ids = entry.ids else { return nil }
+            result.formUnion(ids)
+            expected &+= 1
+        }
+        guard expected == photoFaceRevision &+ 1 else { return nil }
+        return result
+    }
     /// How many batches were applied and how many full fetches ran; for tests
     /// and the page probe. A batch applied from its own changes counts here
     /// but not in `fullFetchCount`.
@@ -502,6 +533,11 @@ final class LibraryStore {
     /// Which public list or signature a batch touched.
     private struct Touched {
         var photoLists = false
+        /// String ids of the photos whose hash changed.
+        var changedPhotoIDs: Set<String> = []
+        /// A photo was added, removed, trashed, restored or turned into a
+        /// screenshot or back: the change cannot be applied photo by photo.
+        var photoMembershipChanged = false
         var faces = false
         var places = false
         /// Every place has to be hashed again: a deleted override cannot say
@@ -526,6 +562,8 @@ final class LibraryStore {
         /// before it did. Flags are OR'd, sets are unioned.
         mutating func merge(_ other: Touched) {
             photoLists = photoLists || other.photoLists
+            changedPhotoIDs.formUnion(other.changedPhotoIDs)
+            photoMembershipChanged = photoMembershipChanged || other.photoMembershipChanged
             faces = faces || other.faces
             places = places || other.places
             allPlaces = allPlaces || other.allPlaces
@@ -679,10 +717,14 @@ final class LibraryStore {
         if touched.photoLists { rebuildPhotos() }
         if touched.faces { rebuildFaces() }
         refreshCount += 1
+        let describable: Bool = !touched.photoMembershipChanged
+            && touched.changedPhotoIDs.count <= Self.photoChangeLogMaximumIDs
+        pendingPhotoChange = describable ? touched.changedPhotoIDs : nil
         appliedRevisionRule(
             hadFavoriteRow: touched.hadFavoriteRow,
             hadOnlyPhotosAndFavorites: !touched.hadOtherEntityRow
         )
+        pendingPhotoChange = nil
     }
 
     /// What one applied batch does to `revision` and `favoriteRevision`.
@@ -720,7 +762,8 @@ final class LibraryStore {
     }
 
     private func upsertPhoto(_ id: PersistentIdentifier, model: MediaItem, touched: inout Touched) {
-        if let old = itemHash[id] { itemSum &-= old }
+        let oldHash: Int? = itemHash[id]
+        if let oldHash { itemSum &-= oldHash }
         let oldLayout: Int? = layoutHash[id]
         if let oldLayout { layoutSum &-= oldLayout }
         // `itemKeys` still holds the keys before this save, so it says whether
@@ -751,8 +794,17 @@ final class LibraryStore {
             stackLiveSum &+= stack
             stackLiveCount += 1
         }
+        if oldHash != hash { touched.changedPhotoIDs.insert(model.id) }
 
         let existed = itemByPID[id] != nil
+        if let oldKeys = itemKeys[id], existed {
+            let liveMoved: Bool = (oldKeys.deletedAt == nil) != (model.deletedAt == nil)
+            if liveMoved || oldKeys.isScreenshot != model.isScreenshot || oldKeys.id != model.id {
+                touched.photoMembershipChanged = true
+            }
+        } else {
+            touched.photoMembershipChanged = true
+        }
         itemByPID[id] = model
         let keys = PhotoKeys(item: model)
         if itemKeys[id] != keys {
@@ -775,7 +827,10 @@ final class LibraryStore {
             }
         }
         itemKeys[id] = nil
-        if itemByPID.removeValue(forKey: id) != nil { touched.photoLists = true }
+        if itemByPID.removeValue(forKey: id) != nil {
+            touched.photoLists = true
+            touched.photoMembershipChanged = true
+        }
     }
 
     private func upsertFace(_ id: PersistentIdentifier, model: FaceObservation, touched: inout Touched) {
@@ -1196,7 +1251,14 @@ final class LibraryStore {
             let photosMoved: Bool = next.itemSum != previous?.itemSum || next.itemCount != previous?.itemCount
             let facesMoved: Bool = next.faceSum != previous?.faceSum || next.faceCount != previous?.faceCount
             let placesMoved: Bool = next.placeSum != previous?.placeSum || next.placeCount != previous?.placeCount
-            if previous == nil || photosMoved || facesMoved { photoFaceRevision &+= 1 }
+            if previous == nil || photosMoved || facesMoved {
+                photoFaceRevision &+= 1
+                let ids: Set<String>? = (previous == nil || facesMoved) ? nil : pendingPhotoChange
+                photoChangeLog.append((revision: photoFaceRevision, ids: ids))
+                if photoChangeLog.count > Self.photoChangeLogLength {
+                    photoChangeLog.removeFirst(photoChangeLog.count - Self.photoChangeLogLength)
+                }
+            }
             if previous == nil || placesMoved { placeRevision &+= 1 }
             if previous == nil || photosMoved || placesMoved { photoPlaceRevision &+= 1 }
             applied = next

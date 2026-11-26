@@ -80,10 +80,15 @@ final class SharingController {
     /// An invitation opened before the main window set the controller up.
     static var pendingInvitation: CKShare.Metadata?
 
+    /// Sync state lives next to the library it describes, so two builds
+    /// with different libraries (a side-by-side test build and the release
+    /// build) never share one CKSyncEngine state.
     static var stateRoot: URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appending(path: "Moments", directoryHint: .isDirectory)
-            .appending(path: "Sync", directoryHint: .isDirectory)
+        stateRoot(storeFolder: MomentsPersistence.defaultStoreFolder())
+    }
+
+    static func stateRoot(storeFolder: URL) -> URL {
+        storeFolder.appending(path: "Sync", directoryHint: .isDirectory)
     }
 
     func configure(container: ModelContainer) {

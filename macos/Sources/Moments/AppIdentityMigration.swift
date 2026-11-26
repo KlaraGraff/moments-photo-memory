@@ -95,6 +95,9 @@ enum AppIdentityMigration {
     ///   otherwise uses `Moments`. The choice is remembered (unless
     ///   `record` is false) so that a library made later in the other
     ///   folder never takes over.
+    /// - A recorded name is honoured as long as it is a plain folder name,
+    ///   so a side-by-side test build can be pointed at its own empty
+    ///   library with `defaults write <id> MomentsAppIdentity.storeFolderName`.
     static func storeFolderName(
         bundleIdentifier: String?,
         defaults: UserDefaults,
@@ -108,7 +111,7 @@ enum AppIdentityMigration {
             return storeFolderName
         }
         if let recorded = defaults.string(forKey: storeFolderKey),
-           recorded == storeFolderName || recorded == previewStoreFolderName {
+           isPlainFolderName(recorded) {
             return recorded
         }
         let chosen = storeExists(previewStoreFolderName) ? previewStoreFolderName : storeFolderName
@@ -116,5 +119,14 @@ enum AppIdentityMigration {
             defaults.set(chosen, forKey: storeFolderKey)
         }
         return chosen
+    }
+
+    /// One path component under Application Support: not empty, no slash,
+    /// not `.` or `..`, and no leading dot (which would hide the folder).
+    static func isPlainFolderName(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed == name else { return false }
+        guard !name.contains("/"), !name.contains(":"), !name.hasPrefix(".") else { return false }
+        return true
     }
 }

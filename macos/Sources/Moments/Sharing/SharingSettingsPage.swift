@@ -367,7 +367,7 @@ private struct SharingLibrarySections: View {
     }
 
     private var partnerName: String {
-        let saved = UserDefaults.standard.string(forKey: "moments.people.partnerName")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let saved = UserDefaults.standard.string(forKey: AuthorNames.partnerNameKey)?.trimmingCharacters(in: .whitespacesAndNewlines)
         return saved?.isEmpty == false ? saved! : String(localized: "Your partner")
     }
 

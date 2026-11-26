@@ -70,9 +70,9 @@ final class MomentsImportUITests: XCTestCase {
         capture(app, named: "import-11-relaunched")
 
         let memory = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.note."))
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.memory."))
             .firstMatch
-        XCTAssertTrue(memory.waitForExistence(timeout: timeout), "An imported photo's note line was not visible after relaunch")
+        XCTAssertTrue(memory.waitForExistence(timeout: timeout), "An imported photo's memory line was not visible after relaunch")
 
         exerciseVideoPlayback(in: app)
     }

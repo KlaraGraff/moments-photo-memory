@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Settings is one page: sharing with your partner, and backups. Everything
+/// Settings is one page: sharing with your partner, what the two of you
+/// are called, and backups. Everything
 /// else the app decides on its own (the language follows the Mac, photos are
 /// organized after every import), so there is nothing else to set.
 struct SettingsView: View {
@@ -10,6 +11,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             SharingSettingsSections(hasStore: hasStore)
+            AuthorNamesSection()
             if hasStore { BackupSettingsSection() }
         }
         .formStyle(.grouped)
@@ -27,12 +29,31 @@ enum SettingsLayout {
     static let height: CGFloat = 470
 }
 
-/// Kept for links written before Settings became one page; picking a tab
-/// does nothing now.
-enum SettingsTab: String {
-    case general
-    case imports
-    case aiModel
+/// What the two of you are called next to what you write.
+struct AuthorNamesSection: View {
+    @AppStorage(AuthorNames.myNameKey) private var myName = ""
+    @AppStorage(AuthorNames.partnerNameKey) private var partnerName = ""
 
-    static func select(_ tab: SettingsTab) {}
+    var body: some View {
+        Section {
+            LabeledContent(String(localized: "Your name")) {
+                TextField(String(localized: "Me"), text: $myName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 220)
+                    .accessibilityIdentifier("settings.my-name")
+            }
+            LabeledContent(String(localized: "Your partner's name")) {
+                TextField(String(localized: "Partner"), text: $partnerName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 220)
+                    .accessibilityIdentifier("settings.partner-name")
+            }
+        } header: {
+            Text(String(localized: "Names"))
+        } footer: {
+            Text(String(localized: "Shown next to what each of you writes. Kept on this Mac."))
+                .font(.caption)
+                .foregroundStyle(Paper.muted)
+        }
+    }
 }

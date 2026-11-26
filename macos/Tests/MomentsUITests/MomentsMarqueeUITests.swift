@@ -109,16 +109,20 @@ final class MomentsMarqueeUITests: XCTestCase {
         probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeNoHover")
     }
 
-    func testProbeNoMemoryLines() {
-        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeNoMemoryLines")
+    func testProbeNoEditableTitle() {
+        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeNoEditableTitle")
     }
 
-    func testProbeNoScrollPosition() {
-        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeNoScrollPosition")
+    func testProbeNoChapterLink() {
+        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeNoChapterLink")
     }
 
-    func testProbeNoStrip() {
-        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeNoStrip")
+    func testProbeTitleNoHelp() {
+        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeTitleNoHelp")
+    }
+
+    func testProbeTitleNoTaps() {
+        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeTitleNoTaps")
     }
 
     func testProbePlainHeadings() {

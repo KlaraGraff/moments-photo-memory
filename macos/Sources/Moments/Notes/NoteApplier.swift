@@ -286,13 +286,29 @@ public enum NoteApplier {
         return PhotoNoteUndoRecord.TextChange(recordID: placeNote.id, previousText: nil, created: true, writtenText: text)
     }
 
+    /// The words typed under a photo, written straight into this person's
+    /// own memory on it (added on a new line, or a new memory). This is not
+    /// part of a note's undo record: Undo takes back what the AI did, never
+    /// the person's own words, which they edit or clear in the memory itself.
+    @discardableResult
+    public static func writeOwnWords(_ text: String, on item: MediaItem, context: ModelContext, now: Date = .now) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return writePhotoMemory(trimmed, on: item, context: context, now: now).recordID
+    }
+
+    /// What the AI's result adds once the words are already the photo's
+    /// memory: the place fixes. A memory it suggests would only repeat the
+    /// person's words (or put them a second time on the day or trip), so it
+    /// is dropped.
+    public static func suggestionsAfterWords(_ suggestions: [NoteSuggestion]) -> [NoteSuggestion] {
+        suggestions.filter { $0.kind != .memory }
+    }
+
     /// Adds to this person's own memory on the photo, or starts one. A
     /// partner's memory is never edited.
     private static func writePhotoMemory(_ text: String, on item: MediaItem, context: ModelContext, now: Date) -> PhotoNoteUndoRecord.TextChange {
-        let mine = item.memories
-            .filter { $0.authorAccountID == MomentsAccount.localID || ($0.authorAccountID == nil && $0.author == .me) }
-            .max { $0.updatedAt < $1.updatedAt }
-        if let mine, !mine.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if let mine = item.ownMemory, !mine.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let previous = mine.text
             context.insert(MemoryRevision(
                 text: mine.text,

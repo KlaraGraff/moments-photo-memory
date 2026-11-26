@@ -338,21 +338,20 @@ enum LibraryFilterEngine {
         case .all:
             break
         case .hasMemory:
-            guard item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return false }
+            guard item.hasWrittenMemory else { return false }
         case .noMemory:
-            guard item.latestMemory?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return false }
+            guard !item.hasWrittenMemory else { return false }
         }
         return true
     }
 
-    /// Every word must appear somewhere: place, trip, memory or a tag.
+    /// Every word must appear somewhere: place, trip, either person's memory or a tag.
     static func matchesSearch(_ item: MediaItem, _ text: String) -> Bool {
         let haystack = [
             item.effectivePlaceName,
             item.displayPlaceName,
             item.trip?.effectiveName,
-            item.latestMemory?.text,
-        ].compactMap { $0 } + item.tags.map(\.displayName)
+        ].compactMap { $0 } + item.memories.map(\.text) + item.tags.map(\.displayName)
         let words = text.split(whereSeparator: \.isWhitespace)
         return words.allSatisfy { word in
             haystack.contains { $0.localizedStandardContains(word) }
@@ -663,14 +662,13 @@ final class LibraryViewState {
     /// The people of the library for the row of faces and the small faces on
     /// section titles; worked out once per change to faces or names.
     var peopleEntries: [PeopleStripEntry] = []
+    /// Your own memory on a photo while it is typed, by media ID, so
+    /// switching views never loses the words before they are saved.
     var memoryDrafts: [String: String] = [:]
-    /// Unsaved words on a photo's note line, by media ID.
-    var noteDrafts: [String: String] = [:]
     /// Scroll ID of the section at the top of the Library, restored on return.
     var topSectionScrollID: String?
+    /// The photo whose memory is being typed in.
     var focusedMemoryItemID: String?
-    /// The photo whose note line is being typed in.
-    var focusedNoteItemID: String?
     /// The card a reveal request is waiting for; lazy grids build cards only
     /// near the viewport, so the final scroll happens when this card appears.
     var pendingRevealItemID: String?
@@ -696,7 +694,7 @@ final class LibraryViewState {
     let marquee = LibraryMarquee()
 
     func draft(for item: MediaItem) -> String {
-        memoryDrafts[item.id] ?? item.latestMemory?.text ?? ""
+        memoryDrafts[item.id] ?? item.ownMemory?.text ?? ""
     }
 
     func setDraft(_ text: String, for item: MediaItem) {
@@ -705,14 +703,6 @@ final class LibraryViewState {
 
     func clearDraft(for item: MediaItem) {
         memoryDrafts.removeValue(forKey: item.id)
-    }
-}
-
-extension MediaItem {
-    var latestMemory: Memory? {
-        memories.max { lhs, rhs in
-            lhs.updatedAt < rhs.updatedAt
-        }
     }
 }
 

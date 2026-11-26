@@ -47,12 +47,14 @@ private struct LibraryGridInteraction: ViewModifier {
             .focusable()
             .focusEffectDisabled()
             .focused($isFocused)
+            // Keys typed into a memory under a photo bubble up to here;
+            // they belong to the text, not to the grid.
             .onMoveCommand { direction in
-                guard selection.viewerRequest == nil else { return }
+                guard selection.viewerRequest == nil, !Self.isEditingText else { return }
                 move(direction)
             }
             .onExitCommand {
-                guard selection.viewerRequest == nil else { return }
+                guard selection.viewerRequest == nil, !Self.isEditingText else { return }
                 selection.clear()
             }
             .onKeyPress(.space) { openFocused() }
@@ -120,7 +122,7 @@ private struct LibraryGridInteraction: ViewModifier {
     }
 
     private func openFocused() -> KeyPress.Result {
-        guard selection.viewerRequest == nil, let focused = selection.focusedItemID,
+        guard selection.viewerRequest == nil, !Self.isEditingText, let focused = selection.focusedItemID,
               state.orderedItemIDs.contains(focused) else { return .ignored }
         selection.openViewer(focused, in: state.viewerItemIDs)
         return .handled

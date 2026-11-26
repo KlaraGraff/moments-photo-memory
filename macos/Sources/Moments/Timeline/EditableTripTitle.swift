@@ -44,12 +44,14 @@ struct EditableTripTitle: View {
                 .font(font)
                 .foregroundStyle(Paper.ink)
                 .contentShape(Rectangle())
-                .onTapGesture(count: 2) {
-                    draft = title
-                    isEditing = true
+                .probeUnless("-MomentsProbeTitleNoTaps") { $0
+                    .onTapGesture(count: 2) {
+                        draft = title
+                        isEditing = true
+                    }
+                    .onTapGesture(count: 1) { onClick?() }
                 }
-                .onTapGesture(count: 1) { onClick?() }
-                .help(String(localized: "Double-click to rename"))
+                .probeUnless("-MomentsProbeTitleNoHelp") { $0.help(String(localized: "Double-click to rename")) }
                 .accessibilityIdentifier("trip.title.\(tripID)")
                 .accessibilityAction(named: Text(String(localized: "Rename"))) {
                     draft = title

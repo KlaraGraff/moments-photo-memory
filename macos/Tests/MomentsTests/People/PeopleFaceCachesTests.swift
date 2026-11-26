@@ -50,6 +50,8 @@ final class PeopleFaceCachesTests: XCTestCase {
             var clusterID: String? = nil
             if index % 4 == 0 {
                 personID = "synthetic-person-\(index % personCount)"
+                // Some named faces still carry their old cluster: the person wins.
+                if index % 8 == 0 { clusterID = "synthetic-cluster-\(index % clusterCount)" }
             } else if index % 11 == 0 {
                 // Neither person nor cluster: the page draws no card for these.
                 clusterID = nil
@@ -239,6 +241,7 @@ final class PeopleFaceCachesTests: XCTestCase {
 
     func testMakeMatchesReferenceForEveryCache() throws {
         let library: Library = try makeLibrary()
+        defer { withExtendedLifetime(library.container) {} }
         let caches = PeopleFaceCaches.make(
             observations: library.observations,
             deletedIDs: library.deletedMediaIDs,
@@ -246,7 +249,6 @@ final class PeopleFaceCachesTests: XCTestCase {
             keyFaceID: { (personID: String) -> String? in library.keyFaceIDs[personID] }
         )
         let expected: ReferenceCaches = reference(library)
-        withExtendedLifetime(library.container) {}
 
         // The values the test itself built, so the comparison has something to bite on.
         XCTAssertEqual(library.observations.count, library.faceCount)
@@ -265,17 +267,23 @@ final class PeopleFaceCachesTests: XCTestCase {
         XCTAssertFalse(clusterIDs(caches).contains(Self.smallClusterID))
         XCTAssertTrue(looseIDs.contains("synthetic-face-298"))
         XCTAssertTrue(looseIDs.contains("synthetic-face-299"))
+        // synthetic-face-8 has both a person and a cluster: it is only the person's.
+        let personFaceIDs: [String] = faceIDs(caches)["synthetic-person-3"] ?? []
+        XCTAssertTrue(personFaceIDs.contains("synthetic-face-8"))
+        let clusterFaceIDSet: Set<String> = Set(clusterFaceIDs(caches).values.flatMap { (ids: [String]) -> [String] in ids })
+        XCTAssertFalse(clusterFaceIDSet.contains("synthetic-face-8"))
+        XCTAssertFalse(looseIDs.contains("synthetic-face-8"))
     }
 
     func testFacesInDeletedPhotosAreLeftOut() throws {
         let library: Library = try makeLibrary()
+        defer { withExtendedLifetime(library.container) {} }
         let caches = PeopleFaceCaches.make(
             observations: library.observations,
             deletedIDs: library.deletedMediaIDs,
             minimumCardFaces: PeopleStoreActions.minimumCardFaces,
             keyFaceID: { (personID: String) -> String? in library.keyFaceIDs[personID] }
         )
-        withExtendedLifetime(library.container) {}
         let remaining: [FaceObservation] = library.observations.filter { (face: FaceObservation) -> Bool in
             !library.deletedMediaIDs.contains(face.mediaID)
         }
@@ -299,6 +307,7 @@ final class PeopleFaceCachesTests: XCTestCase {
 
     func testKeyFaceWinsTheCoverOfItsPerson() throws {
         let library: Library = try makeLibrary()
+        defer { withExtendedLifetime(library.container) {} }
         let keyFace: FaceObservation = try XCTUnwrap(library.observations.first { (face: FaceObservation) -> Bool in
             face.id == Self.keyFaceID
         })
@@ -313,7 +322,6 @@ final class PeopleFaceCachesTests: XCTestCase {
             minimumCardFaces: PeopleStoreActions.minimumCardFaces,
             keyFaceID: { (personID: String) -> String? in library.keyFaceIDs[personID] }
         )
-        withExtendedLifetime(library.container) {}
         XCTAssertEqual(keyFace.personID, Self.keyPersonID)
         let summary = try XCTUnwrap(caches.cardSummaries[Self.keyPersonID])
         XCTAssertEqual(summary.cover?.id, Self.keyFaceID)

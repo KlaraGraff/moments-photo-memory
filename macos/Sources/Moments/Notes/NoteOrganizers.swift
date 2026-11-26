@@ -67,6 +67,33 @@ public struct AISettings: Equatable, Sendable {
         AppleOnDeviceOrganizer.unavailableReason() == nil ? .onDevice : .cloud
     }
 
+    /// A key saved for Anthropic before the custom model becomes the custom
+    /// model's, with Anthropic's address, so nothing has to be typed again.
+    /// Nothing changes when the Keychain can't be read (it is tried again
+    /// next time), so a working setup is never dropped.
+    public static func moveOldAnthropicSetup(
+        defaults: UserDefaults = .standard,
+        lookup: (CloudProvider) -> AIKeychain.Lookup = AIKeychain.lookup(for:),
+        store: (String, CloudProvider) -> Bool = AIKeychain.setKey(_:for:)
+    ) {
+        let provider = defaults.string(forKey: providerKey).flatMap(CloudProvider.init(rawValue:)) ?? .claude
+        guard provider == .claude else { return }
+        switch lookup(.claude) {
+        case .failed:
+            return
+        case .notFound:
+            break
+        case .found(let key):
+            guard store(key, .openAICompatible) else { return }
+            defaults.set(anthropicAddress, forKey: baseURLKey)
+            let model = defaults.string(forKey: modelKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if model.isEmpty { defaults.set(CloudProvider.claude.defaultModel, forKey: modelKey) }
+        }
+        defaults.set(CloudProvider.openAICompatible.rawValue, forKey: providerKey)
+    }
+
+    static let anthropicAddress = "https://api.anthropic.com/v1"
+
     public static func load(from defaults: UserDefaults = .standard) -> AISettings {
         var settings = AISettings()
         settings.enabled = defaults.object(forKey: enabledKey) as? Bool ?? true
@@ -82,16 +109,29 @@ public struct AISettings: Equatable, Sendable {
 public enum AIKeychain {
     static let service = "Moments AI"
 
-    public static func key(for provider: CloudProvider) -> String? {
+    /// A key, no key, or a Keychain that could not be read (locked, or
+    /// access denied), which is not the same as no key.
+    public enum Lookup: Equatable, Sendable {
+        case found(String)
+        case notFound
+        case failed
+    }
+
+    public static func lookup(for provider: CloudProvider) -> Lookup {
         var query = baseQuery(provider)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let value = String(data: data, encoding: .utf8),
-              !value.isEmpty else { return nil }
-        return value
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return .notFound }
+        guard status == errSecSuccess, let data = result as? Data,
+              let value = String(data: data, encoding: .utf8) else { return .failed }
+        return value.isEmpty ? .notFound : .found(value)
+    }
+
+    public static func key(for provider: CloudProvider) -> String? {
+        if case .found(let value) = lookup(for: provider) { return value }
+        return nil
     }
 
     @discardableResult
@@ -137,12 +177,14 @@ public enum NoteOrganizerFactory {
 
     /// The custom model: an address, a model name and a key the person typed,
     /// spoken to as an OpenAI-compatible chat API, or as Anthropic's own API
-    /// when the address is Anthropic's. A key saved before the custom model
-    /// (Anthropic, no address) keeps working.
+    /// when the address is Anthropic's. A key saved for Anthropic before the
+    /// custom model keeps working until Settings moves it over.
     static func cloudOrganizer(settings: AISettings, apiKey: (CloudProvider) -> String?) -> any NoteOrganizing {
         let model = settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = settings.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if base.isEmpty, settings.provider == .claude {
+        if settings.provider == .claude {
+            // Set up before the custom model; an address left from trying
+            // another service then was never in use.
             return ClaudeOrganizer(apiKey: apiKey(.claude), model: model.isEmpty ? CloudProvider.claude.defaultModel : model)
         }
         let key = apiKey(.openAICompatible)

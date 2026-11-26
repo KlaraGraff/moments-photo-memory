@@ -84,9 +84,10 @@ final class PhotoNoteService {
 
     /// Reads which places notes fixed, once the store is open.
     func loadPlaceFixes(context: ModelContext) {
-        guard let notes = try? context.fetch(FetchDescriptor<PhotoNote>(sortBy: [SortDescriptor(\.createdAt)])) else { return }
+        let descriptor = FetchDescriptor<PhotoNote>(predicate: #Predicate { $0.undoData != nil }, sortBy: [SortDescriptor(\.createdAt)])
+        guard let notes = try? context.fetch(descriptor) else { return }
         var fixes: [String: PlaceFix] = [:]
-        for note in notes {
+        for note in notes where AuthorNames.isLocal(note.authorAccountID) {
             for change in note.undoRecord.overrides {
                 guard let name = change.writtenName else { continue }
                 fixes[change.mediaID] = PlaceFix(noteID: note.id, writtenName: name)
@@ -97,14 +98,27 @@ final class PhotoNoteService {
 
     /// Takes back everything one note's AI pass wrote: the place, the
     /// place's description and the day or trip lines. The person's own words
-    /// are untouched; nothing is offered again.
+    /// are untouched, including a photo memory an older note wrote (the only
+    /// copy of words from before they were saved as typed); nothing is
+    /// offered again. Only this Mac's person's notes are undone here.
     func undo(noteID: String, context: ModelContext) {
         let id = noteID
-        guard let note = try? context.fetch(FetchDescriptor<PhotoNote>(predicate: #Predicate { $0.id == id })).first else { return }
+        guard let note = try? context.fetch(FetchDescriptor<PhotoNote>(predicate: #Predicate { $0.id == id })).first,
+              AuthorNames.isLocal(note.authorAccountID) else { return }
+        var record = note.undoRecord
+        record.memories = []
+        note.undoRecord = record
         do {
             try NoteApplier.undo(note, context: context)
         } catch {
             return
+        }
+        // Whatever it could not take back (changed since) keeps no AI mark.
+        if let placeNotes = try? context.fetch(FetchDescriptor<PlaceNote>(predicate: #Predicate { $0.sourceNoteID == id })) {
+            for placeNote in placeNotes { placeNote.sourceNoteID = nil }
+        }
+        if let lines = try? context.fetch(FetchDescriptor<CollectionMemory>(predicate: #Predicate { $0.sourceNoteID == id })) {
+            for line in lines { line.sourceNoteID = nil }
         }
         var suggestions = note.suggestions
         for index in suggestions.indices where suggestions[index].decision == .pending {
@@ -114,7 +128,8 @@ final class PhotoNoteService {
         note.status = .done
         note.updatedAt = .now
         try? context.save()
-        placeFixes = placeFixes.filter { $0.value.noteID != id }
+        // An older note's fix may show again now.
+        loadPlaceFixes(context: context)
     }
 
     static let earlierWordsWrittenKey = "moments.notes.earlierWordsWritten"

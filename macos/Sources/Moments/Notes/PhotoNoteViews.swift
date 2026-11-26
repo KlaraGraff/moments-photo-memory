@@ -133,7 +133,7 @@ struct PhotoPlaceLine: View {
 
     /// The note whose AI pass wrote this description, to undo it.
     private var describedByNoteID: String? {
-        describing.compactMap(\.sourceNoteID).last
+        describing.filter { AuthorNames.isLocal($0.authorAccountID) }.compactMap(\.sourceNoteID).last
     }
 
     private var correctedFrom: String? {
@@ -242,7 +242,7 @@ struct CollectionMemoryLines: View {
                             .font(.caption)
                             .foregroundStyle(LibraryPalette.accent)
                         // Put here by AI from a photo's memory.
-                        if let noteID = memory.sourceNoteID {
+                        if let noteID = memory.sourceNoteID, AuthorNames.isLocal(memory.authorAccountID) {
                             AIAddedMark {
                                 notes.undo(noteID: noteID, context: modelContext)
                             }

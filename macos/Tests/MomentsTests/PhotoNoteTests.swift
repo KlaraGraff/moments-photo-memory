@@ -65,6 +65,14 @@ final class PhotoNoteTests: XCTestCase {
         return container.mainContext
     }
 
+    /// A throwaway defaults domain, removed after the test.
+    private func makeDefaults() throws -> UserDefaults {
+        let name = "PhotoNoteTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+        return defaults
+    }
+
     override func tearDown() {
         container = nil
         super.tearDown()
@@ -388,6 +396,90 @@ final class PhotoNoteTests: XCTestCase {
         XCTAssertEqual(note.status, .done)
     }
 
+    func testUndoNeverTouchesAMemoryAnOlderNoteWrote() throws {
+        let context = try makeContext()
+        let harbor = Place(name: "Harbor")
+        context.insert(harbor)
+        let item = insertItem("a", place: harbor, in: context)
+        try context.save()
+        // From before words were saved as typed: the note wrote the photo
+        // memory (the only copy of those words) and fixed the place.
+        let note = PhotoNote(mediaID: "a", text: "This is Old Lane, lovely", createdAt: base, status: .ready)
+        note.suggestions = [
+            NoteSuggestion(id: "c", kind: .placeCorrection, text: "Old Lane", previousPlaceName: "Harbor"),
+            NoteSuggestion(id: "m", kind: .memory, text: "Lovely", scope: .photo)
+        ]
+        context.insert(note)
+        try NoteApplier.accept(["c", "m"], of: note, item: item, context: context)
+        try context.save()
+        XCTAssertEqual(item.ownMemory?.text, "Lovely")
+
+        let service = PhotoNoteService(makeOrganizers: { [] })
+        service.loadPlaceFixes(context: context)
+        XCTAssertEqual(service.placeFix(for: item)?.noteID, note.id)
+        service.undo(noteID: note.id, context: context)
+        XCTAssertEqual(item.effectivePlaceName, "Harbor", "The AI place fix is taken back")
+        XCTAssertEqual(item.ownMemory?.text, "Lovely", "The person's memory is never taken back")
+    }
+
+    func testUndoTakesBackTheNewestDescriptionAndLeavesThePartnersNotesAlone() async throws {
+        let context = try makeContext()
+        let lane = Place(name: "Old Lane")
+        context.insert(lane)
+        let item = insertItem("a", place: lane, in: context)
+        context.insert(PlaceNote(placeName: "Old Lane", text: "Written by hand."))
+        try context.save()
+        let service = PhotoNoteService(makeOrganizers: {
+            [StubOrganizer(outcome: .success(NoteOrganizerResult(placeDescription: "Steep steps.")))]
+        })
+        let note = try XCTUnwrap(service.organize("Steep steps", for: item, context: context))
+        await waitUntilDone(note, service)
+        let placeNote = try XCTUnwrap(try context.fetch(FetchDescriptor<PlaceNote>()).first)
+        XCTAssertEqual(placeNote.text, "Written by hand.\nSteep steps.")
+        XCTAssertEqual(placeNote.sourceNoteID, note.id, "The newest AI addition is what its Undo takes back")
+
+        service.undo(noteID: note.id, context: context)
+        XCTAssertEqual(placeNote.text, "Written by hand.")
+        XCTAssertNil(placeNote.sourceNoteID, "Nothing AI-made is left to mark")
+
+        // A note from the other person is theirs; this Mac doesn't undo it.
+        let theirs = PhotoNote(mediaID: "a", authorAccountID: "partner-account", text: "Theirs", createdAt: base, status: .done)
+        context.insert(theirs)
+        try context.save()
+        let before = theirs.updatedAt
+        service.undo(noteID: theirs.id, context: context)
+        XCTAssertEqual(theirs.updatedAt, before)
+    }
+
+    func testAnOldAnthropicKeyMovesToTheCustomModelOnlyWhenTheKeychainAnswers() throws {
+        // Found: the key and Anthropic's address move over.
+        let found = try makeDefaults()
+        found.set("https://models.example.com/v1", forKey: AISettings.baseURLKey)
+        var stored: [(String, CloudProvider)] = []
+        AISettings.moveOldAnthropicSetup(defaults: found, lookup: { $0 == .claude ? .found("old-key") : .notFound }, store: { stored.append(($0, $1)); return true })
+        XCTAssertEqual(stored.map { $0.0 }, ["old-key"])
+        XCTAssertEqual(stored.map { $0.1 }, [.openAICompatible])
+        XCTAssertEqual(found.string(forKey: AISettings.baseURLKey), "https://api.anthropic.com/v1", "A stale address from trying another service is replaced")
+        XCTAssertEqual(found.string(forKey: AISettings.modelKey), CloudProvider.claude.defaultModel)
+        XCTAssertEqual(found.string(forKey: AISettings.providerKey), CloudProvider.openAICompatible.rawValue)
+
+        // No key: just the custom model from now on.
+        let none = try makeDefaults()
+        AISettings.moveOldAnthropicSetup(defaults: none, lookup: { _ in .notFound }, store: { _, _ in XCTFail("Nothing to store"); return false })
+        XCTAssertEqual(none.string(forKey: AISettings.providerKey), CloudProvider.openAICompatible.rawValue)
+        XCTAssertNil(none.string(forKey: AISettings.baseURLKey))
+
+        // Keychain locked or access denied: nothing changes, tried again later.
+        let locked = try makeDefaults()
+        AISettings.moveOldAnthropicSetup(defaults: locked, lookup: { _ in .failed }, store: { _, _ in XCTFail("Nothing to store"); return false })
+        XCTAssertNil(locked.string(forKey: AISettings.providerKey))
+
+        // Already moved: left alone.
+        let moved = try makeDefaults()
+        moved.set(CloudProvider.openAICompatible.rawValue, forKey: AISettings.providerKey)
+        AISettings.moveOldAnthropicSetup(defaults: moved, lookup: { _ in XCTFail("No lookup needed"); return .notFound }, store: { _, _ in false })
+    }
+
     func testOnlyDayAndTripLinesThatHaveAPlaceToGoAreKept() {
         let dated = MediaItem(id: "dated", captureDate: base, title: "dated", tripID: "trip-1")
         let undated = MediaItem(id: "undated", title: "undated")
@@ -410,7 +502,7 @@ final class PhotoNoteTests: XCTestCase {
 
         var settings = AISettings()
         XCTAssertTrue(settings.enabled, "AI starts turned on")
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PhotoNoteTests.\(UUID().uuidString)"))
+        let defaults = try makeDefaults()
         XCTAssertTrue(AISettings.load(from: defaults).enabled)
         defaults.set(false, forKey: AISettings.enabledKey)
         XCTAssertFalse(AISettings.load(from: defaults).enabled)
@@ -503,7 +595,7 @@ final class PhotoNoteTests: XCTestCase {
         context.insert(placeOnly)
         context.insert(PhotoNote(mediaID: "partner", authorAccountID: "partner-account", text: "Theirs", createdAt: base, status: .waiting))
         try context.save()
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PhotoNoteTests.\(UUID().uuidString)"))
+        let defaults = try makeDefaults()
 
         XCTAssertEqual(PhotoNoteService.writeEarlierWords(context: context, defaults: defaults), 3)
         XCTAssertEqual(placeOnlyItem.ownMemory?.text, "This is Old Lane", "A note that only fixed the place kept its words nowhere else")
@@ -524,7 +616,7 @@ final class PhotoNoteTests: XCTestCase {
         XCTAssertEqual(AuthorNames.label(isOwn: false, myName: "Alex", partnerName: ""), String(localized: "Partner"))
         XCTAssertEqual(AuthorNames.label(isOwn: true, myName: " Alex ", partnerName: "Sam"), "Alex")
         XCTAssertEqual(AuthorNames.label(isOwn: false, myName: "Alex", partnerName: "Sam"), "Sam")
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PhotoNoteTests.\(UUID().uuidString)"))
+        let defaults = try makeDefaults()
         defaults.set("Sam", forKey: AuthorNames.partnerNameKey)
         XCTAssertEqual(AuthorNames.label(isOwn: false, defaults: defaults), "Sam")
         XCTAssertTrue(AuthorNames.isLocal(nil))
@@ -560,8 +652,15 @@ final class PhotoNoteTests: XCTestCase {
         XCTAssertEqual(NoteOrganizerFactory.organizers(settings: settings, apiKey: { _ in "k" }).map(\.label), ["Anthropic"], "A key from before the custom model keeps working")
 
         // A custom model is any address; Anthropic's own gets its own API.
-        settings.provider = .openAICompatible
+        // An address left from once trying another service is not used for
+        // a key set up for Anthropic before the custom model.
         settings.baseURL = "https://models.example.com/v1"
+        var legacyAsked: [CloudProvider] = []
+        let legacy = NoteOrganizerFactory.organizers(settings: settings, apiKey: { legacyAsked.append($0); return "k" })
+        XCTAssertEqual(legacy.map(\.label), ["Anthropic"])
+        XCTAssertEqual(legacyAsked, [.claude])
+
+        settings.provider = .openAICompatible
         settings.model = "some-model"
         var asked: [CloudProvider] = []
         let custom = NoteOrganizerFactory.organizers(settings: settings, apiKey: { asked.append($0); return "k" })

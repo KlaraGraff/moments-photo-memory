@@ -96,7 +96,14 @@ struct MomentsApp: App {
         #endif
         let backups = BackupController()
         _backups = State(initialValue: backups)
+        #if DEBUG
+        // UI tests write synthetic memories; none of them goes to a model.
+        let noteService = ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
+            ? PhotoNoteService(makeOrganizers: { [] })
+            : PhotoNoteService()
+        #else
         let noteService = PhotoNoteService()
+        #endif
         _noteService = State(initialValue: noteService)
         do {
             #if DEBUG

@@ -101,7 +101,7 @@ struct TripMemoryLines: View {
                 .font(.caption)
                 .foregroundStyle(Paper.accent)
             // Put here by AI from what a photo's memory said about the day or trip.
-            if let noteID = memory.sourceNoteID {
+            if let noteID = memory.sourceNoteID, isOwn {
                 AIAddedMark {
                     if editingID == memory.id { editingID = nil }
                     notes.undo(noteID: noteID, context: modelContext)
@@ -154,6 +154,8 @@ struct TripMemoryLines: View {
               !text.isEmpty, text != memory.text else { return }
         memory.text = text
         memory.updatedAt = .now
+        // Rewritten by the person: theirs now, no longer something AI's Undo takes back.
+        memory.sourceNoteID = nil
         try? modelContext.save()
         savedCount += 1
     }

@@ -21,13 +21,15 @@ struct AISettingsView: View {
 struct AISettingsSections: View {
     @AppStorage(AISettings.enabledKey) private var enabled = true
     @AppStorage(AISettings.engineKey) private var engineRaw = AISettings.defaultEngine.rawValue
-    @AppStorage(AISettings.providerKey) private var providerRaw = CloudProvider.claude.rawValue
     @AppStorage(AISettings.modelKey) private var model = ""
     @AppStorage(AISettings.baseURLKey) private var baseURL = ""
     @State private var apiKey = ""
     /// Only a key the person typed is ever written, so a failed keychain read
     /// can't erase the stored key.
     @State private var keyEdited = false
+    /// The connection is tested only after the person changes something
+    /// here, never just because Settings opened.
+    @State private var fieldsEdited = false
     @State private var status: ConnectionStatus = .idle
 
     private enum ConnectionStatus: Equatable {
@@ -46,6 +48,17 @@ struct AISettingsSections: View {
         Section {
             Toggle(String(localized: "Organize memories with AI after you write"), isOn: $enabled)
                 .accessibilityIdentifier("settings.ai-enabled")
+                // On one row, not the Section: a Form applies a Section's
+                // modifiers to each of its rows.
+                .onAppear {
+                    AISettings.moveOldAnthropicSetup()
+                    apiKey = AIKeychain.key(for: .openAICompatible) ?? ""
+                    keyEdited = false
+                }
+                .onDisappear { storeKey() }
+                // Saves the key and checks the connection once typing
+                // settles; a newer edit cancels the wait.
+                .task(id: "\(enabled)|\(engineRaw)|\(baseURL)|\(model)|\(apiKey)") { await checkConnection() }
             if enabled {
                 Picker(String(localized: "Model"), selection: $engineRaw) {
                     Text(String(localized: "On this Mac")).tag(AIEngine.onDevice.rawValue)
@@ -65,13 +78,13 @@ struct AISettingsSections: View {
                     }
                     .font(.callout)
                 case .cloud:
-                    TextField(String(localized: "Address"), text: $baseURL, prompt: Text(verbatim: "https://example.com/v1"))
+                    TextField(String(localized: "Address"), text: edited($baseURL), prompt: Text(verbatim: "https://example.com/v1"))
                         .accessibilityIdentifier("settings.ai-address")
-                    TextField(String(localized: "Model name"), text: $model, prompt: Text(verbatim: "model-name"))
+                    TextField(String(localized: "Model name"), text: edited($model), prompt: Text(verbatim: "model-name"))
                         .accessibilityIdentifier("settings.ai-model")
                     SecureField(String(localized: "API key"), text: Binding(
                         get: { apiKey },
-                        set: { apiKey = $0; keyEdited = true }
+                        set: { apiKey = $0; keyEdited = true; fieldsEdited = true }
                     ))
                     .onSubmit { storeKey() }
                     .accessibilityIdentifier("settings.ai-key")
@@ -82,15 +95,10 @@ struct AISettingsSections: View {
         } footer: {
             Text(footer)
         }
-        .onAppear {
-            moveOldKeyToCustom()
-            apiKey = AIKeychain.key(for: .openAICompatible) ?? ""
-            keyEdited = false
-        }
-        .onDisappear { storeKey() }
-        // Saves the key and checks the connection once typing settles; a
-        // newer edit cancels the wait.
-        .task(id: "\(enabled)|\(engineRaw)|\(baseURL)|\(model)|\(apiKey)") { await checkConnection() }
+    }
+
+    private func edited(_ binding: Binding<String>) -> Binding<String> {
+        Binding(get: { binding.wrappedValue }, set: { binding.wrappedValue = $0; fieldsEdited = true })
     }
 
     private var footer: String {
@@ -98,7 +106,7 @@ struct AISettingsSections: View {
         guard enabled else { return words }
         switch engine {
         case .onDevice:
-            return String(localized: "The model runs on this Mac; your words never leave it.") + " " + words
+            return String(localized: "Runs on this Mac when it can, and then your words never leave it. When it can't, a custom model is used if you set one up.") + " " + words
         case .cloud:
             return String(localized: "Only the words you wrote, the photo's date and its place name are sent. Never the photo itself or GPS coordinates.")
                 + " " + String(localized: "The key is kept in your Mac's keychain.") + " " + words
@@ -125,24 +133,6 @@ struct AISettingsSections: View {
         }
     }
 
-    /// A key saved for Anthropic before the custom model becomes the custom
-    /// model's, with Anthropic's address, so nothing has to be typed again.
-    private func moveOldKeyToCustom() {
-        guard CloudProvider(rawValue: providerRaw) == .claude else { return }
-        if let old = AIKeychain.key(for: .claude) {
-            if AIKeychain.key(for: .openAICompatible) == nil {
-                AIKeychain.setKey(old, for: .openAICompatible)
-            }
-            if baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                baseURL = "https://api.anthropic.com/v1"
-            }
-            if model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                model = CloudProvider.claude.defaultModel
-            }
-        }
-        providerRaw = CloudProvider.openAICompatible.rawValue
-    }
-
     private func storeKey() {
         guard keyEdited else { return }
         AIKeychain.setKey(apiKey, for: .openAICompatible)
@@ -154,14 +144,19 @@ struct AISettingsSections: View {
             status = .idle
             return
         }
+        // Wait for typing or pasting to settle: a half-typed address must
+        // never receive the key.
+        do { try await Task.sleep(for: .milliseconds(1500)) } catch { return }
+        storeKey()
         let filledIn = [baseURL, model, apiKey].allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        guard filledIn else {
-            storeKey()
+        guard filledIn, Self.looksLikeAddress(baseURL) else {
             status = .incomplete
             return
         }
-        do { try await Task.sleep(for: .milliseconds(800)) } catch { return }
-        storeKey()
+        guard fieldsEdited else {
+            status = .idle
+            return
+        }
         status = .testing
         var settings = AISettings.load()
         settings.provider = .openAICompatible
@@ -174,5 +169,13 @@ struct AISettingsSections: View {
             guard !Task.isCancelled else { return }
             status = .failed(error.localizedDescription)
         }
+    }
+
+    /// A whole web address: http or https and a host with a dot (or localhost).
+    static func looksLikeAddress(_ text: String) -> Bool {
+        guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              let host = url.host, !host.isEmpty else { return false }
+        return host.contains(".") || host == "localhost"
     }
 }

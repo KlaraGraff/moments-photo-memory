@@ -353,7 +353,7 @@ struct LibraryView: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     // The people in these photos, before the photos: it
                     // scrolls away with them. Not while only some photos show.
-                    if selection.libraryScope == nil && query.isEmpty {
+                    if selection.libraryScope == nil && query.isEmpty && !ProbeSwitch.on("-MomentsProbeNoStrip") {
                         LibraryPeopleStrip(entries: state.peopleEntries)
                     }
                     ForEach(cachedSections) { section in
@@ -377,7 +377,7 @@ struct LibraryView: View {
             // The scroll view opens at the section that was at the top when
             // the user left, in its first layout. Scrolling there after
             // onAppear showed the top first and then jumped.
-            .scrollPosition(
+            .probeUnless("-MomentsProbeNoScrollPosition") { $0.scrollPosition(
                 // Written only when the top section really changes: the scroll
                 // view reports it on every layout, and each write would
                 // rebuild the whole Library while the sidebar moves. Not
@@ -398,7 +398,7 @@ struct LibraryView: View {
                     state.topSectionScrollID = id
                 }),
                 anchor: .top
-            )
+            ) }
             .libraryGridInteraction(state: state, proxy: proxy)
             .environment(\.photoDeletionScope, deletionScope)
             .onChange(of: selection.focusedItemID) { _, _ in
@@ -794,13 +794,15 @@ private struct LibrarySectionView: View {
     /// more stalls on 2,000 photos.)
     var body: some View {
         let _ = marqueeCount(4)
+        let _ = marqueeNote("section " + section.id)
+        let plainHeadings: Bool = ProbeSwitch.on("-MomentsProbePlainHeadings")
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 // Like a moment title in Photos: click selects the section's
                 // photos, and the menu goes to the trip or the map. A trip's
                 // name also changes in place on double-click.
                 HStack(spacing: 0) {
-                    if let tripID = sectionTripID, section.id != "trip:unassigned" {
+                    if let tripID = sectionTripID, section.id != "trip:unassigned", !plainHeadings {
                         EditableTripTitle(tripID: tripID, title: section.title, onClick: selectSection)
                             .accessibilityAction(named: Text(String(localized: "Select these photos"))) { selectSection() }
                     } else {
@@ -826,7 +828,7 @@ private struct LibrarySectionView: View {
                     .foregroundStyle(LibraryPalette.muted)
                 // A chapter's photos lead to the chapter: its days, places,
                 // people and map.
-                if let tripID = sectionTripID, section.id != "trip:unassigned" {
+                if let tripID = sectionTripID, section.id != "trip:unassigned", !plainHeadings {
                     Button { selection.showTrip(tripID) } label: {
                         Image(systemName: "book.pages")
                             .font(.caption)
@@ -849,7 +851,9 @@ private struct LibrarySectionView: View {
                     .foregroundStyle(LibraryPalette.muted)
             }
 
-            CollectionMemoryLines(memories: memories)
+            if !ProbeSwitch.on("-MomentsProbeNoMemoryLines") {
+                CollectionMemoryLines(memories: memories)
+            }
         }
         .padding(.bottom, 13)
         .id(LibraryScrollTarget.section(section.id))
@@ -993,10 +997,10 @@ private struct LibraryPhotoCell: View {
                     .opacity(showsNoteLine ? 1 : 0)
             }
         }
-        .onHover {
+        .probeUnless("-MomentsProbeNoHover") { $0.onHover {
             marqueeCount(6)
             isHovering = $0
-        }
+        } }
         .modifier(LibraryPhotoMenu(item: item, state: state, stackCount: stackCount, open: open))
         .onDrag { NSItemProvider(object: item.id as NSString) }
     }

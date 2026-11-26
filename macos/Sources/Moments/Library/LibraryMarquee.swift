@@ -96,6 +96,7 @@ final class LibraryMarquee {
     /// follows with the new one.
     func appeared(_ id: String) {
         marqueeCount(13)
+        marqueeNote("+" + id)
         live[id, default: 0] += 1
         if frames[id]?.layout != layout {
             frames[id]?.layout = layout
@@ -105,6 +106,7 @@ final class LibraryMarquee {
 
     func disappeared(_ id: String) {
         marqueeCount(14)
+        marqueeNote("-" + id)
         let count = (live[id] ?? 0) - 1
         live[id] = count > 0 ? count : nil
     }
@@ -543,6 +545,36 @@ private struct LibraryMarqueeAnchor: NSViewRepresentable {
     }
 }
 
+/// Temporary, for finding a hang: UI tests switch single parts of the
+/// Library off with a launch argument, to see which part the hang needs.
+enum ProbeSwitch {
+    private static let given: Set<String> = Set(ProcessInfo.processInfo.arguments.filter { $0.hasPrefix("-MomentsProbe") })
+
+    static func on(_ name: String) -> Bool {
+        #if DEBUG
+        return !given.isEmpty && given.contains(name)
+        #else
+        return false
+        #endif
+    }
+}
+
+extension View {
+    /// Applies `transform` unless the launch argument `flag` is given.
+    @ViewBuilder
+    func probeUnless<Changed: View>(_ flag: String, @ViewBuilder _ transform: (Self) -> Changed) -> some View {
+        if ProbeSwitch.on(flag) { self } else { transform(self) }
+    }
+}
+
+/// Notes one line for the marquee watchdog's report (DEBUG, UI tests only).
+@inline(__always)
+func marqueeNote(_ text: @autoclosure () -> String) {
+    #if DEBUG
+    if MarqueeCounters.isOn { MarqueeCounters.note(text()) }
+    #endif
+}
+
 /// Counts one event for the marquee watchdog's report (DEBUG, UI tests only).
 @inline(__always)
 func marqueeCount(_ index: Int) {
@@ -664,7 +696,7 @@ enum MarqueeProbe {
                 for (index, name) in MarqueeCounters.names.enumerated() {
                     text += "  \(name): \(after[index]) (+\(after[index] - before[index]) in 1 s)\n"
                 }
-                text += "  scroll ids reported last: \(MarqueeCounters.notes().joined(separator: " | "))\n"
+                text += "  last notes: \(MarqueeCounters.notes().joined(separator: " | "))\n"
                 text += MainThreadSampler.stuckStacks()
                 try? text.write(to: folder.appending(path: "marquee-report-stuck-\(ProcessInfo.processInfo.processIdentifier)-\(written).txt"), atomically: true, encoding: .utf8)
                 usleep(4_000_000)

@@ -100,31 +100,32 @@ final class MomentsMarqueeUITests: XCTestCase {
     }
 
     /// Temporary, while the hang in the test above is looked into: the same
-    /// drag in a large window.
-    func testProbeHoldingAtTheBottomEdgeInALargeWindow() {
-        probeHold(count: "26", smallWindow: false)
-    }
-
-    /// Temporary: the same drag in a small window over many months, where the
-    /// demo chapters are far below.
-    func testProbeHoldingAtTheBottomEdgeOverManyMonths() {
-        probeHold(count: "600", smallWindow: true)
-    }
-
-    /// Temporary: the hanging drag again, since it does not hang every time.
-    func testProbeHoldingAtTheBottomEdgeAgain1() {
+    /// drag with one part of the Library switched off each time.
+    func testProbeAgain() {
         probeHold(count: "26", smallWindow: true)
     }
 
-    func testProbeHoldingAtTheBottomEdgeAgain2() {
-        probeHold(count: "26", smallWindow: true)
+    func testProbeNoHover() {
+        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeNoHover")
     }
 
-    func testProbeHoldingAtTheBottomEdgeAgain3() {
-        probeHold(count: "26", smallWindow: true)
+    func testProbeNoMemoryLines() {
+        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeNoMemoryLines")
     }
 
-    private func probeHold(count: String, smallWindow: Bool) {
+    func testProbeNoScrollPosition() {
+        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeNoScrollPosition")
+    }
+
+    func testProbeNoStrip() {
+        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbeNoStrip")
+    }
+
+    func testProbePlainHeadings() {
+        probeHold(count: "26", smallWindow: true, switchOff: "-MomentsProbePlainHeadings")
+    }
+
+    private func probeHold(count: String, smallWindow: Bool, switchOff: String? = nil) {
         let folder: String? = ProcessInfo.processInfo.environment["MOMENTS_MARQUEE_DIR"]
             .flatMap { (value: String) -> String? in value.hasPrefix("/") ? value : nil }
         var arguments: [String] = [
@@ -132,6 +133,7 @@ final class MomentsMarqueeUITests: XCTestCase {
             "-MomentsUITestStressNoTrip",
         ]
         if let folder { arguments += ["-MomentsUITestMarqueeProbe", folder] }
+        if let switchOff { arguments.append(switchOff) }
         let app = launch(smallWindow: smallWindow, extraArguments: arguments)
         let visible = visiblePhotos(app)
         guard let first = visible.first else { return XCTFail("No photo on screen") }

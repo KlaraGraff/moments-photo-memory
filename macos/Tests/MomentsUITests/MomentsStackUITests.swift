@@ -102,7 +102,14 @@ final class MomentsStackUITests: XCTestCase {
         for identifier in identifiers where !shown {
             element(app, identifier).click()
             XCTAssertTrue(element(app, "trips.back").waitForExistence(timeout: timeout), "\(identifier) did not open")
-            shown = stack.waitForExistence(timeout: 3)
+            // The burst is the chapter's newest shots, on its last day, and
+            // the days are built as they scroll in.
+            let page = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.6))
+            shown = stack.waitForExistence(timeout: 2)
+            for _ in 0..<10 where !shown {
+                page.scroll(byDeltaX: 0, deltaY: -900)
+                shown = stack.waitForExistence(timeout: 1)
+            }
             if !shown { element(app, "trips.back").click() }
         }
         XCTAssertTrue(shown, "No chapter shows the burst as a stack (looked in \(identifiers))")

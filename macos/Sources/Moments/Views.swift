@@ -25,10 +25,12 @@ struct ContentView: View {
     @AppStorage(LibraryLaunchState.appStorageKey) private var firstLaunchCompleted = false
 
     /// A click on a page in the sidebar also leaves the large map, even when
-    /// that page was already the one behind it.
+    /// that page was already the one behind it: a list tells nobody about a
+    /// click on the row it already shows as selected, so no row is selected
+    /// while the map is up.
     private var sidebarSelection: Binding<MomentsSection?> {
         Binding(
-            get: { selection },
+            get: { shared.mapScope == nil ? selection : nil },
             set: { section in
                 selection = section
                 if shared.mapScope != nil { shared.mapScope = nil }

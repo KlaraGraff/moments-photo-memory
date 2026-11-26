@@ -403,7 +403,9 @@ struct LibraryScopeHeading: View {
     /// Typing over a place's name renames the place for every photo taken
     /// there. A name another place already has joins the two places.
     private func commitPlaceName() {
-        guard let oldName = scope.placeName else { return }
+        // The scope as it is now: losing focus right after Return calls this
+        // a second time, and the heading may not have been redrawn yet.
+        guard let before: LibraryScope = self.selection.libraryScope, let oldName = before.placeName else { return }
         let value: String = nameText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, value != oldName else {
             nameText = oldName
@@ -427,15 +429,18 @@ struct LibraryScopeHeading: View {
             actionName: String(localized: "Rename Place"),
             restore: { context in
                 PlaceNames.restore(changes, context: context)
-                // Still looking at the renamed place: show it under its old name again.
+                // Still looking at the renamed place: back to what was shown
+                // before, under its old name.
                 if selection.libraryScope?.placeName == value {
-                    PlaceClue.showPhotos(at: oldName, store: store, selection: selection)
+                    selection.libraryScope = before
                 }
             }
         ), context: modelContext)
         // The photos now listed under the new name: more than before when
         // the name joined another place.
         PlaceClue.showPhotos(at: value, store: store, selection: selection)
+        // Typing is over, so a later change to the name (Undo) shows.
+        isNaming = false
     }
 
     /// "Ignore this group": a stranger, or something that is not a face. The
@@ -509,6 +514,9 @@ struct LibrarySectionFaces: View {
 /// opens that person's photos in the Library.
 struct ChapterPeopleRow: View {
     let itemIDs: Set<String>
+    /// The spacing of the stack this row sits in, taken back while there is
+    /// nobody to show, so an empty row leaves no gap.
+    var stackSpacing: CGFloat = 0
     @Environment(LibraryStore.self) private var store
     @Environment(SelectionModel.self) private var selection
     @Query(sort: \Person.name) private var people: [Person]
@@ -528,8 +536,15 @@ struct ChapterPeopleRow: View {
     }
 
     var body: some View {
+        // One view in either case: a modifier on an empty `Group` never runs,
+        // so the lookup would not start.
         Group {
-            if !entries.isEmpty {
+            if entries.isEmpty {
+                Color.clear
+                    .frame(width: 0, height: 0)
+                    .padding(.top, -stackSpacing)
+                    .accessibilityHidden(true)
+            } else {
                 HStack(spacing: 12) {
                     ForEach(entries) { entry in
                         Button { open(entry) } label: {

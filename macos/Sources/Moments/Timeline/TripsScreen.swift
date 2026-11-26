@@ -1461,7 +1461,7 @@ private struct TripDetailView: View {
                             .foregroundStyle(Paper.ink)
                     }
                     // Who is in these photos; a face opens that person's photos.
-                    ChapterPeopleRow(itemIDs: Set(trip.orderedItems.map(\.id)))
+                    ChapterPeopleRow(itemIDs: Set(trip.orderedItems.map(\.id)), stackSpacing: 10)
                     if !trip.isUnsorted {
                         TripMemoryLines(
                             scope: .trip,

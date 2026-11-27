@@ -843,7 +843,8 @@ final class MomentsUITests: XCTestCase {
         journey.click()
         let tripCount = libraryPhotoCount(app)
         XCTAssertTrue(tripCount > 0 && tripCount < allCount, "The Trip filter left \(tripCount) of \(allCount) photos")
-        if popover.exists { app.typeKey(.escape, modifierFlags: []) }
+        // The button closes what it opened.
+        if popover.exists { libraryFilter.click() }
         XCTAssertTrue(popover.waitForNonExistence(timeout: launchTimeout), "The Filter popover did not close")
 
         element(in: app, identifier: "sidebar.trips").click()

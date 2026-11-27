@@ -31,7 +31,12 @@ enum PeopleStrip {
 
     /// Named people first, most photos first; then the largest unnamed groups.
     /// Faces in screenshots and in Recently Deleted photos do not count.
-    static func entries(faces: [FaceObservation], people: [Person], itemsByID: [String: MediaItem]) -> [PeopleStripEntry] {
+    static func entries(
+        faces: [FaceObservation],
+        people: [Person],
+        itemsByID: [String: MediaItem],
+        decisions: any DecisionStore = LibraryDecisions.shared
+    ) -> [PeopleStripEntry] {
         var names: [String: String] = [:]
         for person in people where !person.hidden {
             let name: String = person.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -56,7 +61,7 @@ enum PeopleStrip {
         var named: [PeopleStripEntry] = []
         for (personID, group) in byPerson {
             let mediaIDs: Set<String> = photos["person." + personID] ?? []
-            let cover: FaceObservation? = PeopleFacePicker.cover(group, keyFaceID: PeopleStoreActions.keyFaceID(for: personID))
+            let cover: FaceObservation? = PeopleFacePicker.cover(group, keyFaceID: PeopleStoreActions.keyFaceID(for: personID, defaults: decisions))
             named.append(PeopleStripEntry(
                 id: "person." + personID,
                 personID: personID,
@@ -93,7 +98,13 @@ enum PeopleStrip {
 
     /// The named people in a set of photos, most photos first, for the small
     /// faces on a chapter.
-    static func people(in mediaIDs: Set<String>, faces: [FaceObservation], people: [Person], limit: Int) -> [PeopleStripEntry] {
+    static func people(
+        in mediaIDs: Set<String>,
+        faces: [FaceObservation],
+        people: [Person],
+        limit: Int,
+        decisions: any DecisionStore = LibraryDecisions.shared
+    ) -> [PeopleStripEntry] {
         var names: [String: String] = [:]
         for person in people where !person.hidden {
             let name: String = person.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -112,7 +123,7 @@ enum PeopleStrip {
                 personID: personID,
                 clusterID: nil,
                 name: names[personID],
-                cover: PeopleFacePicker.cover(group),
+                cover: PeopleFacePicker.cover(group, keyFaceID: PeopleStoreActions.keyFaceID(for: personID, defaults: decisions)),
                 mediaIDs: ids
             ))
         }
@@ -169,6 +180,7 @@ struct LibraryPeopleIndexer: View {
         var hasher = Hasher()
         hasher.combine(store.photoFaceRevision)
         hasher.combine(store.refreshCount)
+        hasher.combine(store.keyFaceRevision)
         for person in people {
             hasher.combine(person.id)
             hasher.combine(person.name)
@@ -256,6 +268,7 @@ struct LibraryScopeHeading: View {
     @State private var nameText = ""
     @State private var stops: [TripRouteStop] = []
     @State private var pendingMerge: PendingMerge?
+    @State private var isPickingKeyFace = false
     @FocusState private var isNaming: Bool
 
     /// A typed name that another person already has, waiting for the answer
@@ -283,7 +296,7 @@ struct LibraryScopeHeading: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             if isPerson {
-                PersonFace(face: cover, size: 40)
+                headingFace
                 TextField("", text: $nameText, prompt: Text(String(localized: "Who is this?")))
                     .textFieldStyle(.plain)
                     .font(.system(size: 19, weight: .medium, design: .serif))
@@ -373,9 +386,36 @@ struct LibraryScopeHeading: View {
         }
     }
 
+    /// A named person's face is a button: it opens their faces, and the one
+    /// clicked stands for them from then on. An unnamed group has no choice
+    /// to keep yet.
+    @ViewBuilder
+    private var headingFace: some View {
+        if let personID = scope.personID {
+            Button { isPickingKeyFace = true } label: {
+                PersonFace(face: cover, size: 40).contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(String(localized: "Choose key photo"))
+            .accessibilityLabel(String(localized: "Choose key photo"))
+            .accessibilityValue(cover?.id ?? "")
+            .accessibilityIdentifier("library.scope.face")
+            .popover(isPresented: $isPickingKeyFace, arrowEdge: .bottom) {
+                KeyFacePicker(faces: faces, current: cover?.id) { (face: FaceObservation) in
+                    store.setKeyFace(face.id, for: personID)
+                    isPickingKeyFace = false
+                }
+            }
+        } else {
+            PersonFace(face: cover, size: 40)
+        }
+    }
+
     private var cover: FaceObservation? {
         let group: [FaceObservation] = faces
         if let personID = scope.personID {
+            // Read so a new key face redraws the heading.
+            _ = store.keyFaceRevision
             return PeopleFacePicker.cover(group, keyFaceID: PeopleStoreActions.keyFaceID(for: personID))
         }
         return PeopleFacePicker.cover(group)
@@ -539,6 +579,61 @@ struct LibraryScopeHeading: View {
     }
 }
 
+/// Every face of one person, one per photo, sharpest first; the one clicked
+/// becomes the face that stands for them.
+struct KeyFacePicker: View {
+    let faces: [FaceObservation]
+    let current: String?
+    let onPick: (FaceObservation) -> Void
+
+    static let size: CGFloat = 64
+    static let columns = 5
+
+    /// One face per photo, so a burst does not fill the grid.
+    private var choices: [FaceObservation] {
+        var seen = Set<String>()
+        var result: [FaceObservation] = []
+        let sorted: [FaceObservation] = faces.sorted { (left: FaceObservation, right: FaceObservation) -> Bool in
+            if left.quality != right.quality { return left.quality > right.quality }
+            return left.id < right.id
+        }
+        for face in sorted {
+            let mediaID: String = face.mediaID
+            if face.id == current || seen.insert(mediaID).inserted { result.append(face) }
+        }
+        return result
+    }
+
+    var body: some View {
+        let shown: [FaceObservation] = choices
+        let rows: Int = (shown.count + Self.columns - 1) / Self.columns
+        let gridHeight: CGFloat = min(CGFloat(rows) * (Self.size + 8), 340)
+        VStack(alignment: .leading, spacing: 10) {
+            PaperFormLabel(String(localized: "Choose key photo"))
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(Self.size), spacing: 8), count: Self.columns), spacing: 8) {
+                    ForEach(shown, id: \.id) { (face: FaceObservation) in
+                        Button { onPick(face) } label: {
+                            FaceCropView(data: face.cropData, cacheKey: face.id, size: Self.size)
+                                .overlay {
+                                    if face.id == current {
+                                        Circle().stroke(Paper.accent, lineWidth: 3)
+                                    }
+                                }
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("library.scope.face.pick.\(face.id)")
+                    }
+                }
+                .padding(2)
+            }
+            .frame(width: CGFloat(Self.columns) * Self.size + CGFloat(Self.columns - 1) * 8 + 4, height: gridHeight + 4)
+        }
+        .padding(14)
+    }
+}
+
 /// The named people in one Library section, as small faces beside its
 /// title. A face opens that person's photos.
 struct LibrarySectionFaces: View {
@@ -557,6 +652,7 @@ struct LibrarySectionFaces: View {
         for entry in state.peopleEntries where entry.name != nil {
             hasher.combine(entry.id)
             hasher.combine(entry.photoCount)
+            hasher.combine(entry.cover?.id)
         }
         return hasher.finalize()
     }
@@ -605,6 +701,7 @@ struct ChapterPeopleRow: View {
         hasher.combine(itemIDs.count)
         hasher.combine(store.photoFaceRevision)
         hasher.combine(store.refreshCount)
+        hasher.combine(store.keyFaceRevision)
         for person in people {
             hasher.combine(person.id)
             hasher.combine(person.name)

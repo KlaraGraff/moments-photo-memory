@@ -371,7 +371,8 @@ struct LibraryView: View {
         #if DEBUG
         // Tests read which section the Library returns to.
         .background(alignment: .topTrailing) {
-            Text(state.topSectionScrollID ?? "")
+            // Never empty: an empty text has no accessibility element.
+            Text(verbatim: "top")
                 .font(.system(size: 1))
                 .foregroundStyle(.clear)
                 .allowsHitTesting(false)

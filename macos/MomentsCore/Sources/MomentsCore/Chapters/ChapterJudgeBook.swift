@@ -140,19 +140,27 @@ public struct ChapterJudgeBook: Codable, Equatable, Sendable {
     // MARK: Changing
 
     public mutating func record(_ verdict: ChapterVerdict, for id: String, signature: String, now: Date) {
+        guard let kind = verdict.kind.normalized else { return }
+        var verdict = verdict
+        verdict.kind = kind
+        verdict.alternatives = verdict.alternatives.compactMap(\.normalized)
         verdicts[id] = StoredVerdict(verdict: verdict, signature: signature, judgedAt: now)
     }
 
     /// The person decided the chapter: the kind is theirs from now on, and
-    /// similar days are judged by it.
+    /// similar days are judged by it. False when the kind's label is no
+    /// type and nothing was kept.
+    @discardableResult
     public mutating func decide(
         _ kind: ChapterKind,
         for id: String,
         title: String,
         evidence: SegmentEvidence,
         now: Date
-    ) {
-        guard let kind = kind.normalized else { return }
+    ) -> Bool {
+        guard let kind = kind.normalized else { return false }
+        var evidence = evidence
+        evidence.baseName = nil
         let earlier = verdicts[id]?.verdict
         let corrected = earlier.map { $0.kind != kind } ?? true
         var stored = StoredVerdict(verdict: .person(kind), signature: evidence.signature, judgedAt: now)
@@ -164,6 +172,7 @@ public struct ChapterJudgeBook: Codable, Equatable, Sendable {
             at: 0
         )
         if examples.count > Self.maximumExamples { examples.removeLast(examples.count - Self.maximumExamples) }
+        return true
     }
 
     /// The one-line check was answered "yes", or put away.

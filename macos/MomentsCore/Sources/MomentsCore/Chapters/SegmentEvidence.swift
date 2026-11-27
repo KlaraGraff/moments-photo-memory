@@ -165,17 +165,20 @@ public struct SegmentEvidence: Codable, Equatable, Sendable {
     }
 
     /// The place name and title, unless they could name where the person
-    /// lives or works: near daily life, or the same as the base's name.
-    public var shareablePlaceName: String? { shareable(placeName) }
-    public var shareableTitle: String? { shareable(title) }
+    /// lives or works: near daily life, or holding the name of one of their
+    /// places (`privateNames`, plus this stretch's base).
+    public func shareablePlaceName(privateNames: [String] = []) -> String? { shareable(placeName, privateNames: privateNames) }
+    public func shareableTitle(privateNames: [String] = []) -> String? { shareable(title, privateNames: privateNames) }
 
     /// Any text about this stretch, such as an example's title, held to
     /// the same test.
-    public func shareable(_ text: String?) -> String? {
+    public func shareable(_ text: String?, privateNames: [String] = []) -> String? {
         guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         if let km = kmFromBase, km < 150 { return nil }
-        if let base = baseName?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !base.isEmpty {
-            let lowered = text.lowercased()
+        let lowered = text.lowercased()
+        for name in privateNames + [baseName].compactMap({ $0 }) {
+            let base = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !base.isEmpty else { continue }
             if lowered.contains(base) || base.contains(lowered) { return nil }
         }
         return text

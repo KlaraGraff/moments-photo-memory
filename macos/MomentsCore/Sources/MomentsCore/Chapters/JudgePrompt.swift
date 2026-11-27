@@ -14,12 +14,16 @@ public struct JudgePrompt: Equatable, Sendable {
 
     /// - Parameters:
     ///   - language: the language the reason is written in, such as "Chinese".
+    ///   - privateNames: the names of the person's own places; a place name
+    ///     or title holding one stays out of the prompt.
     public static func make(
         evidence: SegmentEvidence,
         book: ChapterJudgeBook,
         language: String,
-        calendar: Calendar
+        calendar: Calendar,
+        privateNames: [String] = []
     ) -> JudgePrompt {
+        let names = privateNames + [evidence.baseName].compactMap { $0 }
         let kinds = book.candidates + [.daily]
         let keys = kinds.map(\.key)
         let system = """
@@ -42,15 +46,15 @@ public struct JudgePrompt: Equatable, Sendable {
         "reason": one short sentence in \(language), at most 20 words, naming the facts that decided it}.
         """
         var lines: [String] = ["Stretch to judge:"]
-        lines += sheet(evidence, calendar: calendar).map { "- " + $0 }
+        lines += sheet(evidence, calendar: calendar, privateNames: names).map { "- " + $0 }
         let examples = book.nearestExamples(to: evidence)
         if !examples.isEmpty {
             lines.append("")
             lines.append("Their earlier decisions, most alike first:")
             for (index, example) in examples.enumerated() {
-                let summary = sheet(example.evidence, calendar: calendar).prefix(4).joined(separator: "; ")
+                let summary = sheet(example.evidence, calendar: calendar, privateNames: names).prefix(4).joined(separator: "; ")
                 let how = example.corrected ? "they changed the judge's answer to" : "they confirmed"
-                let name = example.evidence.shareable(example.title).map { "\"\($0)\": " } ?? ""
+                let name = example.evidence.shareable(example.title, privateNames: names).map { "\"\($0)\": " } ?? ""
                 lines.append("\(index + 1). \(name)\(summary). \(how) \(example.kind.key)")
             }
         }
@@ -60,7 +64,7 @@ public struct JudgePrompt: Equatable, Sendable {
     }
 
     /// The facts of one stretch, one per line, in English.
-    static func sheet(_ evidence: SegmentEvidence, calendar: Calendar) -> [String] {
+    static func sheet(_ evidence: SegmentEvidence, calendar: Calendar, privateNames: [String]) -> [String] {
         var lines: [String] = []
         let first = dayText(evidence.start, calendar: calendar)
         let last = dayText(evidence.end, calendar: calendar)
@@ -70,7 +74,7 @@ public struct JudgePrompt: Equatable, Sendable {
         let perDay = Int(evidence.photosPerDay.rounded())
         let workHours = Int((evidence.workHourShare * 100).rounded())
         lines.append("Photos: \(evidence.photoCount) on \(evidence.photoDayCount) days, about \(perDay) a day, \(workHours)% taken on workdays between 8:00 and 18:00")
-        if let place = evidence.shareablePlaceName { lines.append("Place: \(place)") }
+        if let place = evidence.shareablePlaceName(privateNames: privateNames) { lines.append("Place: \(place)") }
         if let km = evidence.kmFromBase, let role = evidence.baseRole {
             let base = role == .work ? "where they work" : "where they live"
             lines.append("Distance from \(base): \(Int(km.rounded())) km")
@@ -87,7 +91,7 @@ public struct JudgePrompt: Equatable, Sendable {
             if !evidence.sceneWords.isEmpty { line += "; seen most: " + evidence.sceneWords.joined(separator: ", ") }
             lines.append(line)
         }
-        if let title = evidence.shareableTitle { lines.append("Title they gave it: \(title)") }
+        if let title = evidence.shareableTitle(privateNames: privateNames) { lines.append("Title they gave it: \(title)") }
         return lines
     }
 

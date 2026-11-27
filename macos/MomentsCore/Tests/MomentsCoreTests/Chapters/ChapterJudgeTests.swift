@@ -204,18 +204,19 @@ final class ChapterJudgeTests: XCTestCase {
             calendar: utc
         ))
         var book = ChapterJudgeBook()
-        book.decide(.trip, for: "a", title: "Bay", evidence: evidence, now: friday)
-        book.decide(.custom(String(repeating: "x", count: 30)), for: "b", title: "Hill", evidence: evidence, now: friday)
+        XCTAssertTrue(book.decide(.trip, for: "a", title: "Bay", evidence: evidence, now: friday))
+        XCTAssertFalse(book.decide(.custom(String(repeating: "x", count: 30)), for: "b", title: "Hill", evidence: evidence, now: friday))
         XCTAssertNil(book.verdict(for: "b"), "a label that is no type is not stored")
+        book.record(ChapterVerdict(kind: .businessTrip, confidence: .high, source: .rules), for: "c", signature: "s", now: friday)
         let stored = book.encoded()
         XCTAssertFalse(stored.contains("Secret site"))
+        XCTAssertEqual(ChapterJudgeBook.decode(stored), book)
         // An entry from another version is left out; the rest stays.
-        let damaged = stored.replacingOccurrences(of: #""kind":"trip""#, with: #""kind":"custom:""#, options: [], range: stored.range(of: #""verdicts""#).map { $0.lowerBound..<stored.endIndex })
-        var two = ChapterJudgeBook.decode(stored)
-        two.record(ChapterVerdict(kind: .businessTrip, confidence: .high, source: .rules), for: "c", signature: "s", now: friday)
+        let damaged = stored.replacingOccurrences(of: #""kind":"businessTrip""#, with: #""kind":"custom:""#)
         let mixed = ChapterJudgeBook.decode(damaged)
+        XCTAssertEqual(Set(mixed.verdicts.keys), ["a"])
         XCTAssertEqual(mixed.examples.count, 1)
-        XCTAssertEqual(ChapterJudgeBook.decode(two.encoded()).verdicts.count, 2)
+        XCTAssertFalse(book.decide(.custom(""), for: "d", title: "", evidence: evidence, now: friday))
 
         // Damaged counts never divide by zero.
         let zero = #"{"start":0,"end":0,"dayCount":0,"photoDayCount":0,"photoCount":5,"workHourShare":0.5}"#
@@ -271,6 +272,15 @@ final class ChapterJudgeTests: XCTestCase {
             XCTAssertFalse(prompt.user.contains("Rivertown"))
         }
         XCTAssertTrue(JudgePrompt.make(evidence: far, book: ChapterJudgeBook(), language: "English", calendar: utc).user.contains("Hills"))
+        // A reloaded example's title holding a place's name stays out too.
+        var book = ChapterJudgeBook()
+        var outing = far
+        outing.placeName = "Hills"
+        book.decide(.trip, for: "x", title: "Rivertown crew outing", evidence: outing, now: friday)
+        let reloaded = ChapterJudgeBook.decode(book.encoded())
+        let prompt = JudgePrompt.make(evidence: far, book: reloaded, language: "English", calendar: utc, privateNames: ["Rivertown"])
+        XCTAssertFalse(prompt.user.contains("Rivertown"))
+        XCTAssertTrue(prompt.user.contains("earlier decisions"))
         let emoji = JudgePrompt(system: "", user: "", allowedKeys: ["trip", "custom:🎉"])
         XCTAssertNil(emoji.parse(#"{"kind":"","confidence":"high"}"#))
     }

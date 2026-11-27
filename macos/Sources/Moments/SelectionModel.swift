@@ -142,6 +142,15 @@ final class SelectionModel {
         dateAdjustmentItemIDs = selectedItemIDs.contains(itemID) ? Array(selectedItemIDs) : [itemID]
     }
 
+    /// Photos the window's Set Location sheet is open for.
+    var locationItemIDs: [String]?
+
+    /// Opens Set Location for `itemID`, or for the whole selection when the
+    /// photo is part of it, as Adjust Date and Time does.
+    func setLocation(for itemID: String) {
+        locationItemIDs = selectedItemIDs.contains(itemID) ? Array(selectedItemIDs) : [itemID]
+    }
+
     init() {}
 
     /// A click on a photo, the way Photos and Finder grids handle it:

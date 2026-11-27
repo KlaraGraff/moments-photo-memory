@@ -62,12 +62,14 @@ struct PlacesViewModel {
         }
     }
 
-    func photoStops(from items: [MediaItem], visibleItemIDs: Set<String>?) -> [PhotoStop] {
+    /// `manualCoordinates` are the hand-set locations
+    /// (`ManualLocationIndex.coordinates`); they win over the camera's.
+    func photoStops(from items: [MediaItem], visibleItemIDs: Set<String>?, manualCoordinates: [String: GeoPoint] = [:]) -> [PhotoStop] {
         filteredItems(items, visibleItemIDs: visibleItemIDs).map { item in
             PhotoStop(
                 id: item.id,
                 date: item.effectiveCaptureDate ?? .distantPast,
-                coordinate: coordinate(for: item)
+                coordinate: manualCoordinates[item.id] ?? coordinate(for: item)
             )
         }
     }

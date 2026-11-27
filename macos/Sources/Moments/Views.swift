@@ -186,6 +186,12 @@ struct ContentView: View {
         )) {
             DateAdjustmentSheet(itemIDs: shared.dateAdjustmentItemIDs ?? [])
         }
+        .sheet(isPresented: Binding(
+            get: { shared.locationItemIDs != nil },
+            set: { if !$0 { shared.locationItemIDs = nil } }
+        )) {
+            ManualLocationSheet(itemIDs: shared.locationItemIDs ?? [])
+        }
         // One accent everywhere, sheets included: no system blue controls.
         .tint(MomentsPalette.accent)
         .onChange(of: selection) { _, section in

@@ -355,6 +355,23 @@ final class MomentsUITests: XCTestCase {
         XCTAssertEqual(libraryPhotoCount(app), 2, "Alex is in two synthetic photos")
         XCTAssertTrue(strip.waitForNonExistence(timeout: launchTimeout), "The row of faces should give way to the heading")
         capture(app, named: "\(prefix)-02-person-evidence")
+
+        // The face in the heading picks which face stands for Alex.
+        let headingFace = element(in: app, identifier: "library.scope.face")
+        XCTAssertTrue(headingFace.waitForExistence(timeout: launchTimeout), "A person's face in the heading is not a control")
+        let coverBefore: String = (headingFace.value as? String) ?? ""
+        headingFace.click()
+        let picks = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (identifier ENDSWITH %@)", "library.scope.face.pick.", "." + coverBefore))
+        let other = picks.firstMatch
+        XCTAssertTrue(other.waitForExistence(timeout: launchTimeout), "Clicking the face did not offer Alex's other faces")
+        capture(app, named: "\(prefix)-02b-key-face-picker-evidence")
+        let pickedID: String = String(other.identifier.dropFirst("library.scope.face.pick.".count))
+        other.click()
+        XCTAssertTrue(other.waitForNonExistence(timeout: launchTimeout), "Picking a face did not close the picker")
+        let changed = NSPredicate(format: "value == %@", pickedID)
+        XCTAssertEqual(XCTWaiter().wait(for: [expectation(for: changed, evaluatedWith: headingFace)], timeout: launchTimeout), .completed, "The picked face does not stand for Alex")
+
         element(in: app, identifier: "library.scope.close").click()
         XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout))
         XCTAssertEqual(libraryPhotoCount(app), allCount)
@@ -845,10 +862,22 @@ final class MomentsUITests: XCTestCase {
         let card = element(in: app, identifier: "trips.card.journeyA")
         XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
 
-        // The cover: click the prints, pick another photo.
-        let prints = element(in: app, identifier: "trips.cover.journeyA")
-        XCTAssertTrue(prints.waitForExistence(timeout: launchTimeout), "The cover cannot be changed")
-        prints.click()
+        // The print behind comes to the front as the cover with one click.
+        let front = element(in: app, identifier: "trips.cover.front.journeyA")
+        let behind = element(in: app, identifier: "trips.cover.back.journeyA")
+        XCTAssertTrue(front.waitForExistence(timeout: launchTimeout), "The cover cannot be changed")
+        XCTAssertTrue(behind.exists, "The print behind is not a choice of its own")
+        let behindID: String = (behind.value as? String) ?? ""
+        XCTAssertNotEqual(behindID, (front.value as? String) ?? "", "The two prints show the same photo")
+        // Most of the print behind lies under the one in front; click the
+        // strip of it that shows on the left, as a person would.
+        behind.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.5)).click()
+        let swapped = NSPredicate(format: "value == %@", behindID)
+        XCTAssertEqual(XCTWaiter().wait(for: [expectation(for: swapped, evaluatedWith: front)], timeout: launchTimeout), .completed, "Clicking the print behind did not make it the cover")
+        capture(app, named: "trips-04b-cover-swapped-evidence")
+
+        // The print in front opens every photo to pick from.
+        front.click()
         let pick = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.cover.pick."))
             .element(boundBy: 3)

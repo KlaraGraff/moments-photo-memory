@@ -255,6 +255,11 @@ public enum PostcardText {
         public var fontSize: Double
         /// False when even the smallest size cuts the end off.
         public var fitsCompletely: Bool
+
+        public init(fontSize: Double, fitsCompletely: Bool) {
+            self.fontSize = fontSize
+            self.fitsCompletely = fitsCompletely
+        }
     }
 
     /// Print shops ask for text no smaller than 8 pt.

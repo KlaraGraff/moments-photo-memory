@@ -348,13 +348,6 @@ struct LibraryScopeHeading: View {
                 }
                 .accessibilityIdentifier("library.scope.map")
             }
-            Button {
-                selection.libraryScope = nil
-            } label: {
-                Label(String(localized: "All photos"), systemImage: "xmark")
-            }
-            .help(String(localized: "Back to all photos"))
-            .accessibilityIdentifier("library.scope.close")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)

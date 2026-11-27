@@ -264,12 +264,10 @@ public final class PhotoKitAssetSource: NSObject, PhotosAssetSource, PHPhotoLibr
         }
         var batches: [PhotosChangeBatch] = []
         var lastToken: PHPersistentChangeToken?
-        var isComplete = true
-        changes.enumerateChanges { change, stop in
-            guard let details = try? change.changeDetails(for: .asset) else {
-                isComplete = false
-                stop.pointee = true
-                return
+        for change in changes {
+            try Task.checkCancellation()
+            guard let details = try? change.changeDetails(for: PHObjectType.asset) else {
+                throw PhotosHistoryError.unavailable
             }
             batches.append(PhotosChangeBatch(
                 inserted: details.insertedLocalIdentifiers.sorted(),
@@ -278,7 +276,6 @@ public final class PhotoKitAssetSource: NSObject, PhotosAssetSource, PHPhotoLibr
             ))
             lastToken = change.changeToken
         }
-        guard isComplete else { throw PhotosHistoryError.unavailable }
         return PhotosHistory(batches: batches, token: lastToken.flatMap(Self.archive))
     }
 

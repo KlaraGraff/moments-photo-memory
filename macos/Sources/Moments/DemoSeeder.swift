@@ -227,6 +227,28 @@ public enum DemoSeeder {
         try context.save()
     }
 
+    /// UI tests: many more unnamed groups (five photos each, flat coloured
+    /// squares), so the row of faces has more people than fit in the window.
+    public static func addSyntheticCrowd(groups: Int = 24, context: ModelContext) throws {
+        let items = try context.fetch(FetchDescriptor<MediaItem>(sortBy: [SortDescriptor(\.id)])).filter { $0.source == .demo }
+        guard items.count >= 5, groups > 0 else { return }
+        for group in 1...groups {
+            let hue: Double = Double(group) / Double(groups + 1)
+            for (offset, item) in items[0..<5].enumerated() {
+                context.insert(FaceObservation(
+                    id: "demo-face-crowd-\(group)-\(offset + 1)",
+                    mediaID: item.id,
+                    rect: (0.05 + 0.03 * Double(offset), 0.1, 0.2, 0.2),
+                    embedding: Data(),
+                    cropData: syntheticFaceCrop(hue: hue),
+                    quality: 1,
+                    clusterID: "demo-cluster-crowd-\(group)"
+                ))
+            }
+        }
+        try context.save()
+    }
+
     private static func syntheticFaceCrop(hue: Double) -> Data {
         let image = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
             NSColor(calibratedHue: hue, saturation: 0.35, brightness: 0.85, alpha: 1).setFill()

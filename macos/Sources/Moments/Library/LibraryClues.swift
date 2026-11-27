@@ -26,10 +26,10 @@ struct PeopleStripEntry: Identifiable {
 enum PeopleStrip {
     /// An unnamed group shows once it is in this many photos.
     static let minimumUnnamedPhotos = 5
-    /// At most this many unnamed groups ask for a name at a time.
-    static let maximumUnnamed = 6
 
-    /// Named people first, most photos first; then the largest unnamed groups.
+    /// Everyone: named people first, most photos first; then every unnamed
+    /// group big enough to ask about, largest first. There is no cap, so the
+    /// row never hides people; it scrolls instead (`LibraryPeopleStrip`).
     /// Faces in screenshots and in Recently Deleted photos do not count.
     static func entries(
         faces: [FaceObservation],
@@ -93,7 +93,7 @@ enum PeopleStrip {
             if left.photoCount != right.photoCount { return left.photoCount > right.photoCount }
             return left.id < right.id
         }
-        return named + Array(unnamed.prefix(maximumUnnamed))
+        return named + unnamed
     }
 
     /// The named people in a set of photos, most photos first, for the small
@@ -191,17 +191,12 @@ extension PeopleStrip {
             guard let setIDs = owners[mediaID] else { continue }
             for setID in setIDs { perSet[setID, default: [:]][key, default: []].append(face) }
         }
-        var asked: [(id: String, count: Int)] = []
+        var askedIDs: Set<String> = []
         for (clusterID, photos) in clusterPhotos {
             guard (clusterFaces[clusterID] ?? 0) >= PeopleStoreActions.minimumCardFaces,
                   photos.count >= minimumUnnamedPhotos else { continue }
-            asked.append((clusterID, photos.count))
+            askedIDs.insert(clusterID)
         }
-        asked.sort { (left: (id: String, count: Int), right: (id: String, count: Int)) -> Bool in
-            if left.count != right.count { return left.count > right.count }
-            return left.id < right.id
-        }
-        let askedIDs: Set<String> = Set(asked.prefix(maximumUnnamed).map { (entry: (id: String, count: Int)) -> String in entry.id })
 
         var result: [String: [PeopleStripEntry]] = [:]
         for (setID, groups) in perSet {
@@ -261,14 +256,15 @@ enum PersonClue {
         }
     }
 
-    /// The Library, showing only this person's photos.
-    static func showPhotos(ofPerson personID: String, name: String?, store: LibraryStore, selection: SelectionModel) {
+    /// The Library, showing only this person's photos. `replacing` when
+    /// they are already showing under another name (see `showInLibrary`).
+    static func showPhotos(ofPerson personID: String, name: String?, store: LibraryStore, selection: SelectionModel, replacing: Bool = false) {
         var ids = Set<String>()
         for face in store.faces where face.personID == personID {
             guard let item = store.itemsByID[face.mediaID], !item.isScreenshot else { continue }
             ids.insert(face.mediaID)
         }
-        selection.showInLibrary(ids, title: name ?? String(localized: "Who is this?"), personID: personID)
+        selection.showInLibrary(ids, title: name ?? String(localized: "Who is this?"), personID: personID, replacing: replacing)
     }
 }
 
@@ -326,35 +322,142 @@ struct LibraryPeopleIndexer: View {
 /// The people of the library as a row of faces over the photos. A click shows
 /// that person's photos right here in the Library; a group nobody has named
 /// yet shows as "?" and asks who it is.
+///
+/// Everyone is in the row, however many: it stays one line and scrolls
+/// sideways. When more faces are off to a side, that edge fades out and a
+/// round arrow button pages along, so it never looks like these are all the
+/// people (a mouse wheel does not scroll a row sideways).
 struct LibraryPeopleStrip: View {
     let entries: [PeopleStripEntry]
     @Environment(SelectionModel.self) private var selection
+    /// The row's own frame in the strip's visible area: `minX` is 0 at the
+    /// start and negative once scrolled.
+    @State private var rowFrame: CGRect = .zero
+    @State private var visibleWidth: CGFloat = 0
+
+    private static let space = "library.people.viewport"
+    /// The row itself, padding included: paging back to the first face
+    /// scrolls here, so the row comes all the way back to its start.
+    private static let startID = "library.people.start"
+    private static let itemWidth: CGFloat = 64
+    private static let spacing: CGFloat = 16
+    private static let faceSize: CGFloat = 48
+    private static let fadeWidth: CGFloat = 36
+
+    private var step: CGFloat { Self.itemWidth + Self.spacing }
+    private var hasEarlier: Bool { rowFrame.minX < -1 }
+    private var hasLater: Bool { rowFrame.maxX > visibleWidth + 1 }
+    /// The first unnamed group after the named people, which a hairline
+    /// sets apart; `nil` when the row is all one kind.
+    private var firstUnnamedID: String? {
+        guard let index = entries.firstIndex(where: { (entry: PeopleStripEntry) -> Bool in entry.personID == nil }), index > 0 else { return nil }
+        return entries[index].id
+    }
 
     var body: some View {
         if !entries.isEmpty {
-            ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: 16) {
-                    ForEach(entries) { entry in
-                        Button { open(entry) } label: { label(entry) }
-                            .buttonStyle(.plain)
-                            .help(entry.name.map { String(localized: "Show photos of \($0)") } ?? String(localized: "Who is this?"))
-                            .accessibilityLabel(entry.name ?? String(localized: "Who is this?"))
-                            .accessibilityIdentifier("library.person." + (entry.name ?? "unnamed"))
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    LazyHStack(alignment: .top, spacing: Self.spacing) {
+                        ForEach(entries) { (entry: PeopleStripEntry) in
+                            if entry.id == firstUnnamedID {
+                                // A hairline between the people with a name
+                                // and the groups that still ask for one.
+                                Rectangle()
+                                    .fill(Paper.rule)
+                                    .frame(width: 1, height: Self.faceSize - 12)
+                                    .padding(.top, 6)
+                                    .accessibilityHidden(true)
+                            }
+                            Button { open(entry) } label: { label(entry) }
+                                .buttonStyle(.plain)
+                                .help(entry.name.map { String(localized: "Show photos of \($0)") } ?? String(localized: "Who is this?"))
+                                .accessibilityLabel(entry.name ?? String(localized: "Who is this?"))
+                                .accessibilityIdentifier("library.person." + (entry.name ?? "unnamed"))
+                                .id(entry.id)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 2)
+                    .id(Self.startID)
+                    .onGeometryChange(for: CGRect.self, of: { (geometry: GeometryProxy) -> CGRect in geometry.frame(in: .named(Self.space)) }) { (frame: CGRect) in
+                        rowFrame = frame
                     }
                 }
-                .padding(.vertical, 2)
-                .padding(.horizontal, 2)
+                .scrollIndicators(.never)
+                .coordinateSpace(.named(Self.space))
+                .onGeometryChange(for: CGFloat.self, of: { (geometry: GeometryProxy) -> CGFloat in geometry.size.width }) { (width: CGFloat) in
+                    visibleWidth = width
+                }
+                .mask { edgeFade }
+                .overlay(alignment: .topLeading) {
+                    if hasEarlier {
+                        pageButton(forward: false) { page(forward: false, proxy: proxy) }
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if hasLater {
+                        pageButton(forward: true) { page(forward: true, proxy: proxy) }
+                    }
+                }
+                .animation(.easeOut(duration: 0.15), value: hasEarlier)
+                .animation(.easeOut(duration: 0.15), value: hasLater)
             }
-            .scrollIndicators(.never)
             .padding(.bottom, 22)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("library.people")
         }
     }
 
+    /// Opaque in the middle; each edge fades out while more faces are past it.
+    private var edgeFade: some View {
+        HStack(spacing: 0) {
+            LinearGradient(colors: [Color.black.opacity(hasEarlier ? 0 : 1), Color.black], startPoint: .leading, endPoint: .trailing)
+                .frame(width: Self.fadeWidth)
+            Color.black
+            LinearGradient(colors: [Color.black, Color.black.opacity(hasLater ? 0 : 1)], startPoint: .leading, endPoint: .trailing)
+                .frame(width: Self.fadeWidth)
+        }
+    }
+
+    private func pageButton(forward: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: forward ? "chevron.right" : "chevron.left")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Paper.ink)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Paper.raised))
+                .overlay(Circle().stroke(Paper.line, lineWidth: 1))
+                .shadow(color: Paper.shadow.opacity(0.18), radius: 3, y: 1)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        // Level with the middle of the faces.
+        .padding(.top, 2 + (Self.faceSize - 28) / 2)
+        .help(forward ? String(localized: "More people") : String(localized: "Earlier people"))
+        .accessibilityLabel(forward ? String(localized: "More people") : String(localized: "Earlier people"))
+        .accessibilityIdentifier(forward ? "library.people.more" : "library.people.earlier")
+        .transition(.opacity)
+    }
+
+    /// Moves the row by about one width of faces, keeping one face of the
+    /// last view in sight so the eye can follow.
+    private func page(forward: Bool, proxy: ScrollViewProxy) {
+        let perPage: Int = max(1, Int((visibleWidth / step).rounded(.down)) - 1)
+        let first: Int = max(0, Int((-rowFrame.minX / step).rounded()))
+        let target: Int = forward
+            ? min(entries.count - 1, first + perPage)
+            : max(0, first - perPage)
+        guard entries.indices.contains(target) else { return }
+        let id: String = target == 0 ? Self.startID : entries[target].id
+        withAnimation(.easeInOut(duration: 0.3)) {
+            proxy.scrollTo(id, anchor: .leading)
+        }
+    }
+
     private func label(_ entry: PeopleStripEntry) -> some View {
         VStack(spacing: 4) {
-            PersonFace(face: entry.cover, size: 48)
+            PersonFace(face: entry.cover, size: Self.faceSize)
             Text(verbatim: entry.name ?? "?")
                 .font(.caption)
                 .foregroundStyle(entry.name == nil ? LibraryPalette.muted : LibraryPalette.ink)
@@ -363,7 +466,7 @@ struct LibraryPeopleStrip: View {
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(LibraryPalette.muted)
         }
-        .frame(width: 64)
+        .frame(width: Self.itemWidth)
         .contentShape(Rectangle())
     }
 
@@ -588,7 +691,7 @@ struct LibraryScopeHeading: View {
                 PeopleStoreActions.merge(sourceID: personID, into: target.id, people: people, observations: store.faces, context: modelContext)
                 try? modelContext.save()
                 // Both people's photos, now one person's.
-                PersonClue.showPhotos(ofPerson: target.id, name: shownName, store: store, selection: selection)
+                PersonClue.showPhotos(ofPerson: target.id, name: shownName, store: store, selection: selection, replacing: true)
             } else {
                 rename(person, to: pending.name, keepSeparate: true)
             }
@@ -626,7 +729,7 @@ struct LibraryScopeHeading: View {
         try? modelContext.save()
         if let target, let shownID {
             // Joined someone: their photos and these, together.
-            PersonClue.showPhotos(ofPerson: shownID, name: target.name ?? value, store: store, selection: selection)
+            PersonClue.showPhotos(ofPerson: shownID, name: target.name ?? value, store: store, selection: selection, replacing: true)
         } else {
             selection.libraryScope = LibraryScope(
                 title: value,
@@ -680,7 +783,7 @@ struct LibraryScopeHeading: View {
         ), context: modelContext)
         // The photos now listed under the new name: more than before when
         // the name joined another place.
-        PlaceClue.showPhotos(at: value, store: store, selection: selection)
+        PlaceClue.showPhotos(at: value, store: store, selection: selection, replacing: true)
         // Typing is over, so a later change to the name (Undo) shows.
         isNaming = false
     }
@@ -926,14 +1029,14 @@ enum PlaceClue {
     /// The Library, showing only the photos taken at the place called
     /// `name`: the photos whose own place name is that, and the photos of
     /// places with that name or inside one.
-    static func showPhotos(at name: String, store: LibraryStore, selection: SelectionModel) {
+    static func showPhotos(at name: String, store: LibraryStore, selection: SelectionModel, replacing: Bool = false) {
         let key: String = PlaceNames.key(name)
         guard !key.isEmpty else { return }
         var ids: [String] = []
         for item in store.regularItems where PlaceNames.matches(item, key: key) {
             ids.append(item.id)
         }
-        selection.showInLibrary(ids, title: name, placeName: name)
+        selection.showInLibrary(ids, title: name, placeName: name, replacing: replacing)
     }
 }
 

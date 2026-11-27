@@ -118,6 +118,24 @@ public protocol PhotosChangeObservation: AnyObject {
     func invalidate()
 }
 
+/// What Apple Photos' change history holds since a saved change token.
+public struct PhotosHistory: Equatable, Sendable {
+    public let batches: [PhotosChangeBatch]
+    /// The token to save for the next look; `nil` keeps the old one.
+    public let token: Data?
+
+    public init(batches: [PhotosChangeBatch], token: Data?) {
+        self.batches = batches
+        self.token = token
+    }
+}
+
+public enum PhotosHistoryError: Error, Equatable {
+    /// The token is too old, unreadable, or the history is not kept: the
+    /// library has to be compared with Photos as it is now.
+    case unavailable
+}
+
 public protocol PhotosAssetSource: AnyObject {
     var authorizationStatus: PhotosAuthorizationStatus { get }
 
@@ -136,6 +154,15 @@ public protocol PhotosAssetSource: AnyObject {
         targetSize: CGSize,
         networkAccessAllowed: Bool
     ) async -> CGImage?
+    /// Photos' current change token, archived; `nil` where there is none.
+    func currentChangeToken() -> Data?
+    /// The changes since `token`, a value `currentChangeToken()` returned.
+    func history(since token: Data) async throws -> PhotosHistory
+    /// The local identifiers among `identifiers` that are in the library.
+    func presentLocalIdentifiers(_ identifiers: [String]) async throws -> Set<String>
+    /// Local identifiers on this Mac for Photos' cloud identifiers; the ones
+    /// Photos cannot find are left out.
+    func localIdentifiers(forCloudIdentifiers identifiers: [String]) async -> [String: String]
 }
 
 public extension PhotosAssetSource {
@@ -165,6 +192,13 @@ public extension PhotosAssetSource {
         targetSize: CGSize,
         networkAccessAllowed: Bool
     ) async -> CGImage? { nil }
+    func currentChangeToken() -> Data? { nil }
+    func history(since token: Data) async throws -> PhotosHistory { throw PhotosHistoryError.unavailable }
+    func presentLocalIdentifiers(_ identifiers: [String]) async throws -> Set<String> {
+        guard !identifiers.isEmpty else { return [] }
+        return Set(try await fetchAssets(selection: .identifiers(identifiers)).map(\.localIdentifier))
+    }
+    func localIdentifiers(forCloudIdentifiers identifiers: [String]) async -> [String: String] { [:] }
 }
 
 public struct PhotosMappedAsset: Equatable, Sendable {

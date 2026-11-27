@@ -243,6 +243,75 @@ public final class PhotoKitAssetSource: NSObject, PhotosAssetSource, PHPhotoLibr
         }
     }
 
+    public func currentChangeToken() -> Data? {
+        guard authorizationStatus.canRead else { return nil }
+        return Self.archive(PHPhotoLibrary.shared().currentChangeToken)
+    }
+
+    /// Photos' persistent change history: what changed while Moments was
+    /// closed. Runs off the main thread; a long history can take a moment.
+    public func history(since token: Data) async throws -> PhotosHistory {
+        guard authorizationStatus.canRead,
+              let saved = try? NSKeyedUnarchiver.unarchivedObject(ofClass: PHPersistentChangeToken.self, from: token) else {
+            throw PhotosHistoryError.unavailable
+        }
+        let changes: PHPersistentChangeFetchResult
+        do {
+            changes = try PHPhotoLibrary.shared().fetchPersistentChanges(since: saved)
+        } catch {
+            // Expired or unavailable history: the caller compares instead.
+            throw PhotosHistoryError.unavailable
+        }
+        var batches: [PhotosChangeBatch] = []
+        var lastToken: PHPersistentChangeToken?
+        var isComplete = true
+        changes.enumerateChanges { change, stop in
+            guard let details = try? change.changeDetails(for: .asset) else {
+                isComplete = false
+                stop.pointee = true
+                return
+            }
+            batches.append(PhotosChangeBatch(
+                inserted: details.insertedLocalIdentifiers.sorted(),
+                updated: details.updatedLocalIdentifiers.sorted(),
+                deleted: details.deletedLocalIdentifiers.sorted()
+            ))
+            lastToken = change.changeToken
+        }
+        guard isComplete else { throw PhotosHistoryError.unavailable }
+        return PhotosHistory(batches: batches, token: lastToken.flatMap(Self.archive))
+    }
+
+    public func presentLocalIdentifiers(_ identifiers: [String]) async throws -> Set<String> {
+        var present = Set<String>()
+        for chunk in Self.chunks(identifiers) {
+            try Task.checkCancellation()
+            let result = PHAsset.fetchAssets(withLocalIdentifiers: chunk, options: nil)
+            result.enumerateObjects { asset, _, _ in present.insert(asset.localIdentifier) }
+        }
+        return present
+    }
+
+    public func localIdentifiers(forCloudIdentifiers identifiers: [String]) async -> [String: String] {
+        var result: [String: String] = [:]
+        for chunk in Self.chunks(identifiers) {
+            let mappings = PHPhotoLibrary.shared().localIdentifierMappings(for: chunk.map { PHCloudIdentifier(stringValue: $0) })
+            for (cloud, mapping) in mappings {
+                if case .success(let local) = mapping { result[cloud.stringValue] = local }
+            }
+        }
+        return result
+    }
+
+    private static func archive(_ token: PHPersistentChangeToken) -> Data? {
+        try? NSKeyedArchiver.archivedData(withRootObject: token, requiringSecureCoding: true)
+    }
+
+    /// PhotoKit lookups in slices, so 50,000 identifiers are not one query.
+    private static func chunks(_ identifiers: [String], size: Int = 2_000) -> [[String]] {
+        stride(from: 0, to: identifiers.count, by: size).map { Array(identifiers[$0..<min($0 + size, identifiers.count)]) }
+    }
+
     public func photoLibraryDidChange(_ changeInstance: PHChange) {
         lock.lock()
         let handlers = Array(changeHandlers.values)

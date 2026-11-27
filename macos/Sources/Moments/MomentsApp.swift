@@ -217,6 +217,16 @@ struct MomentsApp: App {
         return container
     }
 
+    /// UI tests never touch PhotoKit; their stores hold no Apple Photos.
+    private static var checksApplePhotosAtLaunch: Bool {
+        #if DEBUG
+        return !ProcessInfo.processInfo.arguments.contains("-MomentsUITesting")
+            && uiTestStoreDirectory == nil
+        #else
+        return true
+        #endif
+    }
+
     @ViewBuilder
     private var appContent: some View {
         // The B1 paper design is light only; sheets inherit the window's appearance.
@@ -237,6 +247,10 @@ struct MomentsApp: App {
                         importController.configure(container: modelContainer)
                         peopleController.configure(container: modelContainer)
                         photosImportController.configure(container: modelContainer)
+                        // New and deleted photos in Apple Photos while Moments was closed.
+                        if Self.checksApplePhotosAtLaunch {
+                            Task { await photosImportController.catchUpAtLaunch() }
+                        }
                         stackAnalyzer.configure(container: modelContainer)
                         stackAnalyzer.analyzeIfNeeded()
                         // A face scan cut short by quitting picks up here;

@@ -672,6 +672,8 @@ final class LibraryViewState {
     var unscopedTopSectionScrollID: String?
     /// Set by the back button until all photos are grouped again.
     var pendingScopeReturnScrollID: String?
+    /// Where the grid scrolls once all photos are laid out again.
+    var scopeReturnScrollTarget: String?
     /// The photo whose memory is being typed in.
     var focusedMemoryItemID: String?
     /// The card a reveal request is waiting for; lazy grids build cards only

@@ -454,6 +454,14 @@ struct LibraryView: View {
                     finishReveal(of: appeared, using: proxy, selection: selection, state: state)
                 }
             }
+            .onChange(of: state.scopeReturnScrollTarget) { _, target in
+                guard let target else { return }
+                // After the new sections are laid out.
+                DispatchQueue.main.async {
+                    proxy.scrollTo(target, anchor: .top)
+                    state.scopeReturnScrollTarget = nil
+                }
+            }
             .onChange(of: selection.shouldRevealSelectionInLibrary) { _, shouldReveal in
                 guard shouldReveal else { return }
                 revealRequestedSelectionIfNeeded(in: cachedSections, using: proxy)
@@ -527,6 +535,9 @@ struct LibraryView: View {
         let isPhoto: Bool = id.hasPrefix(itemPrefix) && cachedItemByID[String(id.dropFirst(itemPrefix.count))] != nil
         guard isSection || isPhoto else { return }
         state.topSectionScrollID = id
+        // The scroll view may already hold this id (a place's section is
+        // often the one that was at the top), so it is told to scroll too.
+        state.scopeReturnScrollTarget = id
     }
 
     private func regroup() {

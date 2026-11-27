@@ -429,11 +429,6 @@ struct LibraryView: View {
                 }
             }
             ToolbarItem(placement: .primaryAction) { LibraryZoomControl(state: state) }
-            // Filters wait while one person's or place's photos show, which
-            // show all of them.
-            if selection.libraryScope == nil {
-                ToolbarItem(placement: .primaryAction) { LibraryFilterToolbarButton() }
-            }
         }
         .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, notes")))
         .navigationTitle(String(localized: "Library"))

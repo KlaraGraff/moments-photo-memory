@@ -414,20 +414,6 @@ struct LibraryView: View {
         #endif
         .background { LibraryPeopleIndexer(state: state) }
         .toolbar {
-            // While only some photos show, the window's back button (where
-            // Chapters and the Map have theirs) returns to all of them.
-            if selection.libraryScope != nil {
-                ToolbarItem(placement: .navigation) {
-                    Button {
-                        backToAllPhotos()
-                    } label: {
-                        Label(String(localized: "All photos"), systemImage: "chevron.left")
-                    }
-                    .help(String(localized: "Back to all photos"))
-                    .keyboardShortcut("[", modifiers: .command)
-                    .accessibilityIdentifier("library.scope.close")
-                }
-            }
             ToolbarItem(placement: .primaryAction) { LibraryZoomControl(state: state) }
         }
         .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, notes")))
@@ -562,13 +548,6 @@ struct LibraryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    /// Leaves a person's or a place's photos for all of them, at the place
-    /// in the Library where all photos were left.
-    private func backToAllPhotos() {
-        state.pendingScopeReturnScrollID = state.unscopedTopSectionScrollID
-        selection.libraryScope = nil
     }
 
     /// Runs after each regroup: once all photos are back on screen, the

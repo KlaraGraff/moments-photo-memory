@@ -1,4 +1,3 @@
-import CoreLocation
 import Foundation
 import MapKit
 import MomentsCore
@@ -11,13 +10,12 @@ struct PlaceSearchResult: Identifiable, Equatable, Sendable {
     let point: GeoPoint
 }
 
-/// Looks places up by name. The app uses Apple Maps' local search (the words
-/// typed and the map's area go to Apple, as in Maps); UI tests use a
-/// synthetic list and never reach the network.
+/// Looks places up by name. The app uses Apple Maps' local search: only the
+/// words typed go to Apple (what the owner agreed to), not the map's area
+/// or a pin's coordinate. UI tests use a synthetic list and never reach the
+/// network.
 protocol PlaceSearching: Sendable {
-    func search(_ query: String, near region: MKCoordinateRegion?) async throws -> [PlaceSearchResult]
-    /// A short name for a point dropped by hand, or nil.
-    func name(of point: GeoPoint) async -> String?
+    func search(_ query: String) async throws -> [PlaceSearchResult]
 }
 
 enum PlaceSearch {
@@ -30,11 +28,10 @@ enum PlaceSearch {
 }
 
 struct MapKitPlaceSearch: PlaceSearching {
-    func search(_ query: String, near region: MKCoordinateRegion?) async throws -> [PlaceSearchResult] {
+    func search(_ query: String) async throws -> [PlaceSearchResult] {
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = query
         request.resultTypes = [.pointOfInterest, .address]
-        if let region { request.region = region }
         let response = try await MKLocalSearch(request: request).start()
         return response.mapItems.prefix(8).enumerated().map { index, mapItem in
             let placemark = mapItem.placemark
@@ -51,12 +48,6 @@ struct MapKitPlaceSearch: PlaceSearching {
             )
         }
     }
-
-    func name(of point: GeoPoint) async -> String? {
-        let location = CLLocation(latitude: point.latitude, longitude: point.longitude)
-        guard let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }
-        return placemark.name ?? placemark.locality
-    }
 }
 
 #if DEBUG
@@ -65,7 +56,7 @@ struct MapKitPlaceSearch: PlaceSearching {
 struct SyntheticPlaceSearch: PlaceSearching {
     static let harbour = GeoPoint(latitude: 0.3, longitude: 0.3)
 
-    func search(_ query: String, near region: MKCoordinateRegion?) async throws -> [PlaceSearchResult] {
+    func search(_ query: String) async throws -> [PlaceSearchResult] {
         try await Task.sleep(for: .milliseconds(150))
         let words = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if words == "offline" { throw URLError(.notConnectedToInternet) }
@@ -75,7 +66,5 @@ struct SyntheticPlaceSearch: PlaceSearching {
             PlaceSearchResult(id: "1", name: "Synthetic Market", detail: "Synthetic Bay", point: GeoPoint(latitude: 0.31, longitude: 0.29)),
         ]
     }
-
-    func name(of point: GeoPoint) async -> String? { nil }
 }
 #endif

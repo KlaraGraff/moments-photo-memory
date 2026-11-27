@@ -32,7 +32,6 @@ struct ManualLocationSheet: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Query private var queried: [MediaItem]
 
     private enum SearchState: Equatable {
         case idle
@@ -68,48 +67,51 @@ struct ManualLocationSheet: View {
     @State private var searchedWords: String?
     @State private var pin: Pin?
     @State private var camera: MapCameraPosition = .automatic
-    @State private var visibleRegion: MKCoordinateRegion?
+    /// The selected photos, oldest first, read once when the sheet opens:
+    /// `body` runs on every key typed, and the selection may be the whole
+    /// library.
+    @State private var items: [MediaItem] = []
+    @State private var cameraLocatedCount = 0
+    @State private var unlocatedTargets: [MediaItem] = []
     @State private var borrowed: [Borrowed] = []
     @State private var loadedSuggestions = false
     @State private var includeCameraLocated = false
     @State private var dragOffset: CGSize?
     @FocusState private var searchFocused: Bool
 
+    private let itemIDs: [String]
     private let searcher: any PlaceSearching = PlaceSearch.current
     private static let mapSpace = "location.map"
 
     init(itemIDs: [String]) {
-        _queried = Query(filter: #Predicate<MediaItem> { itemIDs.contains($0.id) })
+        self.itemIDs = itemIDs
     }
 
-    /// The selected photos, oldest first.
-    private var items: [MediaItem] {
-        queried.sorted { lhs, rhs in
-            let left = lhs.effectiveCaptureDate ?? .distantFuture
-            let right = rhs.effectiveCaptureDate ?? .distantFuture
-            if left != right { return left < right }
-            return lhs.id < rhs.id
-        }
-    }
-
-    private var cameraLocatedCount: Int { items.filter { $0.cameraLocation != nil }.count }
     private var unlocatedCount: Int { items.count - cameraLocatedCount }
     /// Some photos have the camera's location and some have none: the sheet
     /// asks which to change.
     private var isMixed: Bool { cameraLocatedCount > 0 && unlocatedCount > 0 }
 
     private var targets: [MediaItem] {
-        let ids = Set(ManualLocation.targets(
-            items.map { ManualLocation.Target(id: $0.id, hasCameraLocation: $0.cameraLocation != nil) },
-            includingCameraLocated: includeCameraLocated || !isMixed
-        ))
-        return items.filter { ids.contains($0.id) }
+        includeCameraLocated || !isMixed ? items : unlocatedTargets
     }
 
-    /// Changes when a pin dropped by hand comes to rest, to look its name up.
-    private var pinNamingKey: String? {
-        guard let pin, pin.source == .map, dragOffset == nil else { return nil }
-        return "\(pin.point.latitude),\(pin.point.longitude)"
+    private func loadItems() {
+        items = ManualLocationEditing.items(withIDs: itemIDs, context: modelContext)
+            .filter { $0.deletedAt == nil }
+            .sorted { lhs, rhs in
+                let left = lhs.effectiveCaptureDate ?? .distantFuture
+                let right = rhs.effectiveCaptureDate ?? .distantFuture
+                if left != right { return left < right }
+                return lhs.id < rhs.id
+            }
+        let located = Set(items.filter { $0.cameraLocation != nil }.map(\.id))
+        cameraLocatedCount = located.count
+        let ids = Set(ManualLocation.targets(
+            items.map { ManualLocation.Target(id: $0.id, hasCameraLocation: located.contains($0.id)) },
+            includingCameraLocated: false
+        ))
+        unlocatedTargets = items.filter { ids.contains($0.id) }
     }
 
     private var title: String {
@@ -156,7 +158,6 @@ struct ManualLocationSheet: View {
         .background(Paper.raised)
         .onAppear(perform: start)
         .task(id: query) { await searchAfterPause() }
-        .task(id: pinNamingKey) { await nameDroppedPin() }
     }
 
     // MARK: Left column
@@ -327,9 +328,6 @@ struct ManualLocationSheet: View {
                 guard let coordinate = proxy.convert(location, from: .named(Self.mapSpace)) else { return }
                 drop(GeoPoint(coordinate), label: nil, source: .map, zoom: false)
             }
-            .onMapCameraChange(frequency: .onEnd) { context in
-                visibleRegion = context.region
-            }
             .overlay(alignment: .top) {
                 if pin == nil {
                     Text(String(localized: "Click the map to drop a pin"))
@@ -352,6 +350,8 @@ struct ManualLocationSheet: View {
             .scaleEffect(dragOffset == nil ? 1 : 1.12, anchor: .bottom)
             .animation(Motion.animation(Motion.snap, reduceMotion: reduceMotion), value: dragOffset == nil)
             .contentShape(Rectangle())
+            // A click on the pin itself leaves it where it is.
+            .onTapGesture {}
             .highPriorityGesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .named(Self.mapSpace))
                     .onChanged { value in
@@ -382,6 +382,7 @@ struct ManualLocationSheet: View {
     // MARK: Actions
 
     private func start() {
+        loadItems()
         searchFocused = true
         // A photo already placed by hand opens at its place.
         if let existing = items.lazy.compactMap({ $0.manualLocation?.point }).first {
@@ -449,7 +450,8 @@ struct ManualLocationSheet: View {
         searchedWords = words
         search = .loading
         do {
-            let results = try await searcher.search(words, near: visibleRegion)
+            // Only the words go to Apple's search, not where the map is.
+            let results = try await searcher.search(words)
             // A newer search (more typing) owns the list now.
             guard words == query.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
             search = results.isEmpty ? .empty(words) : .results(results)
@@ -467,16 +469,6 @@ struct ManualLocationSheet: View {
                 search = .failed
             }
         }
-    }
-
-    /// A pin dropped or dragged by hand gets the name of where it stands.
-    private func nameDroppedPin() async {
-        guard pinNamingKey != nil, let current = pin else { return }
-        try? await Task.sleep(for: .milliseconds(600))
-        guard !Task.isCancelled else { return }
-        let name = await searcher.name(of: current.point)
-        guard !Task.isCancelled, pin?.point == current.point else { return }
-        pin?.label = name
     }
 
     private func apply() {

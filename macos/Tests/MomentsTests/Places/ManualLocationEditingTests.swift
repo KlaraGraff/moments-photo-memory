@@ -175,9 +175,134 @@ final class ManualLocationEditingTests: XCTestCase {
         XCTAssertEqual(try places(context).count, 3)
     }
 
+    func testMovingWithinTheSameAreaKeepsItsParents() throws {
+        let context = try makeContext()
+        let item = MediaItem(id: "a", captureDate: base)
+        context.insert(item)
+        try context.save()
+        ManualLocationEditing.setLocation(GeoPoint(latitude: 0.3, longitude: 0.3), name: nil, on: [item], context: context, now: base)
+        let first = try XCTUnwrap(item.place)
+        let area = try XCTUnwrap(first.parent?.id)
+        let city = try XCTUnwrap(first.parent?.parent?.id)
+
+        // About 3 km away: past the spot radius, inside the same area.
+        let undo = ManualLocationEditing.setLocation(GeoPoint(latitude: 0.327, longitude: 0.3), name: nil, on: [item], context: context, now: base)
+        XCTAssertNotEqual(item.place?.id, first.id)
+        XCTAssertEqual(item.place?.parent?.id, area, "The new spot lost its area")
+        XCTAssertEqual(item.place?.parent?.parent?.id, city, "The new spot lost its city")
+        let spot = try XCTUnwrap(item.place?.id)
+        XCTAssertEqual(Set(try places(context).map(\.id)), [area, city, spot])
+
+        undo?.perform(in: context)
+        XCTAssertEqual(item.place?.parent?.id, area)
+        XCTAssertEqual(try places(context).count, 3)
+    }
+
+    func testMovingWithinTheSameCityKeepsTheCity() throws {
+        let context = try makeContext()
+        let item = MediaItem(id: "a", captureDate: base)
+        context.insert(item)
+        try context.save()
+        ManualLocationEditing.setLocation(GeoPoint(latitude: 0.3, longitude: 0.3), name: nil, on: [item], context: context, now: base)
+        let city = try XCTUnwrap(item.place?.parent?.parent?.id)
+        let firstArea = try XCTUnwrap(item.place?.parent?.id)
+
+        // About 11 km away: past the area radius, inside the same city.
+        ManualLocationEditing.setLocation(GeoPoint(latitude: 0.4, longitude: 0.3), name: nil, on: [item], context: context, now: base)
+        XCTAssertEqual(item.place?.parent?.parent?.id, city, "The new area lost its city")
+        XCTAssertNotEqual(item.place?.parent?.id, firstArea)
+        XCTAssertEqual(try places(context).count, 3, "The emptied area stayed, or the city went")
+    }
+
+    func testANewSearchedNameFollowsTheNewPlace() throws {
+        let context = try makeContext()
+        let item = MediaItem(id: "a", captureDate: base)
+        context.insert(item)
+        try context.save()
+        ManualLocationEditing.setLocation(GeoPoint(latitude: 0.3, longitude: 0.3), name: "Synthetic Harbour", on: [item], context: context, now: base)
+        XCTAssertEqual(item.namedPlace, "Synthetic Harbour")
+        XCTAssertNil(item.placeOverrideName, "A searched name went into the photo's own name")
+
+        ManualLocationEditing.setLocation(GeoPoint(latitude: -0.4, longitude: -0.4), name: "Synthetic Market", on: [item], context: context, now: base)
+        XCTAssertEqual(item.namedPlace, "Synthetic Market", "The first searched name stayed after a move")
+    }
+
+    func testClearingKeepsANameTypedByHand() throws {
+        let context = try makeContext()
+        let item = MediaItem(id: "a", captureDate: base)
+        context.insert(item)
+        PhotoInfoEditing.setPlaceName("My own name", on: item, context: context, now: base)
+        try context.save()
+        ManualLocationEditing.setLocation(GeoPoint(latitude: 0.3, longitude: 0.3), name: nil, on: [item], context: context, now: base)
+
+        ManualLocationEditing.clearLocation(on: [item], context: context, now: base)
+        XCTAssertNil(item.manualLocation)
+        XCTAssertEqual(item.placeOverrideName, "My own name", "Clear Location removed a name typed by hand")
+    }
+
+    func testARenamedPlaceIsNotRemoved() throws {
+        let context = try makeContext()
+        let item = MediaItem(id: "a", captureDate: base)
+        context.insert(item)
+        try context.save()
+        ManualLocationEditing.setLocation(GeoPoint(latitude: 0.3, longitude: 0.3), name: nil, on: [item], context: context, now: base)
+        let city = try XCTUnwrap(item.place?.parent?.parent)
+        context.insert(PlaceOverride(placeID: city.id, nameOverride: "Renamed", place: city))
+        try context.save()
+
+        ManualLocationEditing.setLocation(GeoPoint(latitude: -0.4, longitude: -0.4), name: nil, on: [item], context: context, now: base)
+        XCTAssertTrue(try places(context).contains { $0.id == city.id }, "A city renamed in Places was removed")
+    }
+
+    func testClearingGoesToThePartnersLocation() throws {
+        let context = try makeContext()
+        let item = MediaItem(id: "a", captureDate: base)
+        context.insert(item)
+        context.insert(PlaceOverride(mediaID: "a", accountID: "partner", latitude: 0.2, longitude: 0.2, updatedAt: base, mediaItem: item))
+        try context.save()
+        ManualLocationEditing.setLocation(GeoPoint(latitude: 0.6, longitude: 0.6), name: nil, on: [item], context: context, now: base.addingTimeInterval(60))
+        XCTAssertEqual(item.manualLocation?.point, GeoPoint(latitude: 0.6, longitude: 0.6))
+
+        ManualLocationEditing.clearLocation(on: [item], context: context, now: base.addingTimeInterval(120))
+        XCTAssertEqual(item.manualLocation?.point, GeoPoint(latitude: 0.2, longitude: 0.2))
+        XCTAssertEqual(item.place?.latitude, 0.2, "The photo's place does not follow the location it now shows")
+    }
+
+    func testTheBackfillNamesAnAreaMadeUnderANamedCity() async throws {
+        let context = try makeContext()
+        let city = Place(id: "city", name: "Synthetic City", kind: .city, latitude: 0.3, longitude: 0.3)
+        context.insert(city)
+        let item = MediaItem(id: "a", captureDate: base)
+        context.insert(item)
+        try context.save()
+        // About 11 km from the city's centre: a new area under it.
+        ManualLocationEditing.setLocation(GeoPoint(latitude: 0.4, longitude: 0.3), name: nil, on: [item], context: context, now: base)
+        let area = try XCTUnwrap(item.place?.parent)
+        XCTAssertEqual(area.parent?.id, "city")
+        XCTAssertEqual(area.name, "")
+
+        let container = try XCTUnwrap(self.container)
+        let backfill = PlaceNameBackfill(geocoder: SyntheticAreaGeocoder(), geocodeCache: ImportGeocodeCache(), pace: {})
+        _ = try await backfill.run(container: container)
+        XCTAssertFalse(try PlaceNameBackfill.hasUnnamedManualAreas(in: container))
+        let fresh = ModelContext(container)
+        let areaID = area.id
+        let named = try fresh.fetch(FetchDescriptor<Place>(predicate: #Predicate { $0.id == areaID })).first
+        XCTAssertEqual(named?.name, "Synthetic Area")
+        let cityName = try fresh.fetch(FetchDescriptor<Place>(predicate: #Predicate { $0.id == "city" })).first?.name
+        XCTAssertEqual(cityName, "Synthetic City", "The backfill renamed a city that had its name")
+    }
+
     func testIntervalText() {
         XCTAssertNotEqual(ManualLocationSheet.intervalText(-600), ManualLocationSheet.intervalText(600))
         // Under a minute reads as a minute.
         XCTAssertEqual(ManualLocationSheet.intervalText(20), ManualLocationSheet.intervalText(60))
+    }
+}
+
+/// Answers every lookup with the same made-up names, without the network.
+private struct SyntheticAreaGeocoder: ImportGeocoder {
+    func reverseGeocode(coordinate: GeoPoint) async throws -> ImportGeocodeResult {
+        ImportGeocodeResult(city: "Synthetic City", area: "Synthetic Area")
     }
 }

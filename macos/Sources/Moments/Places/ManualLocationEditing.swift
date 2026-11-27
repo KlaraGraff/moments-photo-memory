@@ -79,7 +79,21 @@ enum ManualLocationEditing {
 
     /// Places made here start with this, so Change and Clear can remove the
     /// ones left empty, and never a place the import made.
-    static let placeIDPrefix = "manual-"
+    nonisolated static let placeIDPrefix = "manual-"
+
+    /// Photos by id, a few hundred ids to a fetch, so a large selection
+    /// stays under the store's limit on values in one query.
+    static func items(withIDs ids: [String], context: ModelContext) -> [MediaItem] {
+        var found: [MediaItem] = []
+        var start = 0
+        while start < ids.count {
+            let chunk = Array(ids[start..<min(start + 400, ids.count)])
+            let descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { chunk.contains($0.id) })
+            found += (try? context.fetch(descriptor)) ?? []
+            start += 400
+        }
+        return found
+    }
 
     private struct OverrideState {
         let nameOverride: String?
@@ -90,9 +104,10 @@ enum ManualLocationEditing {
         let updatedBy: String?
     }
 
-    /// Puts the photos at `point`. `name` is the searched place's name; it
-    /// becomes the photo's place name only where this person has not typed
-    /// one. Returns the undo for the bar and ⌘Z, or nil when nothing changed.
+    /// Puts the photos at `point`. `name` is the searched place's name; a
+    /// spot made here takes it, and a photo's own name (typed by hand) is
+    /// never touched. Returns the undo for the bar and ⌘Z, or nil when
+    /// nothing changed.
     @discardableResult
     static func setLocation(
         _ point: GeoPoint,
@@ -105,23 +120,24 @@ enum ManualLocationEditing {
         let before = items.map(state(of:))
         let previous = items.compactMap(\.place)
         var created: [String] = []
-        let place = place(for: point, context: context, created: &created)
-        let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        var finder = PlaceFinder(context: context)
+        let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let place = finder.place(for: point, name: trimmedName, created: &created)
         for item in items {
             let override = localOverride(of: item, context: context, now: now)
             override.latitude = point.latitude
             override.longitude = point.longitude
-            if let trimmedName, !trimmedName.isEmpty, override.nameOverride?.isEmpty ?? true {
-                override.nameOverride = trimmedName
-            }
             override.updatedAt = now
             override.updatedBy = MomentsAccount.localID
             item.place = place
             touch(item, now: now)
         }
-        let removed = pruneEmptyPlaces(previous, movedItemIDs: Set(items.map(\.id)), context: context)
+        let removed = pruneEmptyPlaces(previous, keeping: [place], movedItemIDs: Set(items.map(\.id)), context: context)
         try? context.save()
-        if created.contains(where: { id in fetchPlace(id, context: context)?.kind == .city }) {
+        if created.contains(where: { id in
+            guard let kind = fetchPlace(id, context: context)?.kind else { return false }
+            return kind != .spot
+        }) {
             startNameBackfill(context: context)
         }
         let message = items.count == 1
@@ -130,9 +146,10 @@ enum ManualLocationEditing {
         return undo(message: message, before: before, created: created, removed: removed)
     }
 
-    /// Takes this person's hand-set location off the photos, and the place
-    /// name that came with it. A photo the camera located goes back to that
-    /// location (Use Camera Location); any other has none again.
+    /// Takes this person's hand-set location off the photos. A name they
+    /// typed for the photo stays. The photo goes to the partner's hand-set
+    /// location if there is one, else the camera's (Use Camera Location),
+    /// else it has none again.
     @discardableResult
     static func clearLocation(on items: [MediaItem], context: ModelContext, now: Date = .now) -> CorrectionUndo? {
         let changed = items.filter { $0.localPlaceOverride?.latitude != nil || $0.localPlaceOverride?.longitude != nil }
@@ -140,28 +157,42 @@ enum ManualLocationEditing {
         let before = changed.map(state(of:))
         let previous = changed.compactMap(\.place)
         var created: [String] = []
+        var finder = PlaceFinder(context: context)
+        var targets: [Place] = []
         for item in changed {
             if let override = item.localPlaceOverride {
-                if override.mapLinkOverride == nil {
+                let typedName = override.nameOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if typedName.isEmpty, override.mapLinkOverride == nil {
                     context.delete(override)
                 } else {
                     override.latitude = nil
                     override.longitude = nil
-                    override.nameOverride = nil
                     override.updatedAt = now
                     override.updatedBy = MomentsAccount.localID
                 }
             }
-            if let camera = item.cameraLocation {
-                item.place = place(for: camera, context: context, created: &created)
+            // The partner's hand-set location, read without this person's
+            // override, which may only be marked deleted until the save.
+            let partner = ManualLocation.resolved(
+                item.placeOverrides
+                    .filter { $0.accountID != MomentsAccount.localID }
+                    .compactMap(ManualLocationIndex.coordinate(of:))
+            )
+            if let point = partner?.point ?? item.cameraLocation {
+                let place = finder.place(for: point, name: "", created: &created)
+                item.place = place
+                targets.append(place)
             } else {
                 item.place = nil
             }
             touch(item, now: now)
         }
-        let removed = pruneEmptyPlaces(previous, movedItemIDs: Set(changed.map(\.id)), context: context)
+        let removed = pruneEmptyPlaces(previous, keeping: targets, movedItemIDs: Set(changed.map(\.id)), context: context)
         try? context.save()
-        if created.contains(where: { id in fetchPlace(id, context: context)?.kind == .city }) {
+        if created.contains(where: { id in
+            guard let kind = fetchPlace(id, context: context)?.kind else { return false }
+            return kind != .spot
+        }) {
             startNameBackfill(context: context)
         }
         return undo(message: String(localized: "Location cleared"), before: before, created: created, removed: removed)
@@ -169,81 +200,122 @@ enum ManualLocationEditing {
 
     // MARK: Places
 
-    /// The spot the photos join: one within 1 km, else a new unnamed spot
-    /// under the nearest area or city (new ones too when none is near). The
-    /// place-name backfill names a new city and its area.
-    private static func place(for point: GeoPoint, context: ModelContext, created: inout [String]) -> Place {
-        // About 30 km of latitude either side: past the city radius.
-        let low = point.latitude - 0.3
-        let high = point.latitude + 0.3
-        let descriptor = FetchDescriptor<Place>(predicate: #Predicate { place in
-            place.latitude != nil && place.longitude != nil
-        })
-        let nearby = ((try? context.fetch(descriptor)) ?? []).filter { place in
-            guard let latitude = place.latitude else { return false }
-            return latitude > low && latitude < high
+    /// Finds the spot a coordinate joins. Reads the places with a
+    /// coordinate once per edit, however many photos it moves, and counts
+    /// the places it makes, so a batch shares them.
+    private struct PlaceFinder {
+        let context: ModelContext
+        private var places: [Place]
+
+        init(context: ModelContext) {
+            self.context = context
+            let descriptor = FetchDescriptor<Place>(predicate: #Predicate { place in
+                place.latitude != nil && place.longitude != nil
+            })
+            places = (try? context.fetch(descriptor)) ?? []
         }
-        let existing: [ManualLocation.ExistingPlace] = nearby.compactMap { place in
-            guard let latitude = place.latitude, let longitude = place.longitude else { return nil }
-            let level: ManualLocation.Level
-            switch place.kind {
-            case .spot: level = .spot
-            case .area: level = .area
-            case .city: level = .city
+
+        /// One within the clusterer's spot radius, else a new spot under the
+        /// nearest area or city
+        /// (new ones too when none is near). A new spot takes `name`; the
+        /// place-name backfill names a new city and area.
+        mutating func place(for point: GeoPoint, name: String, created: inout [String]) -> Place {
+            // About 30 km of latitude either side: past the city radius.
+            let low = point.latitude - 0.3
+            let high = point.latitude + 0.3
+            let nearby = places.filter { place in
+                guard let latitude = place.latitude else { return false }
+                return latitude > low && latitude < high
             }
-            return ManualLocation.ExistingPlace(id: place.id, level: level, point: GeoPoint(latitude: latitude, longitude: longitude))
-        }
-        let byID = Dictionary(nearby.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let clusterer = PlaceClusterer()
-        let placement = ManualLocation.placement(
-            for: point,
-            among: existing,
-            areaRadiusMeters: clusterer.areaRadiusMeters,
-            cityRadiusMeters: clusterer.cityRadiusMeters
-        )
-        func newPlace(_ kind: PlaceKind, parent: Place?) -> Place {
-            let place = Place(
-                id: placeIDPrefix + UUID().uuidString,
-                name: "",
-                kind: kind,
-                latitude: point.latitude,
-                longitude: point.longitude,
-                parent: parent,
-                updatedBy: MomentsAccount.localID
+            let existing: [ManualLocation.ExistingPlace] = nearby.compactMap { place in
+                guard let latitude = place.latitude, let longitude = place.longitude else { return nil }
+                let level: ManualLocation.Level
+                switch place.kind {
+                case .spot: level = .spot
+                case .area: level = .area
+                case .city: level = .city
+                }
+                return ManualLocation.ExistingPlace(id: place.id, level: level, point: GeoPoint(latitude: latitude, longitude: longitude))
+            }
+            let byID = Dictionary(nearby.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let clusterer = PlaceClusterer()
+            let placement = ManualLocation.placement(
+                for: point,
+                among: existing,
+                spotRadiusMeters: clusterer.spotRadiusMeters,
+                areaRadiusMeters: clusterer.areaRadiusMeters,
+                cityRadiusMeters: clusterer.cityRadiusMeters
             )
-            context.insert(place)
-            created.append(place.id)
-            return place
-        }
-        switch placement {
-        case .spot(let id):
-            if let spot = byID[id] { return spot }
-            return newPlace(.spot, parent: nil)
-        case .newSpot(let areaID):
-            return newPlace(.spot, parent: byID[areaID])
-        case .newArea(let cityID):
-            let area = newPlace(.area, parent: byID[cityID])
-            return newPlace(.spot, parent: area)
-        case .newCity:
-            let city = newPlace(.city, parent: nil)
-            let area = newPlace(.area, parent: city)
-            return newPlace(.spot, parent: area)
+            let context = context
+            func newPlace(_ kind: PlaceKind, parent: Place?) -> Place {
+                let place = Place(
+                    id: ManualLocationEditing.placeIDPrefix + UUID().uuidString,
+                    name: kind == .spot ? name : "",
+                    kind: kind,
+                    latitude: point.latitude,
+                    longitude: point.longitude,
+                    parent: parent,
+                    updatedBy: MomentsAccount.localID
+                )
+                context.insert(place)
+                created.append(place.id)
+                return place
+            }
+            let spot: Place
+            switch placement {
+            case .spot(let id):
+                if let found = byID[id] { return found }
+                spot = newPlace(.spot, parent: nil)
+            case .newSpot(let areaID):
+                spot = newPlace(.spot, parent: byID[areaID])
+            case .newArea(let cityID):
+                let area = newPlace(.area, parent: byID[cityID])
+                places.append(area)
+                spot = newPlace(.spot, parent: area)
+            case .newCity:
+                let city = newPlace(.city, parent: nil)
+                let area = newPlace(.area, parent: city)
+                places.append(city)
+                places.append(area)
+                spot = newPlace(.spot, parent: area)
+            }
+            places.append(spot)
+            return spot
         }
     }
 
     /// Removes the places this feature made that the photos just left, when
     /// nothing else uses them, from the spot up. Returns them for Undo.
-    private static func pruneEmptyPlaces(_ previous: [Place], movedItemIDs: Set<String>, context: ModelContext) -> [PlaceState] {
+    /// `keeping` are the places the photos just joined: they and their
+    /// parents stay, because a child made in this edit is not in its
+    /// parent's list until the save. A place someone renamed stays too.
+    private static func pruneEmptyPlaces(
+        _ previous: [Place],
+        keeping: [Place],
+        movedItemIDs: Set<String>,
+        context: ModelContext
+    ) -> [PlaceState] {
+        var kept: Set<String> = []
+        for target in keeping {
+            var current: Place? = target
+            var depth = 0
+            while let place = current, depth < 4 {
+                kept.insert(place.id)
+                current = place.parent
+                depth += 1
+            }
+        }
         var removed: [PlaceState] = []
         var removedIDs: Set<String> = []
         var seen: Set<String> = []
         for start in previous where seen.insert(start.id).inserted {
             var current: Place? = start
-            while let place = current, place.id.hasPrefix(placeIDPrefix), !removedIDs.contains(place.id) {
+            while let place = current, place.id.hasPrefix(placeIDPrefix), !removedIDs.contains(place.id), !kept.contains(place.id) {
                 let placeID = place.id
                 // The inverse lists still hold the photos that just moved.
                 let unused = place.items.allSatisfy { movedItemIDs.contains($0.id) && $0.place?.id != placeID }
                     && place.children.allSatisfy { removedIDs.contains($0.id) }
+                    && place.overrides.isEmpty
                 guard unused else { break }
                 removed.append(PlaceState(
                     id: placeID,
@@ -319,7 +391,8 @@ enum ManualLocationEditing {
                 restored[saved.id] = place
             }
             let ids = before.map(\.id)
-            let items = (try? context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { ids.contains($0.id) }))) ?? []
+            let idSet = Set(ids)
+            let items = Self.items(withIDs: ids, context: context)
             let itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             for state in before {
                 guard let item = itemsByID[state.id] else { continue }
@@ -351,8 +424,9 @@ enum ManualLocationEditing {
             var deleted: Set<String> = []
             for id in created.reversed() {
                 guard let place = fetchPlace(id, context: context),
-                      place.items.allSatisfy({ ids.contains($0.id) && $0.place?.id != id }),
-                      place.children.allSatisfy({ deleted.contains($0.id) }) else { continue }
+                      place.items.allSatisfy({ idSet.contains($0.id) && $0.place?.id != id }),
+                      place.children.allSatisfy({ deleted.contains($0.id) }),
+                      place.overrides.isEmpty else { continue }
                 context.delete(place)
                 deleted.insert(id)
             }

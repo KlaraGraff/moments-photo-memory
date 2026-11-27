@@ -23,7 +23,8 @@ public enum ManualLocation {
     }
 
     /// The coordinate a photo shows: the one set most recently, by whoever
-    /// set it. Ties go to the smaller account id, so both Macs agree.
+    /// set it. A tie (same moment to the second) goes to the smaller
+    /// account id, so the answer does not depend on fetch order.
     public static func resolved(_ overrides: [OverrideCoordinate]) -> OverrideCoordinate? {
         overrides.max { lhs, rhs in
             if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt < rhs.updatedAt }
@@ -190,8 +191,8 @@ public enum ManualLocation {
         case newCity
     }
 
-    /// The radii match the import: a spot is shared within 1 km, and an area
-    /// or city within the clusterer's radius for that level.
+    /// A spot is shared within `spotRadiusMeters`, an area or city within
+    /// its radius. The app passes the clusterer's radii, as the import uses.
     public static func placement(
         for point: GeoPoint,
         among places: [ExistingPlace],

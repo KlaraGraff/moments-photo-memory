@@ -76,28 +76,35 @@ public struct MapFlight: Sendable {
         let w1: Double = end.distance * Self.visibleHeightPerMetre
         let ground: Double = Self.groundDistance(from: start, to: end)
 
-        let length: Double
-        // Closer than a metre counts as the same centre.
-        if ground < 1 {
-            let logRatio: Double = log(w1 / w0)
-            length = abs(logRatio) / rho
-            shape = .zoom(logRatio: logRatio)
-        } else {
+        var length: Double = abs(log(w1 / w0)) / rho
+        var shape: Shape = .zoom(logRatio: log(w1 / w0))
+        // Closer than a metre counts as the same centre: only the zoom changes.
+        if ground >= 1 {
             let rho2: Double = rho * rho
             let rho4: Double = rho2 * rho2
             let b0: Double = (w1 * w1 - w0 * w0 + rho4 * ground * ground) / (2 * w0 * rho2 * ground)
             let b1: Double = (w1 * w1 - w0 * w0 - rho4 * ground * ground) / (2 * w1 * rho2 * ground)
-            let r0: Double = log((b0 * b0 + 1).squareRoot() - b0)
-            let r1: Double = log((b1 * b1 + 1).squareRoot() - b1)
-            length = (r1 - r0) / rho
+            // log(√(b² + 1) − b) in the paper; −asinh(b) is the same value
+            // without losing every digit when b is large, as it is when the
+            // camera rises from a close view to a centre a few metres away.
+            let r0: Double = -asinh(b0)
+            let r1: Double = -asinh(b1)
+            let pathLength: Double = (r1 - r0) / rho
             let coshR0: Double = cosh(r0)
             let sinhR0: Double = sinh(r0)
             // In exact arithmetic the path ends at 1; dividing by the computed
             // end keeps rounding from leaving the camera a little short.
             let endScale: Double = w0 / (rho2 * ground)
-            let rawEnd: Double = endScale * (coshR0 * tanh(rho * length + r0) - sinhR0)
-            shape = .path(groundDistance: ground, r0: r0, coshR0: coshR0, sinhR0: sinhR0, endFraction: rawEnd)
+            let rawEnd: Double = endScale * (coshR0 * tanh(rho * pathLength + r0) - sinhR0)
+            let values: [Double] = [r0, pathLength, coshR0, sinhR0, rawEnd]
+            if values.allSatisfy(\.isFinite), rawEnd > 0, pathLength >= 0 {
+                length = pathLength
+                shape = .path(groundDistance: ground, r0: r0, coshR0: coshR0, sinhR0: sinhR0, endFraction: rawEnd)
+            }
+            // Otherwise the plain zoom below, with the centre gliding along:
+            // never a frame of NaN for MapKit.
         }
+        self.shape = shape
         pathLength = length.isFinite ? max(0, length) : 0
         duration = Self.duration(forPathLength: pathLength)
     }
@@ -119,6 +126,7 @@ public struct MapFlight: Sendable {
         guard time > 0 else { return start }
         let progress: Double = Self.eased(time / duration)
         let (fraction, distance) = position(atProgress: progress)
+        guard fraction.isFinite, distance.isFinite else { return end }
         return MapFlightCamera(
             latitude: start.latitude + (end.latitude - start.latitude) * fraction,
             longitude: start.longitude + (end.longitude - start.longitude) * fraction,
@@ -126,29 +134,6 @@ public struct MapFlight: Sendable {
             heading: start.heading + Self.headingChange(from: start.heading, to: end.heading) * progress,
             pitch: start.pitch + (end.pitch - start.pitch) * progress
         )
-    }
-
-    /// The flight sampled every `1 / perSecond` seconds: the camera at the end
-    /// of each step, the last one exactly `end`. Each step lasts `stepDuration`.
-    public func frames(perSecond: Double) -> [MapFlightCamera] {
-        let count: Int = Self.frameCount(duration: duration, perSecond: perSecond)
-        let step: Double = duration / Double(count)
-        var frames: [MapFlightCamera] = []
-        frames.reserveCapacity(count)
-        for index in 1..<count {
-            frames.append(camera(at: step * Double(index)))
-        }
-        frames.append(end)
-        return frames
-    }
-
-    /// Seconds each of `frames(perSecond:)` lasts.
-    public func stepDuration(perSecond: Double) -> Double {
-        duration / Double(Self.frameCount(duration: duration, perSecond: perSecond))
-    }
-
-    private static func frameCount(duration: Double, perSecond: Double) -> Int {
-        max(1, Int((duration * max(1, perSecond)).rounded(.up)))
     }
 
     /// How far along the ground the centre has come (0…1), and the distance.

@@ -325,6 +325,7 @@ struct MapScreen: View {
         .onMapCameraChange(frequency: .continuous) { context in
             // A plain object: remembering the camera redraws nothing.
             cameraWatch.latest = MapFlightCamera(context.camera)
+            cameraWatch.latestRegion = context.region
             #if DEBUG
             MapCameraTrace.record(distance: context.camera.distance)
             #endif
@@ -335,40 +336,59 @@ struct MapScreen: View {
             if let target = cameraWatch.flightTarget, !MapFlightCamera(context.camera).isClose(to: target) {
                 return
             }
-            defer {
-                updateWorldClusters()
-                updateVisibleClusters()
-            }
-            viewport = MapViewport(
-                centerLatitude: context.region.center.latitude,
-                centerLongitude: context.region.center.longitude,
-                latitudeDelta: context.region.span.latitudeDelta,
-                longitudeDelta: context.region.span.longitudeDelta
-            )
-            latitudeDelta = context.region.span.latitudeDelta
-            cameraDistance = context.camera.distance
-            // Down among the places the camera is the person's, whatever
-            // brought it there: a resize must never pull it back to the globe.
-            if context.camera.distance < Self.worldDistanceMetres {
-                isShowingGlobeOverview = false
-                awaitingProgrammaticCamera = false
-                return
-            }
-            if awaitingProgrammaticCamera {
-                awaitingProgrammaticCamera = false
-                programmaticDistance = context.camera.distance
-                return
-            }
-            guard isShowingGlobeOverview, let programmaticDistance else { return }
-            // Zooming by hand changes the distance; keep the person's camera.
-            if abs(context.camera.distance - programmaticDistance) > programmaticDistance * 0.05 {
-                isShowingGlobeOverview = false
-            }
+            cameraSettled(distance: context.camera.distance, region: context.region)
+        }
+        .onDisappear {
+            cameraWatch.cancelFlight()
         }
         .onTapGesture {
             guard Date().timeIntervalSince(lastMarkerSelection) > 0.4 else { return }
             closePanel()
         }
+    }
+
+    /// The camera came to rest: show the pins and routes around it, and work
+    /// out whether it is still the globe overview a resize may refit.
+    private func cameraSettled(distance: Double, region: MKCoordinateRegion) {
+        defer {
+            updateWorldClusters()
+            updateVisibleClusters()
+        }
+        viewport = MapViewport(
+            centerLatitude: region.center.latitude,
+            centerLongitude: region.center.longitude,
+            latitudeDelta: region.span.latitudeDelta,
+            longitudeDelta: region.span.longitudeDelta
+        )
+        latitudeDelta = region.span.latitudeDelta
+        cameraDistance = distance
+        // Down among the places the camera is the person's, whatever
+        // brought it there: a resize must never pull it back to the globe.
+        if distance < Self.worldDistanceMetres {
+            isShowingGlobeOverview = false
+            awaitingProgrammaticCamera = false
+            return
+        }
+        if awaitingProgrammaticCamera {
+            awaitingProgrammaticCamera = false
+            programmaticDistance = distance
+            return
+        }
+        guard isShowingGlobeOverview, let programmaticDistance else { return }
+        // Zooming by hand changes the distance; keep the person's camera.
+        if abs(distance - programmaticDistance) > programmaticDistance * 0.05 {
+            isShowingGlobeOverview = false
+        }
+    }
+
+    /// The person stopped a flight with a click, scroll or pinch: the camera
+    /// stays where it is and is theirs, and MapKit may never report it again,
+    /// so settle on its last report.
+    private func flightInterrupted() {
+        isShowingGlobeOverview = false
+        awaitingProgrammaticCamera = false
+        guard let latest = cameraWatch.latest, let region = cameraWatch.latestRegion else { return }
+        cameraSettled(distance: latest.distance, region: region)
     }
 
     /// A photo standing on the map: the place's first photo in a white frame,
@@ -1143,7 +1163,7 @@ struct MapScreen: View {
         MapCameraTrace.note("path=flight \(String(format: "%.2f", flight.duration))s")
         #endif
         let binding: Binding<MapCameraPosition> = $cameraPosition
-        cameraWatch.fly(flight) { camera in
+        cameraWatch.fly(flight, interrupted: flightInterrupted) { camera in
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) {

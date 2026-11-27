@@ -3,6 +3,14 @@ import XCTest
 @testable import MomentsCore
 
 final class MapFlightTests: XCTestCase {
+    /// The flight sampled 60 times a second, ending exactly on its end.
+    private func frames(_ flight: MapFlight) -> [MapFlightCamera] {
+        let count: Int = max(1, Int((flight.duration * 60).rounded(.up)))
+        return (1...count).map { index in
+            flight.camera(at: flight.duration * Double(index) / Double(count))
+        }
+    }
+
     private let globe = MapFlightCamera(latitude: 20, longitude: 0, distance: 20_000_000)
     private let city = MapFlightCamera(latitude: 48.85, longitude: 2.35, distance: 8_000)
     private let farCity = MapFlightCamera(latitude: 35.6, longitude: 139.7, distance: 8_000)
@@ -14,9 +22,7 @@ final class MapFlightTests: XCTestCase {
         XCTAssertEqual(flight.camera(at: 0), globe)
         XCTAssertEqual(flight.camera(at: flight.duration), city)
         XCTAssertEqual(flight.camera(at: flight.duration + 5), city)
-        let frames: [MapFlightCamera] = flight.frames(perSecond: 60)
-        XCTAssertEqual(frames.last, city)
-        XCTAssertEqual(frames.count, Int((flight.duration * 60).rounded(.up)))
+        XCTAssertEqual(frames(flight).last, city)
     }
 
     func testSameViewIsAShortStill() {
@@ -82,7 +88,7 @@ final class MapFlightTests: XCTestCase {
 
     func testFarHopRisesOutToSeeBothEnds() {
         let flight = MapFlight(from: city, to: farCity, distanceCeiling: 20_000_000)
-        let highest: Double = flight.frames(perSecond: 60).map(\.distance).max() ?? 0
+        let highest: Double = frames(flight).map(\.distance).max() ?? 0
         XCTAssertGreaterThan(highest, 5_000_000, "Paris to Tokyo should rise to see both")
         XCTAssertLessThanOrEqual(highest, 20_000_000, "Never above the ceiling")
         XCTAssertEqual(flight.duration, MapFlight.longestDuration, accuracy: 1e-9)
@@ -92,7 +98,7 @@ final class MapFlightTests: XCTestCase {
         let start = MapFlightCamera(latitude: 48.85, longitude: 2.35, distance: 8_000)
         let end = MapFlightCamera(latitude: 48.86, longitude: 2.37, distance: 8_000)
         let flight = MapFlight(from: start, to: end)
-        let highest: Double = flight.frames(perSecond: 60).map(\.distance).max() ?? 0
+        let highest: Double = frames(flight).map(\.distance).max() ?? 0
         XCTAssertLessThan(highest, 16_000)
         XCTAssertLessThan(flight.duration, 1.0)
     }
@@ -100,7 +106,7 @@ final class MapFlightTests: XCTestCase {
     func testCentreMovesSteadilyTowardTheTarget() {
         let flight = MapFlight(from: city, to: farCity, distanceCeiling: 20_000_000)
         var previous: Double = city.longitude
-        for frame in flight.frames(perSecond: 60) {
+        for frame in frames(flight) {
             XCTAssertGreaterThanOrEqual(frame.longitude, previous - 1e-9)
             XCTAssertLessThanOrEqual(frame.longitude, farCity.longitude + 1e-9)
             previous = frame.longitude
@@ -111,15 +117,52 @@ final class MapFlightTests: XCTestCase {
 
     func testFramesAreSmallSteps() {
         let flight = MapFlight(from: globe, to: city)
-        let frames: [MapFlightCamera] = [globe] + flight.frames(perSecond: 60)
+        let cameras: [MapFlightCamera] = [globe] + frames(flight)
         var largest: Double = 0
-        for index in 1..<frames.count {
-            let ratio: Double = abs(log(frames[index].distance / frames[index - 1].distance))
+        for index in 1..<cameras.count {
+            let ratio: Double = abs(log(cameras[index].distance / cameras[index - 1].distance))
             largest = max(largest, ratio)
         }
         // No single sixtieth of a second may zoom by more than about 25 %.
         XCTAssertLessThan(largest, log(1.25))
-        XCTAssertEqual(flight.stepDuration(perSecond: 60) * Double(frames.count - 1), flight.duration, accuracy: 1e-9)
+    }
+
+    /// "Zoom to photos" on one city, then "Whole world": the two centres are
+    /// a few metres apart, where the paper's formula lost every digit.
+    func testRisingFromACloseViewToANearbyCentreStaysFinite() {
+        for offset in [0.5, 2.0, 20.0, 128.0, 500.0, 5_000.0] {
+            let close = MapFlightCamera(latitude: 20, longitude: offset / 111_320 / cos(20 * Double.pi / 180), distance: 6_232)
+            let flight = MapFlight(from: close, to: globe, distanceCeiling: 20_000_000)
+            var previous: Double = close.distance
+            for frame in frames(flight) {
+                XCTAssertTrue(frame.distance.isFinite && frame.latitude.isFinite && frame.longitude.isFinite, "Offset \(offset) m gave \(frame)")
+                XCTAssertGreaterThanOrEqual(frame.distance, previous * 0.999, "Offset \(offset) m: the camera came down on the way out")
+                previous = frame.distance
+            }
+            XCTAssertEqual(frames(flight).last, globe)
+            XCTAssertGreaterThan(flight.duration, 1.0, "Offset \(offset) m: the flight lost its length")
+        }
+    }
+
+    func testExtremeViewsStayFinite() {
+        let cameras: [MapFlightCamera] = [
+            MapFlightCamera(latitude: 90, longitude: 180, distance: 1),
+            MapFlightCamera(latitude: -90, longitude: -180, distance: 100_000_000),
+            MapFlightCamera(latitude: 0, longitude: 0, distance: 1),
+            MapFlightCamera(latitude: 0, longitude: 0.000001, distance: 100_000_000),
+            city,
+            globe,
+        ]
+        for start in cameras {
+            for end in cameras {
+                let flight = MapFlight(from: start, to: end, distanceCeiling: 20_000_000)
+                XCTAssertTrue(flight.duration.isFinite)
+                for frame in frames(flight) {
+                    XCTAssertTrue(frame.distance.isFinite && frame.distance > 0, "\(start) → \(end) gave \(frame)")
+                    XCTAssertTrue(frame.latitude.isFinite && frame.longitude.isFinite, "\(start) → \(end) gave \(frame)")
+                }
+            }
+        }
     }
 
     func testDurationGrowsWithThePath() {
@@ -147,7 +190,7 @@ final class MapFlightTests: XCTestCase {
         let west = MapFlightCamera(latitude: 0, longitude: -170, distance: 1_000_000)
         let flight = MapFlight(from: east, to: MapFlightCamera(latitude: 0, longitude: 170, distance: 1_000_000))
         XCTAssertEqual(flight.start.longitude, west.longitude, accuracy: 1e-9)
-        for frame in flight.frames(perSecond: 30) {
+        for frame in frames(flight) {
             XCTAssertGreaterThanOrEqual(frame.longitude, -170 - 1e-9)
             XCTAssertLessThanOrEqual(frame.longitude, 170 + 1e-9)
         }

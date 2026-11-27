@@ -10,6 +10,7 @@ import MomentsCore
 @MainActor
 final class MapCameraWatch {
     var latest: MapFlightCamera?
+    var latestRegion: MKCoordinateRegion?
     /// Where the flight under way ends; nil when the camera is not flying.
     private(set) var flightTarget: MapFlightCamera?
     private var flightTask: Task<Void, Never>?
@@ -17,15 +18,22 @@ final class MapCameraWatch {
 
     /// Plays `flight`, handing `apply` the camera for each frame until the
     /// last, which is exactly the flight's end. A click, scroll, pinch or
-    /// rotation on the way stops it where it is, so the person's own move
-    /// wins; a newer flight replaces this one.
-    func fly(_ flight: MapFlight, apply: @escaping @MainActor (MapFlightCamera) -> Void) {
+    /// rotation anywhere in the app on the way stops it where it is, so the
+    /// person's own move wins, and calls `interrupted`; a newer flight
+    /// replaces this one.
+    func fly(
+        _ flight: MapFlight,
+        interrupted: @escaping @MainActor () -> Void,
+        apply: @escaping @MainActor (MapFlightCamera) -> Void
+    ) {
         cancelFlight()
         flightTarget = flight.end
         let events: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .magnify, .rotate, .swipe]
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: events) { [weak self] event in
             MainActor.assumeIsolated {
-                self?.cancelFlight()
+                guard let self, self.flightTarget != nil else { return }
+                self.cancelFlight()
+                interrupted()
             }
             return event
         }

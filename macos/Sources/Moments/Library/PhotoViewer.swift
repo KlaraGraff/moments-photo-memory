@@ -8,7 +8,7 @@ import SwiftUI
 /// The large view of one photo, opened by a double click, Space or Return:
 /// a card over the dimmed window with the photo on the left and what is
 /// known about it on the right. The arrow keys page through the photos the
-/// screen showed; Esc, Space or a click outside the card closes it.
+/// screen showed; Esc, ⌘[, Space or a click outside the card closes it.
 struct PhotoViewer: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks
@@ -419,6 +419,13 @@ struct PhotoViewer: View {
         if event.type == .keyDown {
             // Esc in "Delete from Moments?" cancels the alert only.
             guard selection.pendingDeletion == nil else { return false }
+            // ⌘[ is the window's Back, and the open photo is the first
+            // thing it leaves, wherever the keyboard is.
+            if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+               event.charactersIgnoringModifiers == "[" {
+                close()
+                return true
+            }
             // 53 is Esc. Popovers (the date editor) and menus handle their own.
             guard event.keyCode == 53, let window = event.window, window.styleMask.contains(.titled),
                   !(window.firstResponder is NSText) else { return false }

@@ -116,7 +116,7 @@ final class MomentsCorrectionsUITests: XCTestCase {
         undoFromBar(app, bar: bar, prefix: prefix)
         XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: restored, evaluatedWith: field)], timeout: timeout), .completed, "Undo did not separate the two places")
         XCTAssertEqual(photoCount(app), count)
-        element(in: app, identifier: "library.scope.close").click()
+        element(in: app, identifier: "window.back").click()
     }
 
     private func photoCount(_ app: XCUIApplication) -> Int {
@@ -157,7 +157,7 @@ final class MomentsCorrectionsUITests: XCTestCase {
         XCTAssertTrue(element(in: app, identifier: "viewer.face.demo-face-3").waitForExistence(timeout: timeout), "The viewer does not list who is in the photo")
         capture(app, named: "\(prefix)-02-viewer-evidence")
         app.typeKey(.escape, modifierFlags: [])
-        element(in: app, identifier: "library.scope.close").click()
+        element(in: app, identifier: "window.back").click()
     }
 
     // MARK: Helpers

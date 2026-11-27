@@ -53,10 +53,10 @@ final class MomentsVisualTourUITests: XCTestCase {
                     if element(app, "map.view").waitForExistence(timeout: timeout) {
                         Thread.sleep(forTimeInterval: 1.2)
                         capture(app, "tour-04-large-map-evidence")
-                        element(app, "map.back").click()
+                        element(app, "window.back").click()
                     }
                 }
-                let close = element(app, "library.scope.close")
+                let close = element(app, "window.back")
                 if close.waitForExistence(timeout: timeout) { close.click() }
             }
         }
@@ -79,10 +79,10 @@ final class MomentsVisualTourUITests: XCTestCase {
         let card = element(app, "trips.card.journeyA")
         if card.waitForExistence(timeout: timeout) {
             card.click()
-            if element(app, "trips.back").waitForExistence(timeout: timeout) {
+            if element(app, "window.back").waitForExistence(timeout: timeout) {
                 Thread.sleep(forTimeInterval: 1.2)
                 capture(app, "tour-07-chapter-evidence")
-                element(app, "trips.back").click()
+                element(app, "window.back").click()
             }
         }
 

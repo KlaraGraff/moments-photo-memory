@@ -2,8 +2,8 @@ import AppKit
 import XCTest
 
 /// Set Location: a synthetic photo the camera gave no location gets one by
-/// searching a place name (a synthetic search, no network), shows on the map
-/// with the hand-set mark, and Undo takes it off again. At a large and a
+/// searching a place name (a synthetic search, no network), shows on the
+/// large map with the hand-set mark, and Undo takes it off again. At a large and a
 /// small (900×600) window.
 final class MomentsLocationUITests: XCTestCase {
     private let timeout: TimeInterval = 15
@@ -69,23 +69,27 @@ final class MomentsLocationUITests: XCTestCase {
         XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: timeout), "A sheet is still open")
         XCTAssertTrue(element(app, "correction.bar").waitForExistence(timeout: timeout), "No Undo bar after setting the location")
 
-        // The viewer marks it as set by hand; its small map opens the large
-        // map at the photo.
+        // The viewer marks it as set by hand and shows its small map. The
+        // column reports its controls with the column's frame, which has no
+        // hit point, so the large map is opened the way the map tests do.
         pauseLongerThanADoubleClick()
         photo.doubleClick()
-        XCTAssertTrue(element(app, "viewer").waitForExistence(timeout: timeout))
+        let viewer = element(app, "viewer")
+        XCTAssertTrue(viewer.waitForExistence(timeout: timeout))
         XCTAssertTrue(element(app, "viewer.location.manual").waitForExistence(timeout: timeout), "The viewer does not say the location was set by hand")
-        let miniMap = element(app, "viewer.place.map")
-        XCTAssertTrue(miniMap.waitForExistence(timeout: timeout), "The viewer shows no small map for the new location")
+        XCTAssertTrue(element(app, "viewer.place.map").waitForExistence(timeout: timeout), "The viewer shows no small map for the new location")
         capture(app, "\(prefix)-03-viewer-evidence")
-        miniMap.click()
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(viewer.waitForNonExistence(timeout: timeout), "The viewer did not close")
+        openMapAtPhotos(app)
         let marker = element(app, "map.marker.demo-unlocated-1")
         XCTAssertTrue(marker.waitForExistence(timeout: timeout), "The photo is not on the map")
         let value = marker.value as? String ?? ""
         XCTAssertTrue(value.contains("Set by hand"), "The pin is not marked as set by hand (\(value))")
         capture(app, "\(prefix)-04-map-evidence")
 
-        // Undo from the bar: the photo leaves the map.
+        // Undo from the bar, or ⌘Z once the bar has gone: the photo leaves
+        // the map.
         let undo = element(app, "correction.undo")
         if undo.waitForExistence(timeout: timeout) {
             undo.click()
@@ -94,6 +98,21 @@ final class MomentsLocationUITests: XCTestCase {
         }
         XCTAssertTrue(marker.waitForNonExistence(timeout: timeout), "Undo left the photo on the map")
         capture(app, "\(prefix)-05-undone-evidence")
+    }
+
+    /// Chapters' small map opens the large map; Fit zooms to the photos.
+    private func openMapAtPhotos(_ app: XCUIApplication) {
+        element(app, "sidebar.trips").click()
+        let footprints = element(app, "trips.footprints")
+        XCTAssertTrue(footprints.waitForExistence(timeout: timeout), "Chapters has no small map over the cards")
+        footprints.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.92)).click()
+        XCTAssertTrue(element(app, "map.view").waitForExistence(timeout: 30), "The small map did not open the large map")
+        let fit = element(app, "map.fit")
+        XCTAssertTrue(fit.waitForExistence(timeout: timeout))
+        // The fitted region needs the clustered snapshot; give it a moment.
+        Thread.sleep(forTimeInterval: 1.0)
+        fit.click()
+        Thread.sleep(forTimeInterval: 2.0)
     }
 
     private func pauseLongerThanADoubleClick() {

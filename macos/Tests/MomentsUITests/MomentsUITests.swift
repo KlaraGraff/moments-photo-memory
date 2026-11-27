@@ -1235,11 +1235,11 @@ final class MomentsUITests: XCTestCase {
             XCTFail("\(name): too few camera reports (\(samples.count))", file: file, line: line)
             return
         }
-        let total: Double = log(last.distance / first.distance)
-        XCTAssertGreaterThan(abs(total), log(4.0), "\(name): the camera barely zoomed (\(first.distance) → \(last.distance) m)", file: file, line: line)
+        let total: Double = Foundation.log(last.distance / first.distance)
+        XCTAssertGreaterThan(abs(total), Foundation.log(4.0), "\(name): the camera barely zoomed (\(first.distance) → \(last.distance) m)", file: file, line: line)
         // The move ends when the distance is within 1 % of where it stopped.
         let endIndex: Int = samples.firstIndex { sample in
-            abs(log(sample.distance / last.distance)) < 0.01
+            abs(Foundation.log(sample.distance / last.distance)) < 0.01
         } ?? samples.count - 1
         guard endIndex >= 1 else {
             XCTFail("\(name): the camera did not move", file: file, line: line)
@@ -1249,8 +1249,8 @@ final class MomentsUITests: XCTestCase {
         let moving: Int = samples[1...endIndex].count
         XCTAssertGreaterThanOrEqual(moving, 8, "\(name): only \(moving) camera reports during the move; it jumped instead of moving", file: file, line: line)
         XCTAssertGreaterThan(end, 0.3, "\(name): the move took only \(end) s", file: file, line: line)
-        let startShare: Double = log(logDistance(samples, at: end * 0.15) / first.distance) / total
-        let endShare: Double = log(last.distance / logDistance(samples, at: end * 0.85)) / total
+        let startShare: Double = Foundation.log(logDistance(samples, at: end * 0.15) / first.distance) / total
+        let endShare: Double = Foundation.log(last.distance / logDistance(samples, at: end * 0.85)) / total
         print("CAMERA-TRACE \(name): \(String(format: "%.2f", end)) s, first 15 % did \(Int((startShare * 100).rounded())) %, last 15 % did \(Int((endShare * 100).rounded())) % of the zoom")
         XCTAssertLessThan(startShare, 0.2, "\(name): the first 15 % of the move did \(Int(startShare * 100)) % of the zoom", file: file, line: line)
         XCTAssertLessThan(endShare, 0.2, "\(name): the last 15 % of the move did \(Int(endShare * 100)) % of the zoom", file: file, line: line)
@@ -1265,8 +1265,8 @@ final class MomentsUITests: XCTestCase {
         let b: CameraSample = samples[after]
         let span: Double = b.time - a.time
         let fraction: Double = span > 0 ? (time - a.time) / span : 1
-        let logA: Double = log(a.distance)
-        let logB: Double = log(b.distance)
+        let logA: Double = Foundation.log(a.distance)
+        let logB: Double = Foundation.log(b.distance)
         return exp(logA + (logB - logA) * fraction)
     }
 

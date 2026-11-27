@@ -1,4 +1,5 @@
 import MapKit
+import SwiftUI
 import MomentsCore
 
 /// What the map screen remembers about its camera between redraws: the last

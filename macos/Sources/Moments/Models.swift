@@ -1528,6 +1528,43 @@ public final class MemoryRevision {
     }
 }
 
+/// A comment under a memory, or a reply to another comment (issue #28).
+/// Both people comment on any memory; each edits and deletes only their own.
+/// Memories and parents are referred to by ID, like the note entities, so a
+/// comment that arrives before its memory is simply not shown yet, and a
+/// reply whose parent was deleted moves up under the memory.
+@Model
+public final class Comment {
+    public var id: String
+    public var memoryID: String
+    /// The comment this one answers; nil for a comment on the memory itself.
+    public var parentCommentID: String?
+    public var text: String
+    /// `MomentsAccount.localID` for this Mac's person, the partner's account
+    /// for theirs.
+    public var authorAccountID: String
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(
+        id: String = UUID().uuidString,
+        memoryID: String,
+        parentCommentID: String? = nil,
+        text: String,
+        authorAccountID: String = MomentsAccount.localID,
+        createdAt: Date = .now,
+        updatedAt: Date = .now
+    ) {
+        self.id = id
+        self.memoryID = memoryID
+        self.parentCommentID = parentCommentID
+        self.text = text
+        self.authorAccountID = authorAccountID
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
 @Model
 public final class Place {
     public var id: String
@@ -4251,19 +4288,26 @@ public enum SchemaV8: VersionedSchema {
     ]
 }
 
-/// Current live schema: V8 plus `LocalDecision`, the choices that used to
-/// live in user defaults (trip covers, photos placed in a trip by hand,
-/// People answers and groups, suggested event days, rule versions). The
-/// V8 entities are unchanged and only a table is added, so the stage is
-/// lightweight; the values are copied over from user defaults once, after
-/// the store opens (`LibraryDecisions.configure`).
+/// V8 plus `LocalDecision`, the choices that used to live in user defaults
+/// (trip covers, photos placed in a trip by hand, People answers and groups,
+/// suggested event days, rule versions). The V8 entities are unchanged and
+/// only a table is added, so the stage is lightweight; the values are copied
+/// over from user defaults once, after the store opens
+/// (`LibraryDecisions.configure`).
 public enum SchemaV9: VersionedSchema {
     public static let versionIdentifier = Schema.Version(9, 0, 0)
     public static let models: [any PersistentModel.Type] = SchemaV8.models + [LocalDecision.self]
 }
 
+/// Current live schema: V9 plus `Comment`, comments and replies under a
+/// memory. Only a table is added, so the stage is lightweight.
+public enum SchemaV10: VersionedSchema {
+    public static let versionIdentifier = Schema.Version(10, 0, 0)
+    public static let models: [any PersistentModel.Type] = SchemaV9.models + [Comment.self]
+}
+
 public enum MomentsMigrationPlan: SchemaMigrationPlan {
-    public static let schemas: [any VersionedSchema.Type] = [SchemaV1.self, SchemaV2.self, SchemaV3.self, SchemaV4.self, SchemaV5.self, SchemaV6.self, SchemaV7.self, SchemaV8.self, SchemaV9.self]
+    public static let schemas: [any VersionedSchema.Type] = [SchemaV1.self, SchemaV2.self, SchemaV3.self, SchemaV4.self, SchemaV5.self, SchemaV6.self, SchemaV7.self, SchemaV8.self, SchemaV9.self, SchemaV10.self]
 
     /// Legacy v1 stores are handled by the launch-time safety gate below.
     /// Each post-v2 change is additive and therefore lightweight. V5 is a
@@ -4276,7 +4320,8 @@ public enum MomentsMigrationPlan: SchemaMigrationPlan {
         .lightweight(fromVersion: SchemaV5.self, toVersion: SchemaV6.self),
         .lightweight(fromVersion: SchemaV6.self, toVersion: SchemaV7.self),
         .lightweight(fromVersion: SchemaV7.self, toVersion: SchemaV8.self),
-        .lightweight(fromVersion: SchemaV8.self, toVersion: SchemaV9.self)
+        .lightweight(fromVersion: SchemaV8.self, toVersion: SchemaV9.self),
+        .lightweight(fromVersion: SchemaV9.self, toVersion: SchemaV10.self)
     ]
 }
 
@@ -4402,7 +4447,7 @@ public enum MomentsPersistence {
         if inMemory {
             let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
             return try ModelContainer(
-                for: Schema(versionedSchema: SchemaV9.self),
+                for: Schema(versionedSchema: SchemaV10.self),
                 migrationPlan: MomentsMigrationPlan.self,
                 configurations: configuration
             )
@@ -4426,12 +4471,12 @@ public enum MomentsPersistence {
 
         let configuration = ModelConfiguration(
             "Moments",
-            schema: Schema(versionedSchema: SchemaV9.self),
+            schema: Schema(versionedSchema: SchemaV10.self),
             url: storeURL,
             cloudKitDatabase: .none
         )
         return try ModelContainer(
-            for: Schema(versionedSchema: SchemaV9.self),
+            for: Schema(versionedSchema: SchemaV10.self),
             migrationPlan: MomentsMigrationPlan.self,
             configurations: configuration
         )
@@ -4571,6 +4616,24 @@ public enum MomentsPersistence {
     /// Creates a V8 store for the V8 -> V9 migration test without opening the
     /// live schema. V8's entities are the live ones; only `LocalDecision` is
     /// missing. Production stores are opened through ``makeContainer``.
+    /// Creates a V9 store (before comments) for migration tests.
+    public static func makeV9Container(url: URL) throws -> ModelContainer {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let configuration = ModelConfiguration(
+            "Moments-v9",
+            schema: Schema(versionedSchema: SchemaV9.self),
+            url: url,
+            cloudKitDatabase: .none
+        )
+        return try ModelContainer(
+            for: Schema(versionedSchema: SchemaV9.self),
+            configurations: configuration
+        )
+    }
+
     public static func makeV8Container(url: URL) throws -> ModelContainer {
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),

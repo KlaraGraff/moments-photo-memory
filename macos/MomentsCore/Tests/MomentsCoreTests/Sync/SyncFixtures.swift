@@ -55,6 +55,18 @@ enum SyncFixtures {
         ])
     }
 
+    static func comment(_ id: String, memory: String, parent: String? = nil, text: String, author: String = SyncAccountMap.localAlias, at seconds: Double = 0) -> SyncRecord {
+        var record = SyncRecord(type: .comment, id: id, fields: [
+            "memoryID": .reference(memory),
+            "text": .string(text),
+            "authorAccountID": .string(author),
+            "createdAt": .date(at(seconds)),
+            "updatedAt": .date(at(seconds))
+        ])
+        if let parent { record["parentCommentID"] = .reference(parent) }
+        return record
+    }
+
     static func favorite(media: String, account: String = SyncAccountMap.localAlias, on: Bool, at seconds: Double = 0) -> SyncRecord {
         SyncRecord(type: .favorite, id: "\(media):\(account)", fields: [
             "mediaID": .reference(media),

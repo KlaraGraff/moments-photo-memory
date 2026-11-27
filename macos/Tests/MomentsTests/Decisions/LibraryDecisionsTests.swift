@@ -49,6 +49,29 @@ final class LibraryDecisionsTests: XCTestCase {
         XCTAssertNoThrow(try context.save())
     }
 
+    /// Comments (issue #28) add a table: a V9 store with data opens as V10
+    /// with nothing lost, and a comment can be saved.
+    func testV9StoreWithDataOpensAsV10() throws {
+        do {
+            let old: ModelContainer = try MomentsPersistence.makeV9Container(url: storeURL)
+            let item = MediaItem(id: "synthetic-v9-photo")
+            old.mainContext.insert(item)
+            old.mainContext.insert(Memory(text: "synthetic v9 memory", mediaItem: item))
+            old.mainContext.insert(LocalDecision(key: "synthetic.v9.key", value: Data([9])))
+            try old.mainContext.save()
+        }
+        let container: ModelContainer = try MomentsPersistence.makeContainer(url: storeURL)
+        let context = container.mainContext
+        let memories: [Memory] = try context.fetch(FetchDescriptor<Memory>())
+        let decisions: [LocalDecision] = try context.fetch(FetchDescriptor<LocalDecision>())
+        XCTAssertEqual(memories.map(\.text), ["synthetic v9 memory"])
+        XCTAssertEqual(decisions.map(\.key), ["synthetic.v9.key"])
+        let none: [Comment] = try context.fetch(FetchDescriptor<Comment>())
+        XCTAssertTrue(none.isEmpty)
+        context.insert(Comment(memoryID: memories[0].id, text: "synthetic comment"))
+        XCTAssertNoThrow(try context.save())
+    }
+
     /// The first open copies every moved key from user defaults, once, and
     /// leaves user defaults as they were (a way back).
     func testFirstOpenCopiesDecisionsFromDefaultsOnce() async throws {

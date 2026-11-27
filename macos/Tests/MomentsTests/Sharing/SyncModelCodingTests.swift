@@ -45,6 +45,8 @@ final class SyncModelCodingTests: XCTestCase {
         )
         let memory = Memory(id: "mem1", text: "Synthetic words", authorAccountID: SyncAccountMap.localAlias, createdAt: t0, updatedAt: t0, mediaItem: item)
         let revision = MemoryRevision(id: "rev1", text: "Older words", editedBy: SyncAccountMap.localAlias, editedAt: t0, baseRevision: 1, reason: "edit", memory: memory)
+        let comment = Comment(id: "c1", memoryID: "mem1", text: "Synthetic comment", createdAt: t0, updatedAt: t0)
+        let reply = Comment(id: "c2", memoryID: "mem1", parentCommentID: "c1", text: "Synthetic reply", createdAt: t0, updatedAt: t0)
         let tag = Tag(id: "tg1", displayName: "Beach", updatedAt: t0)
         let join = MediaTag(id: "m1:tg1", updatedAt: t0, mediaItem: item, tag: tag)
         let favorite = Favorite(isFavorite: true, changedAt: t0, mediaItem: item)
@@ -61,6 +63,8 @@ final class SyncModelCodingTests: XCTestCase {
         context.insert(item)
         context.insert(memory)
         context.insert(revision)
+        context.insert(comment)
+        context.insert(reply)
         context.insert(tag)
         context.insert(join)
         context.insert(favorite)
@@ -150,6 +154,28 @@ final class SyncModelCodingTests: XCTestCase {
         let note: PhotoNote? = try context.fetch(FetchDescriptor<PhotoNote>()).first
         XCTAssertEqual(note?.status, .done)
         XCTAssertEqual(note?.authorAccountID, partnerAccount)
+    }
+
+    /// Issue #28: her comment and reply arrive as hers, before or after the
+    /// memory they belong to, and a deletion from the zone removes them.
+    func testThePartnersCommentsArriveAsHersInAnyOrder() throws {
+        let context: ModelContext = try makeContext()
+        let receiver: SwiftDataSyncStore = store(context, account: ownerAccount, partner: partnerAccount)
+        receiver.apply(SyncRecord(type: .comment, id: "her-reply", fields: [
+            "memoryID": .reference("mem1"), "parentCommentID": .reference("his-comment"),
+            "text": .string("Her reply"), "authorAccountID": .string(partnerAccount),
+            "createdAt": .date(t0), "updatedAt": .date(t0)
+        ]))
+        try receiver.save()
+        let reply: Comment? = try context.fetch(FetchDescriptor<Comment>()).first
+        XCTAssertEqual(reply?.memoryID, "mem1")
+        XCTAssertEqual(reply?.parentCommentID, "his-comment")
+        XCTAssertEqual(reply?.authorAccountID, partnerAccount)
+        XCTAssertEqual(receiver.record(for: SyncRecordKey(.comment, "her-reply"))?["parentCommentID"], .reference("his-comment"))
+
+        receiver.applyDeletion(SyncRecordKey(.comment, "her-reply"))
+        try receiver.save()
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Comment>()).isEmpty)
     }
 
     func testDeletionFromTheZoneNeverRemovesThisMacsOwnPhoto() throws {

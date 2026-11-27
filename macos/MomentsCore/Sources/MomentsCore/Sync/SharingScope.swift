@@ -138,8 +138,12 @@ public enum SharingScopeResolver {
                 writtenAbout.insert(record.id)
             }
         }
-        // Kept revisions follow whatever they were kept for.
+        // Kept revisions follow whatever they were kept for; comments and
+        // replies follow their memory.
         for record in all(.memoryRevision) where isIn(ref(record, "memoryID"), writtenAbout) {
+            included.insert(record.key)
+        }
+        for record in all(.comment) where isIn(ref(record, "memoryID"), memories) {
             included.insert(record.key)
         }
         return included

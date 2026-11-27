@@ -22,6 +22,7 @@ struct SyncModelApplier {
         case .mediaItem: try applyMedia(record)
         case .memory: try applyMemory(record)
         case .memoryRevision: try applyRevision(record)
+        case .comment: try applyComment(record)
         case .mediaTag: try applyMediaTag(record)
         case .favorite: try applyFavorite(record)
         case .placeOverride: try applyPlaceOverride(record)
@@ -48,6 +49,7 @@ struct SyncModelApplier {
         case .trip: try deleteModel(Trip.self, #Predicate { $0.id == id })
         case .memory: try deleteModel(Memory.self, #Predicate { $0.id == id })
         case .memoryRevision: try deleteModel(MemoryRevision.self, #Predicate { $0.id == id })
+        case .comment: try deleteModel(Comment.self, #Predicate { $0.id == id })
         case .mediaTag: try deleteModel(MediaTag.self, #Predicate { $0.id == id })
         case .favorite: try deleteModel(Favorite.self, #Predicate { $0.id == id })
         case .placeOverride: try deleteModel(PlaceOverride.self, #Predicate { $0.id == id })
@@ -225,6 +227,20 @@ struct SyncModelApplier {
         if let memoryID, revision.memory?.id != memoryID {
             revision.memory = try find(Memory.self, #Predicate { $0.id == memoryID })
         }
+    }
+
+    /// Comments refer to their memory and parent by ID only, so either can
+    /// arrive first.
+    private func applyComment(_ r: SyncRecord) throws {
+        let id = r.id
+        let comment = try find(Comment.self, #Predicate { $0.id == id })
+            ?? insert(Comment(id: id, memoryID: "", text: ""))
+        comment.memoryID = r.string("memoryID") ?? comment.memoryID
+        comment.parentCommentID = r.string("parentCommentID")
+        comment.text = r.string("text") ?? ""
+        comment.authorAccountID = local(r.string("authorAccountID")) ?? SyncAccountMap.localAlias
+        comment.createdAt = r.date("createdAt") ?? comment.createdAt
+        comment.updatedAt = r.date("updatedAt") ?? .now
     }
 
     private func applyMediaTag(_ r: SyncRecord) throws {

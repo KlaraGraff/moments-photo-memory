@@ -210,6 +210,15 @@ enum LibraryMemoryPersistence {
         guard draft != stored.text else { return .noChange }
         return trimmed.isEmpty ? .delete : .update
     }
+
+    /// Whether an update keeps the words it replaces in the memory's edit
+    /// history (issue #28): once per editing session, so the history shows
+    /// what the memory said before each sitting, not every pause in typing.
+    static func keepsPreviousText(previous: String, new: String, alreadyKept: Bool) -> Bool {
+        !alreadyKept
+            && previous != new
+            && !previous.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 /// The app-layer mapping from SwiftData to the package's privacy-safe descriptor.

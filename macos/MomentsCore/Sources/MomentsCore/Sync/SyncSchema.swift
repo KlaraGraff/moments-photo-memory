@@ -102,6 +102,7 @@ public enum SyncRecordType: String, CaseIterable, Sendable, Codable {
     case photoNote = "PhotoNote"
     case placeNote = "PlaceNote"
     case collectionMemory = "CollectionMemory"
+    case comment = "Comment"
 
     /// Parents go up before children so a partner never receives a child
     /// whose parent is still missing for long; deletes go the other way.
@@ -111,7 +112,7 @@ public enum SyncRecordType: String, CaseIterable, Sendable, Codable {
         case .trip: return 1
         case .mediaItem: return 2
         case .previewAsset, .memory, .mediaTag, .favorite, .placeOverride, .userGroupItem, .photoNote: return 3
-        case .memoryRevision, .placeNote, .collectionMemory: return 4
+        case .memoryRevision, .placeNote, .collectionMemory, .comment: return 4
         }
     }
 
@@ -310,6 +311,19 @@ public enum SyncSchema {
                 SyncFieldSpec("authorAccountID", .string, .immutable, account: true),
                 SyncFieldSpec("createdAt", .date, .immutable),
                 SyncFieldSpec("sourceNoteID", .reference, target: .photoNote),
+                SyncFieldSpec("updatedAt", .date, .stamp)
+            ],
+            ownership: .authored(field: "authorAccountID"), stampField: "updatedAt", editorField: "authorAccountID"
+        ),
+        // A comment under a memory, or a reply to a comment. Both people
+        // comment on any memory; each edits and deletes only their own.
+        .comment: SyncTypeSpec(
+            fields: [
+                SyncFieldSpec("memoryID", .reference, .immutable, target: .memory),
+                SyncFieldSpec("parentCommentID", .reference, .immutable, target: .comment),
+                SyncFieldSpec("text", .string, text: true),
+                SyncFieldSpec("authorAccountID", .string, .immutable, account: true, nilMeansLocal: true),
+                SyncFieldSpec("createdAt", .date, .immutable),
                 SyncFieldSpec("updatedAt", .date, .stamp)
             ],
             ownership: .authored(field: "authorAccountID"), stampField: "updatedAt", editorField: "authorAccountID"

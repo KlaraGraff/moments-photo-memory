@@ -96,6 +96,17 @@ enum SyncModelCoding {
         return record
     }
 
+    static func record(_ comment: Comment) -> SyncRecord {
+        var record = SyncRecord(type: .comment, id: comment.id)
+        record.setReference("memoryID", comment.memoryID)
+        record.setReference("parentCommentID", comment.parentCommentID)
+        record.set("text", comment.text)
+        record.set("authorAccountID", comment.authorAccountID)
+        record.set("createdAt", comment.createdAt)
+        record.set("updatedAt", comment.updatedAt)
+        return record
+    }
+
     static func record(_ tag: Tag) -> SyncRecord {
         var record = SyncRecord(type: .tag, id: tag.id)
         record.set("normalizedName", tag.normalizedName)
@@ -203,6 +214,7 @@ enum SyncModelCoding {
         records += try context.fetch(FetchDescriptor<MediaItem>()).map { record($0) }
         records += try context.fetch(FetchDescriptor<Memory>()).map { record($0) }
         records += try context.fetch(FetchDescriptor<MemoryRevision>()).map { record($0) }
+        records += try context.fetch(FetchDescriptor<Comment>()).map { record($0) }
         records += try context.fetch(FetchDescriptor<MediaTag>()).map { record($0) }
         records += try context.fetch(FetchDescriptor<Favorite>()).map { record($0) }
         records += try context.fetch(FetchDescriptor<PlaceOverride>()).map { record($0) }
@@ -224,6 +236,7 @@ enum SyncModelCoding {
         case .mediaItem: return try find(MediaItem.self, #Predicate { $0.id == id }, in: context).map { record($0) }
         case .memory: return try find(Memory.self, #Predicate { $0.id == id }, in: context).map { record($0) }
         case .memoryRevision: return try find(MemoryRevision.self, #Predicate { $0.id == id }, in: context).map { record($0) }
+        case .comment: return try find(Comment.self, #Predicate { $0.id == id }, in: context).map { record($0) }
         case .mediaTag: return try find(MediaTag.self, #Predicate { $0.id == id }, in: context).map { record($0) }
         case .favorite: return try find(Favorite.self, #Predicate { $0.id == id }, in: context).map { record($0) }
         case .placeOverride: return try find(PlaceOverride.self, #Predicate { $0.id == id }, in: context).map { record($0) }

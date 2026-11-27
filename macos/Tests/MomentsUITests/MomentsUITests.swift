@@ -869,7 +869,9 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(behind.exists, "The print behind is not a choice of its own")
         let behindID: String = (behind.value as? String) ?? ""
         XCTAssertNotEqual(behindID, (front.value as? String) ?? "", "The two prints show the same photo")
-        behind.click()
+        // Most of the print behind lies under the one in front; click the
+        // strip of it that shows on the left, as a person would.
+        behind.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.5)).click()
         let swapped = NSPredicate(format: "value == %@", behindID)
         XCTAssertEqual(XCTWaiter().wait(for: [expectation(for: swapped, evaluatedWith: front)], timeout: launchTimeout), .completed, "Clicking the print behind did not make it the cover")
         capture(app, named: "trips-04b-cover-swapped-evidence")

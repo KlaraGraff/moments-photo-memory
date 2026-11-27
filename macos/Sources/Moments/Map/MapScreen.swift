@@ -135,22 +135,10 @@ struct MapScreen: View {
         // The large map is what a small map opens into: it shows the photos
         // that small map stood for (one chapter's, one person's, or all of
         // them), narrowed by the Library filters, which its Filter button
-        // opens. Back returns to where the small map was.
+        // opens. The window's back button returns to where the small map was.
         mapArea
         .compactLibraryFilters()
         .navigationTitle(selection.mapScope?.title ?? String(localized: "Map"))
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    selection.mapScope = nil
-                } label: {
-                    Label(String(localized: "Back"), systemImage: "chevron.left")
-                }
-                .help(String(localized: "Back"))
-                .keyboardShortcut("[", modifiers: .command)
-                .accessibilityIdentifier("map.back")
-            }
-        }
         #if DEBUG
         .onAppear {
             PageProbe.shellReady(token: PageProbe.phaseToken)

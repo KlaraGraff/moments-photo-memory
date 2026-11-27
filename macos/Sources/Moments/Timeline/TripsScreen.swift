@@ -298,8 +298,7 @@ struct TripsScreen: View {
                     around: daysAround(trip),
                     itemByID: itemByID,
                     memories: memories,
-                    actions: actions,
-                    onBack: closeTrip
+                    actions: actions
                 )
                 .transition(.opacity)
             } else {
@@ -328,6 +327,11 @@ struct TripsScreen: View {
         // ⌘Z already put things back; the note and its offer no longer apply.
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { _ in
             notice = nil
+        }
+        // However the chapter closed (the window's back button too), the
+        // shelf comes back at its card.
+        .onChange(of: selection.openTripID) { (old: String?, new: String?) in
+            if new == nil, let old { returnTripID = old }
         }
         #if DEBUG
         .onAppear {
@@ -1494,7 +1498,6 @@ private struct TripDetailView: View {
     let itemByID: [String: MediaItem]
     let memories: [CollectionMemory]
     let actions: TripActions
-    let onBack: () -> Void
     @Environment(SelectionModel.self) private var selection
     @Environment(SharingController.self) private var sharing: SharingController?
     @Environment(\.modelContext) private var modelContext
@@ -1642,15 +1645,9 @@ private struct TripDetailView: View {
         // The title bar holds the trip's name; double-click it to rename.
         .modifier(TripWindowTitle(name: TripText.name(trip), target: target, rename: actions.rename))
         .navigationSubtitle(target.map { $0.type.label } ?? String(localized: "Chapters"))
+        // The window's back button returns to the shelf, or to where the
+        // chapter was opened from.
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button(action: onBack) {
-                    Label(String(localized: "All chapters"), systemImage: "chevron.left")
-                }
-                .help(String(localized: "All chapters"))
-                .keyboardShortcut("[", modifiers: .command)
-                .accessibilityIdentifier("trips.back")
-            }
             if let model, let sharing, sharing.canOfferSharing {
                 ToolbarItem {
                     TripShareButton(tripID: model.id, tripName: TripText.name(trip))

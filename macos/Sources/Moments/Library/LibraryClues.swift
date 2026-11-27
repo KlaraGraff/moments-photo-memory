@@ -261,14 +261,15 @@ enum PersonClue {
         }
     }
 
-    /// The Library, showing only this person's photos.
-    static func showPhotos(ofPerson personID: String, name: String?, store: LibraryStore, selection: SelectionModel) {
+    /// The Library, showing only this person's photos. `replacing` when
+    /// they are already showing under another name (see `showInLibrary`).
+    static func showPhotos(ofPerson personID: String, name: String?, store: LibraryStore, selection: SelectionModel, replacing: Bool = false) {
         var ids = Set<String>()
         for face in store.faces where face.personID == personID {
             guard let item = store.itemsByID[face.mediaID], !item.isScreenshot else { continue }
             ids.insert(face.mediaID)
         }
-        selection.showInLibrary(ids, title: name ?? String(localized: "Who is this?"), personID: personID)
+        selection.showInLibrary(ids, title: name ?? String(localized: "Who is this?"), personID: personID, replacing: replacing)
     }
 }
 
@@ -588,7 +589,7 @@ struct LibraryScopeHeading: View {
                 PeopleStoreActions.merge(sourceID: personID, into: target.id, people: people, observations: store.faces, context: modelContext)
                 try? modelContext.save()
                 // Both people's photos, now one person's.
-                PersonClue.showPhotos(ofPerson: target.id, name: shownName, store: store, selection: selection)
+                PersonClue.showPhotos(ofPerson: target.id, name: shownName, store: store, selection: selection, replacing: true)
             } else {
                 rename(person, to: pending.name, keepSeparate: true)
             }
@@ -626,7 +627,7 @@ struct LibraryScopeHeading: View {
         try? modelContext.save()
         if let target, let shownID {
             // Joined someone: their photos and these, together.
-            PersonClue.showPhotos(ofPerson: shownID, name: target.name ?? value, store: store, selection: selection)
+            PersonClue.showPhotos(ofPerson: shownID, name: target.name ?? value, store: store, selection: selection, replacing: true)
         } else {
             selection.libraryScope = LibraryScope(
                 title: value,
@@ -680,7 +681,7 @@ struct LibraryScopeHeading: View {
         ), context: modelContext)
         // The photos now listed under the new name: more than before when
         // the name joined another place.
-        PlaceClue.showPhotos(at: value, store: store, selection: selection)
+        PlaceClue.showPhotos(at: value, store: store, selection: selection, replacing: true)
         // Typing is over, so a later change to the name (Undo) shows.
         isNaming = false
     }
@@ -926,14 +927,14 @@ enum PlaceClue {
     /// The Library, showing only the photos taken at the place called
     /// `name`: the photos whose own place name is that, and the photos of
     /// places with that name or inside one.
-    static func showPhotos(at name: String, store: LibraryStore, selection: SelectionModel) {
+    static func showPhotos(at name: String, store: LibraryStore, selection: SelectionModel, replacing: Bool = false) {
         let key: String = PlaceNames.key(name)
         guard !key.isEmpty else { return }
         var ids: [String] = []
         for item in store.regularItems where PlaceNames.matches(item, key: key) {
             ids.append(item.id)
         }
-        selection.showInLibrary(ids, title: name, placeName: name)
+        selection.showInLibrary(ids, title: name, placeName: name, replacing: replacing)
     }
 }
 

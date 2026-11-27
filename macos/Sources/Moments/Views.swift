@@ -4,16 +4,10 @@ import SwiftData
 import MapKit
 import UniformTypeIdentifiers
 
-private enum MomentsSection: Hashable {
-    case library
-    case trips
-    case recentlyDeleted
-}
-
 private typealias MomentsPalette = Paper
 
 struct ContentView: View {
-    @State private var selection: MomentsSection? = .library
+    @State private var selection: SidebarDestination? = .library
     /// Owned by the app so Library filters and scroll survive sidebar switches.
     let libraryState: LibraryViewState
     @Environment(SelectionModel.self) private var shared
@@ -28,10 +22,13 @@ struct ContentView: View {
     /// that page was already the one behind it: a list tells nobody about a
     /// click on the row it already shows as selected, so no row is selected
     /// while the map is up.
-    private var sidebarSelection: Binding<MomentsSection?> {
+    private var sidebarSelection: Binding<SidebarDestination?> {
         Binding(
             get: { shared.mapScope == nil ? selection : nil },
             set: { section in
+                // A page picked in the sidebar is a fresh start: Back does
+                // not lead into the page that was left.
+                shared.forgetBackHistory()
                 selection = section
                 if shared.mapScope != nil { shared.mapScope = nil }
             }
@@ -68,7 +65,7 @@ struct ContentView: View {
                             } icon: {
                                 Image(systemName: "trash")
                             }
-                            .tag(MomentsSection.recentlyDeleted)
+                            .tag(SidebarDestination.recentlyDeleted)
                             .accessibilityIdentifier("sidebar.recently-deleted")
                         }
                     }
@@ -123,6 +120,20 @@ struct ContentView: View {
                 if shared.viewerRequest == nil { CorrectionUndoBar() }
             }
             .toolbar {
+                // One back button for the whole window, where Finder and
+                // Photos have theirs: it returns to where the last click into
+                // a person, a place, a chapter or the large map came from,
+                // else one level up. Only while there is somewhere to go.
+                if shared.backTarget != nil {
+                    ToolbarItem(placement: .navigation) {
+                        Button(action: goBack) {
+                            Label(String(localized: "Back"), systemImage: "chevron.left")
+                        }
+                        .help(String(localized: "Back"))
+                        .keyboardShortcut("[", modifiers: .command)
+                        .accessibilityIdentifier("window.back")
+                    }
+                }
                 // Each page's + adds that page's thing: photos in the
                 // Library; Chapters brings its own.
                 if (selection ?? .library) == .library && shared.mapScope == nil {
@@ -177,7 +188,12 @@ struct ContentView: View {
         }
         // One accent everywhere, sheets included: no system blue controls.
         .tint(MomentsPalette.accent)
-        .onChange(of: selection) { _, _ in
+        .onChange(of: selection) { _, section in
+            let page: SidebarDestination = section ?? .library
+            // Back already moved the model to this page, with the photo it
+            // reopens; any other switch closes the viewer.
+            guard shared.page != page else { return }
+            shared.page = page
             shared.viewerRequest = nil
         }
         .onChange(of: shared.requestedDestination) { _, destination in
@@ -187,10 +203,7 @@ struct ContentView: View {
             if destination == .library, shared.libraryScope != nil, !shared.shouldRevealSelectionInLibrary {
                 libraryState.topSectionScrollID = nil
             }
-            switch destination {
-            case .library: selection = .library
-            case .trips: selection = .trips
-            }
+            selection = destination
             shared.requestedDestination = nil
         }
         .onAppear {
@@ -204,6 +217,33 @@ struct ContentView: View {
 
     @Environment(\.modelContext) private var modelContext
 
+    /// The back button and ⌘[: see `SelectionModel.goBack()`. Leaving a
+    /// person's or place's photos for all of them returns to where all of
+    /// them were left; a chapter closes onto the shelf as it opened.
+    private func goBack() {
+        guard shared.viewerRequest == nil, let target = shared.backTarget else {
+            shared.goBack()
+            return
+        }
+        let here: NavigationStop = shared.currentStop
+        let leavesScope: Bool = here.page == .library && here.mapScope == nil && here.libraryScope != nil
+            && target.page == .library && target.mapScope == nil && target.libraryScope == nil
+        let closesChapter: Bool = here.page == .trips && here.mapScope == nil && here.openTripID != nil
+            && target.page == .trips && target.mapScope == nil && target.openTripID == nil
+        if leavesScope {
+            libraryState.pendingScopeReturnScrollID = libraryState.unscopedTopSectionScrollID
+        }
+        let apply: () -> Void = {
+            let page: SidebarDestination = shared.goBack()
+            if selection != page { selection = page }
+        }
+        if closesChapter {
+            withAnimation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), apply)
+        } else {
+            apply()
+        }
+    }
+
     /// The shared library's live photos, not fetched again per sidebar page.
     private var items: [MediaItem] { store.items }
 
@@ -213,7 +253,7 @@ struct ContentView: View {
     private func sidebarRow(
         _ title: LocalizedStringKey,
         icon: String,
-        section: MomentsSection,
+        section: SidebarDestination,
         identifier: String
     ) -> some View {
         Label(title, systemImage: icon)

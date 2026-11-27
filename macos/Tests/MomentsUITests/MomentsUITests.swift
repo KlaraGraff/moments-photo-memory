@@ -329,6 +329,60 @@ final class MomentsUITests: XCTestCase {
         XCTAssertEqual(libraryPhotoCount(app), allCount)
     }
 
+    /// A place's photos go back to all photos with the window's back button
+    /// (an arrow, not a cross) and with Command-[, and all photos come back
+    /// where they were left, not at the top.
+    func testBackFromAPlacesPhotosReturnsWhereAllPhotosWereLeft() {
+        let app = launch(language: "en")
+        let allCount = libraryPhotoCount(app)
+        let photos = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+        XCTAssertTrue(photos.firstMatch.waitForExistence(timeout: launchTimeout))
+        photos.firstMatch.scroll(byDeltaX: 0, deltaY: -1500)
+        Thread.sleep(forTimeInterval: 1)
+        let firstShown: XCUIElement? = photos.allElementsBoundByIndex.first { (photo: XCUIElement) -> Bool in photo.isHittable }
+        guard let firstShown else {
+            XCTFail("No photo is in view after scrolling")
+            return
+        }
+        let shownID: String = firstShown.identifier
+        let places = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.place."))
+        let place: XCUIElement? = places.allElementsBoundByIndex.first { (place: XCUIElement) -> Bool in place.isHittable }
+        guard let place else {
+            XCTFail("No place under a photo is in view after scrolling")
+            return
+        }
+        place.click()
+        let heading = element(in: app, identifier: "library.scope")
+        XCTAssertTrue(heading.waitForExistence(timeout: launchTimeout), "Clicking the place did not show its photos")
+        let back = element(in: app, identifier: "library.scope.close")
+        XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "A place's photos have no way back")
+        let backInHeading: Bool = heading.descendants(matching: .any).matching(identifier: "library.scope.close").count > 0
+        XCTAssertFalse(backInHeading, "The way back should be the window's back button, not a cross in the heading")
+        capture(app, named: "scope-back-01-place-evidence")
+
+        back.click()
+        XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout), "Back did not leave the place")
+        XCTAssertEqual(libraryPhotoCount(app), allCount)
+        let returned = element(in: app, identifier: shownID)
+        XCTAssertTrue(returned.waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(returned.isHittable, "All photos did not come back where they were left")
+        capture(app, named: "scope-back-02-returned-evidence")
+
+        // Command-[ goes back too, as on Chapters and the Map.
+        let placeAgain: XCUIElement? = places.allElementsBoundByIndex.first { (place: XCUIElement) -> Bool in place.isHittable }
+        guard let placeAgain else {
+            XCTFail("No place under a photo is in view after going back")
+            return
+        }
+        placeAgain.click()
+        XCTAssertTrue(heading.waitForExistence(timeout: launchTimeout))
+        app.typeKey("[", modifierFlags: .command)
+        XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout), "Command-[ did not go back to all photos")
+        XCTAssertEqual(libraryPhotoCount(app), allCount)
+    }
+
     /// People are a row of faces over the photos, not a page. A face shows
     /// that person's photos in place; a group nobody named is named there.
     func testFacesOverThePhotosShowAPersonsPhotos() {

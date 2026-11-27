@@ -667,6 +667,11 @@ final class LibraryViewState {
     var memoryDrafts: [String: String] = [:]
     /// Scroll ID of the section at the top of the Library, restored on return.
     var topSectionScrollID: String?
+    /// `topSectionScrollID` while all photos showed, kept while a person's or
+    /// a place's photos show so the way back returns there.
+    var unscopedTopSectionScrollID: String?
+    /// Set by the back button until all photos are grouped again.
+    var pendingScopeReturnScrollID: String?
     /// The photo whose memory is being typed in.
     var focusedMemoryItemID: String?
     /// The card a reveal request is waiting for; lazy grids build cards only

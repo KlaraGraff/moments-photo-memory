@@ -60,14 +60,17 @@ extension SyntheticLibrary {
             (132..<136, PlacePlaces.fukuoka),
             (136..<140, PlacePlaces.sapporo),
         ]
+        // Then 45 days in Tokyo with a photo every day. A month or more at
+        // one place is living there (`TripSegmenter.livedThereDays`), so the
+        // Tokyo days, the first three included, are daily life; the five
+        // other cities are the trip.
         for leg in legs {
             for day in leg.days {
-                drafts += placeTripPhotos(&rng, at: leg.place, day: day, trip: "far")
+                drafts += placeTripPhotos(&rng, at: leg.place, day: day, trip: leg.place == PlacePlaces.tokyo ? nil : "far")
             }
         }
-        // Then a long stay in Tokyo with a photo every day, still the same trip.
         for day in 140..<185 {
-            drafts += placeTripPhotos(&rng, at: PlacePlaces.tokyo, day: day, trip: "far")
+            drafts += placeTripPhotos(&rng, at: PlacePlaces.tokyo, day: day, trip: nil)
         }
         return SyntheticPlaceScenario(
             scenario: placeScenario(name: "far-long-trip", drafts: drafts),
@@ -270,7 +273,7 @@ extension SyntheticLibrary {
         _ rng: inout SeededRandom,
         at place: GeoPoint,
         day: Int,
-        trip: String,
+        trip: String?,
         noLocationProbability: Double = 0.05
     ) -> [PlaceDraft] {
         let count = rng.int(in: 5...25)

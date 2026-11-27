@@ -41,8 +41,8 @@ final class OrganizationAccuracyTests: XCTestCase {
     /// frequent place groups visits that stay trips, so it may not split or
     /// eat them; the floors are today's scores, rounded down.
     private static let placeTripFloors: [String: (pairF1: Double, agreement: Double)] = [
-        // The 45-day Tokyo stay is dense, so it is one long trip, not a place
-        // someone lives: the whole trip is found.
+        // The 45-day Tokyo stay is dense, but a month or more at one place is
+        // living there: Tokyo is daily life and the other five cities the trip.
         "far-long-trip": (1, 1),
         // The four Dresden visits are found and form one frequent place.
         "second-place-visits": (1, 1),

@@ -111,7 +111,7 @@ final class TripCorrectionLogTests: XCTestCase {
         let entry: TripCorrectionLog.Entry = try XCTUnwrap(written.first)
         XCTAssertEqual(entry.action, .split)
         XCTAssertEqual(entry.version, 1)
-        XCTAssertEqual(entry.rulesVersion, 4)
+        XCTAssertEqual(entry.rulesVersion, TripSegmenter.rulesVersion)
         XCTAssertEqual(entry.before.count, 1)
         XCTAssertEqual(entry.after.count, 2)
         XCTAssertEqual(entry.before.first?.id, "t")

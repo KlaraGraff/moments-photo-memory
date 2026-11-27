@@ -35,6 +35,15 @@ public struct TripSegmenter: Sendable {
     /// ... spread over this many 30-day stretches, so one long stay away is
     /// never a usual place.
     public var minimumUsualPlaceMonths: Int = 3
+    /// The place seen in the most 30-day stretches of the window is a usual
+    /// place too, with this many photo days, whatever its share: a library
+    /// with few photos at home and many away still has a home.
+    public var homeByReturnMonths = true
+    public var minimumReturnHomeDays: Int = 5
+    /// A place that is a usual place in this many 30-day stretches of the
+    /// library is home for the whole library: the home town, or a work site
+    /// someone lived at before. 0 turns it off.
+    public var minimumLifetimeHomeBuckets: Int = 3
     /// Away photos further apart than this start a new trip when they are
     /// also more than `maximumTripDistanceMeters` apart, and that move is
     /// more than `homeDetourRatio` of the way home.
@@ -42,6 +51,17 @@ public struct TripSegmenter: Sendable {
     public var maximumTripDistanceMeters: Double = 300_000
     /// A move longer than this share of the way home counts as having gone home in between.
     public var homeDetourRatio: Double = 0.5
+    /// A shorter quiet stretch than `maximumTimeGap`, down to this one, also
+    /// ends a trip when home lies on the way of the far move: the way through
+    /// home is at most `homeOnTheWayRatio` times the move itself. One night at
+    /// home between two trips leaves about a day and a half without photos.
+    public var homeVisitGap: TimeInterval = 24 * 60 * 60
+    public var homeOnTheWayRatio: Double = 1.2
+    /// Two days without photos also end a trip when the next photo is at
+    /// another place and going home in between is at most this much further
+    /// than the move: two weekends near home, not one trip.
+    public var nearHomeVisitGap: TimeInterval = 48 * 60 * 60
+    public var nearHomeDetourMeters: Double = 300_000
     /// Away photos further apart than this always start a new trip.
     public var maximumQuietGap: TimeInterval = 4 * 24 * 60 * 60
     public var locationlessMatchWindow: TimeInterval = 12 * 60 * 60
@@ -67,6 +87,14 @@ public struct TripSegmenter: Sendable {
     /// `longStayMedianPhotosPerDay`; otherwise it is one long trip.
     public var longStayPhotoDayShare: Double = 0.5
     public var longStayMedianPhotosPerDay: Double = 3
+    /// A stretch away of at most `maximumJourneyDuration`, with photos at two
+    /// different homes no more than `maximumJourneyGap` before and after it,
+    /// is the journey between those homes and belongs to no trip.
+    public var maximumJourneyDuration: TimeInterval = 36 * 60 * 60
+    public var maximumJourneyGap: TimeInterval = 36 * 60 * 60
+    /// A stay at one place of this many days or more is daily life there
+    /// whatever its photos: a new work site, not one long trip.
+    public var livedThereDays: Int = 30
     /// A stay that touches the start or the end of the library is a move when
     /// it spans more days than this; a shorter stay may simply end with the year.
     public var maximumEdgeStayDays: Int = 200
@@ -93,7 +121,9 @@ public struct TripSegmenter: Sendable {
     /// 2: trips are time away from usual places (#99). 3: a trip stays together
     /// across quiet days far from home (#111). 4: long stays vs trips by photo
     /// density, the everyday place found by spread, and frequent places.
-    public static let rulesVersion = 4
+    /// 5: homes of the whole library (home town, former work sites), stays of
+    /// a month or more as daily life, and journeys between two homes.
+    public static let rulesVersion = 5
 
     public init() {}
 
@@ -135,11 +165,15 @@ public struct TripSegmenter: Sendable {
             ? []
             : Self.longStayIDs(segmenter: self, stops: ordered + context, longStays: longStays)
                 .union(frequent.excludedIDs)
-        let usual: UsualPlaceFinder = excludedIDs.isEmpty
+        let usual: UsualPlaceFinder = longStays.isEmpty && excludedIDs.isEmpty && minimumLifetimeHomeBuckets <= 0
             ? initialUsual
             : UsualPlaceFinder(
                 segmenter: self,
-                stops: (ordered + context).filter { (stop: PhotoStop) -> Bool in !excludedIDs.contains(stop.id) }
+                stops: (ordered + context).filter { (stop: PhotoStop) -> Bool in !excludedIDs.contains(stop.id) },
+                lifetimeHomes: true,
+                // A place someone lived at for a while, like a former work
+                // site, stays home: going back there for a few days is no trip.
+                livedAt: longStays.filter(\.dailyLife).map(\.centre)
             )
         func isAway(_ coordinate: GeoPoint, at date: Date) -> Bool {
             usual.places(at: date).allSatisfy { coordinate.distance(to: $0) > awayRadiusMeters }
@@ -151,15 +185,31 @@ public struct TripSegmenter: Sendable {
         /// A move between two away photos is far enough to end the trip only
         /// when it is also long compared with the way home from both ends: a
         /// short hop between two places far from home is not a trip home.
-        func isFarMove(from last: GeoPoint?, at lastDate: Date?, to stop: PhotoStop) -> Bool {
-            guard let last, let next = stop.coordinate else { return false }
-            let move = last.distance(to: next)
+        func isFarMove(from last: GeoPoint?, at lastDate: Date?, to next: (coordinate: GeoPoint, date: Date)?) -> Bool {
+            guard let last, let next else { return false }
+            let move = last.distance(to: next.coordinate)
             guard move > maximumTripDistanceMeters else { return false }
             guard let lastDate,
                   let homeFromLast = distanceToNearestUsualPlace(last, at: lastDate),
-                  let homeFromNext = distanceToNearestUsualPlace(next, at: stop.date)
+                  let homeFromNext = distanceToNearestUsualPlace(next.coordinate, at: next.date)
             else { return true }
             return move > homeDetourRatio * min(homeFromLast, homeFromNext)
+        }
+        /// True when going home between two away photos costs little more
+        /// than the move itself: home lies on the way of a far move, or a new
+        /// place near home is a short drive from home and from the last one.
+        func homeIsOnTheWay(from last: GeoPoint?, at lastDate: Date?, to next: (coordinate: GeoPoint, date: Date)?, gap: TimeInterval) -> Bool {
+            guard let last, let lastDate, let next,
+                  let homeFromLast = distanceToNearestUsualPlace(last, at: lastDate),
+                  let homeFromNext = distanceToNearestUsualPlace(next.coordinate, at: next.date)
+            else { return false }
+            let move = last.distance(to: next.coordinate)
+            if gap > homeVisitGap, move > maximumTripDistanceMeters,
+               homeFromLast + homeFromNext <= homeOnTheWayRatio * move {
+                return true
+            }
+            return gap > nearHomeVisitGap && move > awayRadiusMeters
+                && homeFromLast + homeFromNext - move <= nearHomeDetourMeters
         }
 
         // A long stay is judged by what was done there, not by its length.
@@ -183,11 +233,27 @@ public struct TripSegmenter: Sendable {
         let located = (ordered + context)
             .compactMap { stop in
                 stop.coordinate.map { coordinate in
-                    (date: stop.date, away: forcedSide[stop.id] ?? isAway(coordinate, at: stop.date))
+                    (date: stop.date, coordinate: coordinate, away: forcedSide[stop.id] ?? isAway(coordinate, at: stop.date))
                 }
             }
             .sorted { $0.date < $1.date }
         let locatedDates = located.map(\.date)
+        let homeFixes = located.filter { !$0.away }
+        let homeFixDates = homeFixes.map(\.date)
+        /// A short stretch away between photos at two different homes is the
+        /// journey from one to the other: the flight back to the home town,
+        /// its layover, the drive to a new work site. It is no trip.
+        func isJourneyBetweenHomes(_ run: [PhotoStop]) -> Bool {
+            guard let first = run.first, let last = run.last,
+                  last.date.timeIntervalSince(first.date) <= maximumJourneyDuration else { return false }
+            let after = Self.lowerBound(last.date, in: homeFixDates, inclusive: true)
+            let before = Self.lowerBound(first.date, in: homeFixDates) - 1
+            guard homeFixes.indices.contains(before), homeFixes.indices.contains(after) else { return false }
+            let from = homeFixes[before], to = homeFixes[after]
+            guard first.date.timeIntervalSince(from.date) <= maximumJourneyGap,
+                  to.date.timeIntervalSince(last.date) <= maximumJourneyGap else { return false }
+            return from.coordinate.distance(to: to.coordinate) > 2 * awayRadiusMeters
+        }
         let libraryAway = context
             .compactMap { stop in
                 stop.coordinate.flatMap { coordinate in
@@ -209,6 +275,22 @@ public struct TripSegmenter: Sendable {
             return locationlessDefaultsToAway || !usualPlaceKnown(at: stop.date)
         }
 
+        // Where each photo was: its own location, or for a photo without one
+        // the next located photo's within `locationlessMatchWindow`, so a
+        // trip that starts with a photo without a location is still judged
+        // by where it went.
+        var positions = [(coordinate: GeoPoint, date: Date)?](repeating: nil, count: ordered.count)
+        var nextLocated: (coordinate: GeoPoint, date: Date)?
+        for index in ordered.indices.reversed() {
+            let stop = ordered[index]
+            if let coordinate = stop.coordinate {
+                nextLocated = (coordinate, stop.date)
+                positions[index] = nextLocated
+            } else if let nextLocated, nextLocated.date.timeIntervalSince(stop.date) <= locationlessMatchWindow {
+                positions[index] = nextLocated
+            }
+        }
+
         var runs: [[PhotoStop]] = []
         var current: [PhotoStop] = []
         var lastPosition: (coordinate: GeoPoint, date: Date)?
@@ -220,9 +302,10 @@ public struct TripSegmenter: Sendable {
             }
             if let previous = current.last {
                 let gap = stop.date.timeIntervalSince(previous.date)
-                let far = isFarMove(from: lastPosition?.coordinate, at: lastPosition?.date, to: stop)
+                let far = isFarMove(from: lastPosition?.coordinate, at: lastPosition?.date, to: positions[index])
+                let throughHome = homeIsOnTheWay(from: lastPosition?.coordinate, at: lastPosition?.date, to: positions[index], gap: gap)
                 // Without a usual place, a quiet day and a half ends a trip as before.
-                if gap > maximumQuietGap || (gap > maximumTimeGap && (far || !usualPlaceKnown(at: stop.date))) {
+                if gap > maximumQuietGap || (gap > maximumTimeGap && (far || !usualPlaceKnown(at: stop.date))) || throughHome {
                     runs.append(current)
                     current = []
                 }
@@ -240,7 +323,9 @@ public struct TripSegmenter: Sendable {
             // few photos next to the library's photos away belong with them.
             let nextToLibraryAway = Self.lowerBound(last.date.addingTimeInterval(maximumTimeGap), in: libraryAway, inclusive: true)
                 > Self.lowerBound(first.date.addingTimeInterval(-maximumTimeGap), in: libraryAway)
-            if run.count >= minimumTripItems || spansSeveralDays(run) || !usualPlaceKnown(at: first.date) || nextToLibraryAway {
+            if isJourneyBetweenHomes(run) {
+                atUsualPlaceIDs.formUnion(run.map(\.id))
+            } else if run.count >= minimumTripItems || spansSeveralDays(run) || !usualPlaceKnown(at: first.date) || nextToLibraryAway {
                 trips.append(run.map(\.id))
             } else {
                 atUsualPlaceIDs.formUnion(run.map(\.id))
@@ -628,8 +713,12 @@ public struct TripSegmenter: Sendable {
                     guard !counts.isEmpty else { continue }
                     let photoDayShare = Double(part.count) / Double(span.count)
                     let medianPhotos = counts[counts.count / 2]
+                    // A month or more at one place is living there, however
+                    // many photos it holds: a new work site photographed
+                    // every day is no trip.
                     let dailyLife = photoDayShare < segmenter.longStayPhotoDayShare
                         || Double(medianPhotos) <= segmenter.longStayMedianPhotosPerDay
+                        || span.count >= segmenter.livedThereDays
                     stays.append(LongStay(centre: centre, days: span, dailyLife: dailyLife))
                 }
             }
@@ -749,7 +838,10 @@ private final class UsualPlaceFinder {
     private let segmenter: TripSegmenter
     private var cache: [Int: [GeoPoint]] = [:]
 
-    init(segmenter: TripSegmenter, stops: [PhotoStop]) {
+    /// `lifetimeHomes` adds the homes of the whole library to every window.
+    /// Only the final finder may: before long stays are left out, a long
+    /// stay would look like a home of its own.
+    init(segmenter: TripSegmenter, stops: [PhotoStop], lifetimeHomes: Bool = false, livedAt: [GeoPoint] = []) {
         self.segmenter = segmenter
         fixed = segmenter.fixedUsualPlace
         guard fixed == nil else { centres = []; daysByCluster = []; return }
@@ -771,26 +863,71 @@ private final class UsualPlaceFinder {
         }
         self.centres = centres
         daysByCluster = days
+        // Homes of the whole library: a place that is a usual place for long
+        // enough at any time stays home at every other time, so going back to
+        // the home town or a former work site is no trip.
+        guard lifetimeHomes else { return }
+        var lifetime: [GeoPoint] = []
+        if segmenter.minimumLifetimeHomeBuckets > 0,
+           let firstDay = days.compactMap(\.first).min(),
+           let lastDay = days.compactMap(\.last).max() {
+            var buckets = [Int](repeating: 0, count: centres.count)
+            let firstBucket = Int((Double(firstDay) / 30).rounded(.down))
+            let lastBucket = Int((Double(lastDay) / 30).rounded(.down))
+            for bucket in firstBucket...lastBucket {
+                let found = windowPlaces(bucket: bucket)
+                cache[bucket] = found.map { centres[$0] }
+                for index in found { buckets[index] += 1 }
+            }
+            lifetime = buckets.indices.filter { buckets[$0] >= segmenter.minimumLifetimeHomeBuckets }.map { centres[$0] }
+        }
+        lifetime += livedAt
+        guard !lifetime.isEmpty else { return }
+        self.lifetimeHomes = lifetime
+        for bucket in cache.keys {
+            cache[bucket] = Self.merge(cache[bucket] ?? [], lifetime)
+        }
     }
+
+    /// The library's lifetime homes.
+    private var lifetimeHomes: [GeoPoint] = []
 
     func places(at date: Date) -> [GeoPoint] {
         if let fixed { return [fixed] }
         let bucket = Int((Double(Self.day(of: date)) / 30).rounded(.down))
         if let cached = cache[bucket] { return cached }
-        let found = places(bucket: bucket)
+        let found = Self.merge(windowPlaces(bucket: bucket).map { centres[$0] }, lifetimeHomes)
         cache[bucket] = found
         return found
     }
 
-    private func places(bucket: Int) -> [GeoPoint] {
+    private static func merge(_ places: [GeoPoint], _ more: [GeoPoint]) -> [GeoPoint] {
+        var merged = places
+        for place in more where !merged.contains(place) { merged.append(place) }
+        return merged
+    }
+
+    /// The clusters that are usual places in the window around `bucket`.
+    private func windowPlaces(bucket: Int) -> [Int] {
         let middle = bucket * 30 + 15
         let window = (middle - segmenter.usualPlaceWindowDays)...(middle + segmenter.usualPlaceWindowDays)
         let counts = daysByCluster.map { Self.count(of: window, in: $0) }
+        let months = daysByCluster.map { Self.months(of: window, in: $0) }
         let total = Double(counts.reduce(0, +))
-        return counts.indices
+        var usual = counts.indices
             .filter { counts[$0] >= segmenter.minimumUsualPlaceDays && Double(counts[$0]) >= segmenter.minimumUsualPlaceShare * total }
-            .filter { Self.months(of: window, in: daysByCluster[$0]) >= segmenter.minimumUsualPlaceMonths }
-            .map { centres[$0] }
+            .filter { months[$0] >= segmenter.minimumUsualPlaceMonths }
+        // Someone who takes few photos at home and many away still comes
+        // back home month after month: the place seen in the most months of
+        // the window is a usual place even when trips hold most photo days.
+        if segmenter.homeByReturnMonths,
+           let returning = counts.indices.max(by: { (months[$0], counts[$0], $1) < (months[$1], counts[$1], $0) }),
+           !usual.contains(returning),
+           months[returning] >= segmenter.minimumUsualPlaceMonths,
+           counts[returning] >= segmenter.minimumReturnHomeDays {
+            usual.append(returning)
+        }
+        return usual
     }
 
     private static func count(of window: ClosedRange<Int>, in sorted: [Int]) -> Int {

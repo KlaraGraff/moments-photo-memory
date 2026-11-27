@@ -1,0 +1,622 @@
+import SwiftData
+import SwiftUI
+
+/// The Library's filter chips (type, place, trip, date, memory, person) and
+/// the row of active filters. The Library shows them over the photos; the
+/// large map and Chapters open the same chips from a Filter button. The
+/// filters live in shared app storage, so changing one screen changes the
+/// others.
+struct LibraryFilterChips: View {
+    @Environment(LibraryStore.self) private var store
+    @Query(sort: \Person.name) private var people: [Person]
+    @Query(sort: \Trip.id) private var allTrips: [Trip]
+
+    private var allItems: [MediaItem] { store.items }
+    private var allPlaces: [Place] { store.places }
+
+    @AppStorage(LibraryFilterKeys.type) private var typeRaw = LibraryMediaTypeFilter.all.rawValue
+    @AppStorage(LibraryFilterKeys.fromDate) private var fromDateInterval = 0.0
+    @AppStorage(LibraryFilterKeys.toDate) private var toDateInterval = 0.0
+    @AppStorage(LibraryFilterKeys.place) private var placeFilterID = ""
+    @AppStorage(LibraryFilterKeys.trip) private var tripFilterKey = ""
+    @AppStorage(LibraryFilterKeys.memory) private var memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+    @AppStorage(LibraryFilterKeys.person) private var personFilterID = ""
+    @AppStorage(LibraryFilterKeys.dateMode) private var dateModeRaw = DateFilterMode.days.rawValue
+    @State private var showingDatePicker = false
+    /// The menus' options, rebuilt only when items, trips or places change:
+    /// this view's body runs on every Library update, including scrolling.
+    @State private var options = LibraryFilterOptionSet()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Chips never truncate; when they do not fit, scroll rather than clip.
+            ViewThatFits(in: .horizontal) {
+                chipRow
+                ScrollView(.horizontal) { chipRow }
+                    .scrollIndicators(.hidden)
+            }
+
+            if hasActiveFilters {
+                HStack(spacing: 7) {
+                    if selectedType != .all {
+                        filterChip(typeLabel(selectedType)) { typeRaw = LibraryMediaTypeFilter.all.rawValue }
+                            .accessibilityIdentifier("filter.type-chip")
+                    }
+                    if let selectedPlaceName {
+                        filterChip("\(String(localized: "Place:")) \(selectedPlaceName)") { placeFilterID = "" }
+                    }
+                    if let selectedTripName {
+                        filterChip("\(String(localized: "Trip:")) \(selectedTripName)") { tripFilterKey = "" }
+                    }
+                    if let dateLabel = dateFilterLabel {
+                        filterChip(dateLabel) {
+                            fromDateInterval = 0
+                            toDateInterval = 0
+                        }
+                        .accessibilityIdentifier("filter.date-chip")
+                    }
+                    if selectedMemoryFilter != .all {
+                        filterChip(memoryFilterLabel(selectedMemoryFilter)) { memoryFilterRaw = LibraryMemoryFilter.all.rawValue }
+                    }
+                    if let selectedPersonName {
+                        filterChip("\(String(localized: "Person:")) \(selectedPersonName)") { personFilterID = "" }
+                    }
+                    Button(String(localized: "Clear filters")) { clearFilters() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                        .foregroundStyle(LibraryPalette.muted)
+                }
+            }
+        }
+        .onChange(of: optionsKey, initial: true) { options = buildOptions() }
+        .onChange(of: people.map(\.id), initial: true) { _, ids in
+            if !personFilterID.isEmpty && !ids.contains(personFilterID) { personFilterID = "" }
+        }
+        .onAppear {
+            // A place filter saved by id before places were listed by name.
+            if let migrated = PlaceNames.optionID(forLegacy: placeFilterID, items: allItems) { placeFilterID = migrated }
+        }
+    }
+
+    private var places: [LibraryPlaceOption] { options.places }
+    private var trips: [String] { options.trips }
+
+    /// The same key the Library grid uses, so both share one build.
+    private var optionsKey: Int {
+        LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips)
+    }
+
+    /// The photos' key: a place-only save leaves it alone, so the options are
+    /// rebuilt from the cached counts instead of reading every photo again.
+    private var sourceKey: Int {
+        LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
+    }
+
+    private func buildOptions() -> LibraryFilterOptionSet {
+        LibraryFilterOptionsCache.options(for: allItems, key: optionsKey, sourceKey: sourceKey)
+    }
+
+    private var selectedPlaceName: String? {
+        guard !placeFilterID.isEmpty else { return nil }
+        return places.first(where: { $0.id == placeFilterID })?.name
+    }
+
+    private var selectedTripName: String? {
+        guard !tripFilterKey.isEmpty else { return nil }
+        return selectedTripName(for: tripFilterKey)
+    }
+
+    private func selectedTripName(for tripID: String) -> String {
+        options.tripNames[tripID] ?? tripID
+    }
+
+    private var selectedMemoryFilter: LibraryMemoryFilter {
+        LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all
+    }
+
+    private var visiblePeople: [Person] {
+        people.filter { !$0.hidden && ($0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) }
+    }
+
+    private var selectedPersonName: String? {
+        guard !personFilterID.isEmpty else { return nil }
+        return people.first(where: { $0.id == personFilterID })?.name
+    }
+
+    private var dateFilterLabel: String? {
+        DateFilterMode.label(
+            from: fromDateInterval == 0 ? nil : Date(timeIntervalSince1970: fromDateInterval),
+            to: toDateInterval == 0 ? nil : Date(timeIntervalSince1970: toDateInterval),
+            modeRaw: dateModeRaw
+        ).map { "\(String(localized: "Date:")) \($0)" }
+    }
+
+    /// Days with photos, for the dots in the date picker.
+    private var photoDays: Set<Date> {
+        let calendar = Calendar.current
+        return Set(allItems.compactMap { $0.effectiveCaptureDate.map(calendar.startOfDay(for:)) })
+    }
+
+    private var hasActiveFilters: Bool {
+        selectedType != .all || !placeFilterID.isEmpty || !tripFilterKey.isEmpty || dateFilterLabel != nil || selectedMemoryFilter != .all || !personFilterID.isEmpty
+    }
+
+    private func memoryFilterLabel(_ filter: LibraryMemoryFilter) -> String {
+        switch filter {
+        case .all: return String(localized: "All memories")
+        case .hasMemory: return String(localized: "Has memory")
+        case .noMemory: return String(localized: "No memory")
+        }
+    }
+
+    /// Clears the chips; the search stays, as it has its own field.
+    private func clearFilters() {
+        typeRaw = LibraryMediaTypeFilter.all.rawValue
+        fromDateInterval = 0
+        toDateInterval = 0
+        placeFilterID = ""
+        tripFilterKey = ""
+        memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+        personFilterID = ""
+    }
+
+    /// The kinds the Library can show; screenshots stay out of it and
+    /// favorites are gone, so a saved choice of those counts as All.
+    static let typeChoices: [LibraryMediaTypeFilter] = [.all, .photo, .video, .live]
+
+    private var selectedType: LibraryMediaTypeFilter {
+        let type = LibraryMediaTypeFilter(rawValue: typeRaw) ?? .all
+        return Self.typeChoices.contains(type) ? type : .all
+    }
+
+    private func typeLabel(_ type: LibraryMediaTypeFilter) -> String {
+        switch type {
+        case .photo: return String(localized: "Photos")
+        case .video: return String(localized: "Videos")
+        case .live: return String(localized: "Live Photos")
+        default: return String(localized: "All types")
+        }
+    }
+
+    private var typeFilterMenu: some View {
+        menuChip(selected: selectedType != .all) {
+            Menu {
+                ForEach(Self.typeChoices, id: \.self) { type in
+                    Button {
+                        typeRaw = type.rawValue
+                    } label: {
+                        filterMenuLabel(typeLabel(type), selected: type == selectedType)
+                    }
+                }
+            } label: {
+                filterMenuTitle(
+                    selectedType == .all ? String(localized: "Type") : typeLabel(selectedType),
+                    systemImage: "photo.on.rectangle",
+                    selected: selectedType != .all,
+                    showsChevron: false
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            // Chip labels read as ink; the app accent would turn every chip red.
+            .tint(LibraryPalette.ink)
+            .accessibilityIdentifier("filter.type")
+        }
+    }
+
+    private var chipRow: some View {
+        HStack(spacing: 8) {
+            typeFilterMenu
+
+            filterMenu(label: String(localized: "Place"), systemImage: "mappin.and.ellipse", identifier: "filter.place", selected: selectedPlaceName) {
+                Button(String(localized: "All places")) { placeFilterID = "" }
+                if !places.isEmpty { Divider() }
+                ForEach(places) { place in
+                    Button {
+                        placeFilterID = place.id
+                    } label: {
+                        filterMenuLabel(place.name, selected: place.id == placeFilterID)
+                    }
+                }
+            }
+
+            filterMenu(label: String(localized: "Trip"), systemImage: "airplane.departure", identifier: "filter.trip", selected: selectedTripName) {
+                Button(String(localized: "All trips")) { tripFilterKey = "" }
+                if !trips.isEmpty { Divider() }
+                ForEach(trips, id: \.self) { trip in
+                    Button {
+                        tripFilterKey = trip
+                    } label: {
+                        filterMenuLabel(selectedTripName(for: trip), selected: trip == tripFilterKey)
+                    }
+                }
+            }
+
+            dateFilterMenu
+            memoryFilterMenu
+            personFilterMenu
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func filterMenu<Content: View>(label: String, systemImage: String, identifier: String, selected: String?, @ViewBuilder content: () -> Content) -> some View {
+        menuChip(selected: selected != nil) {
+            Menu {
+                content()
+            } label: {
+                filterMenuTitle(selected.map(Self.chipTitle) ?? label, systemImage: systemImage, selected: selected != nil, showsChevron: false)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            // Chip labels read as ink; the app accent would turn every chip red.
+            .tint(LibraryPalette.ink)
+            .accessibilityIdentifier(identifier)
+        }
+    }
+
+    /// A long place or trip name would push the other chips out of the row;
+    /// the full name stays in the menu and in the active-filter chip below.
+    static func chipTitle(_ name: String) -> String {
+        name.count > 22 ? String(name.prefix(21)) + "…" : name
+    }
+
+    private func filterMenuLabel(_ text: String, selected: Bool) -> some View {
+        Label(text, systemImage: selected ? "checkmark" : "circle")
+    }
+
+    /// A calendar in a popover rather than a menu: picking a day must not
+    /// apply anything until a day is actually clicked.
+    private var dateFilterMenu: some View {
+        Button {
+            showingDatePicker.toggle()
+        } label: {
+            filterMenuTitle(String(localized: "Date"), systemImage: "calendar", selected: dateFilterLabel != nil)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .paperChip(selected: dateFilterLabel != nil)
+        .accessibilityIdentifier("filter.date")
+        .popover(isPresented: $showingDatePicker, arrowEdge: .bottom) {
+            DateFilterPicker(
+                fromInterval: $fromDateInterval,
+                toInterval: $toDateInterval,
+                modeRaw: $dateModeRaw,
+                photoDays: photoDays
+            )
+        }
+    }
+
+    private var memoryFilterMenu: some View {
+        menuChip(selected: selectedMemoryFilter != .all) {
+            Menu {
+                Button {
+                    memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+                } label: {
+                    filterMenuLabel(String(localized: "All memories"), selected: selectedMemoryFilter == .all)
+                }
+                Button {
+                    memoryFilterRaw = LibraryMemoryFilter.hasMemory.rawValue
+                } label: {
+                    filterMenuLabel(String(localized: "Has memory"), selected: selectedMemoryFilter == .hasMemory)
+                }
+                Button {
+                    memoryFilterRaw = LibraryMemoryFilter.noMemory.rawValue
+                } label: {
+                    filterMenuLabel(String(localized: "No memory"), selected: selectedMemoryFilter == .noMemory)
+                }
+            } label: {
+                filterMenuTitle(String(localized: "Memory"), systemImage: "quote.bubble", selected: selectedMemoryFilter != .all, showsChevron: false)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            // Chip labels read as ink; the app accent would turn every chip red.
+            .tint(LibraryPalette.ink)
+            .accessibilityIdentifier("filter.memory")
+        }
+    }
+
+    private var personFilterMenu: some View {
+        menuChip(selected: !personFilterID.isEmpty) {
+            Menu {
+                Button { personFilterID = "" } label: {
+                    filterMenuLabel(String(localized: "All people"), selected: personFilterID.isEmpty)
+                }
+                if !visiblePeople.isEmpty { Divider() }
+                ForEach(visiblePeople, id: \.id) { person in
+                    Button { personFilterID = person.id } label: {
+                        filterMenuLabel(person.name ?? String(localized: "Unnamed person"), selected: person.id == personFilterID)
+                    }
+                }
+            } label: {
+                filterMenuTitle(String(localized: "Person"), systemImage: "person", selected: !personFilterID.isEmpty, showsChevron: false)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            // Chip labels read as ink; the app accent would turn every chip red.
+            .tint(LibraryPalette.ink)
+            .accessibilityIdentifier("filter.person")
+        }
+    }
+
+    private func menuChip<M: View>(selected: Bool, @ViewBuilder menu: () -> M) -> some View {
+        HStack(spacing: 4) {
+            menu()
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(selected ? LibraryPalette.accent : LibraryPalette.ink)
+                .allowsHitTesting(false)
+        }
+        .fixedSize()
+        .paperChip(selected: selected)
+    }
+
+    private func filterMenuTitle(_ label: String, systemImage: String, selected: Bool, showsChevron: Bool = true) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: systemImage)
+                .imageScale(.small)
+                .accessibilityHidden(true)
+            Text(label)
+                .fontWeight(selected ? .semibold : .regular)
+            if showsChevron {
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
+            }
+        }
+        .foregroundStyle(selected ? LibraryPalette.accent : LibraryPalette.ink)
+    }
+
+    private func filterChip(_ text: String, remove: @escaping () -> Void) -> some View {
+        Button(action: remove) {
+            HStack(spacing: 5) {
+                Text(text)
+                Image(systemName: "xmark")
+                    .font(.caption2.weight(.bold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(LibraryPalette.accent, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+}
+
+/// Where the Library filters are kept. Every screen that filters by them
+/// reads the same keys, so they stay in step.
+enum LibraryFilterKeys {
+    static let type = "moments.library.type"
+    static let fromDate = "moments.library.fromDate"
+    static let toDate = "moments.library.toDate"
+    static let place = "moments.library.place"
+    static let trip = "moments.library.trip"
+    static let memory = "moments.library.memory"
+    static let person = "moments.library.person"
+    /// Date filter as picked: a day, a range, after/before a day, a month or a
+    /// year. The engine only reads fromDate/toDate; this names the choice.
+    static let dateMode = "moments.library.dateMode"
+    static let query = "moments.library.query"
+
+    /// Clears every filter, the media type and the search on every screen.
+    static func clearAll(_ defaults: UserDefaults = .standard) {
+        for key in [type, fromDate, toDate, place, trip, memory, person, dateMode, query] {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    /// The criteria the stored choices stand for. A media type the chips no
+    /// longer offer (favorites, screenshots) counts as All.
+    static func criteria(
+        query: String,
+        typeRaw: String,
+        fromDateInterval: Double,
+        toDateInterval: Double,
+        placeFilterID: String,
+        tripFilterKey: String,
+        memoryFilterRaw: String,
+        personFilterID: String
+    ) -> LibraryFilterCriteria {
+        let storedType: LibraryMediaTypeFilter = LibraryMediaTypeFilter(rawValue: typeRaw) ?? .all
+        let type: LibraryMediaTypeFilter = LibraryFilterChips.typeChoices.contains(storedType) ? storedType : .all
+        return LibraryFilterCriteria(
+            fromDate: fromDateInterval == 0 ? nil : Date(timeIntervalSince1970: fromDateInterval),
+            toDate: toDateInterval == 0 ? nil : Date(timeIntervalSince1970: toDateInterval),
+            placeID: placeFilterID.isEmpty ? nil : placeFilterID,
+            mediaType: type,
+            tripKey: tripFilterKey.isEmpty ? nil : tripFilterKey,
+            memoryFilter: LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all,
+            personID: personFilterID.isEmpty ? nil : personFilterID,
+            searchText: query
+        )
+    }
+
+    /// The names of the people in each photo, so a search finds photos by
+    /// who is in them. Empty while nothing is typed.
+    @MainActor
+    static func personSearchExtras(query: String, people: [Person], personIndex: [String: Set<String>]) -> [String: [String]] {
+        var extras: [String: [String]] = [:]
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return extras }
+        var names: [String: String] = [:]
+        for person in people where !person.hidden {
+            let name: String = person.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !name.isEmpty { names[person.id] = name }
+        }
+        guard !names.isEmpty else { return extras }
+        for (mediaID, personIDs) in personIndex {
+            let found: [String] = personIDs.compactMap { (id: String) -> String? in names[id] }
+            if !found.isEmpty { extras[mediaID] = found }
+        }
+        return extras
+    }
+}
+
+/// Publishes the ids that pass the Library filters into `SelectionModel`
+/// for screens other than the Library (the Library publishes its own while
+/// it is open), or `nil` while no filter or search is on. Put it in the
+/// background of a screen that reads them.
+struct LibraryFilterPublisher: View {
+    @Environment(SelectionModel.self) private var selection
+    @Environment(LibraryStore.self) private var store
+
+    /// The view is dropped when the page is left, so keep the last result across visits.
+    @MainActor private static var lastPublished: (key: Int, visible: Set<String>?)?
+
+    private var items: [MediaItem] { store.items }
+    private var faceObservations: [FaceObservation] { store.faces }
+    @Query(sort: \Person.name) private var people: [Person]
+
+    @AppStorage(LibraryFilterKeys.type) private var typeRaw = LibraryMediaTypeFilter.all.rawValue
+    @AppStorage(LibraryFilterKeys.fromDate) private var fromDateInterval = 0.0
+    @AppStorage(LibraryFilterKeys.toDate) private var toDateInterval = 0.0
+    @AppStorage(LibraryFilterKeys.place) private var placeFilterID = ""
+    @AppStorage(LibraryFilterKeys.trip) private var tripFilterKey = ""
+    @AppStorage(LibraryFilterKeys.memory) private var memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+    @AppStorage(LibraryFilterKeys.person) private var personFilterID = ""
+    @AppStorage(LibraryFilterKeys.query) private var query = ""
+
+    private var criteria: LibraryFilterCriteria {
+        LibraryFilterKeys.criteria(
+            query: query,
+            typeRaw: typeRaw,
+            fromDateInterval: fromDateInterval,
+            toDateInterval: toDateInterval,
+            placeFilterID: placeFilterID,
+            tripFilterKey: tripFilterKey,
+            memoryFilterRaw: memoryFilterRaw,
+            personFilterID: personFilterID
+        )
+    }
+
+    private var key: Int {
+        var hasher = Hasher()
+        hasher.combine(query)
+        hasher.combine(typeRaw)
+        hasher.combine(fromDateInterval)
+        hasher.combine(toDateInterval)
+        hasher.combine(placeFilterID)
+        hasher.combine(tripFilterKey)
+        hasher.combine(memoryFilterRaw)
+        hasher.combine(personFilterID)
+        // Search and the memory filter read notes and trip names, which change
+        // without touching the item; only read them when they matter.
+        let readsText = !query.isEmpty || memoryFilterRaw != LibraryMemoryFilter.all.rawValue
+        hasher.combine(store.photoFaceRevision)
+        // A place filter and search read place names.
+        if !placeFilterID.isEmpty || !query.isEmpty { hasher.combine(store.placeRevision) }
+        if !query.isEmpty {
+            // A search reads people's names too.
+            for person in people {
+                hasher.combine(person.id)
+                hasher.combine(person.name)
+                hasher.combine(person.hidden)
+            }
+        }
+        if readsText {
+            for item in items {
+                // Both people's memories, in whatever order the store lists them.
+                var memories = 0
+                for memory in item.memories { memories ^= memory.text.hashValue }
+                hasher.combine(memories)
+                hasher.combine(item.trip?.effectiveName)
+            }
+        }
+        return hasher.finalize()
+    }
+
+    var body: some View {
+        Color.clear
+            .accessibilityHidden(true)
+            .task(id: key) {
+                // Taken before anything is read: these are the inputs this run
+                // uses, and a change during the work must not be stored under
+                // a newer key.
+                let taskKey: Int = key
+                if let cached = Self.lastPublished, cached.key == taskKey {
+                    if selection.visibleItemIDs != cached.visible { selection.visibleItemIDs = cached.visible }
+                    if selection.libraryFiltersActive != (cached.visible != nil) { selection.libraryFiltersActive = cached.visible != nil }
+                    #if DEBUG
+                    PageProbe.tally("filter publisher reused last result")
+                    #endif
+                    return
+                }
+                // Nothing picked: nothing to narrow, so every photo shows.
+                let visible: Set<String>?
+                if criteria.isFiltered {
+                    let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
+                    let extras: [String: [String]] = LibraryFilterKeys.personSearchExtras(query: query, people: people, personIndex: personIndex)
+                    let passed: [MediaItem] = LibraryFilterEngine.publishedItems(items, by: criteria, personIDsByMediaID: personIndex, searchExtras: extras)
+                    visible = Set(passed.map(\.id))
+                } else {
+                    visible = nil
+                }
+                if selection.visibleItemIDs != visible { selection.visibleItemIDs = visible }
+                if selection.libraryFiltersActive != (visible != nil) { selection.libraryFiltersActive = visible != nil }
+                Self.lastPublished = (taskKey, visible)
+                #if DEBUG
+                PageProbe.tally("filter publisher filtered")
+                #endif
+            }
+    }
+}
+
+/// The light way into the shared filters for screens other than the Library:
+/// a search field and a Filter button in the toolbar. The button opens the
+/// same chips as the Library in a popover and shows how many are on.
+struct CompactLibraryFilters: ViewModifier {
+    @AppStorage(LibraryFilterKeys.query) private var query = ""
+    @AppStorage(LibraryFilterKeys.type) private var typeRaw = LibraryMediaTypeFilter.all.rawValue
+    @AppStorage(LibraryFilterKeys.fromDate) private var fromDateInterval = 0.0
+    @AppStorage(LibraryFilterKeys.toDate) private var toDateInterval = 0.0
+    @AppStorage(LibraryFilterKeys.place) private var placeFilterID = ""
+    @AppStorage(LibraryFilterKeys.trip) private var tripFilterKey = ""
+    @AppStorage(LibraryFilterKeys.memory) private var memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+    @AppStorage(LibraryFilterKeys.person) private var personFilterID = ""
+    @State private var showingFilters = false
+
+    private var activeCount: Int {
+        [
+            // Favorites, Videos… picked in the Library narrow these screens too.
+            typeRaw != LibraryMediaTypeFilter.all.rawValue,
+            fromDateInterval != 0 || toDateInterval != 0,
+            !placeFilterID.isEmpty,
+            !tripFilterKey.isEmpty,
+            memoryFilterRaw != LibraryMemoryFilter.all.rawValue,
+            !personFilterID.isEmpty,
+        ].filter { $0 }.count
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .background { LibraryFilterPublisher() }
+            .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, notes")))
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showingFilters.toggle()
+                    } label: {
+                        Label(
+                            activeCount == 0 ? String(localized: "Filter") : String(format: String(localized: "Filter (%lld)"), activeCount),
+                            systemImage: activeCount == 0 ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill"
+                        )
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(activeCount == 0 ? Paper.ink : Paper.accent)
+                    }
+                    .help(String(localized: "Filter by place, trip, date, memory or person"))
+                    .accessibilityValue(String(activeCount))
+                    .accessibilityIdentifier("toolbar.filter")
+                    .popover(isPresented: $showingFilters, arrowEdge: .bottom) {
+                        LibraryFilterChips()
+                            .fixedSize()
+                            .padding(16)
+                    }
+                }
+            }
+    }
+}
+
+extension View {
+    func compactLibraryFilters() -> some View {
+        modifier(CompactLibraryFilters())
+    }
+}

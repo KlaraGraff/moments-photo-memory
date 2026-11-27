@@ -972,6 +972,17 @@ private struct TripNoticeBar: View {
 
 // MARK: - Shelf
 
+/// Which chapters the shelf shows while a Library filter or search is on.
+enum ChapterShelfFilter {
+    /// The chapters with at least one photo in `ids`; every chapter for `nil`.
+    static func chapters(_ trips: [TimelineTrip], passing ids: Set<String>?) -> [TimelineTrip] {
+        guard let ids else { return trips }
+        return trips.filter { (trip: TimelineTrip) -> Bool in
+            trip.orderedItems.contains { (item: TimelineItemSnapshot) -> Bool in ids.contains(item.id) }
+        }
+    }
+}
+
 private struct TripShelfView: View {
     let trips: [TimelineTrip]
     let target: (String) -> ChapterTarget?
@@ -982,26 +993,68 @@ private struct TripShelfView: View {
     let actions: TripActions
     let onOpen: (TimelineTrip) -> Void
     let onNew: () -> Void
+    @Environment(SelectionModel.self) private var selection
+    @Environment(LibraryStore.self) private var store
+    @Query(sort: \Person.name) private var people: [Person]
+    /// Who was on each chapter, by its id, worked out once per change to the
+    /// chapters, the faces or the names, not by each card.
+    @State private var companions: [String: [PeopleStripEntry]] = [:]
+
+    /// At most this many faces on a card.
+    static let companionLimit = 5
+
+    private var companionsKey: Int {
+        var hasher = Hasher()
+        hasher.combine(store.photoFaceRevision)
+        hasher.combine(store.refreshCount)
+        for trip in trips {
+            hasher.combine(trip.id)
+            hasher.combine(trip.itemCount)
+        }
+        for person in people {
+            hasher.combine(person.id)
+            hasher.combine(person.name)
+            hasher.combine(person.hidden)
+        }
+        return hasher.finalize()
+    }
 
     private var chapterCount: Int { trips.filter { !$0.isUnsorted }.count }
 
+    /// While a Library filter or search is on, only the chapters with a
+    /// photo that passes it.
+    private var shownTrips: [TimelineTrip] {
+        ChapterShelfFilter.chapters(trips, passing: selection.filteredItemIDs)
+    }
+
     var body: some View {
+        let shownTrips: [TimelineTrip] = self.shownTrips
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .center, spacing: 18) {
                     // Where the chapters happened, as one small map over
                     // the cards: a stamp opens its chapter, the map itself
                     // the large map of every photo.
-                    ChapterFootprints(trips: trips, onOpen: onOpen)
+                    ChapterFootprints(trips: shownTrips, onOpen: onOpen)
+                    if shownTrips.isEmpty && selection.filteredItemIDs != nil {
+                        ContentUnavailableView(
+                            String(localized: "No matching chapters"),
+                            systemImage: "line.3.horizontal.decrease.circle",
+                            description: Text(String(localized: "Try changing your filters."))
+                        )
+                        .padding(.top, 40)
+                        .accessibilityIdentifier("trips.noMatches")
+                    }
                     // Cards sit straight in the lazy stack so only visible ones
                     // are built.
-                    ForEach(trips) { trip in
+                    ForEach(shownTrips) { trip in
                         TripCoverCard(
                             trip: trip,
                             target: target(trip.id),
                             covers: covers(for: trip),
                             photos: trip.orderedItems.compactMap { itemByID[$0.id] },
                             memory: memories.first { $0.scope == .trip && $0.scopeKey == trip.id }?.text,
+                            companions: companions[trip.id] ?? [],
                             actions: actions,
                             onOpen: { onOpen(trip) }
                         )
@@ -1016,6 +1069,21 @@ private struct TripShelfView: View {
             }
             .scrollIndicators(.automatic)
             .background(Paper.canvas)
+            // The same filters and search as the Library, from a Filter button.
+            .compactLibraryFilters()
+            .task(id: companionsKey) {
+                var sets: [String: Set<String>] = [:]
+                for trip in trips where !trip.isUnsorted {
+                    sets[trip.id] = Set(trip.orderedItems.map { (item: TimelineItemSnapshot) -> String in item.id })
+                }
+                companions = PeopleStrip.companions(
+                    in: sets,
+                    faces: store.faces,
+                    people: people,
+                    itemsByID: store.itemsByID,
+                    limit: Self.companionLimit
+                )
+            }
             // The page's name lives in the window's title bar, not in the page.
             .navigationTitle(String(localized: "Chapters"))
             .navigationSubtitle(String(localized: "\(chapterCount) chapters"))
@@ -1132,6 +1200,8 @@ private struct TripCoverCard: View {
     let covers: [MediaItem]
     let photos: [MediaItem]
     let memory: String?
+    /// Who was there, as small faces under the counts.
+    let companions: [PeopleStripEntry]
     let actions: TripActions
     let onOpen: () -> Void
     @Environment(\.locale) private var locale
@@ -1214,6 +1284,8 @@ private struct TripCoverCard: View {
                     .font(.footnote.monospacedDigit())
                     .foregroundStyle(Paper.muted)
                     .lineLimit(1)
+                CompanionFaces(entries: companions)
+                    .padding(.top, 1)
                 if let memory {
                     Text(memory)
                         .font(.system(.footnote, design: .serif).italic())

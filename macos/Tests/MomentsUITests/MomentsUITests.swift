@@ -578,11 +578,15 @@ final class MomentsUITests: XCTestCase {
     func testSmallWindowHasNoOverlaps() {
         let app = launch(language: "en", smallWindow: true, extraArguments: ["-MomentsUITestPeople"])
         XCTAssertTrue(element(in: app, identifier: "library.photoCount").waitForExistence(timeout: launchTimeout))
-        // The rows that used to sit above the photos are gone.
-        for identifier in ["toolbar.filter", "library.type-filter", "filter.date", "library.grouping", "library.review-banner"] {
+        // One row of filter chips over the photos; the grouping picker and
+        // the review banner stay gone.
+        for identifier in ["toolbar.filter", "library.type-filter", "library.grouping", "library.review-banner"] {
             XCTAssertFalse(element(in: app, identifier: identifier).exists, "\(identifier) is back above the photos")
         }
         let window = app.windows.firstMatch.frame
+        let dateChip = element(in: app, identifier: "filter.date")
+        XCTAssertTrue(dateChip.waitForExistence(timeout: launchTimeout), "The Library has no filter chips")
+        XCTAssertTrue(window.contains(dateChip.frame), "The Date chip \(dateChip.frame) spills outside the window \(window)")
         let strip = element(in: app, identifier: "library.people")
         XCTAssertTrue(strip.waitForExistence(timeout: launchTimeout))
         XCTAssertTrue(window.contains(strip.frame), "The row of faces \(strip.frame) spills outside the window \(window)")
@@ -716,6 +720,70 @@ final class MomentsUITests: XCTestCase {
         element(in: app, identifier: "sidebar.trips").click()
         XCTAssertTrue(element(in: app, identifier: "trips.new").waitForExistence(timeout: launchTimeout))
         XCTAssertTrue(importButton.waitForNonExistence(timeout: launchTimeout), "Chapters still shows the import +")
+    }
+
+    /// The filters over the photos: each chip opens its list, what is picked
+    /// shows below with Clear, and the same filters narrow Chapters and the
+    /// large map from their Filter button. A chapter card shows who was on it.
+    func testFiltersNarrowTheLibraryChaptersAndTheMap() {
+        let app = launch(language: "en", extraArguments: ["-MomentsUITestPeople"])
+        let allCount = libraryPhotoCount(app)
+        for identifier in ["filter.type", "filter.place", "filter.trip", "filter.date", "filter.memory", "filter.person"] {
+            XCTAssertTrue(element(in: app, identifier: identifier).waitForExistence(timeout: launchTimeout), "\(identifier) is missing over the photos")
+        }
+        capture(app, named: "filters-01-chips-evidence")
+
+        // Person, then back to every photo.
+        element(in: app, identifier: "filter.person").click()
+        let alex = app.menuItems["Alex"].firstMatch
+        XCTAssertTrue(alex.waitForExistence(timeout: launchTimeout), "Person did not open its list")
+        alex.click()
+        XCTAssertEqual(libraryPhotoCount(app), 2, "Alex is in two synthetic photos")
+        capture(app, named: "filters-02-person-evidence")
+        let clear = app.buttons["Clear filters"].firstMatch
+        XCTAssertTrue(clear.waitForExistence(timeout: launchTimeout), "A picked filter shows no Clear")
+        clear.click()
+        XCTAssertEqual(libraryPhotoCount(app), allCount)
+
+        // Trip: the Library, Chapters and the large map all narrow to it.
+        element(in: app, identifier: "filter.trip").click()
+        let journey = app.menuItems["journeyA"].firstMatch
+        XCTAssertTrue(journey.waitForExistence(timeout: launchTimeout), "Trip did not open its list")
+        journey.click()
+        let tripCount = libraryPhotoCount(app)
+        XCTAssertTrue(tripCount > 0 && tripCount < allCount, "The Trip filter left \(tripCount) of \(allCount) photos")
+
+        element(in: app, identifier: "sidebar.trips").click()
+        let filterButton = element(in: app, identifier: "toolbar.filter")
+        XCTAssertTrue(filterButton.waitForExistence(timeout: launchTimeout), "Chapters has no Filter button")
+        XCTAssertEqual(filterButton.value as? String, "1", "Chapters does not count the Library's filter")
+        let card = element(in: app, identifier: "trips.card.journeyA")
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(element(in: app, identifier: "trips.card.journeyB").waitForNonExistence(timeout: launchTimeout), "A chapter outside the filter still shows")
+        let companions = element(in: app, identifier: "trips.card.people")
+        XCTAssertTrue(companions.waitForExistence(timeout: launchTimeout), "The chapter card does not show who was there")
+        XCTAssertTrue(element(in: app, identifier: "trips.card.person.Alex").exists, "A named person is missing from the card")
+        capture(app, named: "filters-03-chapters-evidence")
+
+        filterButton.click()
+        let popover = app.popovers.firstMatch
+        XCTAssertTrue(popover.waitForExistence(timeout: launchTimeout), "Filter did not open the chips")
+        XCTAssertTrue(popover.descendants(matching: .any).matching(identifier: "filter.trip").firstMatch.exists)
+        capture(app, named: "filters-04-chapters-popover-evidence")
+        popover.buttons["Clear filters"].firstMatch.click()
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(element(in: app, identifier: "trips.card.journeyB").waitForExistence(timeout: launchTimeout), "Clearing the filter did not bring every chapter back")
+
+        // The large map has the same Filter button.
+        openLargeMap(app)
+        XCTAssertTrue(element(in: app, identifier: "toolbar.filter").waitForExistence(timeout: 30), "The large map has no Filter button")
+        capture(app, named: "filters-05-map-evidence")
+        element(in: app, identifier: "map.back").click()
+
+        // A face on a card opens that person's photos.
+        element(in: app, identifier: "trips.card.person.Alex").click()
+        XCTAssertTrue(element(in: app, identifier: "library.scope").waitForExistence(timeout: launchTimeout), "A face on the card did not show that person's photos")
+        XCTAssertEqual(libraryPhotoCount(app), 2)
     }
 
     /// A chapter shows who is in it and where it went. A face opens that

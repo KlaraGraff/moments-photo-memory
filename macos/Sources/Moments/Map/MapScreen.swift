@@ -93,8 +93,10 @@ struct MapScreen: View {
         // The store bumps `revision` when anything the pins are built from
         // changes: a photo's time or place, a place's name or its rename.
         hasher.combine(store.revision)
-        // The photos this map was opened for.
+        // The photos this map was opened for, and the Library filters.
         hasher.combine(selection.mapScopeGeneration)
+        hasher.combine(selection.libraryFiltersActive)
+        if selection.libraryFiltersActive { hasher.combine(selection.visibleGeneration) }
         hasher.combine(viewModel.level(for: latitudeDelta))
         return hasher.finalize()
     }
@@ -130,9 +132,10 @@ struct MapScreen: View {
     var body: some View {
         // The large map is what a small map opens into: it shows the photos
         // that small map stood for (one chapter's, one person's, or all of
-        // them), so it needs no filters of its own. Back returns to where the
-        // small map was.
+        // them), narrowed by the Library filters, which its Filter button
+        // opens. Back returns to where the small map was.
         mapArea
+        .compactLibraryFilters()
         .navigationTitle(selection.mapScope?.title ?? String(localized: "Map"))
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -156,7 +159,7 @@ struct MapScreen: View {
             let probeToken = PageProbe.phaseToken
             #endif
             let scopeGeneration: Int = selection.mapScopeGeneration
-            let scopedIDs: Set<String>? = selection.mapScope?.itemIDs
+            let scopedIDs: Set<String>? = Self.shownIDs(scope: selection.mapScope?.itemIDs, filtered: selection.filteredItemIDs)
             let stops = viewModel.photoStops(from: items, visibleItemIDs: scopedIDs)
             let delta = latitudeDelta
             let model = viewModel
@@ -945,6 +948,14 @@ struct MapScreen: View {
     /// the visible pins keep separate entries.
     private func mergedKey(_ id: String) -> String {
         (isWorldView ? Self.worldKeyPrefix : Self.nearKeyPrefix) + id
+    }
+
+    /// The photos the map shows: the ones it was opened for, narrowed by the
+    /// Library filters while any is on. `nil` is every photo.
+    nonisolated static func shownIDs(scope: Set<String>?, filtered: Set<String>?) -> Set<String>? {
+        guard let filtered else { return scope }
+        guard let scope else { return filtered }
+        return scope.intersection(filtered)
     }
 
     /// A pin's name: its own name, else the nearest named place within 1.5 km

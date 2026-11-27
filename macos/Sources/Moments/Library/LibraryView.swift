@@ -49,9 +49,16 @@ struct LibraryView: View {
     let state: LibraryViewState
     @Binding var firstLaunchCompleted: Bool
 
-    /// The search field is the one thing typed to find photos; people and
-    /// places are clicked where they show.
+    /// The search field, and the filter chips over the photos. People and
+    /// places can also be clicked where they show.
     @AppStorage(LibraryFilterKeys.query) private var query = ""
+    @AppStorage(LibraryFilterKeys.type) private var typeRaw = LibraryMediaTypeFilter.all.rawValue
+    @AppStorage(LibraryFilterKeys.fromDate) private var fromDateInterval = 0.0
+    @AppStorage(LibraryFilterKeys.toDate) private var toDateInterval = 0.0
+    @AppStorage(LibraryFilterKeys.place) private var placeFilterID = ""
+    @AppStorage(LibraryFilterKeys.trip) private var tripFilterKey = ""
+    @AppStorage(LibraryFilterKeys.memory) private var memoryFilterRaw = LibraryMemoryFilter.all.rawValue
+    @AppStorage(LibraryFilterKeys.person) private var personFilterID = ""
 
     @State private var cachedSections: [LibrarySection] = []
     /// Each section's photos before stacks were folded.
@@ -108,7 +115,28 @@ struct LibraryView: View {
     }
 
     private var criteria: LibraryFilterCriteria {
-        LibraryFilterCriteria(searchText: query)
+        LibraryFilterKeys.criteria(
+            query: query,
+            typeRaw: typeRaw,
+            fromDateInterval: fromDateInterval,
+            toDateInterval: toDateInterval,
+            placeFilterID: placeFilterID,
+            tripFilterKey: tripFilterKey,
+            memoryFilterRaw: memoryFilterRaw,
+            personFilterID: personFilterID
+        )
+    }
+
+    /// The chips' choices, hashed the same way for the regroup key and the probe.
+    private func combineFilters(into hasher: inout Hasher) {
+        hasher.combine(query)
+        hasher.combine(typeRaw)
+        hasher.combine(fromDateInterval)
+        hasher.combine(toDateInterval)
+        hasher.combine(placeFilterID)
+        hasher.combine(tripFilterKey)
+        hasher.combine(memoryFilterRaw)
+        hasher.combine(personFilterID)
     }
 
     /// Screenshots are imported but stay out of the Library's photos.
@@ -157,14 +185,15 @@ struct LibraryView: View {
         ScrollProbe.count("library.groupingKey")
         #endif
         var hasher = Hasher()
-        hasher.combine(query)
+        combineFilters(into: &hasher)
         hasher.combine(selection.libraryScope?.itemIDs)
         // All photos and faces the pages group by, as one revision.
         if includingPhotos { hasher.combine(store.photoFaceRevision) }
-        // A search reads place names and people's names; a save of those
-        // alone regroups only then.
+        // A place filter and a search read place names.
+        if !query.isEmpty || !placeFilterID.isEmpty { hasher.combine(store.placeRevision) }
+        // A search also reads people's names; a save of those alone
+        // regroups only then.
         if !query.isEmpty {
-            hasher.combine(store.placeRevision)
             for person in people {
                 hasher.combine(person.id)
                 hasher.combine(person.name)
@@ -202,7 +231,7 @@ struct LibraryView: View {
     /// from, so the page probe can name the one that moved.
     private var groupingKeyParts: [(String, Int)] {
         var filters = Hasher()
-        filters.combine(query)
+        combineFilters(into: &filters)
         filters.combine(selection.libraryScope?.itemIDs)
         var trips = Hasher()
         for trip in allTrips {
@@ -229,7 +258,7 @@ struct LibraryView: View {
             records.combine(record.id)
             records.combine(record.rulesData)
         }
-        let readsPlaceNames: Bool = !query.isEmpty
+        let readsPlaceNames: Bool = !query.isEmpty || !placeFilterID.isEmpty
         return [
             ("filters", filters.finalize()),
             ("store.photoFaceRevision", store.photoFaceRevision),
@@ -329,6 +358,13 @@ struct LibraryView: View {
             ImportStatusView()
                 .padding(.horizontal, 34)
                 .padding(.vertical, 7)
+            // Type, place, trip, date, memory and person, each a menu that
+            // opens on a click; what is picked shows below with its ✕.
+            if hasGrouped && (!cachedSections.isEmpty || criteria.isFiltered) {
+                LibraryFilterChips()
+                    .padding(.horizontal, 34)
+                    .padding(.bottom, 4)
+            }
 
             if !hasGrouped {
                 Spacer()
@@ -364,7 +400,7 @@ struct LibraryView: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     // The people in these photos, before the photos: it
                     // scrolls away with them. Not while only some photos show.
-                    if selection.libraryScope == nil && query.isEmpty {
+                    if selection.libraryScope == nil && !criteria.isFiltered {
                         LibraryPeopleStrip(entries: state.peopleEntries)
                     }
                     ForEach(cachedSections) { section in
@@ -432,13 +468,24 @@ struct LibraryView: View {
         }
     }
 
+    /// A chip is on, besides any search.
+    private var hasChipFilters: Bool {
+        var withoutSearch = criteria
+        withoutSearch.searchText = ""
+        return withoutSearch.isFiltered
+    }
+
     private var emptyState: some View {
         let isFiltered = criteria.isFiltered || selection.libraryScope != nil
         return VStack(spacing: 13) {
             ContentUnavailableView(
                 isFiltered ? String(localized: "No matching photos") : String(localized: "No photos yet"),
                 systemImage: isFiltered ? "magnifyingglass" : "photo.on.rectangle",
-                description: Text(isFiltered ? String(localized: "Try other words.") : String(localized: "Add a photo or import a folder to begin."))
+                description: Text(
+                    !isFiltered ? String(localized: "Add a photo or import a folder to begin.")
+                        : hasChipFilters ? String(localized: "Try changing your filters.")
+                        : String(localized: "Try other words.")
+                )
             )
             if !isFiltered {
                 Button {
@@ -508,6 +555,7 @@ struct LibraryView: View {
             )
             applySectionMemories(memories)
             if selection.visibleItemIDs != result.publishedIDs { selection.visibleItemIDs = result.publishedIDs }
+            if selection.libraryFiltersActive != criteria.isFiltered { selection.libraryFiltersActive = criteria.isFiltered }
             selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
             if let focus = selection.focusedItemID,
                !result.filteredIDs.contains(focus),
@@ -542,20 +590,7 @@ struct LibraryView: View {
         step("scope")
         #endif
         // A search also finds photos by who is in them.
-        var searchExtras: [String: [String]] = [:]
-        if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            var names: [String: String] = [:]
-            for person in people where !person.hidden {
-                let name: String = person.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if !name.isEmpty { names[person.id] = name }
-            }
-            if !names.isEmpty {
-                for (mediaID, personIDs) in personIndex {
-                    let found: [String] = personIDs.compactMap { (id: String) -> String? in names[id] }
-                    if !found.isEmpty { searchExtras[mediaID] = found }
-                }
-            }
-        }
+        let searchExtras: [String: [String]] = LibraryFilterKeys.personSearchExtras(query: query, people: people, personIndex: personIndex)
         // One call for all three results, so each photo is tested once.
         let passes = LibraryFilterEngine.regroupPasses(
             scopedItems: scopedItems,
@@ -639,6 +674,7 @@ struct LibraryView: View {
         #endif
         let publishedVisible = passes.publishedIDs
         if selection.visibleItemIDs != publishedVisible { selection.visibleItemIDs = publishedVisible }
+        if selection.libraryFiltersActive != criteria.isFiltered { selection.libraryFiltersActive = criteria.isFiltered }
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
         if let focus = selection.focusedItemID,
            !filtered.contains(where: { $0.id == focus }),
@@ -769,6 +805,7 @@ struct LibraryView: View {
         // No photo came or went and no filter is on, so the published and
         // filtered ids are the last regroup's.
         if selection.visibleItemIDs != old.publishedIDs { selection.visibleItemIDs = old.publishedIDs }
+        if selection.libraryFiltersActive != criteria.isFiltered { selection.libraryFiltersActive = criteria.isFiltered }
         selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
         if let focus = selection.focusedItemID,
            !old.filteredIDs.contains(focus),

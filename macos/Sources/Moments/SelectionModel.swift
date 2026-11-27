@@ -60,6 +60,14 @@ final class SelectionModel {
     /// Changes each time `visibleItemIDs` is assigned. Pages hash this
     /// instead of the whole set.
     private(set) var visibleGeneration = 0
+    /// True while a Library filter chip or the search is on. The Library
+    /// publishes every photo it shows even then, so other pages narrow to
+    /// `visibleItemIDs` only while this is true.
+    var libraryFiltersActive = false
+    /// The photos the large map and Chapters show: `nil` for all of them.
+    var filteredItemIDs: Set<String>? {
+        libraryFiltersActive ? visibleItemIDs : nil
+    }
     /// A screen asks to switch the sidebar; the window clears it after switching.
     /// Opening Library is a reveal request: the photo in focus is scrolled to.
     var requestedDestination: SidebarDestination? {
@@ -198,7 +206,8 @@ final class SelectionModel {
 
     /// True when the large map shows this photo.
     func isOnMap(_ id: String) -> Bool {
-        mapScope?.itemIDs?.contains(id) ?? true
+        guard filteredItemIDs?.contains(id) ?? true else { return false }
+        return mapScope?.itemIDs?.contains(id) ?? true
     }
 
     /// Opens a trip on the Trips screen, closing the viewer.

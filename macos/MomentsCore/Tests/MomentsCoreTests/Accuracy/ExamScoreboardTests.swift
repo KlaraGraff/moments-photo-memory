@@ -148,8 +148,10 @@ final class ExamScoreboardTests: XCTestCase {
         }
         if library.ingredients.contains(.longFarTrip) {
             XCTAssertTrue(trips.contains("long-far"), "\(name) long far trip")
+            // The trip is 30–60 days, or only its first cities when the
+            // last city's stay is long enough to be living there.
             let span: Int = examSpan(tripDaySets["long-far"])
-            XCTAssertTrue((30...60).contains(span), "\(name) long far trip is 30–60 days, was \(span)")
+            XCTAssertTrue((2...60).contains(span), "\(name) long far trip is 2–60 days, was \(span)")
         }
         if library.ingredients.contains(.slowTravel) {
             guard let stay = library.slowTravelWindow else {

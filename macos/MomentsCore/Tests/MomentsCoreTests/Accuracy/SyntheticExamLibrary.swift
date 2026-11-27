@@ -54,7 +54,6 @@ enum ExamIngredient: String, CaseIterable {
         .frequentPlace,
         .frequentPlaceTwoVisits,
         .longFarTrip,
-        .slowTravel,
         .longStayOuting,
     ]
 }
@@ -304,14 +303,15 @@ private struct ExamBuilder {
         guard let city = pickCity(around: home, km: 300...9_000) else { return }
         guard let start = takeWindow(length: length, margin: 3) else { return }
         let skipCount = max(1, length / 10)
-        // The first and last day always have photos, so the trip's own day span
+        // The first and last day always have photos, so the stay's own day span
         // is the stay length.
         let skipped = Set(pickDays(from: Array(1..<(length - 1)), count: skipCount))
+        // Two to four months in one city, photographed every day, is living
+        // there (`TripSegmenter.livedThereDays`): daily life, not a trip.
         for offset in 0..<length {
             let rule = ExamPhotoRule.slowTravel(photoDay: !skipped.contains(offset))
-            plans[start + offset] = ExamDayPlan(place: city, trip: "slow-travel", rule: rule)
+            plans[start + offset] = ExamDayPlan(place: city, trip: nil, rule: rule)
         }
-        tripWindows.append(ExamTripWindow(name: "slow-travel", start: start, length: length))
         slowTravelWindow = (start: start, length: length)
         ingredients.insert(.slowTravel)
     }
@@ -339,11 +339,15 @@ private struct ExamBuilder {
             budget -= days
             legIndex += 1
         }
+        // The stay in the last city is still the trip, unless it lasts long
+        // enough to be living there (`TripSegmenter.livedThereDays`).
+        let livedThere = start + length - day >= TripSegmenter().livedThereDays
+        let tripLength = livedThere ? day - start : length
         while day < start + length {
-            plans[day] = ExamDayPlan(place: cities[legIndex], trip: "long-far", rule: .tripDay)
+            plans[day] = ExamDayPlan(place: cities[legIndex], trip: livedThere ? nil : "long-far", rule: .tripDay)
             day += 1
         }
-        tripWindows.append(ExamTripWindow(name: "long-far", start: start, length: length))
+        tripWindows.append(ExamTripWindow(name: "long-far", start: start, length: tripLength))
         ingredients.insert(.longFarTrip)
     }
 
@@ -538,7 +542,6 @@ private struct ExamBuilder {
             .frequentPlace,
             .frequentPlaceTwoVisits,
             .longFarTrip,
-            .slowTravel,
             .longStayOuting,
         ]
         return SyntheticExamLibrary(

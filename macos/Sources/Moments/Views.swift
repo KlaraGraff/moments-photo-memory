@@ -226,12 +226,16 @@ struct ContentView: View {
             return
         }
         let here: NavigationStop = shared.currentStop
-        let leavesScope: Bool = here.page == .library && here.mapScope == nil && here.libraryScope != nil
-            && target.page == .library && target.mapScope == nil && target.libraryScope == nil
         let closesChapter: Bool = here.page == .trips && here.mapScope == nil && here.openTripID != nil
             && target.page == .trips && target.mapScope == nil && target.openTripID == nil
-        if leavesScope {
+        if here.libraryScope != nil, target.libraryScope == nil {
+            // All photos come back where they were left, now or whenever
+            // the Library shows next (Back may lead to a chapter or the map).
             libraryState.pendingScopeReturnScrollID = libraryState.unscopedTopSectionScrollID
+        } else if let scope = target.libraryScope, scope != here.libraryScope {
+            // Another person's or place's photos: from their top, as when
+            // they were first opened.
+            libraryState.topSectionScrollID = nil
         }
         let apply: () -> Void = {
             let page: SidebarDestination = shared.goBack()

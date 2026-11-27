@@ -1101,6 +1101,11 @@ private struct TripShelfView: View {
                     .accessibilityIdentifier("trips.new")
                 }
             }
+            // Back sets the card to return to as the shelf appears, in
+            // either order.
+            .onChange(of: returnTripID) { (_: String?, id: String?) in
+                if let id { proxy.scrollTo(id, anchor: .center) }
+            }
             .onAppear {
                 if let returnTripID { proxy.scrollTo(returnTripID, anchor: .center) }
                 #if DEBUG

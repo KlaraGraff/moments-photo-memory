@@ -259,19 +259,16 @@ public enum SyncSchema {
             ],
             ownership: .perAccount(field: "accountID"), stampField: "updatedAt", editorField: "updatedBy"
         ),
-        // Only the person who made a group or chapter renames it, changes its
-        // rules or deletes it (issue #28). Adding and removing photos is a
-        // `UserGroupItem`, which both people write.
         .userGroup: SyncTypeSpec(
             fields: [
                 SyncFieldSpec("name", .string),
                 SyncFieldSpec("kindRaw", .string),
                 SyncFieldSpec("rulesData", .data),
-                SyncFieldSpec("ownerAccountID", .string, .immutable, account: true, nilMeansLocal: true),
+                SyncFieldSpec("ownerAccountID", .string, .immutable, account: true),
                 SyncFieldSpec("createdAt", .date, .immutable),
                 SyncFieldSpec("updatedAt", .date, .stamp)
             ],
-            ownership: .authored(field: "ownerAccountID"), stampField: "updatedAt", editorField: nil
+            ownership: .shared, stampField: "updatedAt", editorField: nil
         ),
         .userGroupItem: SyncTypeSpec(
             fields: [

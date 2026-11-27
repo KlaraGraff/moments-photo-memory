@@ -1399,29 +1399,39 @@ struct PhotoMemories: View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(others, id: \.id) { memory in
                 VStack(alignment: .leading, spacing: 2) {
-                    if showsNames { nameLabel(isOwn: memory.isOwn) }
+                    MemoryByline(memory: memory, showsName: showsNames, name: name(isOwn: memory.isOwn))
                     Text(memory.text)
                         .font(.system(.body, design: .serif))
                         .foregroundStyle(LibraryPalette.ink)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("library.memory.other.\(memory.id)")
+                    // Comments grow right under the memory (issue #28).
+                    MemoryComments(memory: memory, isLarge: isLarge)
+                        .padding(.leading, isLarge ? 12 : 0)
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("library.memory.other.\(memory.id)")
             }
             VStack(alignment: .leading, spacing: 2) {
-                if showsNames { nameLabel(isOwn: true) }
+                if let own = item.ownMemory {
+                    MemoryByline(memory: own, showsName: showsNames, name: name(isOwn: true))
+                } else if showsNames {
+                    Text(name(isOwn: true))
+                        .font(.caption)
+                        .foregroundStyle(LibraryPalette.accent)
+                        .lineLimit(1)
+                }
                 MemoryEditor(item: item, state: state, isLarge: isLarge)
+                if let own = item.ownMemory {
+                    MemoryComments(memory: own, isLarge: isLarge)
+                        .padding(.leading, isLarge ? 12 : 0)
+                }
             }
         }
     }
 
-    private func nameLabel(isOwn: Bool) -> some View {
-        Text(AuthorNames.label(isOwn: isOwn, myName: myName, partnerName: partnerName))
-            .font(.caption)
-            .foregroundStyle(LibraryPalette.accent)
-            .lineLimit(1)
+    private func name(isOwn: Bool) -> String {
+        AuthorNames.label(isOwn: isOwn, myName: myName, partnerName: partnerName)
     }
 }
 

@@ -28,6 +28,7 @@ final class PartnerNotifierTests: XCTestCase {
     func testManyAtOnceIsOneSummary() {
         let summary = PartnerNotifier.content(for: .summary(count: 7), partner: "Sam")
         XCTAssertEqual(summary.title, "Sam wrote 7 memories and comments")
+        XCTAssertEqual(summary.body, "Open Moments to see them.")
         XCTAssertNil(summary.memoryID)
     }
 
@@ -38,12 +39,5 @@ final class PartnerNotifierTests: XCTestCase {
         XCTAssertTrue(body.hasSuffix("…"))
         XCTAssertFalse(body.contains("\n"))
         XCTAssertEqual(PartnerNotifier.shortened("one\ntwo"), "one two")
-    }
-
-    func testOnUnlessTurnedOff() throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PartnerNotifierTests-\(UUID().uuidString)"))
-        XCTAssertTrue(PartnerNotifier.isEnabled(defaults: defaults))
-        defaults.set(false, forKey: PartnerNotifier.enabledKey)
-        XCTAssertFalse(PartnerNotifier.isEnabled(defaults: defaults))
     }
 }

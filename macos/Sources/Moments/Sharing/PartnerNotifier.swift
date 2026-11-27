@@ -6,10 +6,10 @@ import UserNotifications
 /// memory, a comment on this person's memory, a reply to this person's
 /// comment. Edits, words from this person's other Mac and the first download
 /// of a share never notify (`SyncArrivalNotices`, `CloudSyncEngine`).
+/// They are on by default; System Settings › Notifications turns them off,
+/// so the app has no switch of its own.
 @MainActor
 enum PartnerNotifier {
-    /// Settings › Sharing; on unless turned off.
-    static let enabledKey = "moments.sharing.notifyPartnerWords"
     /// Notifications longer than this are cut with an ellipsis.
     static let bodyLimit = 140
 
@@ -20,10 +20,6 @@ enum PartnerNotifier {
         var memoryID: String?
     }
 
-    static func isEnabled(defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: enabledKey) as? Bool ?? true
-    }
-
     /// What each notice says. `partner` is the other person's label from
     /// Settings, or "Partner".
     static func content(for notice: SyncArrivalNotices.Notice, partner: String) -> Content {
@@ -31,7 +27,7 @@ enum PartnerNotifier {
         case .summary(let count):
             return Content(
                 title: String(localized: "\(partner) wrote \(count) memories and comments"),
-                body: "",
+                body: String(localized: "Open Moments to see them."),
                 memoryID: nil
             )
         case .single(let arrival):
@@ -53,7 +49,6 @@ enum PartnerNotifier {
 
     /// Posts the arrivals of one fetch, asking for permission the first time.
     static func post(_ arrivals: [SyncArrival], defaults: UserDefaults = .standard) {
-        guard isEnabled(defaults: defaults) else { return }
         let notices = SyncArrivalNotices.notices(for: arrivals)
         guard !notices.isEmpty else { return }
         let partner = AuthorNames.label(isOwn: false, defaults: defaults)

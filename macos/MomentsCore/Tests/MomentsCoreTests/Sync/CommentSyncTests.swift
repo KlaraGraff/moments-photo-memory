@@ -2,22 +2,12 @@ import Foundation
 import XCTest
 @testable import MomentsCore
 
-/// Comments, replies, notifications and owner-only groups between two people
-/// (issue #28). Synthetic records only.
+/// Comments, replies and notifications between two people (issue #28).
+/// Synthetic records only.
 final class CommentSyncTests: XCTestCase {
     private var server: InMemorySyncServer!
     private var owner: SimulatedDevice!
     private var partner: SimulatedDevice!
-
-    private func chapter(_ id: String, name: String, owner account: String = SyncAccountMap.localAlias, at seconds: Double = 0) -> SyncRecord {
-        SyncRecord(type: .userGroup, id: id, fields: [
-            "name": .string(name),
-            "kindRaw": .string("chapter"),
-            "ownerAccountID": .string(account),
-            "createdAt": .date(SyncFixtures.t0),
-            "updatedAt": .date(SyncFixtures.at(seconds))
-        ])
-    }
 
     override func setUpWithError() throws {
         server = InMemorySyncServer()
@@ -27,11 +17,7 @@ final class CommentSyncTests: XCTestCase {
             SyncFixtures.media("m2", trip: "t2"),
             SyncFixtures.memory("mem1", media: "m1", text: "his words"),
             SyncFixtures.memory("mem2", media: "m2", text: "private words"),
-            SyncFixtures.comment("c-private", memory: "mem2", text: "not shared"),
-            chapter("g1", name: "His chapter"),
-            SyncRecord(type: .userGroupItem, id: "gi1", fields: [
-                "groupID": .reference("g1"), "mediaID": .reference("m1"), "addedAt": .date(SyncFixtures.t0)
-            ])
+            SyncFixtures.comment("c-private", memory: "mem2", text: "not shared")
         ]
         owner = try SimulatedDevice(account: SyncFixtures.ownerAccount, partner: SyncFixtures.partnerAccount, server: server, database: .privateDatabase, records: records)
         partner = try SimulatedDevice(account: SyncFixtures.partnerAccount, partner: SyncFixtures.ownerAccount, server: server, database: .sharedDatabase)
@@ -87,31 +73,6 @@ final class CommentSyncTests: XCTestCase {
         partner.driver.send()
         owner.driver.fetch()
         XCTAssertEqual(owner.local.record(for: SyncRecordKey(.comment, "c-his"))?["text"], .string("his comment"))
-    }
-
-    func testOnlyTheOwnerRenamesAChapterButBothAddPhotos() {
-        var renamed = partner.local.record(for: SyncRecordKey(.userGroup, "g1"))!
-        renamed["name"] = .string("Her name for it")
-        renamed["updatedAt"] = .date(SyncFixtures.at(30))
-        partner.edit(renamed)
-        XCTAssertTrue(partner.coordinator.pending.isEmpty, "she cannot rename his chapter")
-
-        partner.edit(SyncRecord(type: .userGroupItem, id: "gi2", fields: [
-            "groupID": .reference("g1"), "mediaID": .reference("m1"), "addedAt": .date(SyncFixtures.at(31))
-        ]))
-        XCTAssertEqual(partner.coordinator.pending.count, 1, "adding a photo to his chapter is open to her")
-
-        partner.edit(chapter("g-hers", name: "Her chapter", at: 32))
-        partner.edit(SyncRecord(type: .userGroupItem, id: "gi3", fields: [
-            "groupID": .reference("g-hers"), "mediaID": .reference("m1"), "addedAt": .date(SyncFixtures.at(33))
-        ]))
-        partner.driver.send()
-        owner.driver.fetch()
-        XCTAssertEqual(owner.local.record(for: SyncRecordKey(.userGroup, "g1"))?["name"], .string("His chapter"))
-        XCTAssertNotNil(owner.local.record(for: SyncRecordKey(.userGroupItem, "gi2")))
-        let hers = owner.local.record(for: SyncRecordKey(.userGroup, "g-hers"))
-        XCTAssertEqual(hers?["ownerAccountID"], .string(SyncFixtures.partnerAccount))
-        XCTAssertFalse(owner.coordinator.accounts.canEdit(hers!), "and he cannot rename hers")
     }
 
     func testANewMemoryFromThePartnerIsAnArrivalButAnEditIsNot() {

@@ -1644,7 +1644,7 @@ private struct TripDetailView: View {
         .background(Paper.canvas)
         // The title bar holds the trip's name; double-click it to rename.
         .modifier(TripWindowTitle(name: TripText.name(trip), target: target, rename: actions.rename))
-        .navigationSubtitle(target.map { $0.type.label } ?? String(localized: "Chapters"))
+        .navigationSubtitle(TripWindowTitle.subtitle(for: target))
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button(action: onBack) {
@@ -1673,6 +1673,8 @@ private struct TripDetailView: View {
                         Button(String(localized: "Delete this chapter"), role: .destructive) {
                             actions.delete(target)
                         }
+                        // The other person's chapter is theirs to delete (issue #28).
+                        .disabled(!TripWindowTitle.isRenamable(target))
                         .accessibilityIdentifier("trips.delete")
                     } label: {
                         Label(String(localized: "More"), systemImage: "ellipsis.circle")
@@ -2150,6 +2152,16 @@ private struct TripWindowTitle: ViewModifier {
     static func isRenamable(_ target: ChapterTarget) -> Bool {
         if case let .group(group) = target { return UserGroupRuleEngine.canEdit(group) }
         return true
+    }
+
+    /// Under the title: the kind of chapter, or, on the other person's
+    /// chapter, that only they can rename it.
+    static func subtitle(for target: ChapterTarget?) -> String {
+        guard let target else { return String(localized: "Chapters") }
+        guard isRenamable(target) else {
+            return String(localized: "\(AuthorNames.label(isOwn: false)) made this chapter; only they can rename it")
+        }
+        return target.type.label
     }
 }
 

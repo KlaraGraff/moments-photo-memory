@@ -54,8 +54,9 @@ public struct UserGroupRuleSet: Codable, Equatable, Sendable {
 }
 
 enum UserGroupRuleEngine {
-    /// Only the person who made a group renames it, edits its rules or
-    /// deletes it (issue #28); adding and removing photos is open to both.
+    /// Only the person who made a chapter renames it or deletes it (issue
+    /// #28); adding and removing photos and changing its dates stay open to
+    /// both, so this is a check of the app, not of sync.
     static func canEdit(_ group: UserGroup, accountID: String = MomentsAccount.localID) -> Bool {
         group.ownerAccountID == accountID
     }

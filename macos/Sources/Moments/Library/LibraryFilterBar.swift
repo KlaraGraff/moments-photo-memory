@@ -7,6 +7,9 @@ import SwiftUI
 /// filters live in shared app storage, so changing one screen changes the
 /// others.
 struct LibraryFilterChips: View {
+    /// False in a popover, which sizes itself to the chips.
+    var scrolls = true
+
     @Environment(LibraryStore.self) private var store
     @Query(sort: \Person.name) private var people: [Person]
     @Query(sort: \Trip.id) private var allTrips: [Trip]
@@ -29,11 +32,14 @@ struct LibraryFilterChips: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Chips never truncate; when they do not fit, scroll rather than clip.
-            ViewThatFits(in: .horizontal) {
-                chipRow
+            // Over the photos the chips scroll rather than clip when they do
+            // not fit; always a scroll view, so the row's width never depends
+            // on its content. In a popover they take the width they need.
+            if scrolls {
                 ScrollView(.horizontal) { chipRow }
                     .scrollIndicators(.hidden)
+            } else {
+                chipRow
             }
 
             if hasActiveFilters {
@@ -607,7 +613,7 @@ struct CompactLibraryFilters: ViewModifier {
                     .accessibilityValue(String(activeCount))
                     .accessibilityIdentifier("toolbar.filter")
                     .popover(isPresented: $showingFilters, arrowEdge: .bottom) {
-                        LibraryFilterChips()
+                        LibraryFilterChips(scrolls: false)
                             .fixedSize()
                             .padding(16)
                     }

@@ -15,6 +15,9 @@ struct SavedChanges: Sendable {
     /// True when the save touched something the sidebar's group counts read,
     /// even if the `trackedEntityNames` filter then drops that identifier.
     var touchesGroupSources = false
+    /// True when the save touched something people wrote that search reads
+    /// (memories, comments, notes, trip and person names).
+    var touchesWrittenText = false
 
     var isEmpty: Bool { inserted.isEmpty && updated.isEmpty && deleted.isEmpty }
     var identifierCount: Int { inserted.count + updated.count + deleted.count }
@@ -27,6 +30,7 @@ struct SavedChanges: Sendable {
         deleted += other.deleted
         isKnown = isKnown && other.isKnown
         touchesGroupSources = touchesGroupSources || other.touchesGroupSources
+        touchesWrittenText = touchesWrittenText || other.touchesWrittenText
     }
 }
 
@@ -54,6 +58,20 @@ private let groupSourceEntityNames: Set<String> = [
     String(describing: MediaTag.self),
     String(describing: Tag.self),
     String(describing: PlaceOverride.self)
+]
+
+/// What people wrote that the Library's search finds photos by, besides the
+/// photos' own fields: memories and the comments under them, a note's
+/// original words, day and trip memories, place notes, and the names of
+/// trips and people. A save of any of these moves `writtenTextRevision`.
+private let writtenTextEntityNames: Set<String> = [
+    String(describing: Memory.self),
+    String(describing: Comment.self),
+    String(describing: PhotoNote.self),
+    String(describing: CollectionMemory.self),
+    String(describing: PlaceNote.self),
+    String(describing: Trip.self),
+    String(describing: Person.self)
 ]
 
 /// The library's photos, faces and places, fetched once for every page
@@ -103,6 +121,11 @@ final class LibraryStore {
     /// place overrides, or could not say what it touched. The sidebar's group
     /// counts follow it instead of querying those five entities themselves.
     private(set) var groupSourcesRevision = 0
+    /// Moves when a save touched something people wrote (see
+    /// `writtenTextEntityNames`), or could not say what it touched. The
+    /// search index follows it, so a new day memory or comment is found
+    /// without re-reading anything while nothing was written.
+    private(set) var writtenTextRevision = 0
     /// Moves when someone picks the face that stands for a person. That
     /// choice is a library decision, not a save, so nothing else moves.
     private(set) var keyFaceRevision = 0
@@ -268,6 +291,11 @@ final class LibraryStore {
                 groupSourcesRevision &+= 1
             }
         }
+        if changes.touchesWrittenText || !changes.isKnown {
+            if savedContext == nil || savedContext?.container === container {
+                writtenTextRevision &+= 1
+            }
+        }
         // Autosave fires often with nothing this store lists.
         if changes.isKnown && changes.isEmpty { return }
         guard let savedContext else {
@@ -393,6 +421,9 @@ final class LibraryStore {
             // is not listed by the store, yet the sidebar counts it.
             if ids.contains(where: { groupSourceEntityNames.contains($0.entityName) }) {
                 changes.touchesGroupSources = true
+            }
+            if ids.contains(where: { writtenTextEntityNames.contains($0.entityName) }) {
+                changes.touchesWrittenText = true
             }
             let tracked = ids.filter { trackedEntityNames.contains($0.entityName) }
             if name.contains("insert") { changes.inserted += tracked; changes.isKnown = true }

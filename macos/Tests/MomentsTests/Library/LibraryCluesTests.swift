@@ -131,6 +131,118 @@ final class LibraryCluesTests: XCTestCase {
         XCTAssertTrue(nobody.isEmpty)
     }
 
+    func testChapterCompanionsAreNamedPeopleThenTheGroupsTheRowAsksAbout() {
+        let anna = Person(id: "anna", name: "Anna")
+        let ben = Person(id: "ben", name: "Ben")
+        let hiddenPerson = Person(id: "zed", name: "Zed", hidden: true)
+        var all: [FaceObservation] = []
+        // Anna in three photos of the first chapter, Ben in one of each.
+        all += [
+            face("a1", photo: "c1-1", personID: "anna"),
+            face("a2", photo: "c1-2", personID: "anna"),
+            face("a3", photo: "c1-3", personID: "anna"),
+            face("b1", photo: "c1-1", personID: "ben"),
+            face("b2", photo: "c2-1", personID: "ben"),
+            face("z1", photo: "c1-1", personID: "zed"),
+        ]
+        // A group in five photos over the library, two of them in chapter one;
+        // a group in two photos only is too small to show.
+        all += faces("big", count: 3, clusterID: "cluster-big")
+        all += [
+            face("big-in-1", photo: "c1-2", clusterID: "cluster-big"),
+            face("big-in-2", photo: "c1-3", clusterID: "cluster-big"),
+            face("small-1", photo: "c1-1", clusterID: "cluster-small"),
+            face("small-2", photo: "c1-2", clusterID: "cluster-small"),
+            face("loose", photo: "c1-1", clusterID: "loose-1"),
+        ]
+        var itemsByID: [String: MediaItem] = items(for: all)
+        // A face in a screenshot of the chapter counts for nobody.
+        all.append(face("b-shot", photo: "c2-shot", personID: "ben"))
+        itemsByID["c2-shot"] = MediaItem(id: "c2-shot", isScreenshot: true)
+        let sets: [String: Set<String>] = [
+            "one": ["c1-1", "c1-2", "c1-3"],
+            "two": ["c2-1", "c2-shot"],
+            "empty": ["c3-1"],
+        ]
+
+        let found: [String: [PeopleStripEntry]] = PeopleStrip.companions(
+            in: sets,
+            faces: all,
+            people: [anna, ben, hiddenPerson],
+            itemsByID: itemsByID,
+            limit: 5
+        )
+
+        let one: [String] = (found["one"] ?? []).map { (entry: PeopleStripEntry) -> String in entry.id }
+        XCTAssertEqual(one, ["person.anna", "person.ben", "cluster.cluster-big"], "Named people by photos in the chapter, then the group the row asks about; hidden people, small and loose groups are left out")
+        let counts: [Int] = (found["one"] ?? []).map { (entry: PeopleStripEntry) -> Int in entry.photoCount }
+        XCTAssertEqual(counts, [3, 1, 2], "Only the chapter's own photos count")
+        let two: [String] = (found["two"] ?? []).map { (entry: PeopleStripEntry) -> String in entry.id }
+        XCTAssertEqual(two, ["person.ben"], "Screenshots do not count")
+        XCTAssertEqual(found["two"]?.first?.photoCount, 1)
+        XCTAssertNil(found["empty"], "A chapter nobody is in has no faces")
+
+        let capped: [String: [PeopleStripEntry]] = PeopleStrip.companions(in: sets, faces: all, people: [anna, ben], itemsByID: itemsByID, limit: 2)
+        let cappedIDs: [String] = (capped["one"] ?? []).map { (entry: PeopleStripEntry) -> String in entry.id }
+        XCTAssertEqual(cappedIDs, ["person.anna", "person.ben"], "At most `limit` faces, named people first")
+    }
+
+    // MARK: Filters
+
+    func testStoredFiltersBecomeCriteriaAndRetiredTypesCountAsAll() {
+        let criteria: LibraryFilterCriteria = LibraryFilterKeys.criteria(
+            query: " tea ",
+            typeRaw: LibraryMediaTypeFilter.video.rawValue,
+            fromDateInterval: 100,
+            toDateInterval: 0,
+            placeFilterID: "place-1",
+            tripFilterKey: "journeyA",
+            memoryFilterRaw: LibraryMemoryFilter.hasMemory.rawValue,
+            personFilterID: "anna"
+        )
+        XCTAssertEqual(criteria.mediaType, .video)
+        XCTAssertEqual(criteria.fromDate, Date(timeIntervalSince1970: 100))
+        XCTAssertNil(criteria.toDate)
+        XCTAssertEqual(criteria.placeID, "place-1")
+        XCTAssertEqual(criteria.tripKey, "journeyA")
+        XCTAssertEqual(criteria.memoryFilter, .hasMemory)
+        XCTAssertEqual(criteria.personID, "anna")
+        XCTAssertEqual(criteria.searchText, "tea")
+        XCTAssertTrue(criteria.isFiltered)
+
+        for retired in [LibraryMediaTypeFilter.favorite, .screenshot] {
+            let old: LibraryFilterCriteria = LibraryFilterKeys.criteria(
+                query: "",
+                typeRaw: retired.rawValue,
+                fromDateInterval: 0,
+                toDateInterval: 0,
+                placeFilterID: "",
+                tripFilterKey: "",
+                memoryFilterRaw: "",
+                personFilterID: ""
+            )
+            XCTAssertFalse(old.isFiltered, "A saved \(retired) choice the chips no longer offer must not hide photos")
+        }
+    }
+
+    func testLargeMapShowsItsPhotosNarrowedByTheFilters() {
+        XCTAssertNil(MapScreen.shownIDs(scope: nil, filtered: nil), "No scope and no filter: every photo")
+        XCTAssertEqual(MapScreen.shownIDs(scope: ["a", "b"], filtered: nil), ["a", "b"])
+        XCTAssertEqual(MapScreen.shownIDs(scope: nil, filtered: ["b", "c"]), ["b", "c"])
+        XCTAssertEqual(MapScreen.shownIDs(scope: ["a", "b"], filtered: ["b", "c"]), ["b"])
+    }
+
+    func testOtherPagesFollowTheFiltersOnlyWhileOneIsOn() {
+        let selection = SelectionModel()
+        selection.visibleItemIDs = ["a"]
+        XCTAssertNil(selection.filteredItemIDs, "The Library publishes every photo it shows; without a filter nothing is narrowed")
+        XCTAssertTrue(selection.isOnMap("b"))
+        selection.libraryFiltersActive = true
+        XCTAssertEqual(selection.filteredItemIDs, ["a"])
+        XCTAssertFalse(selection.isOnMap("b"))
+        XCTAssertTrue(selection.isOnMap("a"))
+    }
+
     /// The face a person picked to stand for them shows in the row of faces
     /// and on a chapter, not the sharpest one.
     func testThePickedKeyFaceStandsForThePersonInTheRowAndOnAChapter() throws {

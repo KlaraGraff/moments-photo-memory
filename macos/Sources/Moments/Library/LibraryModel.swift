@@ -53,16 +53,6 @@ struct LibraryPlaceOption: Identifiable, Equatable, Sendable {
     let name: String
 }
 
-/// Where the Library keeps what was typed into its search field.
-enum LibraryFilterKeys {
-    static let query = "moments.library.query"
-
-    /// Clears the search.
-    static func clearAll(_ defaults: UserDefaults = .standard) {
-        defaults.removeObject(forKey: query)
-    }
-}
-
 /// The filters that shape the Library before it is grouped.
 ///
 /// The model deliberately stays separate from SwiftData. It makes the AND

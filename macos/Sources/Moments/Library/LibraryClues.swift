@@ -135,8 +135,123 @@ enum PeopleStrip {
     }
 }
 
+extension PeopleStrip {
+    /// Who was there, for each set of photos (a chapter's, by its id): the
+    /// named people first, then the unnamed groups the row of faces asks
+    /// about, most photos in the set first, at most `limit` each. Faces in
+    /// screenshots, in photos that are gone, of hidden people, of people
+    /// without a name and of groups too small to ask about do not count.
+    static func companions(
+        in sets: [String: Set<String>],
+        faces: [FaceObservation],
+        people: [Person],
+        itemsByID: [String: MediaItem],
+        limit: Int,
+        decisions: any DecisionStore = LibraryDecisions.shared
+    ) -> [String: [PeopleStripEntry]] {
+        guard !sets.isEmpty, limit > 0 else { return [:] }
+        var names: [String: String] = [:]
+        for person in people where !person.hidden {
+            let name: String = person.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !name.isEmpty { names[person.id] = name }
+        }
+        // Which sets each photo is in.
+        var owners: [String: [String]] = [:]
+        for (setID, ids) in sets {
+            for id in ids { owners[id, default: []].append(setID) }
+        }
+        // The groups the row of faces asks about, counted over every photo.
+        var clusterFaces: [String: Int] = [:]
+        var clusterPhotos: [String: Set<String>] = [:]
+        // Each set's faces, by "person.<id>" or "cluster.<id>".
+        var perSet: [String: [String: [FaceObservation]]] = [:]
+        for face in faces {
+            let mediaID: String = face.mediaID
+            guard let item = itemsByID[mediaID], !item.isScreenshot else { continue }
+            let key: String
+            if let personID = face.personID {
+                guard names[personID] != nil else { continue }
+                key = "person." + personID
+            } else if let clusterID = face.clusterID, !clusterID.hasPrefix("loose-") {
+                key = "cluster." + clusterID
+                clusterFaces[clusterID, default: 0] += 1
+                clusterPhotos[clusterID, default: []].insert(mediaID)
+            } else {
+                continue
+            }
+            guard let setIDs = owners[mediaID] else { continue }
+            for setID in setIDs { perSet[setID, default: [:]][key, default: []].append(face) }
+        }
+        var asked: [(id: String, count: Int)] = []
+        for (clusterID, photos) in clusterPhotos {
+            guard (clusterFaces[clusterID] ?? 0) >= PeopleStoreActions.minimumCardFaces,
+                  photos.count >= minimumUnnamedPhotos else { continue }
+            asked.append((clusterID, photos.count))
+        }
+        asked.sort { (left: (id: String, count: Int), right: (id: String, count: Int)) -> Bool in
+            if left.count != right.count { return left.count > right.count }
+            return left.id < right.id
+        }
+        let askedIDs: Set<String> = Set(asked.prefix(maximumUnnamed).map { (entry: (id: String, count: Int)) -> String in entry.id })
+
+        var result: [String: [PeopleStripEntry]] = [:]
+        for (setID, groups) in perSet {
+            var named: [PeopleStripEntry] = []
+            var unnamed: [PeopleStripEntry] = []
+            for (key, group) in groups {
+                let mediaIDs: Set<String> = Set(group.map { (face: FaceObservation) -> String in face.mediaID })
+                if key.hasPrefix("person.") {
+                    let personID = String(key.dropFirst("person.".count))
+                    named.append(PeopleStripEntry(
+                        id: key,
+                        personID: personID,
+                        clusterID: nil,
+                        name: names[personID],
+                        cover: PeopleFacePicker.cover(group, keyFaceID: PeopleStoreActions.keyFaceID(for: personID, defaults: decisions)),
+                        mediaIDs: mediaIDs
+                    ))
+                } else {
+                    let clusterID = String(key.dropFirst("cluster.".count))
+                    guard askedIDs.contains(clusterID) else { continue }
+                    unnamed.append(PeopleStripEntry(
+                        id: key,
+                        personID: nil,
+                        clusterID: clusterID,
+                        name: nil,
+                        cover: PeopleFacePicker.cover(group),
+                        mediaIDs: mediaIDs
+                    ))
+                }
+            }
+            let byCount = { (left: PeopleStripEntry, right: PeopleStripEntry) -> Bool in
+                if left.photoCount != right.photoCount { return left.photoCount > right.photoCount }
+                return left.id < right.id
+            }
+            named.sort(by: byCount)
+            unnamed.sort(by: byCount)
+            let entries: [PeopleStripEntry] = Array((named + unnamed).prefix(limit))
+            if !entries.isEmpty { result[setID] = entries }
+        }
+        return result
+    }
+}
+
 @MainActor
 enum PersonClue {
+    /// The Library, showing every photo of this person or unnamed group.
+    static func showPhotos(of entry: PeopleStripEntry, store: LibraryStore, selection: SelectionModel) {
+        if let personID = entry.personID {
+            showPhotos(ofPerson: personID, name: entry.name, store: store, selection: selection)
+        } else if let clusterID = entry.clusterID {
+            var ids = Set<String>()
+            for face in store.faces where face.personID == nil && face.clusterID == clusterID {
+                guard let item = store.itemsByID[face.mediaID], !item.isScreenshot else { continue }
+                ids.insert(face.mediaID)
+            }
+            selection.showInLibrary(ids, title: String(localized: "Who is this?"), clusterID: clusterID)
+        }
+    }
+
     /// The Library, showing only this person's photos.
     static func showPhotos(ofPerson personID: String, name: String?, store: LibraryStore, selection: SelectionModel) {
         var ids = Set<String>()
@@ -654,15 +769,20 @@ struct LibrarySectionFaces: View {
         HStack(spacing: -4) {
             ForEach(shown) { entry in
                 Button {
-                    selection.showInLibrary(entry.mediaIDs, title: entry.name ?? "", personID: entry.personID)
+                    selection.showInLibrary(
+                        entry.mediaIDs,
+                        title: entry.name ?? String(localized: "Who is this?"),
+                        personID: entry.personID,
+                        clusterID: entry.clusterID
+                    )
                 } label: {
                     PersonFace(face: entry.cover, size: 20)
                         .overlay { Circle().stroke(Paper.canvas, lineWidth: 1.5) }
                 }
                 .buttonStyle(.plain)
-                .help(String(localized: "Show photos of \(entry.name ?? "")"))
-                .accessibilityLabel(entry.name ?? "")
-                .accessibilityIdentifier("library.section.person." + (entry.name ?? ""))
+                .help(CompanionFaces.help(for: entry))
+                .accessibilityLabel(entry.name ?? String(localized: "Who is this?"))
+                .accessibilityIdentifier("library.section.person." + (entry.name ?? entry.id))
             }
         }
         .task(id: key) {
@@ -677,8 +797,8 @@ struct LibrarySectionFaces: View {
     }
 }
 
-/// The named people in a chapter's photos, as small faces with names. A face
-/// opens that person's photos in the Library.
+/// The people in a chapter's photos, as faces with names; an unnamed group
+/// shows as "Who is this?". A face opens that person's photos in the Library.
 struct ChapterPeopleRow: View {
     let itemIDs: Set<String>
     /// The spacing of the stack this row sits in, taken back while there is
@@ -718,17 +838,17 @@ struct ChapterPeopleRow: View {
                         Button { open(entry) } label: {
                             HStack(spacing: 6) {
                                 PersonFace(face: entry.cover, size: 26)
-                                Text(verbatim: entry.name ?? "")
+                                Text(verbatim: entry.name ?? String(localized: "Who is this?"))
                                     .font(.callout)
-                                    .foregroundStyle(Paper.ink)
+                                    .foregroundStyle(entry.name == nil ? Paper.muted : Paper.ink)
                                     .lineLimit(1)
                             }
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .help(String(localized: "Show photos of \(entry.name ?? "")"))
-                        .accessibilityLabel(entry.name ?? "")
-                        .accessibilityIdentifier("trips.person." + (entry.name ?? ""))
+                        .help(CompanionFaces.help(for: entry))
+                        .accessibilityLabel(entry.name ?? String(localized: "Who is this?"))
+                        .accessibilityIdentifier("trips.person." + (entry.name ?? entry.id))
                     }
                 }
                 .accessibilityElement(children: .contain)
@@ -736,13 +856,50 @@ struct ChapterPeopleRow: View {
             }
         }
         .task(id: key) {
-            entries = PeopleStrip.people(in: itemIDs, faces: store.faces, people: people, limit: 6)
+            let found = PeopleStrip.companions(in: ["chapter": itemIDs], faces: store.faces, people: people, itemsByID: store.itemsByID, limit: 6)
+            entries = found["chapter"] ?? []
         }
     }
 
     private func open(_ entry: PeopleStripEntry) {
-        guard let personID = entry.personID else { return }
-        PersonClue.showPhotos(ofPerson: personID, name: entry.name, store: store, selection: selection)
+        PersonClue.showPhotos(of: entry, store: store, selection: selection)
+    }
+}
+
+/// Who was on a chapter, as small overlapping faces on its card on the
+/// shelf. A face opens that person's photos in the Library; the card itself
+/// still opens the chapter.
+struct CompanionFaces: View {
+    let entries: [PeopleStripEntry]
+    var size: CGFloat = 22
+    @Environment(LibraryStore.self) private var store
+    @Environment(SelectionModel.self) private var selection
+
+    var body: some View {
+        if !entries.isEmpty {
+            HStack(spacing: -5) {
+                ForEach(entries) { entry in
+                    Button {
+                        PersonClue.showPhotos(of: entry, store: store, selection: selection)
+                    } label: {
+                        PersonFace(face: entry.cover, size: size)
+                            .overlay { Circle().stroke(Paper.raised, lineWidth: 1.5) }
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(Self.help(for: entry))
+                    .accessibilityLabel(entry.name ?? String(localized: "Who is this?"))
+                    .accessibilityIdentifier("trips.card.person." + (entry.name ?? entry.id))
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("trips.card.people")
+        }
+    }
+
+    static func help(for entry: PeopleStripEntry) -> String {
+        guard let name = entry.name else { return String(localized: "Who is this?") }
+        return String(localized: "Show photos of \(name)")
     }
 }
 

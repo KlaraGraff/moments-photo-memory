@@ -182,6 +182,22 @@ struct FolderImporter {
         await geocodeCache.persist()
         try Task.checkCancellation()
 
+        // The same photo may already be in the library from Apple Photos.
+        // Such files are flagged for review, never merged (#40).
+        let photosDuplicateIDs = CrossSourceDuplicates.matcher.matchingIDs(
+            plan.media.compactMap { CrossSourceDuplicates.candidate(for: $0.metadata) },
+            against: CrossSourceDuplicates.candidates(in: existing, from: .photos)
+        )
+        let duplicateFlags = plan.media.filter { photosDuplicateIDs.contains($0.metadata.id) }.map { organized in
+            ImportReviewFlag(
+                id: organized.metadata.id,
+                fileName: organized.metadata.fileName,
+                reasons: [.nearDuplicate],
+                detail: String(localized: "This file may also be present in an Apple Photos import."),
+                decision: .pending
+            )
+        }
+
         progress(ImportProgress(phase: .saving, completed: 0, total: fresh.count, message: String(localized: "Saving import")))
         var tripModels: [String: Trip] = [:]
         for trip in plan.trips {
@@ -215,6 +231,8 @@ struct FolderImporter {
         for (index, organized) in plan.media.enumerated() {
             try Task.checkCancellation()
             let metadata = organized.metadata
+            var reasons = organized.reasons
+            if photosDuplicateIDs.contains(metadata.id), !reasons.contains(.nearDuplicate) { reasons.append(.nearDuplicate) }
             let model = MediaItem(
                 id: metadata.id,
                 captureDate: metadata.exactCaptureDate,
@@ -235,7 +253,7 @@ struct FolderImporter {
                 localTimeZoneOffsetMinutes: metadata.timeZoneOffsetMinutes,
                 localDayKey: organized.localDayKey,
                 duration: metadata.duration,
-                importReviewReasonsRaw: organized.reasons.map(\.rawValue).joined(separator: ","),
+                importReviewReasonsRaw: reasons.map(\.rawValue).joined(separator: ","),
                 importedAt: .now,
                 originalCaptureDateUTC: metadata.exactCaptureDate,
                 captureDateHintUTC: metadata.dateHintUTC,
@@ -245,7 +263,7 @@ struct FolderImporter {
                 pairedVideoContentHash: metadata.pairedVideoContentHash,
                 pairedVideoBookmarkData: metadata.pairedVideoBookmarkData,
                 perceptualHash: metadata.perceptualHash,
-                reviewDecisionRaw: organized.reasons.isEmpty ? ImportReviewDecision.accepted.rawValue : ImportReviewDecision.pending.rawValue
+                reviewDecisionRaw: reasons.isEmpty ? ImportReviewDecision.accepted.rawValue : ImportReviewDecision.pending.rawValue
             )
             model.place = organized.placeID.flatMap { placeModels[$0] }
             model.importSourceIDsRaw = source.id
@@ -268,7 +286,7 @@ struct FolderImporter {
             collectionCount: plan.collectionCount,
             routeCount: plan.routeCount,
             trips: summaries,
-            flags: plan.flags,
+            flags: CrossSourceDuplicates.mergeFlags(plan.flags, duplicateFlags),
             conflicts: plan.conflicts
         )
     }

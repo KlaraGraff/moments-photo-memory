@@ -57,6 +57,8 @@ public struct SegmentEvidence: Codable, Equatable, Sendable {
     public var placeName: String?
     /// The chapter's title, when the person gave one.
     public var title: String?
+    /// Changes whenever a photo joins or leaves the stretch.
+    public var photoSetHash: String?
 
     public init(
         start: Date,
@@ -78,7 +80,8 @@ public struct SegmentEvidence: Codable, Equatable, Sendable {
         leisureSceneShare: Double? = nil,
         sceneWords: [String] = [],
         placeName: String? = nil,
-        title: String? = nil
+        title: String? = nil,
+        photoSetHash: String? = nil
     ) {
         self.start = start
         self.end = end
@@ -100,16 +103,92 @@ public struct SegmentEvidence: Codable, Equatable, Sendable {
         self.sceneWords = sceneWords
         self.placeName = placeName
         self.title = title
+        self.photoSetHash = photoSetHash
     }
 
-    public var weekendShare: Double { Double(weekendDayCount) / Double(dayCount) }
-    public var workdayCount: Int { dayCount - weekendDayCount }
-    public var photosPerDay: Double { Double(photoCount) / Double(photoDayCount) }
+    private enum CodingKeys: String, CodingKey {
+        case start, end, dayCount, weekendDayCount, firstWeekday, lastWeekday, photoCount, photoDayCount
+        case workHourShare, kmFromBase, baseRole, kmFromHomeTown, isAbroad, sceneSample, workSceneShare
+        case leisureSceneShare, sceneWords, placeName, title, photoSetHash
+    }
+
+    /// Stored evidence goes through the same limits as new evidence, so a
+    /// damaged value never divides by zero. The base's name is never stored.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            start: try c.decode(Date.self, forKey: .start),
+            end: try c.decode(Date.self, forKey: .end),
+            dayCount: try c.decode(Int.self, forKey: .dayCount),
+            weekendDayCount: (try? c.decodeIfPresent(Int.self, forKey: .weekendDayCount)) ?? 0,
+            firstWeekday: (try? c.decodeIfPresent(Int.self, forKey: .firstWeekday)) ?? 1,
+            lastWeekday: (try? c.decodeIfPresent(Int.self, forKey: .lastWeekday)) ?? 1,
+            photoCount: (try? c.decodeIfPresent(Int.self, forKey: .photoCount)) ?? 0,
+            photoDayCount: (try? c.decodeIfPresent(Int.self, forKey: .photoDayCount)) ?? 1,
+            workHourShare: (try? c.decodeIfPresent(Double.self, forKey: .workHourShare)) ?? 0,
+            kmFromBase: try? c.decodeIfPresent(Double.self, forKey: .kmFromBase),
+            baseRole: try? c.decodeIfPresent(PlaceRole.self, forKey: .baseRole),
+            kmFromHomeTown: try? c.decodeIfPresent(Double.self, forKey: .kmFromHomeTown),
+            isAbroad: try? c.decodeIfPresent(Bool.self, forKey: .isAbroad),
+            sceneSample: (try? c.decodeIfPresent(Int.self, forKey: .sceneSample)) ?? 0,
+            workSceneShare: try? c.decodeIfPresent(Double.self, forKey: .workSceneShare),
+            leisureSceneShare: try? c.decodeIfPresent(Double.self, forKey: .leisureSceneShare),
+            sceneWords: (try? c.decodeIfPresent([String].self, forKey: .sceneWords)) ?? [],
+            placeName: try? c.decodeIfPresent(String.self, forKey: .placeName),
+            title: try? c.decodeIfPresent(String.self, forKey: .title),
+            photoSetHash: try? c.decodeIfPresent(String.self, forKey: .photoSetHash)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(start, forKey: .start)
+        try c.encode(end, forKey: .end)
+        try c.encode(dayCount, forKey: .dayCount)
+        try c.encode(weekendDayCount, forKey: .weekendDayCount)
+        try c.encode(firstWeekday, forKey: .firstWeekday)
+        try c.encode(lastWeekday, forKey: .lastWeekday)
+        try c.encode(photoCount, forKey: .photoCount)
+        try c.encode(photoDayCount, forKey: .photoDayCount)
+        try c.encode(workHourShare, forKey: .workHourShare)
+        try c.encodeIfPresent(kmFromBase, forKey: .kmFromBase)
+        try c.encodeIfPresent(baseRole, forKey: .baseRole)
+        try c.encodeIfPresent(kmFromHomeTown, forKey: .kmFromHomeTown)
+        try c.encodeIfPresent(isAbroad, forKey: .isAbroad)
+        try c.encode(sceneSample, forKey: .sceneSample)
+        try c.encodeIfPresent(workSceneShare, forKey: .workSceneShare)
+        try c.encodeIfPresent(leisureSceneShare, forKey: .leisureSceneShare)
+        try c.encode(sceneWords, forKey: .sceneWords)
+        try c.encodeIfPresent(placeName, forKey: .placeName)
+        try c.encodeIfPresent(title, forKey: .title)
+        try c.encodeIfPresent(photoSetHash, forKey: .photoSetHash)
+    }
+
+    /// The place name and title, unless they could name where the person
+    /// lives or works: near daily life, or the same as the base's name.
+    public var shareablePlaceName: String? { shareable(placeName) }
+    public var shareableTitle: String? { shareable(title) }
+
+    /// Any text about this stretch, such as an example's title, held to
+    /// the same test.
+    public func shareable(_ text: String?) -> String? {
+        guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        if let km = kmFromBase, km < 150 { return nil }
+        if let base = baseName?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !base.isEmpty {
+            let lowered = text.lowercased()
+            if lowered.contains(base) || base.contains(lowered) { return nil }
+        }
+        return text
+    }
+
+    public var weekendShare: Double { Double(weekendDayCount) / Double(max(dayCount, 1)) }
+    public var workdayCount: Int { max(0, dayCount - weekendDayCount) }
+    public var photosPerDay: Double { Double(photoCount) / Double(max(photoDayCount, 1)) }
 
     /// Changes when the photos of the stretch change, so a stretch whose
     /// photos moved is judged again.
     public var signature: String {
-        "\(photoCount)-\(Int(start.timeIntervalSince1970))-\(Int(end.timeIntervalSince1970))"
+        "\(photoCount)-\(Int(start.timeIntervalSince1970))-\(Int(end.timeIntervalSince1970))-\(photoSetHash ?? "")"
     }
 }
 
@@ -166,6 +245,11 @@ extension SegmentEvidence {
                 .min()
         }
         let summary = SceneVocabulary.summarize(scenes)
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for id in photos.map(\.id).sorted() {
+            for byte in id.utf8 { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3 }
+            hash = (hash ^ 0x1f) &* 0x0000_0100_0000_01b3
+        }
         return SegmentEvidence(
             start: first,
             end: last,
@@ -186,7 +270,8 @@ extension SegmentEvidence {
             leisureSceneShare: summary.leisureShare,
             sceneWords: summary.words,
             placeName: placeName,
-            title: title
+            title: title,
+            photoSetHash: String(hash, radix: 16)
         )
     }
 

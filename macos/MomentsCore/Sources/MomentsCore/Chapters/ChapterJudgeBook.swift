@@ -67,8 +67,18 @@ public struct ChapterJudgeBook: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? container.decodeIfPresent(Bool.self, forKey: .enabled)) ?? true
         askLevel = (try? container.decodeIfPresent(AskLevel.self, forKey: .askLevel)) ?? .balanced
-        verdicts = (try? container.decodeIfPresent([String: StoredVerdict].self, forKey: .verdicts)) ?? [:]
-        examples = (try? container.decodeIfPresent([JudgeExample].self, forKey: .examples)) ?? []
+        // One entry at a time: an entry this version cannot read is left
+        // out, and the rest stay.
+        let storedVerdicts = (try? container.decodeIfPresent([String: Lossy<StoredVerdict>].self, forKey: .verdicts)) ?? [:]
+        verdicts = storedVerdicts.compactMapValues(\.value)
+        let storedExamples = (try? container.decodeIfPresent([Lossy<JudgeExample>].self, forKey: .examples)) ?? []
+        examples = storedExamples.compactMap(\.value)
+    }
+
+    /// An entry that may fail to decode without failing its list.
+    private struct Lossy<Value: Decodable>: Decodable {
+        let value: Value?
+        init(from decoder: Decoder) throws { value = try? Value(from: decoder) }
     }
 
     // MARK: Reading
@@ -94,7 +104,7 @@ public struct ChapterJudgeBook: Codable, Equatable, Sendable {
     }
 
     public func action(for id: String) -> JudgeAction? {
-        guard let stored = verdicts[id] else { return nil }
+        guard enabled, let stored = verdicts[id] else { return nil }
         return ConfidencePolicy.action(for: stored.verdict, level: askLevel)
     }
 
@@ -113,7 +123,7 @@ public struct ChapterJudgeBook: Codable, Equatable, Sendable {
 
     /// The kind the chapter shows: the verdict's, unless it is still a question.
     public func shownKind(for id: String) -> ChapterKind? {
-        guard let stored = verdicts[id] else { return nil }
+        guard enabled, let stored = verdicts[id] else { return nil }
         if action(for: id) == .ask { return nil }
         return stored.verdict.kind
     }
@@ -142,6 +152,7 @@ public struct ChapterJudgeBook: Codable, Equatable, Sendable {
         evidence: SegmentEvidence,
         now: Date
     ) {
+        guard let kind = kind.normalized else { return }
         let earlier = verdicts[id]?.verdict
         let corrected = earlier.map { $0.kind != kind } ?? true
         var stored = StoredVerdict(verdict: .person(kind), signature: evidence.signature, judgedAt: now)
@@ -180,8 +191,10 @@ public struct ChapterJudgeBook: Codable, Equatable, Sendable {
 
     /// The person moved a chapter's photos to another chapter id.
     public mutating func rename(_ id: String, to newID: String) {
-        guard id != newID, let stored = verdicts.removeValue(forKey: id) else { return }
-        verdicts[newID] = stored
+        guard id != newID else { return }
+        if let stored = verdicts.removeValue(forKey: id) { verdicts[newID] = stored }
+        if examples.contains(where: { $0.id == id }) { examples.removeAll { $0.id == newID } }
+        for index in examples.indices where examples[index].id == id { examples[index].id = newID }
     }
 
     // MARK: Storage

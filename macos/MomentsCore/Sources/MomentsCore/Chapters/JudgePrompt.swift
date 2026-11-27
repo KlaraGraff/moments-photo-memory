@@ -50,7 +50,8 @@ public struct JudgePrompt: Equatable, Sendable {
             for (index, example) in examples.enumerated() {
                 let summary = sheet(example.evidence, calendar: calendar).prefix(4).joined(separator: "; ")
                 let how = example.corrected ? "they changed the judge's answer to" : "they confirmed"
-                lines.append("\(index + 1). \"\(example.title)\": \(summary). \(how) \(example.kind.key)")
+                let name = example.evidence.shareable(example.title).map { "\"\($0)\": " } ?? ""
+                lines.append("\(index + 1). \(name)\(summary). \(how) \(example.kind.key)")
             }
         }
         lines.append("")
@@ -69,7 +70,7 @@ public struct JudgePrompt: Equatable, Sendable {
         let perDay = Int(evidence.photosPerDay.rounded())
         let workHours = Int((evidence.workHourShare * 100).rounded())
         lines.append("Photos: \(evidence.photoCount) on \(evidence.photoDayCount) days, about \(perDay) a day, \(workHours)% taken on workdays between 8:00 and 18:00")
-        if let place = evidence.placeName, !place.isEmpty { lines.append("Place: \(place)") }
+        if let place = evidence.shareablePlaceName { lines.append("Place: \(place)") }
         if let km = evidence.kmFromBase, let role = evidence.baseRole {
             let base = role == .work ? "where they work" : "where they live"
             lines.append("Distance from \(base): \(Int(km.rounded())) km")
@@ -86,7 +87,7 @@ public struct JudgePrompt: Equatable, Sendable {
             if !evidence.sceneWords.isEmpty { line += "; seen most: " + evidence.sceneWords.joined(separator: ", ") }
             lines.append(line)
         }
-        if let title = evidence.title, !title.isEmpty { lines.append("Title they gave it: \(title)") }
+        if let title = evidence.shareableTitle { lines.append("Title they gave it: \(title)") }
         return lines
     }
 
@@ -95,7 +96,11 @@ public struct JudgePrompt: Equatable, Sendable {
     static func dayText(_ date: Date, calendar: Calendar) -> String {
         let parts = calendar.dateComponents([.year, .month, .day, .weekday], from: date)
         let weekday = weekdays[((parts.weekday ?? 1) - 1 + 7) % 7]
-        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0) + " (\(weekday))"
+        func padded(_ value: Int?, _ width: Int) -> String {
+            let text = String(value ?? 0)
+            return String(repeating: "0", count: max(0, width - text.count)) + text
+        }
+        return "\(padded(parts.year, 4))-\(padded(parts.month, 2))-\(padded(parts.day, 2)) (\(weekday))"
     }
 
     /// The JSON schema of the answer, for models that take one.
@@ -133,6 +138,7 @@ public struct JudgePrompt: Equatable, Sendable {
         if allowedKeys.contains(trimmed) { return ChapterKind(key: trimmed) }
         func plain(_ text: String) -> String { text.lowercased().filter { $0.isLetter || $0.isNumber } }
         let wanted = plain(trimmed)
+        guard !wanted.isEmpty else { return nil }
         for key in allowedKeys {
             let label = ChapterKind(key: key)?.customLabel
             if plain(key) == wanted || label.map(plain) == wanted { return ChapterKind(key: key) }

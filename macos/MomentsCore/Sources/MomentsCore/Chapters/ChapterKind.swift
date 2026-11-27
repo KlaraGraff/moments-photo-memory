@@ -49,6 +49,13 @@ public enum ChapterKind: Hashable, Sendable {
     /// A chapter is kept for every kind but `daily`.
     public var isChapter: Bool { self != .daily }
 
+    /// The kind with a custom label cleaned, or nil when the label is no
+    /// type (see `cleanLabel`). Only such kinds are stored.
+    public var normalized: ChapterKind? {
+        guard case let .custom(label) = self else { return self }
+        return Self.cleanLabel(label).map(ChapterKind.custom)
+    }
+
     public var customLabel: String? {
         if case let .custom(label) = self { return label }
         return nil

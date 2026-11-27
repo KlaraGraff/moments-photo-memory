@@ -197,6 +197,84 @@ final class ChapterJudgeTests: XCTestCase {
         XCTAssertFalse(book.encoded().contains("latitude"))
     }
 
+    func testBookKeepsNoBaseNameAndSurvivesBadEntries() throws {
+        let evidence = try XCTUnwrap(SegmentEvidence.make(
+            photos: photos(at: SyntheticPoint.offset(work, kmNorth: 400), days: 2, perDay: 3),
+            bases: [EvidenceBase(role: .work, name: "Secret site", centre: work)],
+            calendar: utc
+        ))
+        var book = ChapterJudgeBook()
+        book.decide(.trip, for: "a", title: "Bay", evidence: evidence, now: friday)
+        book.decide(.custom(String(repeating: "x", count: 30)), for: "b", title: "Hill", evidence: evidence, now: friday)
+        XCTAssertNil(book.verdict(for: "b"), "a label that is no type is not stored")
+        let stored = book.encoded()
+        XCTAssertFalse(stored.contains("Secret site"))
+        // An entry from another version is left out; the rest stays.
+        let damaged = stored.replacingOccurrences(of: #""kind":"trip""#, with: #""kind":"custom:""#, options: [], range: stored.range(of: #""verdicts""#).map { $0.lowerBound..<stored.endIndex })
+        var two = ChapterJudgeBook.decode(stored)
+        two.record(ChapterVerdict(kind: .businessTrip, confidence: .high, source: .rules), for: "c", signature: "s", now: friday)
+        let mixed = ChapterJudgeBook.decode(damaged)
+        XCTAssertEqual(mixed.examples.count, 1)
+        XCTAssertEqual(ChapterJudgeBook.decode(two.encoded()).verdicts.count, 2)
+
+        // Damaged counts never divide by zero.
+        let zero = #"{"start":0,"end":0,"dayCount":0,"photoDayCount":0,"photoCount":5,"workHourShare":0.5}"#
+        let decoded = try JSONDecoder().decode(SegmentEvidence.self, from: Data(zero.utf8))
+        XCTAssertEqual(decoded.photosPerDay, 5)
+        XCTAssertEqual(decoded.weekendShare, 0)
+        _ = RuleJudge.judge(decoded, book: ChapterJudgeBook())
+    }
+
+    func testRenameMovesTheExampleToo() {
+        let evidence = SyntheticSegments.library()[0].evidence
+        var book = ChapterJudgeBook()
+        book.decide(.trip, for: "a", title: "Bay", evidence: evidence, now: evidence.end)
+        book.rename("a", to: "b")
+        book.decide(.businessTrip, for: "b", title: "Bay", evidence: evidence, now: evidence.end)
+        XCTAssertEqual(book.examples.map(\.id), ["b"])
+        XCTAssertEqual(book.examples.first?.kind, .businessTrip)
+    }
+
+    func testTurnedOffJudgeShowsNothing() {
+        var book = ChapterJudgeBook()
+        book.record(ChapterVerdict(kind: .trip, confidence: .low, source: .rules), for: "a", signature: "s", now: friday)
+        book.enabled = false
+        XCTAssertNil(book.action(for: "a"))
+        XCTAssertFalse(book.isQuestion("a", now: friday))
+        XCTAssertNil(book.shownKind(for: "a"))
+    }
+
+    func testModelAloneNeverRemovesAChapterSilently() {
+        let evidence = SyntheticSegments.library()[0].evidence
+        let combined = RuleJudge.combine(
+            rules: ChapterVerdict(kind: .trip, confidence: .medium, source: .rules),
+            model: ChapterVerdict(kind: .daily, confidence: .high, source: .model),
+            evidence: evidence, book: ChapterJudgeBook()
+        )
+        XCTAssertEqual(combined.kind, .daily)
+        XCTAssertEqual(ConfidencePolicy.action(for: combined, level: .less), .ask)
+    }
+
+    func testPromptLeavesOutNamesOfDailyLife() throws {
+        let near = try XCTUnwrap(SegmentEvidence.make(
+            photos: photos(at: SyntheticPoint.offset(work, kmNorth: 40), days: 1, perDay: 3),
+            bases: [EvidenceBase(role: .work, name: "Rivertown", centre: work)],
+            calendar: utc, placeName: "Rivertown", title: "Rivertown office"
+        ))
+        let far = try XCTUnwrap(SegmentEvidence.make(
+            photos: photos(at: SyntheticPoint.offset(work, kmNorth: 900), days: 2, perDay: 3),
+            bases: [EvidenceBase(role: .work, name: "Rivertown", centre: work)],
+            calendar: utc, placeName: "Rivertown", title: "Hills"
+        ))
+        for evidence in [near, far] {
+            let prompt = JudgePrompt.make(evidence: evidence, book: ChapterJudgeBook(), language: "English", calendar: utc)
+            XCTAssertFalse(prompt.user.contains("Rivertown"))
+        }
+        XCTAssertTrue(JudgePrompt.make(evidence: far, book: ChapterJudgeBook(), language: "English", calendar: utc).user.contains("Hills"))
+        let emoji = JudgePrompt(system: "", user: "", allowedKeys: ["trip", "custom:🎉"])
+        XCTAssertNil(emoji.parse(#"{"kind":"","confidence":"high"}"#))
+    }
+
     // MARK: Prompt
 
     func testPromptHoldsFactsAndNoCoordinates() throws {

@@ -249,6 +249,11 @@ public enum RuleJudge {
         } else if rules.confidence == .high {
             verdict.confidence = verdict.confidence.lower
         }
+        // Ordinary days remove the chapter: the model alone is never sure
+        // enough for that.
+        if model.kind == .daily && rules.kind != .daily {
+            verdict.confidence = min(verdict.confidence, .medium)
+        }
         if verdict.reasons.isEmpty {
             verdict.reasons = rules.kind == model.kind
                 ? rules.reasons

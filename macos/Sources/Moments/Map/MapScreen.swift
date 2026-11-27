@@ -330,9 +330,6 @@ struct MapScreen: View {
         .accessibilityLabel(Text("Map"))
         .mapCameraKeyframeAnimator(trigger: flightTrigger) { initial in
             let start = MapFlightCamera(initial)
-            #if DEBUG
-            MapCameraTrace.note("keyframes from \(Int(initial.distance))")
-            #endif
             let flight = MapFlight(from: start, to: flightTarget ?? start, distanceCeiling: flightCeiling)
             let frames: [MapFlightCamera] = flight.frames(perSecond: Self.flightFramesPerSecond)
             let step: Double = flight.stepDuration(perSecond: Self.flightFramesPerSecond)

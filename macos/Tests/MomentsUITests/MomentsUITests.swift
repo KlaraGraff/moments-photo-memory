@@ -657,15 +657,15 @@ final class MomentsUITests: XCTestCase {
     func testSmallWindowHasNoOverlaps() {
         let app = launch(language: "en", smallWindow: true, extraArguments: ["-MomentsUITestPeople"])
         XCTAssertTrue(element(in: app, identifier: "library.photoCount").waitForExistence(timeout: launchTimeout))
-        // One row of filter chips over the photos; the grouping picker and
-        // the review banner stay gone.
-        for identifier in ["toolbar.filter", "library.type-filter", "library.grouping", "library.review-banner"] {
+        // No rows of controls over the photos: the filters sit behind the
+        // toolbar's Filter button, which fits the small window.
+        for identifier in ["filter.date", "library.type-filter", "library.grouping", "library.review-banner"] {
             XCTAssertFalse(element(in: app, identifier: identifier).exists, "\(identifier) is back above the photos")
         }
         let window = app.windows.firstMatch.frame
-        let dateChip = element(in: app, identifier: "filter.date")
-        XCTAssertTrue(dateChip.waitForExistence(timeout: launchTimeout), "The Library has no filter chips")
-        XCTAssertTrue(window.contains(dateChip.frame), "The Date chip \(dateChip.frame) spills outside the window \(window)")
+        let filterButton = element(in: app, identifier: "toolbar.filter")
+        XCTAssertTrue(filterButton.waitForExistence(timeout: launchTimeout), "The Library has no Filter button")
+        XCTAssertTrue(window.contains(filterButton.frame), "The Filter button \(filterButton.frame) spills outside the window \(window)")
         let strip = element(in: app, identifier: "library.people")
         XCTAssertTrue(strip.waitForExistence(timeout: launchTimeout))
         XCTAssertTrue(window.contains(strip.frame), "The row of faces \(strip.frame) spills outside the window \(window)")
@@ -782,7 +782,7 @@ final class MomentsUITests: XCTestCase {
             XCTAssertFalse(element(in: app, identifier: identifier).exists, "\(identifier) should have left the sidebar")
         }
         // The Library opens straight on its photos: no banner, no rows of controls.
-        for identifier in ["library.review-banner", "library.type-filter", "toolbar.filter", "reorganize.all"] {
+        for identifier in ["library.review-banner", "library.type-filter", "filter.date", "reorganize.all"] {
             XCTAssertFalse(element(in: app, identifier: identifier).exists, "\(identifier) is back")
         }
         capture(app, named: "sidebar-01-two-pages-evidence")
@@ -801,36 +801,49 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(importButton.waitForNonExistence(timeout: launchTimeout), "Chapters still shows the import +")
     }
 
-    /// The filters over the photos: each chip opens its list, what is picked
-    /// shows below with Clear, and the same filters narrow Chapters and the
-    /// large map from their Filter button. A chapter card shows who was on it.
+    /// The filters on every page sit behind the toolbar's Filter button, right
+    /// of the +: each chip in it opens its list, what is picked shows below
+    /// with Clear, and the same filters narrow Chapters and the large map. A
+    /// chapter card shows who was on it.
     func testFiltersNarrowTheLibraryChaptersAndTheMap() {
         let app = launch(language: "en", extraArguments: ["-MomentsUITestPeople"])
         let allCount = libraryPhotoCount(app)
-        for identifier in ["filter.type", "filter.place", "filter.trip", "filter.date", "filter.memory", "filter.person"] {
-            XCTAssertTrue(element(in: app, identifier: identifier).waitForExistence(timeout: launchTimeout), "\(identifier) is missing over the photos")
-        }
-        capture(app, named: "filters-01-chips-evidence")
+        XCTAssertFalse(element(in: app, identifier: "filter.person").exists, "Filter chips are spread over the photos")
+        let libraryFilter = element(in: app, identifier: "toolbar.filter")
+        XCTAssertTrue(libraryFilter.waitForExistence(timeout: launchTimeout), "The Library has no Filter button")
+        let importButton = element(in: app, identifier: "toolbar.import")
+        XCTAssertTrue(importButton.exists)
+        XCTAssertGreaterThan(libraryFilter.frame.minX, importButton.frame.maxX, "Filter is not right of the +")
 
         // Person, then back to every photo.
-        element(in: app, identifier: "filter.person").click()
+        var popover = openFilters(app, libraryFilter)
+        for identifier in ["filter.type", "filter.place", "filter.trip", "filter.date", "filter.memory", "filter.person"] {
+            XCTAssertTrue(popover.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists, "\(identifier) is missing from Filter")
+        }
+        capture(app, named: "filters-01-chips-evidence")
+        popover.descendants(matching: .any).matching(identifier: "filter.person").firstMatch.click()
         let alex = app.menuItems["Alex"].firstMatch
         XCTAssertTrue(alex.waitForExistence(timeout: launchTimeout), "Person did not open its list")
         alex.click()
         XCTAssertEqual(libraryPhotoCount(app), 2, "Alex is in two synthetic photos")
+        XCTAssertEqual(libraryFilter.value as? String, "1", "Filter does not count the picked person")
         capture(app, named: "filters-02-person-evidence")
-        let clear = element(in: app, identifier: "filter.clear")
+        popover = openFilters(app, libraryFilter)
+        let clear = popover.descendants(matching: .any).matching(identifier: "filter.clear").firstMatch
         XCTAssertTrue(clear.waitForExistence(timeout: launchTimeout), "A picked filter shows no Clear")
         clear.click()
         XCTAssertEqual(libraryPhotoCount(app), allCount)
 
         // Trip: the Library, Chapters and the large map all narrow to it.
-        element(in: app, identifier: "filter.trip").click()
+        popover = openFilters(app, libraryFilter)
+        popover.descendants(matching: .any).matching(identifier: "filter.trip").firstMatch.click()
         let journey = app.menuItems["journeyA"].firstMatch
         XCTAssertTrue(journey.waitForExistence(timeout: launchTimeout), "Trip did not open its list")
         journey.click()
         let tripCount = libraryPhotoCount(app)
         XCTAssertTrue(tripCount > 0 && tripCount < allCount, "The Trip filter left \(tripCount) of \(allCount) photos")
+        if popover.exists { app.typeKey(.escape, modifierFlags: []) }
+        XCTAssertTrue(popover.waitForNonExistence(timeout: launchTimeout), "The Filter popover did not close")
 
         element(in: app, identifier: "sidebar.trips").click()
         let filterButton = element(in: app, identifier: "toolbar.filter")
@@ -845,7 +858,7 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "filters-03-chapters-evidence")
 
         filterButton.click()
-        let popover = app.popovers.firstMatch
+        popover = app.popovers.firstMatch
         XCTAssertTrue(popover.waitForExistence(timeout: launchTimeout), "Filter did not open the chips")
         XCTAssertTrue(popover.descendants(matching: .any).matching(identifier: "filter.trip").firstMatch.exists)
         capture(app, named: "filters-04-chapters-popover-evidence")
@@ -1293,6 +1306,14 @@ final class MomentsUITests: XCTestCase {
     private func element(in app: XCUIApplication, identifier: String) -> XCUIElement {
         XCTAssertEqual(app.state, .runningForeground, "Moments lost focus; stopping before clicking another app")
         return app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    /// The Filter popover, opened by its toolbar button unless it is open.
+    private func openFilters(_ app: XCUIApplication, _ button: XCUIElement) -> XCUIElement {
+        let popover = app.popovers.firstMatch
+        if !popover.exists { button.click() }
+        XCTAssertTrue(popover.waitForExistence(timeout: launchTimeout), "Filter did not open the chips")
+        return popover
     }
 
     private func capture(_ app: XCUIApplication, named name: String) {

@@ -49,8 +49,8 @@ struct LibraryView: View {
     let state: LibraryViewState
     @Binding var firstLaunchCompleted: Bool
 
-    /// The search field, and the filter chips over the photos. People and
-    /// places can also be clicked where they show.
+    /// The search field, and the filters behind the toolbar's Filter
+    /// button. People and places can also be clicked where they show.
     @AppStorage(LibraryFilterKeys.query) private var query = ""
     @AppStorage(LibraryFilterKeys.type) private var typeRaw = LibraryMediaTypeFilter.all.rawValue
     @AppStorage(LibraryFilterKeys.fromDate) private var fromDateInterval = 0.0
@@ -136,8 +136,7 @@ struct LibraryView: View {
 
     /// One person's or one place's photos (a face or a place name was
     /// clicked) show all of them: only the search narrows those, and the
-    /// chips wait, hidden, for the way back. A heading being named and the
-    /// chips under it at once kept the page from ever settling.
+    /// filters wait, with their Filter button hidden, for the way back.
     private var criteria: LibraryFilterCriteria {
         if selection.libraryScope != nil { return LibraryFilterCriteria(searchText: query) }
         return LibraryFilterKeys.criteria(
@@ -384,15 +383,6 @@ struct LibraryView: View {
             ImportStatusView()
                 .padding(.horizontal, 34)
                 .padding(.vertical, 7)
-            // Type, place, trip, date, memory and person, each a menu that
-            // opens on a click; what is picked shows below with its ✕.
-            // Not over one person's or place's photos, which show them all.
-            if hasGrouped && (!cachedSections.isEmpty || criteria.isFiltered) && selection.libraryScope == nil {
-                LibraryFilterChips()
-                    .padding(.horizontal, 34)
-                    .padding(.bottom, 4)
-            }
-
             if !hasGrouped {
                 Spacer()
             } else if cachedSections.isEmpty {
@@ -439,6 +429,11 @@ struct LibraryView: View {
                 }
             }
             ToolbarItem(placement: .primaryAction) { LibraryZoomControl(state: state) }
+            // Filters wait while one person's or place's photos show, which
+            // show all of them.
+            if selection.libraryScope == nil {
+                ToolbarItem(placement: .primaryAction) { LibraryFilterToolbarButton() }
+            }
         }
         .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, notes")))
         .navigationTitle(String(localized: "Library"))

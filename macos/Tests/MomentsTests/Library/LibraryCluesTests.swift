@@ -267,6 +267,36 @@ final class LibraryCluesTests: XCTestCase {
         XCTAssertEqual(chapter.first?.cover?.id, "anna-picked", "A chapter's faces show the picked face")
     }
 
+    /// A person shows the same face on every chapter as in the row of faces,
+    /// even on a chapter without that photo, so nobody looks like a stranger.
+    func testAPersonShowsTheSameFaceOnEveryChapter() {
+        let anna = Person(id: "anna", name: "Anna")
+        let sharp: FaceObservation = face("anna-sharp", photo: "p1", personID: "anna")
+        sharp.quality = 0.95
+        let blurry: FaceObservation = face("anna-blurry", photo: "p2", personID: "anna")
+        blurry.quality = 0.2
+        let group: [FaceObservation] = (0..<6).map { (index: Int) -> FaceObservation in
+            let observation: FaceObservation = face("c\(index)", photo: "q\(index)", clusterID: "c1")
+            observation.quality = Double(index) / 10
+            return observation
+        }
+        let all: [FaceObservation] = [sharp, blurry] + group
+        let itemsByID: [String: MediaItem] = items(for: all)
+        let row: [PeopleStripEntry] = PeopleStrip.entries(faces: all, people: [anna], itemsByID: itemsByID)
+        let rowCovers: [String: String] = Dictionary(uniqueKeysWithValues: row.map { (entry: PeopleStripEntry) -> (String, String) in (entry.id, entry.cover?.id ?? "") })
+
+        let sets: [String: Set<String>] = ["a": ["p1"], "b": ["p2", "q0", "q1"]]
+        let found: [String: [PeopleStripEntry]] = PeopleStrip.companions(in: sets, faces: all, people: [anna], itemsByID: itemsByID, limit: 5)
+        for (chapter, entries) in found {
+            for entry in entries {
+                XCTAssertEqual(entry.cover?.id, rowCovers[entry.id], "\(entry.id) shows another face on chapter \(chapter)")
+            }
+        }
+        XCTAssertEqual(found["b"]?.first?.cover?.id, "anna-sharp", "The blurry face of this chapter stood in for Anna")
+        let chapter: [PeopleStripEntry] = PeopleStrip.people(in: ["p2"], faces: all, people: [anna], limit: 5)
+        XCTAssertEqual(chapter.first?.cover?.id, "anna-sharp")
+    }
+
     // MARK: The small map
 
     func testSmallMapHasOneStampPerAreaFullestFirst() {

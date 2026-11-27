@@ -567,11 +567,10 @@ struct LibraryFilterPublisher: View {
     }
 }
 
-/// The light way into the shared filters for screens other than the Library:
-/// a search field and a Filter button in the toolbar. The button opens the
-/// same chips as the Library in a popover and shows how many are on.
-struct CompactLibraryFilters: ViewModifier {
-    @AppStorage(LibraryFilterKeys.query) private var query = ""
+/// The one way into the filters, on every page: a Filter button in the
+/// toolbar, right of the page's +. It opens the chips in a popover and shows
+/// how many are on.
+struct LibraryFilterToolbarButton: View {
     @AppStorage(LibraryFilterKeys.type) private var typeRaw = LibraryMediaTypeFilter.all.rawValue
     @AppStorage(LibraryFilterKeys.fromDate) private var fromDateInterval = 0.0
     @AppStorage(LibraryFilterKeys.toDate) private var toDateInterval = 0.0
@@ -583,7 +582,6 @@ struct CompactLibraryFilters: ViewModifier {
 
     private var activeCount: Int {
         [
-            // Favorites, Videos… picked in the Library narrow these screens too.
             typeRaw != LibraryMediaTypeFilter.all.rawValue,
             fromDateInterval != 0 || toDateInterval != 0,
             !placeFilterID.isEmpty,
@@ -593,31 +591,39 @@ struct CompactLibraryFilters: ViewModifier {
         ].filter { $0 }.count
     }
 
+    var body: some View {
+        Button {
+            showingFilters.toggle()
+        } label: {
+            Label(
+                activeCount == 0 ? String(localized: "Filter") : String(format: String(localized: "Filter (%lld)"), activeCount),
+                systemImage: activeCount == 0 ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill"
+            )
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(activeCount == 0 ? Paper.ink : Paper.accent)
+        }
+        .help(String(localized: "Filter by place, trip, date, memory or person"))
+        .accessibilityValue(String(activeCount))
+        .accessibilityIdentifier("toolbar.filter")
+        .popover(isPresented: $showingFilters, arrowEdge: .bottom) {
+            LibraryFilterChips(scrolls: false)
+                .fixedSize()
+                .padding(16)
+        }
+    }
+}
+
+/// The shared search and the Filter button for pages other than the
+/// Library, which narrow to what the filters leave.
+struct CompactLibraryFilters: ViewModifier {
+    @AppStorage(LibraryFilterKeys.query) private var query = ""
+
     func body(content: Content) -> some View {
         content
             .background { LibraryFilterPublisher() }
             .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, notes")))
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showingFilters.toggle()
-                    } label: {
-                        Label(
-                            activeCount == 0 ? String(localized: "Filter") : String(format: String(localized: "Filter (%lld)"), activeCount),
-                            systemImage: activeCount == 0 ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill"
-                        )
-                        .labelStyle(.titleAndIcon)
-                        .foregroundStyle(activeCount == 0 ? Paper.ink : Paper.accent)
-                    }
-                    .help(String(localized: "Filter by place, trip, date, memory or person"))
-                    .accessibilityValue(String(activeCount))
-                    .accessibilityIdentifier("toolbar.filter")
-                    .popover(isPresented: $showingFilters, arrowEdge: .bottom) {
-                        LibraryFilterChips(scrolls: false)
-                            .fixedSize()
-                            .padding(16)
-                    }
-                }
+                ToolbarItem(placement: .primaryAction) { LibraryFilterToolbarButton() }
             }
     }
 }

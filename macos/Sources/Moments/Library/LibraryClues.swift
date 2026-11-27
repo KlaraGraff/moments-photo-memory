@@ -111,8 +111,12 @@ enum PeopleStrip {
             if !name.isEmpty { names[person.id] = name }
         }
         var byPerson: [String: [FaceObservation]] = [:]
+        // All of a person's faces: the face that stands for them is the same everywhere.
+        var everywhere: [String: [FaceObservation]] = [:]
         for face in faces {
-            guard let personID = face.personID, names[personID] != nil, mediaIDs.contains(face.mediaID) else { continue }
+            guard let personID = face.personID, names[personID] != nil else { continue }
+            everywhere[personID, default: []].append(face)
+            guard mediaIDs.contains(face.mediaID) else { continue }
             byPerson[personID, default: []].append(face)
         }
         var result: [PeopleStripEntry] = []
@@ -123,7 +127,7 @@ enum PeopleStrip {
                 personID: personID,
                 clusterID: nil,
                 name: names[personID],
-                cover: PeopleFacePicker.cover(group, keyFaceID: PeopleStoreActions.keyFaceID(for: personID, defaults: decisions)),
+                cover: PeopleFacePicker.cover(everywhere[personID] ?? group, keyFaceID: PeopleStoreActions.keyFaceID(for: personID, defaults: decisions)),
                 mediaIDs: ids
             ))
         }
@@ -165,6 +169,10 @@ extension PeopleStrip {
         var clusterPhotos: [String: Set<String>] = [:]
         // Each set's faces, by "person.<id>" or "cluster.<id>".
         var perSet: [String: [String: [FaceObservation]]] = [:]
+        // Every photo's faces by the same key: a person shows the same face
+        // on every chapter as in the row of faces, not the best one of that
+        // chapter, which looked like somebody else.
+        var everywhere: [String: [FaceObservation]] = [:]
         for face in faces {
             let mediaID: String = face.mediaID
             guard let item = itemsByID[mediaID], !item.isScreenshot else { continue }
@@ -179,6 +187,7 @@ extension PeopleStrip {
             } else {
                 continue
             }
+            everywhere[key, default: []].append(face)
             guard let setIDs = owners[mediaID] else { continue }
             for setID in setIDs { perSet[setID, default: [:]][key, default: []].append(face) }
         }
@@ -207,7 +216,7 @@ extension PeopleStrip {
                         personID: personID,
                         clusterID: nil,
                         name: names[personID],
-                        cover: PeopleFacePicker.cover(group, keyFaceID: PeopleStoreActions.keyFaceID(for: personID, defaults: decisions)),
+                        cover: PeopleFacePicker.cover(everywhere[key] ?? group, keyFaceID: PeopleStoreActions.keyFaceID(for: personID, defaults: decisions)),
                         mediaIDs: mediaIDs
                     ))
                 } else {
@@ -218,7 +227,7 @@ extension PeopleStrip {
                         personID: nil,
                         clusterID: clusterID,
                         name: nil,
-                        cover: PeopleFacePicker.cover(group),
+                        cover: PeopleFacePicker.cover(everywhere[key] ?? group),
                         mediaIDs: mediaIDs
                     ))
                 }
@@ -397,13 +406,20 @@ struct LibraryScopeHeading: View {
     private var isPerson: Bool { scope.personID != nil || scope.clusterID != nil }
     private var isPlace: Bool { scope.placeName != nil }
 
-    /// The faces this heading is about: the person's, or the unnamed group's.
+    /// The faces this heading is about: the person's, or the unnamed group's,
+    /// in the same photos the row of faces counts, so the heading shows the
+    /// same face for them as the row and the chapters.
     private var faces: [FaceObservation] {
+        let itemsByID: [String: MediaItem] = store.itemsByID
+        let shown = { (face: FaceObservation) -> Bool in
+            guard let item = itemsByID[face.mediaID] else { return false }
+            return !item.isScreenshot
+        }
         if let personID = scope.personID {
-            return store.faces.filter { (face: FaceObservation) -> Bool in face.personID == personID }
+            return store.faces.filter { (face: FaceObservation) -> Bool in face.personID == personID && shown(face) }
         }
         if let clusterID = scope.clusterID {
-            return store.faces.filter { (face: FaceObservation) -> Bool in face.personID == nil && face.clusterID == clusterID }
+            return store.faces.filter { (face: FaceObservation) -> Bool in face.personID == nil && face.clusterID == clusterID && shown(face) }
         }
         return []
     }

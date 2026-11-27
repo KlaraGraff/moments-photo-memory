@@ -18,15 +18,21 @@ final class ChapterJudgeTests: XCTestCase {
     private let friday = Date(timeIntervalSince1970: 1_767_355_200)
 
     private func photos(at point: GeoPoint, days: Int, perDay: Int, hour: Int = 12) -> [PhotoStop] {
-        (0..<days).flatMap { day in
-            (0..<perDay).map { index in
-                PhotoStop(
+        var stops: [PhotoStop] = []
+        for day in 0..<days {
+            for index in 0..<perDay {
+                let dayOffset: TimeInterval = Double(day) * 86_400
+                let hourOffset: TimeInterval = Double(hour - 12) * 3_600
+                let minuteOffset: TimeInterval = Double(index) * 60
+                let latitude: Double = point.latitude + Double(index) * 0.001
+                stops.append(PhotoStop(
                     id: "p\(day)-\(index)",
-                    date: friday.addingTimeInterval(Double(day) * 86_400 + Double(hour - 12) * 3_600 + Double(index) * 60),
-                    coordinate: GeoPoint(latitude: point.latitude + Double(index) * 0.001, longitude: point.longitude)
-                )
+                    date: friday.addingTimeInterval(dayOffset + hourOffset + minuteOffset),
+                    coordinate: GeoPoint(latitude: latitude, longitude: point.longitude)
+                ))
             }
         }
+        return stops
     }
 
     // MARK: Kinds

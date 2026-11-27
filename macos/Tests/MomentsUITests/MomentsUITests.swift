@@ -1247,8 +1247,8 @@ final class MomentsUITests: XCTestCase {
         // The first photo with a place name has the link to the photos taken
         // there. Not the column's scroll view, which also answers to it; a
         // link-styled button may be reported as a link rather than a button.
-        let scrollViewType: UInt = XCUIElement.ElementType.scrollView.rawValue
-        let linkQuery: NSPredicate = NSPredicate(format: "identifier == %@ AND elementType != %d", "viewer.place.photos", scrollViewType)
+        let scrollViewType: NSNumber = NSNumber(value: XCUIElement.ElementType.scrollView.rawValue)
+        let linkQuery: NSPredicate = NSPredicate(format: "identifier == %@ AND elementType != %@", "viewer.place.photos", scrollViewType)
         let link = app.descendants(matching: .any).matching(linkQuery).firstMatch
         let next = element(in: app, identifier: "viewer.next")
         var found: Bool = link.waitForExistence(timeout: 3)

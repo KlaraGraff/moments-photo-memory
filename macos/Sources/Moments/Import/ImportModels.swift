@@ -209,7 +209,7 @@ public struct ImportConflictConfiguration: Codable, Equatable, Sendable {
     }
 }
 
-public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
+public struct ImportedMediaMetadata: Identifiable, Equatable, Codable, Sendable {
     public let id: String
     public let bookmarkData: Data
     public let fileName: String

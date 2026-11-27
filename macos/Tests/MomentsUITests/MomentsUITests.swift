@@ -263,6 +263,53 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(viewer.exists, "Closing the postcard sheet closed the viewer too")
     }
 
+    /// A chapter's More menu opens the memory book sheet inside the small
+    /// window, with both formats, and Cancel closes it on the chapter.
+    func testChapterExportsAMemoryBookFromItsMoreMenuInTheSmallWindow() {
+        let app = launch(language: "en", smallWindow: true, extraArguments: [
+            "-moments.people.myName", "Synthetic Robin",
+            "-moments.people.partnerName", "Synthetic Kai",
+        ])
+        element(in: app, identifier: "sidebar.trips").click()
+        let card = element(in: app, identifier: "trips.card.journeyA")
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout), "Trip cover card was not exposed")
+        card.click()
+        let tripMemory = element(in: app, identifier: "trips.memory.trip")
+        XCTAssertTrue(tripMemory.waitForExistence(timeout: launchTimeout), "Opening a trip did not show it")
+
+        let more = element(in: app, identifier: "trips.more")
+        XCTAssertTrue(more.waitForExistence(timeout: launchTimeout), "The chapter has no More menu")
+        more.click()
+        let item = app.menuItems.matching(NSPredicate(format: "identifier == %@ OR title == %@", "trips.exportBook", "Export Memory Book…")).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: launchTimeout), "More has no Export Memory Book")
+        item.click()
+
+        let sheet = element(in: app, identifier: "memoryBook.sheet")
+        XCTAssertTrue(sheet.waitForExistence(timeout: launchTimeout), "The memory book sheet did not open")
+        let export = element(in: app, identifier: "memoryBook.export")
+        XCTAssertTrue(export.waitForExistence(timeout: launchTimeout))
+        // Enabled once the chapter is read, since both names are filled in.
+        expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: export)
+        waitForExpectations(timeout: launchTimeout)
+        XCTAssertTrue(element(in: app, identifier: "memoryBook.names").exists, "The sheet does not show whose names go in the book")
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(sheet.frame), "The memory book sheet spills outside the small window")
+        capture(app, named: "memorybook-01-pdf-small-window-evidence")
+
+        element(in: app, identifier: "memoryBook.format.markdown").click()
+        let spec = element(in: app, identifier: "memoryBook.spec")
+        XCTAssertTrue(spec.waitForExistence(timeout: launchTimeout))
+        let markdownSpec = NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", ".md file", ".md file")
+        expectation(for: markdownSpec, evaluatedWith: spec)
+        waitForExpectations(timeout: launchTimeout)
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(sheet.frame), "The Markdown choice makes the sheet spill outside the small window")
+        capture(app, named: "memorybook-02-markdown-small-window-evidence")
+
+        element(in: app, identifier: "memoryBook.cancel").click()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: sheet)
+        waitForExpectations(timeout: launchTimeout)
+        XCTAssertTrue(tripMemory.exists, "Closing the memory book sheet left the chapter")
+    }
+
     /// Two clicks closer together than the double-click interval are a double click.
     private func pauseLongerThanADoubleClick() {
         RunLoop.current.run(until: Date().addingTimeInterval(NSEvent.doubleClickInterval + 0.3))

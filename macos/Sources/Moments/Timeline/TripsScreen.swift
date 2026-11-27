@@ -1696,6 +1696,7 @@ private struct TripDetailView: View {
     @Environment(SharingController.self) private var sharing: SharingController?
     @Environment(\.modelContext) private var modelContext
     @Environment(\.locale) private var locale
+    @State private var exportingBook = false
 
     /// Day numbers count dated days only, from the trip's first day.
     private var dayNumbers: [String: Int] {
@@ -1850,6 +1851,9 @@ private struct TripDetailView: View {
             if let target {
                 ToolbarItem {
                     Menu {
+                        Button(String(localized: "Export Memory Book…")) { exportingBook = true }
+                            .accessibilityIdentifier("trips.exportBook")
+                        Divider()
                         if let model, !otherTrips.isEmpty {
                             Section(String(localized: "Merge with")) {
                                 ForEach(otherTrips) { other in
@@ -1872,10 +1876,14 @@ private struct TripDetailView: View {
                     } label: {
                         Label(String(localized: "More"), systemImage: "ellipsis.circle")
                     }
-                    .help(String(localized: "Merge or delete"))
+                    .help(String(localized: "Merge, export or delete"))
                     .accessibilityIdentifier("trips.more")
                 }
             }
+        }
+        .sheet(isPresented: $exportingBook) {
+            MemoryBookSheet(trip: trip, title: TripText.name(trip), startDate: target?.startDate, endDate: target?.endDate)
+                .modelContext(modelContext)
         }
         #if DEBUG
         .onAppear {

@@ -134,8 +134,13 @@ struct LibraryView: View {
         self._firstLaunchCompleted = firstLaunchCompleted
     }
 
+    /// One person's or one place's photos (a face or a place name was
+    /// clicked) show all of them: only the search narrows those, and the
+    /// chips wait, hidden, for the way back. A heading being named and the
+    /// chips under it at once kept the page from ever settling.
     private var criteria: LibraryFilterCriteria {
-        LibraryFilterKeys.criteria(
+        if selection.libraryScope != nil { return LibraryFilterCriteria(searchText: query) }
+        return LibraryFilterKeys.criteria(
             query: query,
             typeRaw: typeRaw,
             fromDateInterval: fromDateInterval,
@@ -381,8 +386,8 @@ struct LibraryView: View {
                 .padding(.vertical, 7)
             // Type, place, trip, date, memory and person, each a menu that
             // opens on a click; what is picked shows below with its ✕.
-            // EXPERIMENT: not under an unnamed group's heading.
-            if hasGrouped && (!cachedSections.isEmpty || criteria.isFiltered) && selection.libraryScope?.clusterID == nil {
+            // Not over one person's or place's photos, which show them all.
+            if hasGrouped && (!cachedSections.isEmpty || criteria.isFiltered) && selection.libraryScope == nil {
                 LibraryFilterChips()
                     .padding(.horizontal, 34)
                     .padding(.bottom, 4)

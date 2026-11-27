@@ -101,6 +101,12 @@ final class ChapterJudgeTests: XCTestCase {
         XCTAssertFalse(verdict.alternatives.contains(verdict.kind))
         XCTAssertLessThanOrEqual(verdict.alternatives.count, 3)
         XCTAssertFalse(verdict.reasons.isEmpty)
+
+        // A label that only cleans up to the kind is no alternative either.
+        var book = ChapterJudgeBook()
+        let stored = ChapterVerdict(kind: .custom("Visit"), confidence: .medium, source: .model, alternatives: [.custom(" Visit "), .trip])
+        book.record(stored, for: "a", signature: "s", now: Date(timeIntervalSince1970: 0))
+        XCTAssertEqual(book.verdict(for: "a")?.alternatives, [.trip])
     }
 
     func testCombineTrustsTheModelButWeighsTheRules() {

@@ -143,7 +143,7 @@ public struct ChapterJudgeBook: Codable, Equatable, Sendable {
         guard let kind = verdict.kind.normalized else { return }
         var verdict = verdict
         verdict.kind = kind
-        verdict.alternatives = verdict.alternatives.compactMap(\.normalized)
+        verdict.alternatives = verdict.alternatives.compactMap(\.normalized).filter { $0 != kind }
         verdicts[id] = StoredVerdict(verdict: verdict, signature: signature, judgedAt: now)
     }
 

@@ -235,6 +235,32 @@ final class ChapterJudgeTests: XCTestCase {
         XCTAssertNil(book.verdict(for: "new"))
     }
 
+    func testAskingFirstOutlivesJudgingAgain() {
+        let now = friday
+        var book = ChapterJudgeBook()
+        let sure = ChapterVerdict(kind: .daily, confidence: .high, source: .rules)
+        book.record(sure, for: "x", signature: "old", now: now)
+        XCTAssertEqual(book.removals(among: ["x"]), ["x"])
+        book.askInstead(["x"])
+        // Judged again after the places or the model changed: still asked.
+        book.record(sure, for: "x", signature: "new", now: now.addingTimeInterval(60))
+        XCTAssertEqual(book.removals(among: ["x"]), [])
+        XCTAssertTrue(book.isQuestion("x", now: now.addingTimeInterval(60)))
+        // Stored and read back, the mark stays.
+        XCTAssertEqual(ChapterJudgeBook.decode(book.encoded()).removals(among: ["x"]), [])
+        // A question put off stays put off when the same answer comes again.
+        book.verdicts["x"]?.deferredAt = now
+        book.record(sure, for: "x", signature: "newer", now: now.addingTimeInterval(120))
+        XCTAssertFalse(book.isQuestion("x", now: now.addingTimeInterval(120)))
+        // A closed check stays closed.
+        let fairly = ChapterVerdict(kind: .trip, confidence: .medium, source: .rules)
+        book.record(fairly, for: "y", signature: "a", now: now)
+        XCTAssertTrue(book.showsCheck("y", now: now))
+        book.verdicts["y"]?.checkClosedAt = now
+        book.record(fairly, for: "y", signature: "b", now: now.addingTimeInterval(60))
+        XCTAssertFalse(book.showsCheck("y", now: now.addingTimeInterval(60)))
+    }
+
     func testBookStorageRoundTripsAndToleratesGaps() {
         let evidence = SyntheticSegments.library()[3].evidence
         var book = ChapterJudgeBook()

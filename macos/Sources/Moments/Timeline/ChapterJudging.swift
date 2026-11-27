@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MomentsCore
 import Observation
@@ -320,14 +321,20 @@ final class ChapterJudgeRunner {
 
     var isRunning: Bool { total > 0 && done < total }
 
-    /// What the judge's answers rest on besides the photos: the person's
-    /// places and the model. When these change, its answers are redone.
-    static func contextKey(bases: [EvidenceBase], engine: ChapterJudgeEngine) -> String {
-        let places = bases
-            .map { "\($0.role.rawValue):\(Int(($0.centre.latitude * 100).rounded())),\(Int(($0.centre.longitude * 100).rounded()))" }
+    /// What the judge's answers rest on besides the photos: which of the
+    /// person's places it measures from, and the model. When these change,
+    /// its answers are redone. Places count by id and role, never by where
+    /// they are, so a guessed centre that drifts a little redoes nothing,
+    /// and the key is hashed, so the book holds no trace of a place.
+    static func contextKey(bases: [EvidenceBase], places: KnownPlaceBook, engine: ChapterJudgeEngine) -> String {
+        let measured: Set<PlaceRole> = [.home, .work, .homeTown]
+        let named = places.places
+            .filter { measured.contains($0.role) }
+            .map { "\($0.role.rawValue):\($0.id)" }
             .sorted()
-            .joined(separator: ";")
-        return "\(engine)|\(places)"
+        let guessed = bases.count - named.count
+        let text = "\(engine)|\(named.joined(separator: ";"))|guessed:\(max(0, guessed))"
+        return SHA256.hash(data: Data(text.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     /// Judges every trip that needs it. What to remove or ask about is the
@@ -338,7 +345,7 @@ final class ChapterJudgeRunner {
         let bases = ChapterEvidenceBuilder.bases(places: places, found: found)
         let names = ChapterEvidenceBuilder.privateNames(places: places, found: found)
         let engine = ChapterJudgeEngine.current()
-        let context = Self.contextKey(bases: bases, engine: engine)
+        let context = Self.contextKey(bases: bases, places: places, engine: engine)
 
         struct Pending {
             let trip: Trip

@@ -362,12 +362,18 @@ struct TripsScreen: View {
         .animation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), value: notice?.id)
         // ⌘Z already put things back; the note and its offer no longer apply.
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { _ in
+            judgeBook = ChapterJudgeStore.book()
             notice = nil
         }
         // However the chapter closed (the window's back button too), the
         // shelf comes back at its card.
         .onChange(of: selection.openTripID) { (old: String?, new: String?) in
             if new == nil, let old { returnTripID = old }
+            if new == nil { settleOrdinaryDays() }
+        }
+        // Ordinary days left while another change's Undo was up.
+        .onChange(of: notice == nil) { (_: Bool, cleared: Bool) in
+            if cleared { settleOrdinaryDays() }
         }
         #if DEBUG
         .onAppear {
@@ -963,8 +969,9 @@ struct TripsScreen: View {
         let locked = TripAssignmentLocks.lockedIDs()
         var remove: [Trip] = []
         var ask: [String] = []
+        let byID = tripByID
         for id in candidates {
-            guard let trip = tripByID[id] else { continue }
+            guard let trip = byID[id] else { continue }
             let touched = TripRegrouping.isTouched(trip, remembered: remembered, covered: covered, locked: locked)
                 || trip.confirmedAt != nil || sharing?.isShared(tripID: id) == true
             if touched {

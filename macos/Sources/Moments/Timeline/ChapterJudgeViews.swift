@@ -502,10 +502,12 @@ struct ChapterCheckBar: View {
 struct ChapterJudgeSettingsSection: View {
     @State private var book = ChapterJudgeStore.book()
     /// Read when Settings shows, and again when the AI choice changes.
-    @State private var engine: ChapterJudgeEngine = .rules
+    @State private var engine = ChapterJudgeEngine.current()
     @AppStorage(AISettings.enabledKey) private var aiEnabled = true
     @AppStorage(AISettings.engineKey) private var aiEngine = AISettings.defaultEngine.rawValue
     @AppStorage(AISettings.modelKey) private var aiModel = ""
+    @AppStorage(AISettings.providerKey) private var aiProvider = ""
+    @AppStorage(AISettings.baseURLKey) private var aiBaseURL = ""
 
     private var modelStatus: String {
         switch engine {
@@ -571,7 +573,7 @@ struct ChapterJudgeSettingsSection: View {
             } header: {
                 Text(String(localized: "Learned (\(book.examples.count))"))
             } footer: {
-                Text(String(localized: "For each chapter only a short text is kept: its dates and weekdays, how far it was from home or work, roughly what the photos show, the city and the chapter's title. No photos. With the on-device model nothing leaves this Mac. With a cloud model only that text is sent, without photos or coordinates, and without the names of your home, work or home town. Deleting an entry leaves your chapters as they are; it is only no longer used."))
+                Text(String(localized: "For each chapter only a short text is kept: its dates, weekdays and times, how many photos it has, how far it was from home, work or home town and whether it was abroad, roughly what the photos show, the city and the chapter's title. No photos. With the on-device model nothing leaves this Mac. With a cloud model only that text is sent, together with a few of your earlier answers written the same way and the kinds you named yourself, without photos or coordinates, and without the names of your home, work or home town. Deleting an entry leaves your chapters as they are; it is only no longer used."))
                     .foregroundStyle(Paper.muted)
             }
         }
@@ -579,7 +581,11 @@ struct ChapterJudgeSettingsSection: View {
             guard note.object as? String == ChapterJudgeStore.key else { return }
             book = ChapterJudgeStore.book()
         }
-        .task(id: "\(aiEnabled)|\(aiEngine)|\(aiModel)") { engine = ChapterJudgeEngine.current() }
+        .task(id: "\(aiEnabled)|\(aiEngine)|\(aiModel)|\(aiProvider)|\(aiBaseURL)") {
+            // Read a moment later, once the AI settings above have saved.
+            try? await Task.sleep(for: .milliseconds(300))
+            engine = ChapterJudgeEngine.current()
+        }
     }
 
     private func change(_ edit: (inout ChapterJudgeBook) -> Void) {

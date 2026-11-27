@@ -42,6 +42,8 @@ struct MapScreen: View {
     /// MapKit reports a programmatic camera with its own distance value, so
     /// the first report after a move is the baseline for spotting user zooms.
     @State private var awaitingProgrammaticCamera = false
+    /// The last camera MapKit reported and the flight under way.
+    @State private var cameraWatch = MapCameraWatch()
     @State private var programmaticDistance: Double?
     /// The scope the camera was last framed for, so each opening frames once.
     @State private var fittedScopeGeneration: Int?
@@ -258,6 +260,11 @@ struct MapScreen: View {
             .clipped()
             .overlay(alignment: .top) { topBar }
             .overlay(alignment: .bottom) { bottomStrip }
+            #if DEBUG
+            .background {
+                if MapCameraTrace.isEnabled { MapCameraTraceProbe() }
+            }
+            #endif
 
             if snapshot.isEmpty, cachedSnapshot != nil {
                 emptyState
@@ -315,41 +322,73 @@ struct MapScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("map.view")
         .accessibilityLabel(Text("Map"))
+        .onMapCameraChange(frequency: .continuous) { context in
+            // A plain object: remembering the camera redraws nothing.
+            cameraWatch.latest = MapFlightCamera(context.camera)
+            cameraWatch.latestRegion = context.region
+            #if DEBUG
+            MapCameraTrace.record(distance: context.camera.distance)
+            #endif
+        }
         .onMapCameraChange(frequency: .onEnd) { context in
-            defer {
-                updateWorldClusters()
-                updateVisibleClusters()
-            }
-            viewport = MapViewport(
-                centerLatitude: context.region.center.latitude,
-                centerLongitude: context.region.center.longitude,
-                latitudeDelta: context.region.span.latitudeDelta,
-                longitudeDelta: context.region.span.longitudeDelta
-            )
-            latitudeDelta = context.region.span.latitudeDelta
-            cameraDistance = context.camera.distance
-            // Down among the places the camera is the person's, whatever
-            // brought it there: a resize must never pull it back to the globe.
-            if context.camera.distance < Self.worldDistanceMetres {
-                isShowingGlobeOverview = false
-                awaitingProgrammaticCamera = false
+            // Every frame of a flight is a camera move of its own; only the
+            // last one, where the flight was going, counts.
+            if let target = cameraWatch.flightTarget, !MapFlightCamera(context.camera).isClose(to: target) {
                 return
             }
-            if awaitingProgrammaticCamera {
-                awaitingProgrammaticCamera = false
-                programmaticDistance = context.camera.distance
-                return
-            }
-            guard isShowingGlobeOverview, let programmaticDistance else { return }
-            // Zooming by hand changes the distance; keep the person's camera.
-            if abs(context.camera.distance - programmaticDistance) > programmaticDistance * 0.05 {
-                isShowingGlobeOverview = false
-            }
+            cameraSettled(distance: context.camera.distance, region: context.region)
+        }
+        .onDisappear {
+            cameraWatch.cancelFlight()
         }
         .onTapGesture {
             guard Date().timeIntervalSince(lastMarkerSelection) > 0.4 else { return }
             closePanel()
         }
+    }
+
+    /// The camera came to rest: show the pins and routes around it, and work
+    /// out whether it is still the globe overview a resize may refit.
+    private func cameraSettled(distance: Double, region: MKCoordinateRegion) {
+        defer {
+            updateWorldClusters()
+            updateVisibleClusters()
+        }
+        viewport = MapViewport(
+            centerLatitude: region.center.latitude,
+            centerLongitude: region.center.longitude,
+            latitudeDelta: region.span.latitudeDelta,
+            longitudeDelta: region.span.longitudeDelta
+        )
+        latitudeDelta = region.span.latitudeDelta
+        cameraDistance = distance
+        // Down among the places the camera is the person's, whatever
+        // brought it there: a resize must never pull it back to the globe.
+        if distance < Self.worldDistanceMetres {
+            isShowingGlobeOverview = false
+            awaitingProgrammaticCamera = false
+            return
+        }
+        if awaitingProgrammaticCamera {
+            awaitingProgrammaticCamera = false
+            programmaticDistance = distance
+            return
+        }
+        guard isShowingGlobeOverview, let programmaticDistance else { return }
+        // Zooming by hand changes the distance; keep the person's camera.
+        if abs(distance - programmaticDistance) > programmaticDistance * 0.05 {
+            isShowingGlobeOverview = false
+        }
+    }
+
+    /// The person stopped a flight with a click, scroll or pinch: the camera
+    /// stays where it is and is theirs, and MapKit may never report it again,
+    /// so settle on its last report.
+    private func flightInterrupted() {
+        isShowingGlobeOverview = false
+        awaitingProgrammaticCamera = false
+        guard let latest = cameraWatch.latest, let region = cameraWatch.latestRegion else { return }
+        cameraSettled(distance: latest.distance, region: region)
     }
 
     /// A photo standing on the map: the place's first photo in a white frame,
@@ -460,12 +499,18 @@ struct MapScreen: View {
             // or frame exactly the places the photos were taken.
             Group {
                 Button("Whole world", systemImage: "globe.europe.africa") {
+                    #if DEBUG
+                    MapCameraTrace.begin(distance: cameraDistance)
+                    #endif
                     showGlobe()
                 }
                 .help("Back out to the globe with every country you visited")
                 .accessibilityIdentifier("map.globe")
 
                 Button("Zoom to photos", systemImage: "photo.on.rectangle") {
+                    #if DEBUG
+                    MapCameraTrace.begin(distance: cameraDistance)
+                    #endif
                     fitAll()
                 }
                 .help("Zoom in to the places your photos were taken")
@@ -1081,16 +1126,72 @@ struct MapScreen: View {
 
     private func moveCamera(to position: MapCameraPosition, isGlobe: Bool, animated: Bool = true) {
         isShowingGlobeOverview = isGlobe
-        // MapKit reports nothing for a move to where the camera already is,
-        // so only a real move waits for its report.
-        awaitingProgrammaticCamera = isGlobe && position != cameraPosition
-        if animated && !reduceMotion {
-            withAnimation(.easeInOut(duration: 0.45)) {
-                cameraPosition = position
-            }
-        } else {
+        var reducesMotion: Bool = reduceMotion
+        #if DEBUG
+        MapCameraTrace.note("reduceMotion=\(reduceMotion)")
+        if MapCameraTrace.forcesMotion { reducesMotion = false }
+        #endif
+        guard animated, !reducesMotion, let target = flightCamera(for: position) else {
+            #if DEBUG
+            MapCameraTrace.note("path=instant")
+            #endif
+            cameraWatch.cancelFlight()
+            // MapKit reports nothing for a move to where the camera already is,
+            // so only a real move waits for its report.
+            awaitingProgrammaticCamera = isGlobe && position != cameraPosition
             cameraPosition = position
+            return
         }
+        let start: MapFlightCamera = cameraWatch.latest ?? MapFlightCamera(cameraPosition.camera ?? MapCamera(
+            centerCoordinate: world.snapshot.cameraTarget.coordinate,
+            distance: FootprintsCameraTarget.globeDistanceMetres
+        ))
+        if start.isClose(to: target) {
+            cameraWatch.cancelFlight()
+            awaitingProgrammaticCamera = false
+            return
+        }
+        awaitingProgrammaticCamera = isGlobe
+        // A flight through the zoom levels instead of SwiftUI's animation,
+        // which moves the distance evenly in metres and so does most of the
+        // zooming in the last frames (see MapFlight). MapKit's own keyframe
+        // animator showed the destination for one frame before starting, so
+        // the flight sets the camera itself, frame by frame. Only the map
+        // reads the position, so a frame redraws the map and nothing else.
+        let flight = MapFlight(from: start, to: target, distanceCeiling: FootprintsCameraTarget.globeDistance(fitting: mapSize))
+        #if DEBUG
+        MapCameraTrace.note("path=flight \(String(format: "%.2f", flight.duration))s")
+        #endif
+        let binding: Binding<MapCameraPosition> = $cameraPosition
+        cameraWatch.fly(flight, interrupted: flightInterrupted) { camera in
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                binding.wrappedValue = .camera(MapCamera(camera))
+            }
+        }
+    }
+
+    /// Where a camera position puts the camera; a region becomes the
+    /// distance that fits it in the map, looking straight down, north up.
+    private func flightCamera(for position: MapCameraPosition) -> MapFlightCamera? {
+        if let camera = position.camera {
+            return MapFlightCamera(camera)
+        }
+        guard let region = position.region else { return nil }
+        let distance: Double = MapFlight.distance(
+            fittingLatitudeDelta: region.span.latitudeDelta,
+            longitudeDelta: region.span.longitudeDelta,
+            at: region.center.latitude,
+            width: Double(mapSize.width),
+            height: Double(mapSize.height)
+        )
+        let ceiling: Double = FootprintsCameraTarget.globeDistance(fitting: mapSize)
+        return MapFlightCamera(
+            latitude: region.center.latitude,
+            longitude: region.center.longitude,
+            distance: min(distance, ceiling)
+        )
     }
 
     @MainActor

@@ -368,6 +368,17 @@ struct LibraryView: View {
                 .accessibilityValue(String(cachedVisibleCount))
                 .accessibilityIdentifier("library.photoCount")
         }
+        #if DEBUG
+        // Tests read which section the Library returns to.
+        .background(alignment: .topTrailing) {
+            Text(state.topSectionScrollID ?? "")
+                .font(.system(size: 1))
+                .foregroundStyle(.clear)
+                .allowsHitTesting(false)
+                .accessibilityValue(state.topSectionScrollID ?? "")
+                .accessibilityIdentifier("library.topSection")
+        }
+        #endif
         .background { LibraryPeopleIndexer(state: state) }
         .toolbar {
             // While only some photos show, the window's back button (where

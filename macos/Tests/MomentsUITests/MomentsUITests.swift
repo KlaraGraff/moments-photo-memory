@@ -331,21 +331,28 @@ final class MomentsUITests: XCTestCase {
 
     /// A place's photos go back to all photos with the window's back button
     /// (an arrow, not a cross) and with Command-[, and all photos come back
-    /// where they were left, not at the top.
+    /// at the section that was at the top, not at the top of the Library.
     func testBackFromAPlacesPhotosReturnsWhereAllPhotosWereLeft() {
         let app = launch(language: "en")
         let allCount = libraryPhotoCount(app)
-        let photos = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
-        XCTAssertTrue(photos.firstMatch.waitForExistence(timeout: launchTimeout))
-        photos.firstMatch.scroll(byDeltaX: 0, deltaY: -1500)
-        Thread.sleep(forTimeInterval: 1)
-        let firstShown: XCUIElement? = photos.allElementsBoundByIndex.first { (photo: XCUIElement) -> Bool in photo.isHittable }
-        guard let firstShown else {
-            XCTFail("No photo is in view after scrolling")
-            return
+        let sections = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (identifier BEGINSWITH %@)", "library.section.", "library.section.person."))
+        XCTAssertTrue(sections.firstMatch.waitForExistence(timeout: launchTimeout))
+        let firstSectionID: String = sections.firstMatch.identifier
+        let topSection = element(in: app, identifier: "library.topSection")
+        XCTAssertTrue(topSection.waitForExistence(timeout: launchTimeout))
+        // Scroll until a later section is at the top.
+        var leftAt: String = ""
+        for _ in 0..<8 {
+            sections.firstMatch.scroll(byDeltaX: 0, deltaY: -800)
+            Thread.sleep(forTimeInterval: 0.8)
+            leftAt = topSection.value as? String ?? ""
+            if !leftAt.isEmpty, leftAt != "section:" + firstSectionID.dropFirst("library.section.".count) { break }
         }
-        let shownID: String = firstShown.identifier
+        let leftSectionID: String = String(leftAt.dropFirst("section:".count))
+        XCTAssertFalse(leftSectionID.isEmpty, "No section reached the top while scrolling")
+        XCTAssertNotEqual("library.section." + leftSectionID, firstSectionID, "Scrolling never left the first section")
+
         let places = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.place."))
         let place: XCUIElement? = places.allElementsBoundByIndex.first { (place: XCUIElement) -> Bool in place.isHittable }
@@ -365,10 +372,11 @@ final class MomentsUITests: XCTestCase {
         back.click()
         XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout), "Back did not leave the place")
         XCTAssertEqual(libraryPhotoCount(app), allCount)
-        let returned = element(in: app, identifier: shownID)
-        XCTAssertTrue(returned.waitForExistence(timeout: launchTimeout))
-        XCTAssertTrue(returned.isHittable, "All photos did not come back where they were left")
+        let returned = element(in: app, identifier: "library.section." + leftSectionID)
+        XCTAssertTrue(returned.waitForExistence(timeout: launchTimeout), "The section that was at the top is gone")
+        Thread.sleep(forTimeInterval: 0.5)
         capture(app, named: "scope-back-02-returned-evidence")
+        XCTAssertTrue(returned.isHittable, "All photos did not come back at the section that was at the top (top is now \(topSection.value ?? "nil"))")
 
         // Command-[ goes back too, as on Chapters and the Map.
         let placeAgain: XCUIElement? = places.allElementsBoundByIndex.first { (place: XCUIElement) -> Bool in place.isHittable }

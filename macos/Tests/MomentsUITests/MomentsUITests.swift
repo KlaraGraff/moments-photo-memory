@@ -740,7 +740,7 @@ final class MomentsUITests: XCTestCase {
         alex.click()
         XCTAssertEqual(libraryPhotoCount(app), 2, "Alex is in two synthetic photos")
         capture(app, named: "filters-02-person-evidence")
-        let clear = app.buttons["Clear filters"].firstMatch
+        let clear = element(in: app, identifier: "filter.clear")
         XCTAssertTrue(clear.waitForExistence(timeout: launchTimeout), "A picked filter shows no Clear")
         clear.click()
         XCTAssertEqual(libraryPhotoCount(app), allCount)
@@ -770,7 +770,7 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(popover.waitForExistence(timeout: launchTimeout), "Filter did not open the chips")
         XCTAssertTrue(popover.descendants(matching: .any).matching(identifier: "filter.trip").firstMatch.exists)
         capture(app, named: "filters-04-chapters-popover-evidence")
-        popover.buttons["Clear filters"].firstMatch.click()
+        popover.descendants(matching: .any).matching(identifier: "filter.clear").firstMatch.click()
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(element(in: app, identifier: "trips.card.journeyB").waitForExistence(timeout: launchTimeout), "Clearing the filter did not bring every chapter back")
 

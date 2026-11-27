@@ -65,6 +65,7 @@ struct LibraryFilterChips: View {
                         .buttonStyle(.link)
                         .font(.caption)
                         .foregroundStyle(LibraryPalette.muted)
+                        .accessibilityIdentifier("filter.clear")
                 }
             }
         }

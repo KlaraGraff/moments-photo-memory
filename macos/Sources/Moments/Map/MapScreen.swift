@@ -42,6 +42,12 @@ struct MapScreen: View {
     /// MapKit reports a programmatic camera with its own distance value, so
     /// the first report after a move is the baseline for spotting user zooms.
     @State private var awaitingProgrammaticCamera = false
+    /// The camera's flight after a button or a selection: the trigger starts
+    /// it, the target and ceiling shape it (see `moveCamera`).
+    @State private var flightTrigger = 0
+    @State private var flightTarget: MapFlightCamera?
+    @State private var flightCeiling = FootprintsCameraTarget.globeDistanceMetres
+    @State private var cameraWatch = MapCameraWatch()
     @State private var programmaticDistance: Double?
     /// The scope the camera was last framed for, so each opening frames once.
     @State private var fittedScopeGeneration: Int?
@@ -81,6 +87,8 @@ struct MapScreen: View {
     /// Above this camera altitude the map is a globe: city pins, countries and
     /// the whole trip's route. Below it, places and local routes.
     static let worldDistanceMetres = 3_000_000.0
+    /// Keyframes per second of a camera flight; MapKit draws between them.
+    static let flightFramesPerSecond = 60.0
 
     private var isWorldView: Bool { cameraDistance >= Self.worldDistanceMetres }
 
@@ -320,11 +328,39 @@ struct MapScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("map.view")
         .accessibilityLabel(Text("Map"))
-        #if DEBUG
-        .onMapCameraChange(frequency: .continuous) { context in
-            MapCameraTrace.record(distance: context.camera.distance)
+        .mapCameraKeyframeAnimator(trigger: flightTrigger) { initial in
+            let start = MapFlightCamera(initial)
+            let flight = MapFlight(from: start, to: flightTarget ?? start, distanceCeiling: flightCeiling)
+            let frames: [MapFlightCamera] = flight.frames(perSecond: Self.flightFramesPerSecond)
+            let step: Double = flight.stepDuration(perSecond: Self.flightFramesPerSecond)
+            KeyframeTrack(\MapCamera.centerCoordinate) {
+                for frame in frames {
+                    LinearKeyframe(CLLocationCoordinate2D(latitude: frame.latitude, longitude: frame.longitude), duration: step)
+                }
+            }
+            KeyframeTrack(\MapCamera.distance) {
+                for frame in frames {
+                    LinearKeyframe(frame.distance, duration: step)
+                }
+            }
+            KeyframeTrack(\MapCamera.heading) {
+                for frame in frames {
+                    LinearKeyframe(frame.heading, duration: step)
+                }
+            }
+            KeyframeTrack(\MapCamera.pitch) {
+                for frame in frames {
+                    LinearKeyframe(frame.pitch, duration: step)
+                }
+            }
         }
-        #endif
+        .onMapCameraChange(frequency: .continuous) { context in
+            // A plain object: remembering the camera redraws nothing.
+            cameraWatch.latest = MapFlightCamera(context.camera)
+            #if DEBUG
+            MapCameraTrace.record(distance: context.camera.distance)
+            #endif
+        }
         .onMapCameraChange(frequency: .onEnd) { context in
             defer {
                 updateWorldClusters()
@@ -338,6 +374,10 @@ struct MapScreen: View {
             )
             latitudeDelta = context.region.span.latitudeDelta
             cameraDistance = context.camera.distance
+            // A pause on the way is not where the flight was going.
+            if let target = cameraWatch.flightTarget, !MapFlightCamera(context.camera).isClose(to: target) {
+                return
+            }
             // Down among the places the camera is the person's, whatever
             // brought it there: a resize must never pull it back to the globe.
             if context.camera.distance < Self.worldDistanceMetres {
@@ -1097,16 +1137,66 @@ struct MapScreen: View {
 
     private func moveCamera(to position: MapCameraPosition, isGlobe: Bool, animated: Bool = true) {
         isShowingGlobeOverview = isGlobe
-        // MapKit reports nothing for a move to where the camera already is,
-        // so only a real move waits for its report.
-        awaitingProgrammaticCamera = isGlobe && position != cameraPosition
-        if animated && !reduceMotion {
-            withAnimation(.easeInOut(duration: 0.45)) {
-                cameraPosition = position
-            }
-        } else {
+        guard animated, !reduceMotion, let target = flightCamera(for: position) else {
+            cameraWatch.endFlight()
+            // MapKit reports nothing for a move to where the camera already is,
+            // so only a real move waits for its report.
+            awaitingProgrammaticCamera = isGlobe && position != cameraPosition
             cameraPosition = position
+            return
         }
+        let start: MapFlightCamera = cameraWatch.latest ?? MapFlightCamera(cameraPosition.camera ?? MapCamera(
+            centerCoordinate: world.snapshot.cameraTarget.coordinate,
+            distance: FootprintsCameraTarget.globeDistanceMetres
+        ))
+        if start.isClose(to: target) {
+            awaitingProgrammaticCamera = false
+            return
+        }
+        awaitingProgrammaticCamera = isGlobe
+        // A flight through the zoom levels instead of SwiftUI's animation,
+        // which moves the distance evenly in metres and so does most of the
+        // zooming in the last frames (see MapFlight).
+        let ceiling: Double = FootprintsCameraTarget.globeDistance(fitting: mapSize)
+        let flight = MapFlight(from: start, to: target, distanceCeiling: ceiling)
+        let token: Int = cameraWatch.beginFlight(to: target)
+        flightTarget = target
+        flightCeiling = ceiling
+        flightTrigger &+= 1
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(flight.duration + 0.1))
+            guard cameraWatch.isCurrentFlight(token) else { return }
+            cameraWatch.endFlight()
+            // The keyframes moved the camera without touching the binding.
+            // Once the camera has arrived, the binding says so too, so a
+            // later move compares against where the camera really is. If the
+            // person grabbed the map on the way, their camera stays.
+            if let latest = cameraWatch.latest, latest.isClose(to: target) {
+                cameraPosition = .camera(MapCamera(target))
+            }
+        }
+    }
+
+    /// Where a camera position puts the camera; a region becomes the
+    /// distance that fits it in the map, looking straight down, north up.
+    private func flightCamera(for position: MapCameraPosition) -> MapFlightCamera? {
+        if let camera = position.camera {
+            return MapFlightCamera(camera)
+        }
+        guard let region = position.region else { return nil }
+        let distance: Double = MapFlight.distance(
+            fittingLatitudeDelta: region.span.latitudeDelta,
+            longitudeDelta: region.span.longitudeDelta,
+            at: region.center.latitude,
+            width: Double(mapSize.width),
+            height: Double(mapSize.height)
+        )
+        let ceiling: Double = FootprintsCameraTarget.globeDistance(fitting: mapSize)
+        return MapFlightCamera(
+            latitude: region.center.latitude,
+            longitude: region.center.longitude,
+            distance: min(distance, ceiling)
+        )
     }
 
     @MainActor

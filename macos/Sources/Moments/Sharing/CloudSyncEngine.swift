@@ -31,6 +31,10 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
     private var inFlight: [String: SyncPendingChange] = [:]
     private var onStatus: (@Sendable (Status) -> Void)?
     private var onShareEnded: (@Sendable () -> Void)?
+    private var onArrivals: (@Sendable ([SyncArrival]) -> Void)?
+    /// False while this database is downloaded for the first time, so
+    /// joining a share does not announce everything already in it.
+    private var announcesArrivals = false
     /// The engine's own context, so the app can tell its saves (fetched
     /// changes) from the person's edits.
     nonisolated let contextID: ObjectIdentifier
@@ -75,12 +79,19 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
         onShareEnded = handler
     }
 
+    /// Called after each fetch with what the other person newly wrote for
+    /// this person (issue #28): new memories, comments and replies.
+    func setArrivalsHandler(_ handler: @escaping @Sendable ([SyncArrival]) -> Void) {
+        onArrivals = handler
+    }
+
     /// Creates the engine from its saved state. The owner also makes sure the
     /// shared zone exists.
     func start() {
         guard engine == nil else { return }
         let saved = state.engineState(for: scope)
             .flatMap { try? JSONDecoder().decode(CKSyncEngine.State.Serialization.self, from: $0) }
+        announcesArrivals = saved != nil
         let configuration = CKSyncEngine.Configuration(database: database, stateSerialization: saved, delegate: self)
         let engine = CKSyncEngine(configuration)
         self.engine = engine
@@ -196,12 +207,14 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
             }
 
         case .fetchedRecordZoneChanges(let changes):
+            var arrivals: [SyncArrival] = []
             for modification in changes.modifications {
                 let ckRecord = modification.record
                 guard ckRecord.recordID.zoneID == zoneID,
                       let record = CloudKitRecordCoding.syncRecord(from: ckRecord, storeAsset: { url in
                           storePreview(at: url, of: ckRecord)
                       }) else { continue }
+                if announcesArrivals, let arrival = coordinator.arrival(of: record) { arrivals.append(arrival) }
                 coordinator.fetched(
                     record,
                     recordName: ckRecord.recordID.recordName,
@@ -214,6 +227,7 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
             }
             saveLocal()
             mirrorPendingIntoEngine()
+            if !arrivals.isEmpty { onArrivals?(arrivals) }
 
         case .sentRecordZoneChanges(let sent):
             for ckRecord in sent.savedRecords {
@@ -277,7 +291,13 @@ actor CloudSyncEngine: CKSyncEngineDelegate {
                 shareEnded()
             }
 
-        case .didFetchChanges, .didSendChanges:
+        case .didFetchChanges:
+            // The first download is done; from now on new words are news.
+            announcesArrivals = true
+            status.lastSync = .now
+            publish()
+
+        case .didSendChanges:
             status.lastSync = .now
             publish()
 

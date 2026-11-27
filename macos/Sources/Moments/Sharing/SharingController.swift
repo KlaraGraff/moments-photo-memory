@@ -404,9 +404,13 @@ final class SharingController {
         let ended: @Sendable () -> Void = { [weak self] in
             Task { @MainActor in await self?.shareEnded() }
         }
+        let arrivals: @Sendable ([SyncArrival]) -> Void = { arrivals in
+            Task { @MainActor in PartnerNotifier.post(arrivals) }
+        }
         Task {
             await engine.setStatusHandler(handler)
             await engine.setShareEndedHandler(ended)
+            await engine.setArrivalsHandler(arrivals)
             await engine.start()
         }
         observeSaves()

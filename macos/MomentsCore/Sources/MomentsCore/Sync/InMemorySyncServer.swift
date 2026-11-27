@@ -108,6 +108,9 @@ public final class InMemorySyncDriver {
     public let coordinator: SyncCoordinator
     public let server: InMemorySyncServer
     private var token = 0
+    /// New words from the other person seen by the last ``fetch()``, as
+    /// the app would announce them.
+    public private(set) var lastArrivals: [SyncArrival] = []
 
     public init(coordinator: SyncCoordinator, server: InMemorySyncServer) {
         self.coordinator = coordinator
@@ -150,11 +153,13 @@ public final class InMemorySyncDriver {
 
     @discardableResult
     public func fetch() -> [SyncMergeResult] {
+        lastArrivals = []
         guard let result = server.changes(since: token) else { return [] }
         var merges: [SyncMergeResult] = []
         for change in result.changes {
             switch change {
             case .saved(let record, let name, let fields):
+                if let arrival = coordinator.arrival(of: record) { lastArrivals.append(arrival) }
                 if let merge = coordinator.fetched(record, recordName: name, systemFields: fields) {
                     merges.append(merge)
                 }

@@ -81,6 +81,11 @@ final class LibraryBackupTests: XCTestCase {
         try addItems(["synthetic-a"])
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        // SQLite may still touch the store's log at the real time after the
+        // test container closes. Noon on a day a year from now keeps every
+        // time below newer than such a touch, and the 10 minutes on the same
+        // day.
+        let origin = calendar.startOfDay(for: Date.now.addingTimeInterval(365 * 86_400)).addingTimeInterval(12 * 3_600)
         // The store files were last written just before the first backup.
         try setStoreModified(origin.addingTimeInterval(-60))
 

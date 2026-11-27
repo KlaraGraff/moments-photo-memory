@@ -1142,12 +1142,12 @@ struct MapScreen: View {
         #if DEBUG
         MapCameraTrace.note("path=flight \(String(format: "%.2f", flight.duration))s")
         #endif
-        let position: Binding<MapCameraPosition> = $cameraPosition
+        let binding: Binding<MapCameraPosition> = $cameraPosition
         cameraWatch.fly(flight) { camera in
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) {
-                position.wrappedValue = .camera(MapCamera(camera))
+                binding.wrappedValue = .camera(MapCamera(camera))
             }
         }
     }

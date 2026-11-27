@@ -401,6 +401,43 @@ final class MomentsUITests: XCTestCase {
         exerciseFaces(launch(language: "en", smallWindow: true, extraArguments: ["-MomentsUITestPeople"]), prefix: "faces-small")
     }
 
+    /// More people than fit: the row stays one line, every group is in it,
+    /// and the arrow buttons page through them both ways.
+    func testRowOfFacesShowsEveryoneAndPagesThroughThem() {
+        let app = launch(language: "en", extraArguments: ["-MomentsUITestPeople", "-MomentsUITestCrowd"])
+        let strip = element(in: app, identifier: "library.people")
+        XCTAssertTrue(strip.waitForExistence(timeout: launchTimeout), "The Library has no row of faces")
+        XCTAssertTrue(element(in: app, identifier: "library.person.Alex").waitForExistence(timeout: launchTimeout), "The named people lead the row")
+        let more = element(in: app, identifier: "library.people.more")
+        let earlier = element(in: app, identifier: "library.people.earlier")
+        XCTAssertTrue(more.waitForExistence(timeout: launchTimeout), "Twenty-seven faces do not fit, yet the row offers no way to the rest")
+        XCTAssertFalse(earlier.exists, "At the start there is nobody earlier")
+        XCTAssertLessThan(strip.frame.height, 150, "The row of faces \(strip.frame) is more than one line")
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(more.frame), "The arrow \(more.frame) is outside the window")
+        capture(app, named: "crowd-01-start-evidence")
+
+        more.click()
+        XCTAssertTrue(earlier.waitForExistence(timeout: launchTimeout), "Paging on did not offer the way back")
+        capture(app, named: "crowd-02-paged-evidence")
+        var clicks = 0
+        while more.exists && clicks < 12 {
+            more.click()
+            clicks += 1
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertFalse(more.exists, "The arrow stayed after the last face")
+        capture(app, named: "crowd-03-end-evidence")
+
+        while earlier.exists && clicks < 24 {
+            earlier.click()
+            clicks += 1
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertFalse(earlier.exists, "Paging back did not reach the start")
+        XCTAssertTrue(more.waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(element(in: app, identifier: "library.person.Alex").exists, "Back at the start, Alex leads again")
+    }
+
     private func exerciseFaces(_ app: XCUIApplication, prefix: String) {
         let allCount = libraryPhotoCount(app)
         let strip = element(in: app, identifier: "library.people")

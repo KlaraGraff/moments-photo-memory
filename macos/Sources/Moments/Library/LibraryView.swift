@@ -383,6 +383,9 @@ struct LibraryView: View {
             ImportStatusView()
                 .padding(.horizontal, 34)
                 .padding(.vertical, 7)
+            MissingFolderRows()
+                .padding(.horizontal, 34)
+                .padding(.bottom, 7)
             if !hasGrouped {
                 Spacer()
             } else if cachedSections.isEmpty {

@@ -40,9 +40,11 @@ struct CoreLocationImportGeocoder: ImportGeocoder {
 enum FolderImportError: LocalizedError {
     case notDirectory(URL)
     case noSupportedMedia
+    case noSupportedFiles
 
     var errorDescription: String? {
         switch self {
+        case .noSupportedFiles: return String(localized: "None of these files are photos or videos Moments can import.")
         case .notDirectory(let url): return String(localized: "The selected item is not a folder.") + " " + url.lastPathComponent
         case .noSupportedMedia: return String(localized: "No supported photos or videos were found in the folder.")
         }
@@ -96,8 +98,13 @@ struct FolderImporter {
         self.readMetadata = readMetadata
     }
 
+    /// Imports every photo and video in a folder and its subfolders.
+    /// `relocatingSourceID` names an imported folder that moved: this folder
+    /// is its new place, so the source and its photos' bookmarks point here
+    /// from now on.
     func importFolder(
         _ folderURL: URL,
+        relocatingSourceID: String? = nil,
         container: ModelContainer,
         progress: @escaping @Sendable (ImportProgress) -> Void = { _ in }
     ) async throws -> ImportSummary {
@@ -109,7 +116,31 @@ struct FolderImporter {
         defer {
             if hasScopedAccess { folderURL.stopAccessingSecurityScopedResource() }
         }
-        let urls = scan(folderURL)
+        return try await importMedia(scan(folderURL), from: folderURL, relocatingSourceID: relocatingSourceID, container: container, progress: progress)
+    }
+
+    /// Imports some files of one folder, as when they are dropped on the
+    /// window. The folder is recorded as their source.
+    func importFiles(
+        _ files: [URL],
+        in folderURL: URL,
+        container: ModelContainer,
+        progress: @escaping @Sendable (ImportProgress) -> Void = { _ in }
+    ) async throws -> ImportSummary {
+        let urls = SupportedMediaFile.droppingRawCompanions(files.filter { url in
+            SupportedMediaFile.isSupported(pathExtension: url.pathExtension)
+                && (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+        })
+        return try await importMedia(urls, from: folderURL, relocatingSourceID: nil, container: container, progress: progress)
+    }
+
+    private func importMedia(
+        _ urls: [URL],
+        from folderURL: URL,
+        relocatingSourceID: String?,
+        container: ModelContainer,
+        progress: @escaping @Sendable (ImportProgress) -> Void
+    ) async throws -> ImportSummary {
         guard !urls.isEmpty else { throw FolderImportError.noSupportedMedia }
         progress(ImportProgress(phase: .scanning, completed: urls.count, total: urls.count, message: String(localized: "Found media files")))
 
@@ -131,7 +162,8 @@ struct FolderImporter {
         let sourceFileCount = organizedMetadata.reduce(into: 0) { $0 += $1.sourceReferences.count }
 
         let context = ModelContext(container)
-        let source = ImportSources.folderSource(for: folderURL, context: context)
+        let relocated = relocatingSourceID.flatMap { ImportSources.relocate(sourceID: $0, to: folderURL, context: context) }
+        let source = relocated ?? ImportSources.folderSource(for: folderURL, context: context)
         let existing = try context.fetch(FetchDescriptor<MediaItem>())
         let existingHashes = Set(existing.compactMap(\.originalContentHash))
         let existingIDs = Set(existing.map(\.id))
@@ -150,6 +182,14 @@ struct FolderImporter {
             let merged = Array(Set(oldReferences + item.sourceReferences)).sorted { $0.fileName < $1.fileName }
             if merged.count > oldReferences.count {
                 existingItem.sourceReferencesRaw = sourceReferencesJSON(merged)
+            }
+            if relocated != nil, existingItem.importSourceIDs.contains(source.id), existingItem.source == .file {
+                // The moved folder's photo: open it from its new place.
+                existingItem.originalBookmarkData = item.bookmarkData
+                if item.pairedVideoBookmarkData != nil {
+                    existingItem.pairedVideoBookmarkData = item.pairedVideoBookmarkData
+                }
+                existingItem.updatedAt = .now
             }
             existingItem.addImportSource(source.id)
             if existingItem.deletedAt != nil, RecentlyDeleted.canDelete(existingItem), !recovered.contains(where: { $0 === existingItem }) {
@@ -345,7 +385,6 @@ struct FolderImporter {
     }
 
     private func scan(_ folderURL: URL) -> [URL] {
-        let supportedExtensions: Set<String> = ["jpg", "jpeg", "heic", "png", "mov", "mp4"]
         // Extension filtering avoids a LaunchServices content-type lookup,
         // which is unavailable for synthetic files in a test host.
         let keys: [URLResourceKey] = [.isRegularFileKey]
@@ -353,9 +392,10 @@ struct FolderImporter {
         var urls: [URL] = []
         while let url = enumerator?.nextObject() as? URL {
             guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
-            if supportedExtensions.contains(url.pathExtension.lowercased()) { urls.append(url) }
+            if SupportedMediaFile.isSupported(pathExtension: url.pathExtension) { urls.append(url) }
         }
-        return urls.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        return SupportedMediaFile.droppingRawCompanions(urls)
+            .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
     }
 
     private func coalesceDuplicatesAndLivePairs(_ metadata: [ImportedMediaMetadata]) -> [ImportedMediaMetadata] {

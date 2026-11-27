@@ -10,7 +10,8 @@ enum SyntheticMediaFixture {
         offset: String? = "+00:00",
         latitude: Double? = nil,
         longitude: Double? = nil,
-        marker: Int = 0
+        marker: Int = 0,
+        type: UTType = .jpeg
     ) throws {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
@@ -54,7 +55,7 @@ enum SyntheticMediaFixture {
         }
         guard let destination = CGImageDestinationCreateWithURL(
             url as CFURL,
-            UTType.jpeg.identifier as CFString,
+            type.identifier as CFString,
             1,
             nil
         ) else { throw CocoaError(.fileWriteUnknown) }

@@ -79,6 +79,7 @@ enum TripRegrouping {
         segmenter.maximumTimeGap = configuration.maximumTimeGap
         segmenter.maximumTripDistanceMeters = configuration.maximumTripDistanceMeters
         segmenter.fixedUsualPlace = configuration.homeCoordinate
+        (configuration.knownPlaces ?? KnownPlaceStore.book()).apply(to: &segmenter)
         let stops = free.map { item in
             PhotoStop(id: item.id, date: item.effectiveCaptureDate ?? .distantPast, coordinate: coordinate(of: item))
         }

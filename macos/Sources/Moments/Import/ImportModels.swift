@@ -144,6 +144,9 @@ public struct ImportConfiguration: Sendable {
     public var captureDateConflictThreshold: TimeInterval
     public var homeCoordinate: GeoPoint?
     public var conflictConfiguration: ImportConflictConfiguration
+    /// What the person said about their places; `nil` reads the library's
+    /// own, as it is when the trips are found (`KnownPlaceStore`).
+    public var knownPlaces: KnownPlaceBook?
 
     public init(
         maximumTimeGap: TimeInterval = 36 * 60 * 60,

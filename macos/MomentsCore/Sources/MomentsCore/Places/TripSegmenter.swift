@@ -74,6 +74,10 @@ public struct TripSegmenter: Sendable {
     public var minimumTripItems: Int = 5
     /// A place the person set; it replaces the detected ones everywhere.
     public var fixedUsualPlace: GeoPoint?
+    /// Places the person named (their home, home town and work sites, and
+    /// places they said a visit to is no trip): each is home for the whole
+    /// library, within `awayRadiusMeters`, next to the places found.
+    public var knownPlaces: [GeoPoint] = []
     /// A stay away near one place for this many days is a long-stay candidate:
     /// either daily life there or one long trip.
     public var minimumLongStayDays: Int = 21
@@ -165,16 +169,7 @@ public struct TripSegmenter: Sendable {
             ? []
             : Self.longStayIDs(segmenter: self, stops: ordered + context, longStays: longStays)
                 .union(frequent.excludedIDs)
-        let usual: UsualPlaceFinder = longStays.isEmpty && excludedIDs.isEmpty && minimumLifetimeHomeBuckets <= 0
-            ? initialUsual
-            : UsualPlaceFinder(
-                segmenter: self,
-                stops: (ordered + context).filter { (stop: PhotoStop) -> Bool in !excludedIDs.contains(stop.id) },
-                lifetimeHomes: true,
-                // A place someone lived at for a while, like a former work
-                // site, stays home: going back there for a few days is no trip.
-                livedAt: longStays.filter(\.dailyLife).map(\.centre)
-            )
+        let usual = Self.finalFinder(segmenter: self, stops: ordered + context, initial: initialUsual, longStays: longStays, excludedIDs: excludedIDs)
         func isAway(_ coordinate: GeoPoint, at date: Date) -> Bool {
             usual.places(at: date).allSatisfy { coordinate.distance(to: $0) > awayRadiusMeters }
         }
@@ -550,6 +545,33 @@ public struct TripSegmenter: Sendable {
     }
 
     /// The photo ids of the days that belong to a long stay's venue.
+    /// The usual places that decide trips: the ones found around each date,
+    /// the homes of the whole library, the places someone lived at for a
+    /// while and the places the person named.
+    private static func finalFinder(
+        segmenter: TripSegmenter,
+        stops: [PhotoStop],
+        initial: UsualPlaceFinder,
+        longStays: [LongStay],
+        excludedIDs: Set<String>
+    ) -> UsualPlaceFinder {
+        guard !longStays.isEmpty || !excludedIDs.isEmpty || segmenter.minimumLifetimeHomeBuckets > 0
+            || !segmenter.knownPlaces.isEmpty else { return initial }
+        return UsualPlaceFinder(
+            segmenter: segmenter,
+            stops: stops.filter { (stop: PhotoStop) -> Bool in !excludedIDs.contains(stop.id) },
+            lifetimeHomes: true,
+            // A place someone lived at for a while, like a former work
+            // site, stays home: going back there for a few days is no trip.
+            livedAt: longStays.filter(\.dailyLife).map(\.centre) + segmenter.knownPlaces
+        )
+    }
+
+    /// True within `awayRadiusMeters` of a place the person named.
+    func isNearKnownPlace(_ point: GeoPoint) -> Bool {
+        knownPlaces.contains { (place: GeoPoint) -> Bool in place.distance(to: point) <= awayRadiusMeters }
+    }
+
     private static func longStayIDs(segmenter: TripSegmenter, stops: [PhotoStop], longStays: [LongStay]) -> Set<String> {
         guard !longStays.isEmpty else { return [] }
         var ids = Set<String>()
@@ -605,6 +627,71 @@ public struct TripSegmenter: Sendable {
 
     private static func photoOrder(_ lhs: PhotoStop, _ rhs: PhotoStop) -> Bool {
         lhs.date == rhs.date ? lhs.id < rhs.id : lhs.date < rhs.date
+    }
+
+    /// The places that are home in this library, as `segment` finds them,
+    /// for the person to confirm: the homes of the whole library, the places
+    /// lived at for a month or more and the usual places of the last months.
+    /// The person's own `knownPlaces` are left out of the search, so a place
+    /// they named shows here only if the photos call it home too. Ordered by
+    /// photo days, most first.
+    public func homeCandidates(_ stops: [PhotoStop]) -> [HomeCandidate] {
+        let ordered = stops.sorted(by: Self.photoOrder)
+        guard let lastStop = ordered.last(where: { $0.coordinate != nil }) else { return [] }
+        var search = self
+        search.knownPlaces = []
+        search.fixedUsualPlace = nil
+        let initial = UsualPlaceFinder(segmenter: search, stops: ordered)
+        let home = Self.spreadHome(segmenter: search, stops: ordered)
+        let longStays = Self.longStays(segmenter: search, stops: ordered, usual: initial, home: home)
+        let frequent = Self.frequentPlaceVisits(segmenter: search, stops: ordered, usual: initial, home: home, longStays: longStays)
+        let excludedIDs = Self.longStayIDs(segmenter: search, stops: ordered, longStays: longStays).union(frequent.excludedIDs)
+        let finder = Self.finalFinder(segmenter: search, stops: ordered, initial: initial, longStays: longStays, excludedIDs: excludedIDs)
+
+        var centres: [GeoPoint] = []
+        for centre in finder.lifetimeHomes + finder.places(at: lastStop.date)
+        where !centres.contains(where: { $0.distance(to: centre) <= usualPlaceClusterRadiusMeters }) {
+            centres.append(centre)
+        }
+        let lastDay = Self.dayNumber(of: lastStop.date)
+        var found: [HomeCandidate] = []
+        for centre in centres {
+            let near = ordered.filter { (stop: PhotoStop) -> Bool in
+                stop.coordinate.map { $0.distance(to: centre) <= usualPlaceClusterRadiusMeters } ?? false
+            }
+            guard let first = near.first, let last = near.last else { continue }
+            let days = Array(Set(near.map { Self.dayNumber(of: $0.date) })).sorted()
+            // Separate stretches: back after two months or more away.
+            var visits = 1
+            for (previous, next) in zip(days, days.dropFirst()) where next - previous > 60 { visits += 1 }
+            let recentDays = days.filter { lastDay - $0 <= 180 }.count
+            found.append(HomeCandidate(
+                centre: centre,
+                firstDate: first.date,
+                lastDate: last.date,
+                photoDays: days.count,
+                recentPhotoDays: recentDays,
+                visits: visits,
+                isCurrent: lastDay - Self.dayNumber(of: last.date) <= 60,
+                suggestedRole: .formerWork,
+                photoIDs: near.map(\.id)
+            ))
+        }
+        // The current place with the most recent days is home; another
+        // current place is work; of the places left behind, the one with the
+        // most days that someone keeps coming back to is the home town.
+        let homeIndex = found.indices.filter { found[$0].isCurrent }.max { found[$0].recentPhotoDays < found[$1].recentPhotoDays }
+        let town = found.indices.filter { !found[$0].isCurrent && found[$0].visits >= 2 }.max { found[$0].photoDays < found[$1].photoDays }
+        for index in found.indices {
+            if index == homeIndex {
+                found[index].suggestedRole = .home
+            } else if found[index].isCurrent {
+                found[index].suggestedRole = .work
+            } else if index == town {
+                found[index].suggestedRole = .homeTown
+            }
+        }
+        return found.sorted { $0.photoDays == $1.photoDays ? $0.firstDate < $1.firstDate : $0.photoDays > $1.photoDays }
     }
 
     /// One stay away, judged by what was done there.
@@ -719,6 +806,8 @@ public struct TripSegmenter: Sendable {
                     let dailyLife = photoDayShare < segmenter.longStayPhotoDayShare
                         || Double(medianPhotos) <= segmenter.longStayMedianPhotosPerDay
                         || span.count >= segmenter.livedThereDays
+                        // A stay at a place the person named is never a trip.
+                        || segmenter.isNearKnownPlace(centre)
                     stays.append(LongStay(centre: centre, days: span, dailyLife: dailyLife))
                 }
             }
@@ -890,7 +979,7 @@ private final class UsualPlaceFinder {
     }
 
     /// The library's lifetime homes.
-    private var lifetimeHomes: [GeoPoint] = []
+    private(set) var lifetimeHomes: [GeoPoint] = []
 
     func places(at date: Date) -> [GeoPoint] {
         if let fixed { return [fixed] }

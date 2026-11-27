@@ -1317,25 +1317,29 @@ private struct TripCoverCard: View {
         }
     }
 
-    /// The prints; clicking them picks another cover.
+    /// The prints. Each is its own choice: the one behind comes to the
+    /// front as the cover; the one in front opens every photo to pick from.
     @ViewBuilder
     private func prints(scale: CGFloat) -> some View {
-        let printsView = TripPrints(covers: covers, lifted: isHovering, scale: scale)
-            .frame(width: 262 * scale, height: 186 * scale)
         if trip.isUnsorted || photos.count < 2 {
-            printsView
+            TripPrints(covers: covers, lifted: isHovering, scale: scale)
+                .frame(width: 262 * scale, height: 186 * scale)
         } else {
-            Button { isPickingCover = true } label: { printsView.contentShape(Rectangle()) }
-                .buttonStyle(.plain)
-                .help(String(localized: "Choose the cover"))
-                .accessibilityLabel(String(localized: "Choose the cover"))
-                .accessibilityIdentifier("trips.cover.\(trip.id)")
-                .popover(isPresented: $isPickingCover, arrowEdge: .trailing) {
-                    TripCoverPicker(photos: photos, current: covers.first?.id) { item in
-                        actions.setCover(trip.id, item.id)
-                        isPickingCover = false
-                    }
+            TripPrints(
+                covers: covers,
+                lifted: isHovering,
+                scale: scale,
+                tripID: trip.id,
+                onFront: { isPickingCover = true },
+                onBack: { (item: MediaItem) in actions.setCover(trip.id, item.id) }
+            )
+            .frame(width: 262 * scale, height: 186 * scale)
+            .popover(isPresented: $isPickingCover, arrowEdge: .trailing) {
+                TripCoverPicker(photos: photos, current: covers.first?.id) { item in
+                    actions.setCover(trip.id, item.id)
+                    isPickingCover = false
                 }
+            }
         }
     }
 
@@ -1406,24 +1410,32 @@ private struct TripCoverPicker: View {
 
 /// Two photos as prints with a white border, the second laid over the first,
 /// each turned a little. Hovering the card spreads them slightly apart.
+/// Given the actions, each print is a button of its own.
 private struct TripPrints: View {
     let covers: [MediaItem]
     let lifted: Bool
     var scale: CGFloat = 1
+    var tripID: String? = nil
+    /// The print in front was clicked.
+    var onFront: (() -> Void)? = nil
+    /// The print behind was clicked.
+    var onBack: ((MediaItem) -> Void)? = nil
+
+    private var isInteractive: Bool { onFront != nil }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             if covers.count > 1 {
-                printed(covers[1])
+                clickable(printed(covers[1]), help: String(localized: "Set as cover"), id: "back", itemID: covers[1].id) { onBack?(covers[1]) }
                     .frame(width: 186 * scale, height: 150 * scale)
                     .rotationEffect(.degrees(lifted ? -4 : -2.5))
                     .offset(x: (lifted ? 0 : 4) * scale, y: (6) * scale)
-                printed(covers[0])
+                clickable(printed(covers[0]), help: String(localized: "Choose the cover"), id: "front", itemID: covers[0].id) { onFront?() }
                     .frame(width: 192 * scale, height: 156 * scale)
                     .rotationEffect(.degrees(lifted ? 2.5 : 1.5))
                     .offset(x: (70) * scale, y: (lifted ? 22 : 24) * scale)
             } else if let only = covers.first {
-                printed(only)
+                clickable(printed(only), help: String(localized: "Choose the cover"), id: "front", itemID: only.id) { onFront?() }
                     .frame(width: 214 * scale, height: 164 * scale)
                     .rotationEffect(.degrees(-1.5))
                     .offset(x: (22) * scale, y: (10) * scale)
@@ -1440,7 +1452,25 @@ private struct TripPrints: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .accessibilityHidden(true)
+        .accessibilityElement(children: isInteractive ? .contain : .ignore)
+        .accessibilityHidden(!isInteractive)
+        .accessibilityIdentifier(tripID.map { "trips.cover.\($0)" } ?? "")
+    }
+
+    /// A print as a button when the card can change its cover; as it is
+    /// otherwise.
+    @ViewBuilder
+    private func clickable(_ print: some View, help: String, id: String, itemID: String, action: @escaping () -> Void) -> some View {
+        if isInteractive, let tripID {
+            Button(action: action) { print.contentShape(Rectangle()) }
+                .buttonStyle(.plain)
+                .help(help)
+                .accessibilityLabel(help)
+                .accessibilityValue(itemID)
+                .accessibilityIdentifier("trips.cover.\(id).\(tripID)")
+        } else {
+            print
+        }
     }
 
     private func printed(_ item: MediaItem) -> some View {

@@ -96,7 +96,7 @@ final class SelectionModel {
     /// Where a Shift-click range starts: the last item clicked without Shift.
     var anchorItemID: String?
 
-    /// Set by `showInLibrary`; cleared from the Library's chip.
+    /// Set by `showInLibrary`; cleared by the Library's back button.
     var libraryScope: LibraryScope?
 
     /// Photos whose date and time the window's Adjust Date and Time sheet is open for.

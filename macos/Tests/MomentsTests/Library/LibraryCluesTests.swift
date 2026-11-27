@@ -243,6 +243,30 @@ final class LibraryCluesTests: XCTestCase {
         XCTAssertTrue(selection.isOnMap("a"))
     }
 
+    /// The face a person picked to stand for them shows in the row of faces
+    /// and on a chapter, not the sharpest one.
+    func testThePickedKeyFaceStandsForThePersonInTheRowAndOnAChapter() throws {
+        let suiteName: String = "LibraryCluesTests.keyFace.\(UUID().uuidString)"
+        let decisions: UserDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { decisions.removePersistentDomain(forName: suiteName) }
+        let anna = Person(id: "anna", name: "Anna")
+        let sharp: FaceObservation = face("anna-sharp", photo: "p1", personID: "anna")
+        sharp.quality = 0.95
+        let picked: FaceObservation = face("anna-picked", photo: "p2", personID: "anna")
+        picked.quality = 0.3
+        let all: [FaceObservation] = [sharp, picked]
+        let itemsByID: [String: MediaItem] = items(for: all)
+
+        let before: [PeopleStripEntry] = PeopleStrip.entries(faces: all, people: [anna], itemsByID: itemsByID, decisions: decisions)
+        XCTAssertEqual(before.first?.cover?.id, "anna-sharp", "With no choice the sharpest face stands for her")
+
+        PeopleStoreActions.setKeyFace("anna-picked", for: "anna", defaults: decisions)
+        let row: [PeopleStripEntry] = PeopleStrip.entries(faces: all, people: [anna], itemsByID: itemsByID, decisions: decisions)
+        XCTAssertEqual(row.first?.cover?.id, "anna-picked", "The row of faces shows the picked face")
+        let chapter: [PeopleStripEntry] = PeopleStrip.people(in: ["p1", "p2"], faces: all, people: [anna], limit: 5, decisions: decisions)
+        XCTAssertEqual(chapter.first?.cover?.id, "anna-picked", "A chapter's faces show the picked face")
+    }
+
     // MARK: The small map
 
     func testSmallMapHasOneStampPerAreaFullestFirst() {

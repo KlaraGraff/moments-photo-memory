@@ -104,10 +104,30 @@ struct LibraryView: View {
         let stackGeneration: Int
     }
 
-    /// The last finished regroup, kept across visits to the page: SwiftUI drops
-    /// the page's `@State` when it is left, but what it built stays valid as
-    /// long as `groupingKey` is unchanged.
-    @MainActor private static var lastRegroup: (key: Int, result: LibraryRegroupResult)?
+    /// The last finished regroups, newest first, kept across visits to the
+    /// page: SwiftUI drops the page's `@State` when it is left, but what it
+    /// built stays valid as long as `groupingKey` is unchanged. More than one
+    /// is kept so going back from a person's or a place's photos to all of
+    /// them (and opening the same person again) shows the grid at once
+    /// instead of rebuilding the whole Library.
+    @MainActor private static var recentRegroups: [(key: Int, result: LibraryRegroupResult)] = []
+    private static let recentRegroupLimit = 3
+
+    /// The newest finished regroup; the only one a small save is patched into.
+    @MainActor private static var lastRegroup: (key: Int, result: LibraryRegroupResult)? {
+        get { recentRegroups.first }
+        set {
+            guard let newValue else {
+                recentRegroups = []
+                return
+            }
+            recentRegroups.removeAll { (entry: (key: Int, result: LibraryRegroupResult)) -> Bool in entry.key == newValue.key }
+            recentRegroups.insert(newValue, at: 0)
+            if recentRegroups.count > recentRegroupLimit {
+                recentRegroups.removeLast(recentRegroups.count - recentRegroupLimit)
+            }
+        }
+    }
 
     init(state: LibraryViewState, firstLaunchCompleted: Binding<Bool> = .constant(true)) {
         self.state = state
@@ -319,6 +339,7 @@ struct LibraryView: View {
             let started: CFTimeInterval = CACurrentMediaTime()
             #endif
             regroup()
+            restoreScrollAfterLeavingScope()
             #if DEBUG
             PageProbe.contentReady(token: probeToken)
             let previous: [String: Int] = LibraryRegroupProbe.last
@@ -360,7 +381,8 @@ struct LibraryView: View {
                 .padding(.vertical, 7)
             // Type, place, trip, date, memory and person, each a menu that
             // opens on a click; what is picked shows below with its ✕.
-            if hasGrouped && (!cachedSections.isEmpty || criteria.isFiltered) {
+            // EXPERIMENT: not under an unnamed group's heading.
+            if hasGrouped && (!cachedSections.isEmpty || criteria.isFiltered) && selection.libraryScope?.clusterID == nil {
                 LibraryFilterChips()
                     .padding(.horizontal, 34)
                     .padding(.bottom, 4)
@@ -383,8 +405,34 @@ struct LibraryView: View {
                 .accessibilityValue(String(cachedVisibleCount))
                 .accessibilityIdentifier("library.photoCount")
         }
+        #if DEBUG
+        // Tests read which section the Library returns to.
+        .background(alignment: .topTrailing) {
+            // Never empty: an empty text has no accessibility element.
+            Text(verbatim: "top")
+                .font(.system(size: 1))
+                .foregroundStyle(.clear)
+                .allowsHitTesting(false)
+                .accessibilityValue(state.topSectionScrollID ?? "")
+                .accessibilityIdentifier("library.topSection")
+        }
+        #endif
         .background { LibraryPeopleIndexer(state: state) }
         .toolbar {
+            // While only some photos show, the window's back button (where
+            // Chapters and the Map have theirs) returns to all of them.
+            if selection.libraryScope != nil {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        backToAllPhotos()
+                    } label: {
+                        Label(String(localized: "All photos"), systemImage: "chevron.left")
+                    }
+                    .help(String(localized: "Back to all photos"))
+                    .keyboardShortcut("[", modifiers: .command)
+                    .accessibilityIdentifier("library.scope.close")
+                }
+            }
             ToolbarItem(placement: .primaryAction) { LibraryZoomControl(state: state) }
         }
         .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, notes")))
@@ -435,6 +483,11 @@ struct LibraryView: View {
                 id: Binding(get: { state.topSectionScrollID }, set: { id in
                     guard let id, !state.marquee.isDragging, state.topSectionScrollID != id else { return }
                     state.topSectionScrollID = id
+                    // Where all photos were left, for the way back from a
+                    // person's or a place's photos.
+                    if selection.libraryScope == nil, state.pendingScopeReturnScrollID == nil {
+                        state.unscopedTopSectionScrollID = id
+                    }
                 }),
                 anchor: .top
             )
@@ -448,6 +501,14 @@ struct LibraryView: View {
                 // Let the grid finish laying out the card before centring it.
                 DispatchQueue.main.async {
                     finishReveal(of: appeared, using: proxy, selection: selection, state: state)
+                }
+            }
+            .onChange(of: state.scopeReturnScrollTarget) { _, target in
+                guard let target else { return }
+                // After the new sections are laid out.
+                DispatchQueue.main.async {
+                    proxy.scrollTo(target, anchor: .top)
+                    state.scopeReturnScrollTarget = nil
                 }
             }
             .onChange(of: selection.shouldRevealSelectionInLibrary) { _, shouldReveal in
@@ -508,6 +569,37 @@ struct LibraryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Leaves a person's or a place's photos for all of them, at the place
+    /// in the Library where all photos were left.
+    private func backToAllPhotos() {
+        state.pendingScopeReturnScrollID = state.unscopedTopSectionScrollID
+        selection.libraryScope = nil
+    }
+
+    /// Runs after each regroup: once all photos are back on screen, the
+    /// Library scrolls to where they were left. Set with the new sections,
+    /// in the same update, so the scroll view finds that section.
+    private func restoreScrollAfterLeavingScope() {
+        guard let id = state.pendingScopeReturnScrollID else { return }
+        guard selection.libraryScope == nil else {
+            // Another scope was opened before the way back finished.
+            state.pendingScopeReturnScrollID = nil
+            return
+        }
+        state.pendingScopeReturnScrollID = nil
+        // Only an anchor these photos still have: a section or a photo.
+        let isSection: Bool = cachedSections.contains { (section: LibrarySection) -> Bool in
+            LibraryScrollTarget.section(section.id) == id
+        }
+        let itemPrefix: String = LibraryScrollTarget.item("")
+        let isPhoto: Bool = id.hasPrefix(itemPrefix) && cachedItemByID[String(id.dropFirst(itemPrefix.count))] != nil
+        guard isSection || isPhoto else { return }
+        state.topSectionScrollID = id
+        // The scroll view may already hold this id (a place's section is
+        // often the one that was at the top), so it is told to scroll too.
+        state.scopeReturnScrollTarget = id
+    }
+
     private func regroup() {
         // Taken before anything is read: these are the inputs this pass uses,
         // and a change during it must not be stored under a newer key.
@@ -521,7 +613,9 @@ struct LibraryView: View {
             stepStarted = CACurrentMediaTime()
         }
         #endif
-        if let cached = Self.lastRegroup, cached.key == key {
+        if let cached = Self.recentRegroups.first(where: { (entry: (key: Int, result: LibraryRegroupResult)) -> Bool in entry.key == key }) {
+            // Reused: it becomes the newest again, the one a save patches.
+            Self.lastRegroup = cached
             // Nothing changed since the last finished regroup: show it at
             // once, without the filter passes or the sections. What does not
             // come from the cache is rebuilt exactly as the full path does.

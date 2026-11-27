@@ -329,6 +329,68 @@ final class MomentsUITests: XCTestCase {
         XCTAssertEqual(libraryPhotoCount(app), allCount)
     }
 
+    /// A place's photos go back to all photos with the window's back button
+    /// (an arrow, not a cross) and with Command-[, and all photos come back
+    /// at the section that was at the top, not at the top of the Library.
+    func testBackFromAPlacesPhotosReturnsWhereAllPhotosWereLeft() {
+        let app = launch(language: "en")
+        let allCount = libraryPhotoCount(app)
+        let sections = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (identifier BEGINSWITH %@)", "library.section.", "library.section.person."))
+        XCTAssertTrue(sections.firstMatch.waitForExistence(timeout: launchTimeout))
+        let firstSectionID: String = sections.firstMatch.identifier
+        let topSection = element(in: app, identifier: "library.topSection")
+        XCTAssertTrue(topSection.waitForExistence(timeout: launchTimeout))
+        // Scroll until a later section is at the top.
+        var leftAt: String = ""
+        for _ in 0..<8 {
+            sections.firstMatch.scroll(byDeltaX: 0, deltaY: -800)
+            Thread.sleep(forTimeInterval: 0.8)
+            leftAt = topSection.value as? String ?? ""
+            if !leftAt.isEmpty, leftAt != "section:" + firstSectionID.dropFirst("library.section.".count) { break }
+        }
+        let leftSectionID: String = String(leftAt.dropFirst("section:".count))
+        XCTAssertFalse(leftSectionID.isEmpty, "No section reached the top while scrolling")
+        XCTAssertNotEqual("library.section." + leftSectionID, firstSectionID, "Scrolling never left the first section")
+
+        let places = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.place."))
+        let place: XCUIElement? = places.allElementsBoundByIndex.first { (place: XCUIElement) -> Bool in place.isHittable }
+        guard let place else {
+            XCTFail("No place under a photo is in view after scrolling")
+            return
+        }
+        place.click()
+        let heading = element(in: app, identifier: "library.scope")
+        XCTAssertTrue(heading.waitForExistence(timeout: launchTimeout), "Clicking the place did not show its photos")
+        let back = element(in: app, identifier: "library.scope.close")
+        XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "A place's photos have no way back")
+        let backInHeading: Bool = heading.descendants(matching: .any).matching(identifier: "library.scope.close").count > 0
+        XCTAssertFalse(backInHeading, "The way back should be the window's back button, not a cross in the heading")
+        capture(app, named: "scope-back-01-place-evidence")
+
+        back.click()
+        XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout), "Back did not leave the place")
+        XCTAssertEqual(libraryPhotoCount(app), allCount)
+        let returned = element(in: app, identifier: "library.section." + leftSectionID)
+        XCTAssertTrue(returned.waitForExistence(timeout: launchTimeout), "The section that was at the top is gone")
+        Thread.sleep(forTimeInterval: 0.5)
+        capture(app, named: "scope-back-02-returned-evidence")
+        XCTAssertTrue(returned.isHittable, "All photos did not come back at the section that was at the top (top is now \(topSection.value ?? "nil"))")
+
+        // Command-[ goes back too, as on Chapters and the Map.
+        let placeAgain: XCUIElement? = places.allElementsBoundByIndex.first { (place: XCUIElement) -> Bool in place.isHittable }
+        guard let placeAgain else {
+            XCTFail("No place under a photo is in view after going back")
+            return
+        }
+        placeAgain.click()
+        XCTAssertTrue(heading.waitForExistence(timeout: launchTimeout))
+        app.typeKey("[", modifierFlags: .command)
+        XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout), "Command-[ did not go back to all photos")
+        XCTAssertEqual(libraryPhotoCount(app), allCount)
+    }
+
     /// People are a row of faces over the photos, not a page. A face shows
     /// that person's photos in place; a group nobody named is named there.
     func testFacesOverThePhotosShowAPersonsPhotos() {
@@ -355,6 +417,23 @@ final class MomentsUITests: XCTestCase {
         XCTAssertEqual(libraryPhotoCount(app), 2, "Alex is in two synthetic photos")
         XCTAssertTrue(strip.waitForNonExistence(timeout: launchTimeout), "The row of faces should give way to the heading")
         capture(app, named: "\(prefix)-02-person-evidence")
+
+        // The face in the heading picks which face stands for Alex.
+        let headingFace = element(in: app, identifier: "library.scope.face")
+        XCTAssertTrue(headingFace.waitForExistence(timeout: launchTimeout), "A person's face in the heading is not a control")
+        let coverBefore: String = (headingFace.value as? String) ?? ""
+        headingFace.click()
+        let picks = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (identifier ENDSWITH %@)", "library.scope.face.pick.", "." + coverBefore))
+        let other = picks.firstMatch
+        XCTAssertTrue(other.waitForExistence(timeout: launchTimeout), "Clicking the face did not offer Alex's other faces")
+        capture(app, named: "\(prefix)-02b-key-face-picker-evidence")
+        let pickedID: String = String(other.identifier.dropFirst("library.scope.face.pick.".count))
+        other.click()
+        XCTAssertTrue(other.waitForNonExistence(timeout: launchTimeout), "Picking a face did not close the picker")
+        let changed = NSPredicate(format: "value == %@", pickedID)
+        XCTAssertEqual(XCTWaiter().wait(for: [expectation(for: changed, evaluatedWith: headingFace)], timeout: launchTimeout), .completed, "The picked face does not stand for Alex")
+
         element(in: app, identifier: "library.scope.close").click()
         XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout))
         XCTAssertEqual(libraryPhotoCount(app), allCount)
@@ -913,10 +992,22 @@ final class MomentsUITests: XCTestCase {
         let card = element(in: app, identifier: "trips.card.journeyA")
         XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
 
-        // The cover: click the prints, pick another photo.
-        let prints = element(in: app, identifier: "trips.cover.journeyA")
-        XCTAssertTrue(prints.waitForExistence(timeout: launchTimeout), "The cover cannot be changed")
-        prints.click()
+        // The print behind comes to the front as the cover with one click.
+        let front = element(in: app, identifier: "trips.cover.front.journeyA")
+        let behind = element(in: app, identifier: "trips.cover.back.journeyA")
+        XCTAssertTrue(front.waitForExistence(timeout: launchTimeout), "The cover cannot be changed")
+        XCTAssertTrue(behind.exists, "The print behind is not a choice of its own")
+        let behindID: String = (behind.value as? String) ?? ""
+        XCTAssertNotEqual(behindID, (front.value as? String) ?? "", "The two prints show the same photo")
+        // Most of the print behind lies under the one in front; click the
+        // strip of it that shows on the left, as a person would.
+        behind.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.5)).click()
+        let swapped = NSPredicate(format: "value == %@", behindID)
+        XCTAssertEqual(XCTWaiter().wait(for: [expectation(for: swapped, evaluatedWith: front)], timeout: launchTimeout), .completed, "Clicking the print behind did not make it the cover")
+        capture(app, named: "trips-04b-cover-swapped-evidence")
+
+        // The print in front opens every photo to pick from.
+        front.click()
         let pick = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.cover.pick."))
             .element(boundBy: 3)

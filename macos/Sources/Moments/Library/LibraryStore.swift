@@ -103,6 +103,9 @@ final class LibraryStore {
     /// place overrides, or could not say what it touched. The sidebar's group
     /// counts follow it instead of querying those five entities themselves.
     private(set) var groupSourcesRevision = 0
+    /// Moves when someone picks the face that stands for a person. That
+    /// choice is a library decision, not a save, so nothing else moves.
+    private(set) var keyFaceRevision = 0
     /// The photos each recent `photoFaceRevision` bump changed, newest last.
     /// An entry with nil ids means the bump could not be described as "these
     /// existing photos changed" (a photo added, removed, trashed or restored,
@@ -138,6 +141,13 @@ final class LibraryStore {
     /// and the page probe. A batch applied from its own changes counts here
     /// but not in `fullFetchCount`.
     private(set) var refreshCount = 0
+
+    /// Makes `faceID` the face that stands for the person everywhere.
+    func setKeyFace(_ faceID: String, for personID: String) {
+        PeopleStoreActions.setKeyFace(faceID, for: personID)
+        keyFaceRevision &+= 1
+    }
+
     /// How many times the whole library was fetched again from scratch. Only
     /// `refreshNow()` bumps it, so a test can tell an applied batch from a
     /// full fetch.

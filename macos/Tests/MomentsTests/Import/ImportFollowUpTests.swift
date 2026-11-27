@@ -173,6 +173,47 @@ final class ImportFollowUpTests: XCTestCase {
         XCTAssertEqual(summary.skippedCount, 1)
     }
 
+    func testResumeStoreKeepsFoldersApartAndALaterBatchWins() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "moments-resume-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ImportResumeStore(directory: directory)
+        func entry(_ name: String, size: Int64) -> ImportResumeEntry {
+            ImportResumeEntry(
+                fingerprint: ImportFileFingerprint(fileSize: size, modificationTime: 1),
+                metadata: ImportedMediaMetadata(
+                    id: name, bookmarkData: Data(), fileName: name, contentHash: name,
+                    captureDate: Date(timeIntervalSince1970: 0), captureDateSource: .exif,
+                    timeZoneOffsetMinutes: 0, latitude: nil, longitude: nil,
+                    width: 1, height: 1, kind: .photo, duration: nil
+                )
+            )
+        }
+        await store.append(["/a/1.jpg": entry("one", size: 1), "/a/2.jpg": entry("two", size: 2)], forFolder: "/a")
+        await store.append(["/a/1.jpg": entry("one-changed", size: 3)], forFolder: "/a")
+        await store.append(["/b/1.jpg": entry("other", size: 4)], forFolder: "/b")
+
+        // A fresh store reads the batches back from disk.
+        let reopened = ImportResumeStore(directory: directory)
+        let a = await reopened.entries(forFolder: "/a")
+        let b = await reopened.entries(forFolder: "/b")
+        XCTAssertEqual(a["/a/1.jpg"]?.metadata.id, "one-changed")
+        XCTAssertEqual(a["/a/1.jpg"]?.fingerprint.fileSize, 3)
+        XCTAssertEqual(a["/a/2.jpg"]?.metadata.id, "two")
+        XCTAssertEqual(a.count, 2)
+        XCTAssertEqual(Array(b.keys), ["/b/1.jpg"])
+
+        // A checkpoint nobody resumed for over a month is removed.
+        await reopened.removeStale(in: directory, now: .now.addingTimeInterval(ImportResumeStore.maximumAge + 60))
+        let afterA = await reopened.entries(forFolder: "/a")
+        XCTAssertTrue(afterA.isEmpty)
+    }
+
+    func testSharedResumeStoreStaysOutOfApplicationSupportInTests() {
+        let directory = ImportResumeStore.defaultDirectory.standardizedFileURL.path
+        let temporary = FileManager.default.temporaryDirectory.standardizedFileURL.path
+        XCTAssertTrue(directory.hasPrefix(temporary), "Tests never write into the user's Application Support")
+    }
+
     // MARK: Helpers
 
     private static func importer(

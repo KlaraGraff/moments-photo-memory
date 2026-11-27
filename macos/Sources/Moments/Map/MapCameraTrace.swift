@@ -17,8 +17,6 @@ enum MapCameraTrace {
     /// Ignore the Mac's Reduce Motion setting, so a runner that has it on
     /// still plays the move the test measures.
     static let forcesMotion = ProcessInfo.processInfo.arguments.contains("-MomentsUITestForceMotion")
-    /// TEMPORARY: play the old SwiftUI animation, for a before/after measurement.
-    static let usesOldAnimation = ProcessInfo.processInfo.arguments.contains("-MomentsUITestOldCameraAnimation")
 
     /// What the screen decided for this move (path, Reduce Motion).
     static func note(_ text: String) {

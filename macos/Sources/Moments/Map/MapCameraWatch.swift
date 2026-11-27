@@ -1,29 +1,62 @@
+import AppKit
 import MapKit
+import QuartzCore
 import SwiftUI
 import MomentsCore
 
 /// What the map screen remembers about its camera between redraws: the last
-/// camera MapKit reported and the flight under way. A plain object, so
+/// camera MapKit reported, and the flight under way. A plain object, so
 /// updating it on every frame of a move never redraws the screen.
 @MainActor
 final class MapCameraWatch {
     var latest: MapFlightCamera?
+    /// Where the flight under way ends; nil when the camera is not flying.
     private(set) var flightTarget: MapFlightCamera?
-    private var flightToken = 0
+    private var flightTask: Task<Void, Never>?
+    private var eventMonitor: Any?
 
-    /// Starts a flight and returns its token; a newer flight replaces it.
-    func beginFlight(to target: MapFlightCamera) -> Int {
-        flightToken &+= 1
-        flightTarget = target
-        return flightToken
+    /// Plays `flight`, handing `apply` the camera for each frame until the
+    /// last, which is exactly the flight's end. A click, scroll, pinch or
+    /// rotation on the way stops it where it is, so the person's own move
+    /// wins; a newer flight replaces this one.
+    func fly(_ flight: MapFlight, apply: @escaping @MainActor (MapFlightCamera) -> Void) {
+        cancelFlight()
+        flightTarget = flight.end
+        let events: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .magnify, .rotate, .swipe]
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: events) { [weak self] event in
+            MainActor.assumeIsolated {
+                self?.cancelFlight()
+            }
+            return event
+        }
+        let startedAt: CFTimeInterval = CACurrentMediaTime()
+        flightTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                // By the clock, not by frame count: a slow frame never
+                // stretches the flight.
+                let elapsed: Double = CACurrentMediaTime() - startedAt
+                apply(flight.camera(at: elapsed))
+                if elapsed >= flight.duration { break }
+                // About two updates per frame at 60 Hz, one at 120 Hz.
+                try? await Task.sleep(for: .milliseconds(8))
+            }
+            guard !Task.isCancelled else { return }
+            self?.finishFlight()
+        }
     }
 
-    func isCurrentFlight(_ token: Int) -> Bool {
-        flightTarget != nil && token == flightToken
+    func cancelFlight() {
+        flightTask?.cancel()
+        finishFlight()
     }
 
-    func endFlight() {
+    private func finishFlight() {
+        flightTask = nil
         flightTarget = nil
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+        }
+        eventMonitor = nil
     }
 }
 

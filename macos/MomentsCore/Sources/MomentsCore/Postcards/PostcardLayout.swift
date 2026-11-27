@@ -1,4 +1,8 @@
 import Foundation
+#if canImport(CoreGraphics)
+// CGRect's Equatable conformance lives here on Apple platforms.
+import CoreGraphics
+#endif
 
 /// Where everything sits on a print-ready postcard, in millimetres.
 ///

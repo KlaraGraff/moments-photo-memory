@@ -191,6 +191,40 @@ enum PageProbe {
             await measure("back to chapters") { selection?.openTripID = nil }
         }
         await measure("Library again") { selection?.requestedDestination = .library }
+        // People: one person's photos, as a click on a face in the people row
+        // opens them, and back. The faces are looked up before the phase.
+        if let person = mostPhotographedPerson() {
+            await measure("person photos") {
+                selection?.showInLibrary(person.photoIDs, title: person.name, personID: person.id)
+            }
+            await measure("back from person photos") { selection?.libraryScope = nil }
+        }
+        // Searching the Library: words pasted in at once (photo notes), then a
+        // place name typed a letter at a time, each cleared afterwards.
+        await measure("Library search") { setSearch("Synthetic photo") }
+        await measure("Library search cleared") { setSearch("") }
+        typingFinished = false
+        await measure("Library search typing") {
+            Task { @MainActor in
+                var typed = ""
+                for letter in "City 42" {
+                    typed.append(letter)
+                    PageProbe.setSearch(typed)
+                    try? await Task.sleep(for: .milliseconds(150))
+                }
+                PageProbe.typingFinished = true
+            }
+        } until: {
+            typingFinished
+        } describe: {
+            "typing the search"
+        }
+        await measure("Library search typing cleared") { setSearch("") }
+        // A memory written on the newest photo and saved the way the memory
+        // editor saves one, with the Library on screen.
+        if let photo = newestPhotoID() {
+            await measure("write a memory", waitsForContent: false) { writeMemory(on: photo) }
+        }
         write()
         status.begin("done")
         if let folder { FileManager.default.createFile(atPath: folder.appending(path: "page-report-done").path, contents: nil) }
@@ -323,6 +357,56 @@ enum PageProbe {
         )
         descriptor.fetchLimit = 1
         return try? context.fetch(descriptor).first?.id
+    }
+
+    /// Set by the typing in "Library search typing" when its last letter is in.
+    private static var typingFinished = false
+
+    /// What the Library's search field holds (`LibraryFilterKeys.query`).
+    private static func setSearch(_ text: String) {
+        UserDefaults.standard.set(text, forKey: LibraryFilterKeys.query)
+    }
+
+    /// The named person on the most photos, with those photos, the way
+    /// `PersonClue.showPhotos` collects them (no screenshots).
+    private static func mostPhotographedPerson() -> (id: String, name: String, photoIDs: Set<String>)? {
+        guard let context = container?.mainContext,
+              let people = try? context.fetch(FetchDescriptor<Person>()) else { return nil }
+        var best: (id: String, name: String, photoIDs: Set<String>)?
+        for person in people {
+            let personID: String? = person.id
+            let faces = (try? context.fetch(FetchDescriptor<FaceObservation>(predicate: #Predicate { $0.personID == personID }))) ?? []
+            var ids = Set<String>()
+            for face in faces { ids.insert(face.mediaID) }
+            if ids.count > (best?.photoIDs.count ?? 0) {
+                best = (id: person.id, name: person.name ?? person.id, photoIDs: ids)
+            }
+        }
+        guard let best else { return nil }
+        let screenshots = Set(((try? context.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.isScreenshot == true }))) ?? []).map(\.id))
+        let photoIDs = best.photoIDs.subtracting(screenshots)
+        return photoIDs.isEmpty ? nil : (id: best.id, name: best.name, photoIDs: photoIDs)
+    }
+
+    /// Writes a new memory on `photoID` and saves, as the Library's memory
+    /// editor does for a photo without one. Synthetic text only.
+    private static func writeMemory(on photoID: String) {
+        guard let context = container?.mainContext else { return }
+        var descriptor = FetchDescriptor<MediaItem>(predicate: #Predicate { $0.id == photoID })
+        descriptor.fetchLimit = 1
+        guard let item = try? context.fetch(descriptor).first else { return }
+        context.insert(Memory(
+            text: "Synthetic probe memory",
+            author: .me,
+            authorAccountID: MomentsAccount.localID,
+            updatedBy: MomentsAccount.localID,
+            mediaItem: item
+        ))
+        do {
+            try context.save()
+        } catch {
+            note("memory save failed: \(error)")
+        }
     }
 
     private static func largestTripID() -> String? {

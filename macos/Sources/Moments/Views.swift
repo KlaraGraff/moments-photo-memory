@@ -129,6 +129,15 @@ struct ContentView: View {
                     ToolbarItem(placement: .primaryAction) {
                         ImportToolbarButton()
                     }
+                    // Right of the +, as on Chapters and the large map. Not
+                    // while one person's or place's photos show all of theirs.
+                    // Here, not in the Library's own toolbar, which is
+                    // rebuilt on every update; there its popover never opened.
+                    if shared.libraryScope == nil {
+                        ToolbarItem(placement: .primaryAction) {
+                            LibraryFilterToolbarButton()
+                        }
+                    }
                 }
             }
             #if DEBUG

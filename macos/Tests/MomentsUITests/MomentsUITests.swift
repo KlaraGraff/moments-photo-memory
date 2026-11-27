@@ -231,6 +231,38 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "grid-04-viewer-small-window-evidence")
     }
 
+    /// The viewer's envelope opens the postcard sheet inside the small window;
+    /// closing the sheet leaves the viewer open on the photo.
+    func testViewerOpensThePostcardSheetInTheSmallWindow() {
+        let app = launch(language: "en", smallWindow: true)
+        let first = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo.")).element(boundBy: 0)
+        XCTAssertTrue(first.waitForExistence(timeout: launchTimeout))
+        first.doubleClick()
+        let viewer = element(in: app, identifier: "viewer")
+        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout))
+        let envelope = element(in: app, identifier: "viewer.postcard")
+        XCTAssertTrue(envelope.waitForExistence(timeout: launchTimeout))
+        envelope.click()
+        let sheet = element(in: app, identifier: "postcard.sheet")
+        XCTAssertTrue(sheet.waitForExistence(timeout: launchTimeout), "The postcard sheet did not open")
+        let export = element(in: app, identifier: "postcard.export")
+        XCTAssertTrue(export.waitForExistence(timeout: launchTimeout))
+        let enabled = NSPredicate(format: "isEnabled == true")
+        expectation(for: enabled, evaluatedWith: export)
+        waitForExpectations(timeout: launchTimeout)
+        XCTAssertTrue(element(in: app, identifier: "postcard.preview").exists, "No preview of the card")
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(sheet.frame), "The postcard sheet spills outside the small window")
+        element(in: app, identifier: "postcard.template.note").click()
+        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Message Side")).firstMatch.click()
+        capture(app, named: "postcard-01-small-window-evidence")
+        element(in: app, identifier: "postcard.cancel").click()
+        let gone = NSPredicate(format: "exists == false")
+        expectation(for: gone, evaluatedWith: sheet)
+        waitForExpectations(timeout: launchTimeout)
+        XCTAssertTrue(viewer.exists, "Closing the postcard sheet closed the viewer too")
+    }
+
     /// Two clicks closer together than the double-click interval are a double click.
     private func pauseLongerThanADoubleClick() {
         RunLoop.current.run(until: Date().addingTimeInterval(NSEvent.doubleClickInterval + 0.3))

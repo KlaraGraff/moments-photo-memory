@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import MomentsCore
 import Observation
 import SwiftData
 import SwiftUI

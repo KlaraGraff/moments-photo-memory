@@ -350,12 +350,12 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(element(in: app, identifier: "map.view").waitForExistence(timeout: 30), "The small map did not open the large map")
         Thread.sleep(forTimeInterval: 1.5)
         capture(app, named: "\(prefix)-03-place-on-map-evidence")
-        let back = element(in: app, identifier: "map.back")
+        let back = element(in: app, identifier: "window.back")
         XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The large map has no Back")
         back.click()
         XCTAssertTrue(heading.waitForExistence(timeout: launchTimeout), "Back did not return to the place's photos")
 
-        let close = element(in: app, identifier: "library.scope.close")
+        let close = element(in: app, identifier: "window.back")
         close.click()
         XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout), "All photos did not leave the place")
         XCTAssertEqual(libraryPhotoCount(app), allCount)
@@ -395,9 +395,9 @@ final class MomentsUITests: XCTestCase {
         place.click()
         let heading = element(in: app, identifier: "library.scope")
         XCTAssertTrue(heading.waitForExistence(timeout: launchTimeout), "Clicking the place did not show its photos")
-        let back = element(in: app, identifier: "library.scope.close")
+        let back = element(in: app, identifier: "window.back")
         XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "A place's photos have no way back")
-        let backInHeading: Bool = heading.descendants(matching: .any).matching(identifier: "library.scope.close").count > 0
+        let backInHeading: Bool = heading.descendants(matching: .any).matching(identifier: "window.back").count > 0
         XCTAssertFalse(backInHeading, "The way back should be the window's back button, not a cross in the heading")
         capture(app, named: "scope-back-01-place-evidence")
 
@@ -433,6 +433,43 @@ final class MomentsUITests: XCTestCase {
         exerciseFaces(launch(language: "en", smallWindow: true, extraArguments: ["-MomentsUITestPeople"]), prefix: "faces-small")
     }
 
+    /// More people than fit: the row stays one line, every group is in it,
+    /// and the arrow buttons page through them both ways.
+    func testRowOfFacesShowsEveryoneAndPagesThroughThem() {
+        let app = launch(language: "en", extraArguments: ["-MomentsUITestPeople", "-MomentsUITestCrowd"])
+        let strip = element(in: app, identifier: "library.people")
+        XCTAssertTrue(strip.waitForExistence(timeout: launchTimeout), "The Library has no row of faces")
+        XCTAssertTrue(element(in: app, identifier: "library.person.Alex").waitForExistence(timeout: launchTimeout), "The named people lead the row")
+        let more = element(in: app, identifier: "library.people.more")
+        let earlier = element(in: app, identifier: "library.people.earlier")
+        XCTAssertTrue(more.waitForExistence(timeout: launchTimeout), "Twenty-seven faces do not fit, yet the row offers no way to the rest")
+        XCTAssertFalse(earlier.exists, "At the start there is nobody earlier")
+        XCTAssertLessThan(strip.frame.height, 150, "The row of faces \(strip.frame) is more than one line")
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(more.frame), "The arrow \(more.frame) is outside the window")
+        capture(app, named: "crowd-01-start-evidence")
+
+        more.click()
+        XCTAssertTrue(earlier.waitForExistence(timeout: launchTimeout), "Paging on did not offer the way back")
+        capture(app, named: "crowd-02-paged-evidence")
+        var clicks = 0
+        while more.exists && clicks < 12 {
+            more.click()
+            clicks += 1
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertFalse(more.exists, "The arrow stayed after the last face")
+        capture(app, named: "crowd-03-end-evidence")
+
+        while earlier.exists && clicks < 24 {
+            earlier.click()
+            clicks += 1
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertFalse(earlier.exists, "Paging back did not reach the start")
+        XCTAssertTrue(more.waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(element(in: app, identifier: "library.person.Alex").exists, "Back at the start, Alex leads again")
+    }
+
     private func exerciseFaces(_ app: XCUIApplication, prefix: String) {
         let allCount = libraryPhotoCount(app)
         let strip = element(in: app, identifier: "library.people")
@@ -466,7 +503,7 @@ final class MomentsUITests: XCTestCase {
         let changed = NSPredicate(format: "value == %@", pickedID)
         XCTAssertEqual(XCTWaiter().wait(for: [expectation(for: changed, evaluatedWith: headingFace)], timeout: launchTimeout), .completed, "The picked face does not stand for Alex")
 
-        element(in: app, identifier: "library.scope.close").click()
+        element(in: app, identifier: "window.back").click()
         XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout))
         XCTAssertEqual(libraryPhotoCount(app), allCount)
 
@@ -480,7 +517,7 @@ final class MomentsUITests: XCTestCase {
         name.click()
         name.typeText("Robin\r")
         capture(app, named: "\(prefix)-03-named-evidence")
-        element(in: app, identifier: "library.scope.close").click()
+        element(in: app, identifier: "window.back").click()
         XCTAssertTrue(element(in: app, identifier: "library.person.Robin").waitForExistence(timeout: launchTimeout), "The named group did not join the row of faces")
         XCTAssertTrue(unnamed.waitForNonExistence(timeout: launchTimeout), "The group still asks for a name")
 
@@ -504,7 +541,7 @@ final class MomentsUITests: XCTestCase {
         let joined: Int = libraryPhotoCount(app)
         XCTAssertEqual(joined, 7, "After the merge the heading should show both people's photos: Alex's two and the group's five")
         capture(app, named: "\(prefix)-05-merged-evidence")
-        element(in: app, identifier: "library.scope.close").click()
+        element(in: app, identifier: "window.back").click()
         XCTAssertTrue(alex.waitForNonExistence(timeout: launchTimeout), "Alex is still in the row of faces after joining Robin")
         XCTAssertTrue(element(in: app, identifier: "library.person.Robin").waitForExistence(timeout: launchTimeout), "Robin left the row of faces")
     }
@@ -546,6 +583,51 @@ final class MomentsUITests: XCTestCase {
             .firstMatch
         XCTAssertTrue(marker.waitForExistence(timeout: launchTimeout), "Synthetic place marker was not exposed")
         capture(app, named: "map-01-photo-pins-evidence")
+    }
+
+    /// The way maple went: the large map, a place, one of its photos looked
+    /// at, then "Show in Library". Back returns to the map with that place's
+    /// photos open, and once more to where the map was opened.
+    func testBackFromShowInLibraryReturnsToTheMapsPlace() {
+        let app = launch(language: "en")
+        _ = openMapAtPhotos(app)
+        let marker = element(in: app, identifier: "map.marker.D0001")
+        XCTAssertTrue(marker.waitForExistence(timeout: launchTimeout))
+        marker.click()
+        let panel = element(in: app, identifier: "map.panel")
+        XCTAssertTrue(panel.waitForExistence(timeout: launchTimeout), "Clicking a place did not open its photos")
+
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "map.panel.photo."))
+            .firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout), "The place's strip has no photo")
+        photo.click()
+        let viewer = element(in: app, identifier: "viewer")
+        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout), "Clicking a photo in the strip did not open it")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(viewer.waitForNonExistence(timeout: launchTimeout))
+        XCTAssertTrue(panel.exists, "Closing the photo closed the place's strip too")
+
+        element(in: app, identifier: "map.panel.show-in-library").click()
+        let heading = element(in: app, identifier: "library.scope")
+        XCTAssertTrue(heading.waitForExistence(timeout: launchTimeout), "Show in Library did not show the place's photos")
+        let map = element(in: app, identifier: "map.view")
+        XCTAssertTrue(map.waitForNonExistence(timeout: launchTimeout))
+        capture(app, named: "back-map-01-show-in-library-evidence")
+
+        let back = element(in: app, identifier: "window.back")
+        XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The Library has no Back after Show in Library")
+        back.click()
+        XCTAssertTrue(map.waitForExistence(timeout: 30), "Back did not return to the large map")
+        XCTAssertTrue(panel.waitForExistence(timeout: 30), "The map came back without the place that was open")
+        XCTAssertFalse(heading.exists, "The place's photos stayed in front of the map")
+        Thread.sleep(forTimeInterval: 1.0)
+        capture(app, named: "back-map-02-returned-evidence")
+
+        // The map was opened from Chapters: Back closes it there.
+        back.click()
+        XCTAssertTrue(map.waitForNonExistence(timeout: launchTimeout), "Back did not close the large map")
+        XCTAssertTrue(back.waitForNonExistence(timeout: launchTimeout), "Chapters has nothing to go back to, yet shows Back")
     }
 
     func testPlacesPanelIsCompactAndCloses() {
@@ -717,7 +799,7 @@ final class MomentsUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.5)
         capture(app, named: "small-03-map-evidence")
         XCTAssertFalse(stats.frame.intersects(toolbar.frame), "Countries card \(stats.frame) overlaps the map controls \(toolbar.frame)")
-        let back = element(in: app, identifier: "map.back")
+        let back = element(in: app, identifier: "window.back")
         XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The large map has no Back in the small window")
         back.click()
         XCTAssertTrue(footprints.waitForExistence(timeout: launchTimeout), "Back did not return to Chapters")
@@ -904,7 +986,7 @@ final class MomentsUITests: XCTestCase {
         openLargeMap(app)
         XCTAssertTrue(element(in: app, identifier: "toolbar.filter").waitForExistence(timeout: 30), "The large map has no Filter button")
         capture(app, named: "filters-05-map-evidence")
-        element(in: app, identifier: "map.back").click()
+        element(in: app, identifier: "window.back").click()
 
         // A face on a card opens that person's photos.
         element(in: app, identifier: "trips.card.person.Alex").click()
@@ -939,7 +1021,7 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(element(in: app, identifier: "map.view").waitForExistence(timeout: 30), "The route map did not open the large map")
         Thread.sleep(forTimeInterval: 1.5)
         capture(app, named: "chapter-03-large-map-evidence")
-        let back = element(in: app, identifier: "map.back")
+        let back = element(in: app, identifier: "window.back")
         XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The large map has no Back")
         back.click()
         XCTAssertTrue(tripMemory.waitForExistence(timeout: launchTimeout), "Back did not return to the chapter")
@@ -998,7 +1080,7 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(tripMemory.waitForExistence(timeout: launchTimeout), "The open trip was lost on a screen switch")
 
         // Back to the shelf.
-        let back = element(in: app, identifier: "trips.back")
+        let back = element(in: app, identifier: "window.back")
         XCTAssertTrue(back.waitForExistence(timeout: launchTimeout))
         back.click()
         XCTAssertTrue(card.waitForExistence(timeout: launchTimeout), "Back did not return to the trip cards")
@@ -1107,7 +1189,7 @@ final class MomentsUITests: XCTestCase {
 
         // The new chapter opens; back on the shelf it has its own card, next
         // to the trips: there is no row of kinds to filter by.
-        let back = element(in: app, identifier: "trips.back")
+        let back = element(in: app, identifier: "window.back")
         XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The new chapter did not open")
         back.click()
         let card = app.descendants(matching: .any)
@@ -1147,7 +1229,7 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "trips-08-split-evidence")
         element(in: app, identifier: "trips.notice.undo").click()
         XCTAssertTrue(notice.waitForNonExistence(timeout: launchTimeout), "Undo did not finish")
-        element(in: app, identifier: "trips.back").click()
+        element(in: app, identifier: "window.back").click()
         XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
         Thread.sleep(forTimeInterval: 0.8)
         let afterIDs = Set(cards.allElementsBoundByIndex.map(\.identifier))
@@ -1202,9 +1284,52 @@ final class MomentsUITests: XCTestCase {
         XCTAssertLessThanOrEqual(frame.maxY, window.maxY + 1, "The card is cut off at the bottom (card \(frame), window \(window))")
         capture(app, named: "trips-05-place-in-library-evidence")
 
-        element(in: app, identifier: "library.scope.close").click()
-        XCTAssertTrue(chip.waitForNonExistence(timeout: 5), "All photos should leave the place")
+        // Back returns to the chapter the place was clicked in, not to all
+        // photos; once more, to the shelf; then there is nowhere to go back to.
+        let back = element(in: app, identifier: "window.back")
+        back.click()
+        XCTAssertTrue(chip.waitForNonExistence(timeout: 5), "Back should leave the place")
+        XCTAssertTrue(element(in: app, identifier: "trips.memory.trip").waitForExistence(timeout: launchTimeout), "Back did not return to the chapter the place was clicked in")
+        capture(app, named: "trips-06-back-to-chapter-evidence")
+        app.typeKey("[", modifierFlags: .command)
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout), "Command-[ did not return from the chapter to the shelf")
+        XCTAssertTrue(back.waitForNonExistence(timeout: launchTimeout), "The shelf has nothing to go back to, yet shows Back")
+
+        // The Library is where it was: every photo.
+        element(in: app, identifier: "sidebar.library").click()
+        XCTAssertTrue(element(in: app, identifier: "library.photoCount").waitForExistence(timeout: launchTimeout))
+        XCTAssertFalse(chip.exists, "The place's photos stayed in the Library")
         XCTAssertEqual(libraryPhotoCount(app), allCount)
+    }
+
+    /// A chapter opened from the Library: Back returns to the Library, not
+    /// to the Chapters shelf. (Back reopening a photo a link was clicked in
+    /// is covered by SelectionModelBackTests: the links in the photo's
+    /// column are not reachable as their own elements in UI tests.)
+    func testBackFromAChapterOpenedInTheLibraryReturnsToTheLibrary() {
+        let app = launch(language: "en")
+        let allCount = libraryPhotoCount(app)
+        let links = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.chapter-link."))
+        XCTAssertTrue(links.firstMatch.waitForExistence(timeout: launchTimeout), "No section leads to its chapter")
+        let link: XCUIElement? = links.allElementsBoundByIndex.first { (link: XCUIElement) -> Bool in link.isHittable }
+        guard let link else {
+            XCTFail("No chapter link is in view")
+            return
+        }
+        link.click()
+        let count = element(in: app, identifier: "library.photoCount")
+        XCTAssertTrue(count.waitForNonExistence(timeout: launchTimeout), "The chapter link did not leave the Library")
+        let back = element(in: app, identifier: "window.back")
+        XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The chapter has no Back")
+        Thread.sleep(forTimeInterval: 0.8)
+        capture(app, named: "back-01-chapter-from-library-evidence")
+
+        back.click()
+        XCTAssertTrue(count.waitForExistence(timeout: launchTimeout), "Back did not return to the Library the chapter was opened from")
+        XCTAssertEqual(libraryPhotoCount(app), allCount)
+        XCTAssertTrue(back.waitForNonExistence(timeout: launchTimeout), "All photos have nothing to go back to, yet show Back")
+        capture(app, named: "back-02-library-again-evidence")
     }
 
     /// Leaving the large map removes its map view, so MapKit stops drawing
@@ -1217,7 +1342,7 @@ final class MomentsUITests: XCTestCase {
         let onMap = NSPredicate(format: "label != %@", "mapviews=0")
         let gone = NSPredicate(format: "label == %@", "mapviews=0")
         // Back, and a click on either page in the sidebar, all leave the map.
-        for exit in ["map.back", "sidebar.library", "sidebar.trips"] {
+        for exit in ["window.back", "sidebar.library", "sidebar.trips"] {
             openLargeMap(app)
             XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: onMap, evaluatedWith: probe)], timeout: 10), .completed, "The probe found no map view on the large map")
             element(in: app, identifier: exit).click()
@@ -1375,7 +1500,7 @@ final class MomentsUITests: XCTestCase {
         fit.click()
         if settleMap { Thread.sleep(forTimeInterval: 2.0) }
         capture(app, named: "\(prefix)-03-map-places-evidence")
-        element(in: app, identifier: "map.back").click()
+        element(in: app, identifier: "window.back").click()
 
         let trips = element(in: app, identifier: "sidebar.trips")
         XCTAssertTrue(trips.waitForExistence(timeout: launchTimeout))
@@ -1396,7 +1521,7 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(element(in: app, identifier: "trips.dates.start").waitForExistence(timeout: launchTimeout), "The trip's dates cannot be changed")
         capture(app, named: "\(prefix)-07-trip-dates-evidence")
         app.typeKey(.escape, modifierFlags: [])
-        element(in: app, identifier: "trips.back").click()
+        element(in: app, identifier: "window.back").click()
     }
 
     private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, mapProbe: Bool = false, extraArguments: [String] = []) -> XCUIApplication {

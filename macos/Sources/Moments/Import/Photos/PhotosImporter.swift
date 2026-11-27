@@ -31,35 +31,28 @@ public struct PhotosImportPreview: Equatable, Sendable {
     }
 }
 
+/// Flags Apple Photos assets that are probably already in the library from a
+/// folder import. The rule is shared with the folder import (see
+/// ``CrossSourceDuplicates``), so both import orders agree.
 public struct PhotosImportDuplicateDetector: Sendable {
-    public var coordinateToleranceMeters: Double
+    public var matcher: CrossSourceDuplicateMatcher
 
-    public init(coordinateToleranceMeters: Double = 10) {
-        self.coordinateToleranceMeters = max(0, coordinateToleranceMeters)
+    public init(matcher: CrossSourceDuplicateMatcher = CrossSourceDuplicateMatcher()) {
+        self.matcher = matcher
     }
 
+    /// `knownHashes` maps an asset's local identifier to the perceptual hash
+    /// already stored for it, for refreshes that did not render a thumbnail.
     public func matchingPhotoIdentifiers(
         _ mappedAssets: [PhotosMappedAsset],
-        against existingItems: [MediaItem]
+        against existingItems: [MediaItem],
+        knownHashes: [String: String] = [:]
     ) -> Set<String> {
-        let folderItems = existingItems.filter { $0.source == .file }
-        return mappedAssets.reduce(into: Set<String>()) { matches, mapped in
-            guard let date = mapped.asset.creationDate else { return }
-            let hasCoordinate = mapped.asset.location != nil
-            guard folderItems.contains(where: { existing in
-                guard let existingDate = existing.captureDate,
-                      abs(existingDate.timeIntervalSince(date)) <= 1,
-                      existing.width == mapped.asset.pixelWidth,
-                      existing.height == mapped.asset.pixelHeight else { return false }
-                guard hasCoordinate,
-                      let lhs = mapped.asset.location,
-                      let rhs = existing.latitude.flatMap({ latitude in existing.longitude.map { GeoPoint(latitude: latitude, longitude: $0) } }) else {
-                    return false
-                }
-                return lhs.distance(to: rhs) <= coordinateToleranceMeters
-            }) else { return }
-            matches.insert(mapped.asset.localIdentifier)
+        let incoming = mappedAssets.compactMap { mapped in
+            CrossSourceDuplicates.candidate(for: mapped, knownHash: knownHashes[mapped.asset.localIdentifier])
         }
+        guard !incoming.isEmpty else { return [] }
+        return matcher.matchingIDs(incoming, against: CrossSourceDuplicates.candidates(in: existingItems, from: .file))
     }
 }
 
@@ -176,7 +169,8 @@ public struct PhotosImporter {
         let fresh = mapped
 
         let duplicateDetector = PhotosImportDuplicateDetector()
-        let duplicateLocalIDs = duplicateDetector.matchingPhotoIdentifiers(fresh, against: existing.filter { $0.deletedAt == nil })
+        let knownHashes = existingByPhotosID.compactMapValues(\.perceptualHash)
+        let duplicateLocalIDs = duplicateDetector.matchingPhotoIdentifiers(fresh, against: existing, knownHashes: knownHashes)
         let metadata = fresh.map(\.metadata)
         let organizer = ImportOrganizer(
             configuration: configuration,
@@ -201,7 +195,7 @@ public struct PhotosImporter {
                 decision: .pending
             )
         }
-        let mergedFlags = mergeFlags(plan.flags, duplicateFlags)
+        let mergedFlags = CrossSourceDuplicates.mergeFlags(plan.flags, duplicateFlags)
         // Incremental refreshes still organize existing assets to refresh derived metadata,
         // but only new assets may create persisted trip/place suggestions below.
         let existingTrips = try context.fetch(FetchDescriptor<Trip>())
@@ -521,19 +515,6 @@ public struct PhotosImporter {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
             .precomposedStringWithCanonicalMapping
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
-    }
-
-    private func mergeFlags(_ first: [ImportReviewFlag], _ second: [ImportReviewFlag]) -> [ImportReviewFlag] {
-        var values = Dictionary(uniqueKeysWithValues: first.map { ($0.id, $0) })
-        for flag in second {
-            if let old = values[flag.id] {
-                let reasons = Array(Set(old.reasons + flag.reasons)).sorted { $0.rawValue < $1.rawValue }
-                values[flag.id] = ImportReviewFlag(id: old.id, fileName: old.fileName, reasons: reasons, detail: old.detail ?? flag.detail, suggestedDayKey: old.suggestedDayKey ?? flag.suggestedDayKey, suggestedPlaceName: old.suggestedPlaceName ?? flag.suggestedPlaceName, decision: old.decision)
-            } else {
-                values[flag.id] = flag
-            }
-        }
-        return values.values.sorted { $0.fileName.localizedStandardCompare($1.fileName) == .orderedAscending }
     }
 
     private func placeIDsToPersist(in plan: OrganizedImportPlan, newMetadataIDs: Set<String>) -> Set<String> {

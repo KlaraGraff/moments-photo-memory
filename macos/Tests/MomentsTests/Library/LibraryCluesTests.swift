@@ -89,16 +89,33 @@ final class LibraryCluesTests: XCTestCase {
         XCTAssertEqual(ids, ["cluster.cluster-five"], "Only a group in five or more photos asks who it is")
     }
 
-    func testAtMostSixUnnamedGroupsShowLargestFirst() {
-        var all: [FaceObservation] = []
-        for size in 5...11 {
+    func testEveryUnnamedGroupShowsLargestFirstAfterTheNamedPeople() {
+        let anna = Person(id: "anna", name: "Anna")
+        var all: [FaceObservation] = faces("anna", count: 2, personID: "anna")
+        for size in 5...24 {
             all += faces("g\(size)", count: size, clusterID: "cluster-\(size)")
         }
 
-        let entries: [PeopleStripEntry] = PeopleStrip.entries(faces: all, people: [], itemsByID: items(for: all))
+        let entries: [PeopleStripEntry] = PeopleStrip.entries(faces: all, people: [anna], itemsByID: items(for: all))
 
         let counts: [Int] = entries.map { (entry: PeopleStripEntry) -> Int in entry.photoCount }
-        XCTAssertEqual(counts, [11, 10, 9, 8, 7, 6], "Six groups at a time, the largest first")
+        let expected: [Int] = [2] + Array((5...24).reversed())
+        XCTAssertEqual(counts, expected, "No cap: the named person, then all twenty groups, the largest first")
+    }
+
+    func testChapterFacesCanShowAnyGroupTheRowShows() {
+        // More groups than the row used to show at once, all in one chapter:
+        // the chapter's faces are not limited to the six largest.
+        var all: [FaceObservation] = []
+        for size in 5...12 {
+            all += faces("g\(size)", count: size, clusterID: "cluster-\(size)")
+        }
+        let sets: [String: Set<String>] = ["small": ["g5-1"]]
+
+        let found: [String: [PeopleStripEntry]] = PeopleStrip.companions(in: sets, faces: all, people: [], itemsByID: items(for: all), limit: 5)
+
+        let ids: [String] = (found["small"] ?? []).map { (entry: PeopleStripEntry) -> String in entry.id }
+        XCTAssertEqual(ids, ["cluster.cluster-5"], "The smallest group, the eighth largest, still shows on its chapter")
     }
 
     // MARK: Faces on a chapter

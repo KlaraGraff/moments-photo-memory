@@ -107,6 +107,7 @@ final class SelectionModelBackTests: XCTestCase {
         model.goBack()
         XCTAssertEqual(model.mapScope, MapScope(title: "Map", itemIDs: nil))
         XCTAssertEqual(model.mapFocusRequest, "p7", "The map should fly back to the place it had open")
+        XCTAssertEqual(model.focusedItemID, "p7", "The place's photo should be selected so the place stays open")
     }
 
     func testRenamingInTheHeadingAddsNoStep() {

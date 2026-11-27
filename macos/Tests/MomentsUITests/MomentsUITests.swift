@@ -1244,8 +1244,9 @@ final class MomentsUITests: XCTestCase {
         first.doubleClick()
         let viewer = element(in: app, identifier: "viewer")
         XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout))
-        // The first photo with a place name has the link to the photos taken there.
-        let link = element(in: app, identifier: "viewer.place.photos")
+        // The first photo with a place name has the link to the photos taken
+        // there. By type: the column's scroll view also answers to it.
+        let link = app.buttons["viewer.place.photos"]
         let next = element(in: app, identifier: "viewer.next")
         var found: Bool = link.waitForExistence(timeout: 3)
         for _ in 0..<15 where !found {

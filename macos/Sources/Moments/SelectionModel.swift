@@ -358,8 +358,11 @@ final class SelectionModel {
         openTripID = stop.openTripID
         mapOpenPlaceItemID = nil
         mapScope = stop.mapScope
-        // The map opens again at the place it had open.
+        // The map opens again at the place it had open. The photo is
+        // selected too, as "Show on Map" does: the map keeps a place open
+        // through a zoom only while one of its photos is selected.
         mapFocusRequest = stop.mapScope == nil ? nil : stop.mapItemID
+        if stop.mapScope != nil, let itemID = stop.mapItemID { select(itemID) }
         page = stop.page
         viewerRequest = stop.viewerRequest
     }

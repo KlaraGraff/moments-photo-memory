@@ -1179,6 +1179,97 @@ final class MomentsUITests: XCTestCase {
         }
     }
 
+    /// "Zoom to photos" and "Whole world" move the camera evenly through the
+    /// zoom levels: slow at the start, fastest in the middle, slow at the end,
+    /// instead of saving most of the zoom for one jump at the end (or start).
+    func testMapButtonsZoomSmoothly() {
+        let app = launch(language: "en", extraArguments: ["-MomentsUITestCameraProbe"])
+        openLargeMap(app)
+        let probe = element(in: app, identifier: "debug.cameraTrace")
+        XCTAssertTrue(probe.waitForExistence(timeout: launchTimeout), "The camera probe is missing")
+        let fit = element(in: app, identifier: "map.fit")
+        XCTAssertTrue(fit.waitForExistence(timeout: launchTimeout))
+        // The globe settles and the photos are clustered first.
+        Thread.sleep(forTimeInterval: 2.0)
+
+        fit.click()
+        let zoomIn: [CameraSample] = cameraTrace(probe, press: 1)
+        checkSmoothZoom(zoomIn, named: "zoom to photos")
+        capture(app, named: "map-camera-01-photos-evidence")
+
+        element(in: app, identifier: "map.globe").click()
+        let zoomOut: [CameraSample] = cameraTrace(probe, press: 2)
+        checkSmoothZoom(zoomOut, named: "whole world")
+        capture(app, named: "map-camera-02-globe-evidence")
+    }
+
+    private struct CameraSample {
+        let time: Double
+        let distance: Double
+    }
+
+    /// Waits for the move after button press `press` to finish, then reads
+    /// the camera distances MapKit reported during it.
+    private func cameraTrace(_ probe: XCUIElement, press: Int) -> [CameraSample] {
+        let prefix: String = "trace#\(press)="
+        let started = NSPredicate(format: "label BEGINSWITH %@", prefix)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: started, evaluatedWith: probe)], timeout: 5), .completed, "Press \(press) left no camera trace: \(probe.label)")
+        // Longer than any move, plus the probe's quarter-second refresh.
+        Thread.sleep(forTimeInterval: 3.0)
+        let label: String = probe.label
+        let body: Substring = label.dropFirst(prefix.count)
+        let samples: [CameraSample] = body.split(separator: ",").compactMap { entry in
+            let parts: [Substring] = entry.split(separator: ":")
+            guard parts.count == 2, let milliseconds = Double(parts[0]), let distance = Double(parts[1]), distance > 0 else { return nil }
+            return CameraSample(time: milliseconds / 1000, distance: distance)
+        }
+        print("CAMERA-TRACE press \(press): \(label)")
+        return samples
+    }
+
+    /// The share of the whole zoom (in zoom levels, not metres) done in the
+    /// first and last 15 % of the move must be small, and the move must be
+    /// animated, not a cut.
+    private func checkSmoothZoom(_ samples: [CameraSample], named name: String, file: StaticString = #filePath, line: UInt = #line) {
+        guard let first = samples.first, let last = samples.last, samples.count >= 2 else {
+            XCTFail("\(name): too few camera reports (\(samples.count))", file: file, line: line)
+            return
+        }
+        let total: Double = log(last.distance / first.distance)
+        XCTAssertGreaterThan(abs(total), log(4.0), "\(name): the camera barely zoomed (\(first.distance) → \(last.distance) m)", file: file, line: line)
+        // The move ends when the distance is within 1 % of where it stopped.
+        let endIndex: Int = samples.firstIndex { sample in
+            abs(log(sample.distance / last.distance)) < 0.01
+        } ?? samples.count - 1
+        guard endIndex >= 1 else {
+            XCTFail("\(name): the camera did not move", file: file, line: line)
+            return
+        }
+        let end: Double = samples[endIndex].time
+        let moving: Int = samples[1...endIndex].count
+        XCTAssertGreaterThanOrEqual(moving, 8, "\(name): only \(moving) camera reports during the move; it jumped instead of moving", file: file, line: line)
+        XCTAssertGreaterThan(end, 0.3, "\(name): the move took only \(end) s", file: file, line: line)
+        let startShare: Double = log(logDistance(samples, at: end * 0.15) / first.distance) / total
+        let endShare: Double = log(last.distance / logDistance(samples, at: end * 0.85)) / total
+        print("CAMERA-TRACE \(name): \(String(format: "%.2f", end)) s, first 15 % did \(Int((startShare * 100).rounded())) %, last 15 % did \(Int((endShare * 100).rounded())) % of the zoom")
+        XCTAssertLessThan(startShare, 0.2, "\(name): the first 15 % of the move did \(Int(startShare * 100)) % of the zoom", file: file, line: line)
+        XCTAssertLessThan(endShare, 0.2, "\(name): the last 15 % of the move did \(Int(endShare * 100)) % of the zoom", file: file, line: line)
+    }
+
+    /// The camera distance at `time`, read between the two reports around it
+    /// evenly in zoom levels.
+    private func logDistance(_ samples: [CameraSample], at time: Double) -> Double {
+        guard let after = samples.firstIndex(where: { $0.time >= time }) else { return samples.last?.distance ?? 1 }
+        guard after > 0 else { return samples[0].distance }
+        let a: CameraSample = samples[after - 1]
+        let b: CameraSample = samples[after]
+        let span: Double = b.time - a.time
+        let fraction: Double = span > 0 ? (time - a.time) / span : 1
+        let logA: Double = log(a.distance)
+        let logB: Double = log(b.distance)
+        return exp(logA + (logB - logA) * fraction)
+    }
+
     /// A country on the Map's globe lists its photos in the Library.
     func testMapCountryShowsItsPhotosInLibrary() {
         let app = launch(language: "en")

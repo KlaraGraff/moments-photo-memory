@@ -258,6 +258,11 @@ struct MapScreen: View {
             .clipped()
             .overlay(alignment: .top) { topBar }
             .overlay(alignment: .bottom) { bottomStrip }
+            #if DEBUG
+            .background {
+                if MapCameraTrace.isEnabled { MapCameraTraceProbe() }
+            }
+            #endif
 
             if snapshot.isEmpty, cachedSnapshot != nil {
                 emptyState
@@ -315,6 +320,11 @@ struct MapScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("map.view")
         .accessibilityLabel(Text("Map"))
+        #if DEBUG
+        .onMapCameraChange(frequency: .continuous) { context in
+            MapCameraTrace.record(distance: context.camera.distance)
+        }
+        #endif
         .onMapCameraChange(frequency: .onEnd) { context in
             defer {
                 updateWorldClusters()
@@ -460,12 +470,18 @@ struct MapScreen: View {
             // or frame exactly the places the photos were taken.
             Group {
                 Button("Whole world", systemImage: "globe.europe.africa") {
+                    #if DEBUG
+                    MapCameraTrace.begin(distance: cameraDistance)
+                    #endif
                     showGlobe()
                 }
                 .help("Back out to the globe with every country you visited")
                 .accessibilityIdentifier("map.globe")
 
                 Button("Zoom to photos", systemImage: "photo.on.rectangle") {
+                    #if DEBUG
+                    MapCameraTrace.begin(distance: cameraDistance)
+                    #endif
                     fitAll()
                 }
                 .help("Zoom in to the places your photos were taken")

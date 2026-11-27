@@ -228,6 +228,7 @@ struct MapScreen: View {
         // the visible pins until the camera reports again.
         .onChange(of: selectedClusterID) { _, _ in
             updateVisibleClusters()
+            rememberOpenPlace()
         }
     }
 
@@ -1054,6 +1055,21 @@ struct MapScreen: View {
         self.selectedClusterID = anchor.flatMap { itemID in
             newSnapshot.cluster(containing: itemID)?.id
         }
+    }
+
+    /// Tells the window which place is open, so the back button can bring
+    /// the map back to it after a jump to the Library or a chapter.
+    private func rememberOpenPlace() {
+        var itemID: String? = nil
+        if let selectedClusterID,
+           let cluster = snapshot.clusters.first(where: { (cluster: PlaceCluster) -> Bool in cluster.id == selectedClusterID }) {
+            if let focused = selection.focusedItemID, cluster.stopIDs.contains(focused) {
+                itemID = focused
+            } else {
+                itemID = cluster.stopIDs.first
+            }
+        }
+        if selection.mapOpenPlaceItemID != itemID { selection.mapOpenPlaceItemID = itemID }
     }
 
     private func focus(on itemID: String?) {

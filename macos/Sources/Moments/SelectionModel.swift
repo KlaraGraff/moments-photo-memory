@@ -17,6 +17,9 @@ struct NavigationStop: Equatable {
     var libraryScope: LibraryScope?
     var openTripID: String?
     var mapScope: MapScope?
+    /// The photo whose place the large map had open, so the map comes back
+    /// at that place with its photos.
+    var mapItemID: String?
     var viewerRequest: ViewerRequest?
 }
 
@@ -211,7 +214,10 @@ final class SelectionModel {
 
     /// The photos the large map is showing; `nil` while it is closed.
     var mapScope: MapScope? {
-        didSet { mapScopeGeneration &+= 1 }
+        didSet {
+            mapScopeGeneration &+= 1
+            if mapScope == nil { mapOpenPlaceItemID = nil }
+        }
     }
     /// Changes each time `mapScope` is assigned, so the map hashes this
     /// instead of the whole set.
@@ -220,12 +226,16 @@ final class SelectionModel {
     /// A photo the Map should fly to once it is on screen; the Map only
     /// follows focus changes while it is already showing.
     var mapFocusRequest: String?
+    /// A photo of the place the large map has open (its strip of photos),
+    /// kept by the map; `nil` while no place is open.
+    var mapOpenPlaceItemID: String?
 
     /// Opens the large map on `ids` (every photo when `nil`), closing the viewer.
     func showMap(title: String, itemIDs ids: Set<String>?) {
         rememberCurrentStop()
         viewerRequest = nil
         mapFocusRequest = nil
+        mapOpenPlaceItemID = nil
         mapScope = MapScope(title: title, itemIDs: ids)
     }
 
@@ -234,6 +244,7 @@ final class SelectionModel {
         rememberCurrentStop()
         viewerRequest = nil
         select(itemID)
+        mapOpenPlaceItemID = nil
         mapFocusRequest = itemID
         mapScope = MapScope(title: title, itemIDs: nil)
     }
@@ -273,7 +284,14 @@ final class SelectionModel {
 
     /// Where the window is now.
     var currentStop: NavigationStop {
-        NavigationStop(page: page, libraryScope: libraryScope, openTripID: openTripID, mapScope: mapScope, viewerRequest: viewerRequest)
+        NavigationStop(
+            page: page,
+            libraryScope: libraryScope,
+            openTripID: openTripID,
+            mapScope: mapScope,
+            mapItemID: mapScope == nil ? nil : mapOpenPlaceItemID,
+            viewerRequest: viewerRequest
+        )
     }
 
     /// Called by every jump to another page or level before it changes anything.
@@ -300,6 +318,7 @@ final class SelectionModel {
         up.viewerRequest = nil
         if up.mapScope != nil {
             up.mapScope = nil
+            up.mapItemID = nil
         } else if up.page == .library, up.libraryScope != nil {
             up.libraryScope = nil
         } else if up.page == .trips, up.openTripID != nil {
@@ -337,7 +356,10 @@ final class SelectionModel {
         viewerRequest = nil
         libraryScope = stop.libraryScope
         openTripID = stop.openTripID
+        mapOpenPlaceItemID = nil
         mapScope = stop.mapScope
+        // The map opens again at the place it had open.
+        mapFocusRequest = stop.mapScope == nil ? nil : stop.mapItemID
         page = stop.page
         viewerRequest = stop.viewerRequest
     }

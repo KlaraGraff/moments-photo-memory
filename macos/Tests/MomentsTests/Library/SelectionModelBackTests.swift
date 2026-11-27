@@ -94,6 +94,21 @@ final class SelectionModelBackTests: XCTestCase {
         XCTAssertNil(model.backTarget)
     }
 
+    func testTheMapComesBackAtThePlaceItHadOpen() {
+        let model: SelectionModel = SelectionModel()
+        model.page = .trips
+        model.showMap(title: "Map", itemIDs: nil)
+        // The map opened a place's strip of photos.
+        model.mapOpenPlaceItemID = "p7"
+        model.showInLibrary(["p7", "p8"], title: "Lisbon")
+        settle(model)
+        XCTAssertNil(model.mapOpenPlaceItemID)
+
+        model.goBack()
+        XCTAssertEqual(model.mapScope, MapScope(title: "Map", itemIDs: nil))
+        XCTAssertEqual(model.mapFocusRequest, "p7", "The map should fly back to the place it had open")
+    }
+
     func testRenamingInTheHeadingAddsNoStep() {
         let model: SelectionModel = SelectionModel()
         model.showInLibrary(["p1"], title: "Harbour", placeName: "Harbour")

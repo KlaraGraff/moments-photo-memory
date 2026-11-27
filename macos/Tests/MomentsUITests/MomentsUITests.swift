@@ -516,6 +516,51 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "map-01-photo-pins-evidence")
     }
 
+    /// The way maple went: the large map, a place, one of its photos looked
+    /// at, then "Show in Library". Back returns to the map with that place's
+    /// photos open, and once more to where the map was opened.
+    func testBackFromShowInLibraryReturnsToTheMapsPlace() {
+        let app = launch(language: "en")
+        _ = openMapAtPhotos(app)
+        let marker = element(in: app, identifier: "map.marker.D0001")
+        XCTAssertTrue(marker.waitForExistence(timeout: launchTimeout))
+        marker.click()
+        let panel = element(in: app, identifier: "map.panel")
+        XCTAssertTrue(panel.waitForExistence(timeout: launchTimeout), "Clicking a place did not open its photos")
+
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "map.panel.photo."))
+            .firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout), "The place's strip has no photo")
+        photo.click()
+        let viewer = element(in: app, identifier: "viewer")
+        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout), "Clicking a photo in the strip did not open it")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(viewer.waitForNonExistence(timeout: launchTimeout))
+        XCTAssertTrue(panel.exists, "Closing the photo closed the place's strip too")
+
+        element(in: app, identifier: "map.panel.show-in-library").click()
+        let heading = element(in: app, identifier: "library.scope")
+        XCTAssertTrue(heading.waitForExistence(timeout: launchTimeout), "Show in Library did not show the place's photos")
+        let map = element(in: app, identifier: "map.view")
+        XCTAssertTrue(map.waitForNonExistence(timeout: launchTimeout))
+        capture(app, named: "back-map-01-show-in-library-evidence")
+
+        let back = element(in: app, identifier: "window.back")
+        XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The Library has no Back after Show in Library")
+        back.click()
+        XCTAssertTrue(map.waitForExistence(timeout: 30), "Back did not return to the large map")
+        XCTAssertTrue(panel.waitForExistence(timeout: 30), "The map came back without the place that was open")
+        XCTAssertFalse(heading.exists, "The place's photos stayed in front of the map")
+        Thread.sleep(forTimeInterval: 1.0)
+        capture(app, named: "back-map-02-returned-evidence")
+
+        // The map was opened from Chapters: Back closes it there.
+        back.click()
+        XCTAssertTrue(map.waitForNonExistence(timeout: launchTimeout), "Back did not close the large map")
+        XCTAssertTrue(back.waitForNonExistence(timeout: launchTimeout), "Chapters has nothing to go back to, yet shows Back")
+    }
+
     func testPlacesPanelIsCompactAndCloses() {
         let app = launch(language: "en")
         let map = openMapAtPhotos(app)

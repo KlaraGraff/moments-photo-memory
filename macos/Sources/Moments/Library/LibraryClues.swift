@@ -335,6 +335,9 @@ struct LibraryPeopleStrip: View {
     @State private var visibleWidth: CGFloat = 0
 
     private static let space = "library.people.viewport"
+    /// The row itself, padding included: paging back to the first face
+    /// scrolls here, so the row comes all the way back to its start.
+    private static let startID = "library.people.start"
     private static let itemWidth: CGFloat = 64
     private static let spacing: CGFloat = 16
     private static let faceSize: CGFloat = 48
@@ -375,6 +378,7 @@ struct LibraryPeopleStrip: View {
                     }
                     .padding(.vertical, 2)
                     .padding(.horizontal, 2)
+                    .id(Self.startID)
                     .onGeometryChange(for: CGRect.self, of: { (geometry: GeometryProxy) -> CGRect in geometry.frame(in: .named(Self.space)) }) { (frame: CGRect) in
                         rowFrame = frame
                     }
@@ -444,7 +448,7 @@ struct LibraryPeopleStrip: View {
             ? min(entries.count - 1, first + perPage)
             : max(0, first - perPage)
         guard entries.indices.contains(target) else { return }
-        let id: String = entries[target].id
+        let id: String = target == 0 ? Self.startID : entries[target].id
         withAnimation(.easeInOut(duration: 0.3)) {
             proxy.scrollTo(id, anchor: .leading)
         }

@@ -41,6 +41,8 @@ struct PhotoViewer: View {
     @State private var lastSwipeStep: CGFloat = 0
     @State private var lastWheelPage = Date.distantPast
     @State private var isEditingInfo = false
+    /// The postcard sheet is open over the viewer; keys and the wheel are its own.
+    @State private var isMakingPostcard = false
     /// The shots of the open photo's stack, oldest first.
     @State private var stackMembers: [MediaItem] = []
     @FocusState private var isFocused: Bool
@@ -133,6 +135,11 @@ struct PhotoViewer: View {
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
+        .sheet(isPresented: $isMakingPostcard, onDismiss: { isFocused = true }) {
+            if let item {
+                PostcardSheet(item: item)
+            }
+        }
         .onAppear {
             isFocused = true
             installEventMonitor()
@@ -164,7 +171,7 @@ struct PhotoViewer: View {
             return .handled
         }
         .onReceive(NotificationCenter.default.publisher(for: .momentsDeleteWithoutAsking)) { _ in
-            guard !isTyping, selection.pendingDeletion == nil, item?.deletedAt == nil else { return }
+            guard !isTyping, !isMakingPostcard, selection.pendingDeletion == nil, item?.deletedAt == nil else { return }
             deleteOpenPhoto(confirm: false)
         }
         .task(id: request.itemID) {
@@ -223,6 +230,12 @@ struct PhotoViewer: View {
                 stackActions(stack)
             }
             if let item {
+                if item.kind != .video, item.deletedAt == nil {
+                    headerButton("envelope", label: String(localized: "Make Postcard"), identifier: "viewer.postcard") {
+                        isMakingPostcard = true
+                    }
+                    .help(String(localized: "Make Postcard"))
+                }
                 if item.deletedAt == nil, RecentlyDeleted.canDelete(item) {
                     headerButton("trash", label: String(localized: "Delete from Moments"), identifier: "viewer.delete") {
                         deleteOpenPhoto(confirm: true)
@@ -415,7 +428,7 @@ struct PhotoViewer: View {
     }
 
     private func handle(_ event: NSEvent) -> Bool {
-        guard selection.viewerRequest != nil else { return false }
+        guard selection.viewerRequest != nil, !isMakingPostcard else { return false }
         if event.type == .keyDown {
             // Esc in "Delete from Moments?" cancels the alert only.
             guard selection.pendingDeletion == nil else { return false }

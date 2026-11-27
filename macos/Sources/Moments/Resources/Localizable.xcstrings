@@ -19128,6 +19128,28 @@
           }
         }
       }
+    },
+    "Postcard Preview" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Postkartenvorschau"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Postcard Preview"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "明信片预览"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

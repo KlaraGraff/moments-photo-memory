@@ -76,7 +76,7 @@ struct PostcardSheet: View {
 
             ZStack {
                 if let preview {
-                    Image(decorative: preview, scale: 2)
+                    Image(preview, scale: 2, label: Text(String(localized: "Postcard Preview")))
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .shadow(color: Paper.shadow.opacity(0.16), radius: 6, y: 2)

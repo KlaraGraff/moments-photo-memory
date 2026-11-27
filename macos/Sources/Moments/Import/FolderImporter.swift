@@ -50,7 +50,8 @@ enum FolderImportError: LocalizedError {
 }
 
 struct FolderImporter {
-    let metadataReader = MediaMetadataReader()
+    /// Reads one file's metadata and content hash: the slow part of an import.
+    let readMetadata: @Sendable (URL) async throws -> ImportedMediaMetadata
     let configuration: ImportConfiguration
     let geocoder: any ImportGeocoder
     let geocodeCache: ImportGeocodeCache
@@ -60,6 +61,10 @@ struct FolderImporter {
     /// (half-degree cells) and a wrong zone moves the capture date, so the
     /// import waits for them. Place names can come later.
     let timeZoneDelay: @Sendable () async -> Void
+    /// What this folder's earlier, unfinished imports already read.
+    let resumeStore: ImportResumeStore
+    /// Files read between two checkpoint writes.
+    let resumeBatchSize: Int
 
     init(
         configuration: ImportConfiguration = ImportConfiguration(),
@@ -70,6 +75,11 @@ struct FolderImporter {
         },
         timeZoneDelay: @escaping @Sendable () async -> Void = {
             await ImportGeocodePacer.shared.wait()
+        },
+        resumeStore: ImportResumeStore = .shared,
+        resumeBatchSize: Int = 200,
+        readMetadata: @escaping @Sendable (URL) async throws -> ImportedMediaMetadata = { url in
+            try await MediaMetadataReader().read(url: url)
         }
     ) {
         self.configuration = configuration
@@ -81,6 +91,9 @@ struct FolderImporter {
         )
         self.geocodeDelay = geocodeDelay
         self.timeZoneDelay = timeZoneDelay
+        self.resumeStore = resumeStore
+        self.resumeBatchSize = max(1, resumeBatchSize)
+        self.readMetadata = readMetadata
     }
 
     func importFolder(
@@ -100,17 +113,8 @@ struct FolderImporter {
         guard !urls.isEmpty else { throw FolderImportError.noSupportedMedia }
         progress(ImportProgress(phase: .scanning, completed: urls.count, total: urls.count, message: String(localized: "Found media files")))
 
-        var metadata: [ImportedMediaMetadata] = []
-        metadata.reserveCapacity(urls.count)
-        for (index, url) in urls.enumerated() {
-            try Task.checkCancellation()
-            do {
-                metadata.append(try await metadataReader.read(url: url))
-            } catch {
-                // A single malformed file should not discard an otherwise valid folder.
-            }
-            progress(ImportProgress(phase: .readingMetadata, completed: index + 1, total: urls.count, message: String(localized: "Reading metadata")))
-        }
+        let folderKey = Self.folderKey(folderURL)
+        let metadata = try await readAll(urls, folderKey: folderKey, progress: progress)
         guard !metadata.isEmpty else { throw FolderImportError.noSupportedMedia }
         let organizer = ImportOrganizer(
             configuration: configuration,
@@ -165,6 +169,7 @@ struct FolderImporter {
         if fresh.isEmpty {
             await geocodeCache.persist()
             if didUpdateSourceMappings { try context.save() }
+            await resumeStore.remove(forFolder: folderKey)
             return ImportSummary(importedCount: recovered.count, skippedCount: skippedCount, tripCount: 0, placeCount: 0, collectionCount: 0, routeCount: 0, trips: [], flags: [])
         }
 
@@ -266,6 +271,8 @@ struct FolderImporter {
             progress(ImportProgress(phase: .saving, completed: index + 1, total: fresh.count, message: String(localized: "Saving import")))
         }
         try context.save()
+        // Saved: the next import of this folder starts afresh.
+        await resumeStore.remove(forFolder: folderKey)
         progress(ImportProgress(phase: .finished, completed: fresh.count, total: fresh.count, message: String(localized: "Import complete")))
 
         let summaries = plan.trips.map { trip in
@@ -282,6 +289,59 @@ struct FolderImporter {
             flags: CrossSourceDuplicates.mergeFlags(plan.flags, duplicateFlags),
             conflicts: plan.conflicts
         )
+    }
+
+    /// Reads every file, reusing what an earlier unfinished import of this
+    /// folder already read for files whose size and modification time have
+    /// not changed, so those are not hashed again. New reads are checkpointed
+    /// every `resumeBatchSize` files, on cancellation, and once all files are
+    /// read, so cancelling later (while organizing or saving) keeps them too.
+    private func readAll(
+        _ urls: [URL],
+        folderKey: String,
+        progress: @escaping @Sendable (ImportProgress) -> Void
+    ) async throws -> [ImportedMediaMetadata] {
+        let saved = await resumeStore.entries(forFolder: folderKey)
+        // Reads since the last checkpoint write.
+        var pending: [String: ImportResumeEntry] = [:]
+        var metadata: [ImportedMediaMetadata] = []
+        metadata.reserveCapacity(urls.count)
+        do {
+            for (index, url) in urls.enumerated() {
+                try Task.checkCancellation()
+                let fingerprint = ImportFileFingerprint(url: url)
+                let key = url.standardizedFileURL.path
+                if let fingerprint, let entry = saved[key], entry.fingerprint == fingerprint {
+                    metadata.append(entry.metadata)
+                } else {
+                    do {
+                        let read = try await readMetadata(url)
+                        metadata.append(read)
+                        // A changed file's new entry replaces its old one.
+                        if let fingerprint {
+                            pending[key] = ImportResumeEntry(fingerprint: fingerprint, metadata: read)
+                        }
+                    } catch {
+                        // A single malformed file should not discard an otherwise valid folder.
+                    }
+                }
+                if pending.count >= resumeBatchSize {
+                    await resumeStore.append(pending, forFolder: folderKey)
+                    pending.removeAll(keepingCapacity: true)
+                }
+                progress(ImportProgress(phase: .readingMetadata, completed: index + 1, total: urls.count, message: String(localized: "Reading metadata")))
+            }
+        } catch {
+            // Cancelled: keep this run's reads, so a resume skips them too.
+            await resumeStore.append(pending, forFolder: folderKey)
+            throw error
+        }
+        await resumeStore.append(pending, forFolder: folderKey)
+        return metadata
+    }
+
+    static func folderKey(_ folderURL: URL) -> String {
+        folderURL.standardizedFileURL.path
     }
 
     private func scan(_ folderURL: URL) -> [URL] {

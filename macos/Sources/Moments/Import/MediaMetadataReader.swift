@@ -3,6 +3,7 @@ import CoreGraphics
 import CryptoKit
 import Foundation
 import ImageIO
+import MomentsCore
 import UniformTypeIdentifiers
 
 enum MediaMetadataReaderError: LocalizedError {
@@ -91,36 +92,105 @@ struct MediaMetadataReader {
             let asset = AVURLAsset(url: url)
             let durationTime = try? await asset.load(.duration)
             let duration = durationTime?.seconds
-            let creationDate = try? await asset.load(.creationDate)
-            let assetMetadata = try? await asset.load(.metadata)
-            let captureDate = creationDate?.dateValue ?? values?.contentModificationDate ?? values?.creationDate ?? .now
+            let creationItem = try? await asset.load(.creationDate)
+            let assetMetadata = (try? await asset.load(.metadata)) ?? []
+            let quickTime = await Self.quickTimeValues(from: assetMetadata, creationItem: creationItem)
+            let date = Self.videoCaptureDate(quickTime: quickTime)
+            let fileDate = values?.contentModificationDate ?? values?.creationDate ?? .now
+            let captureDate = date?.date ?? fileDate
+            let wallClockDate = date?.isWallClock == true ? date?.date : nil
             let tracks = try? await asset.load(.tracks)
             let videoTrack = tracks?.first(where: { $0.mediaType == .video })
             let size = videoTrack.map { $0.naturalSize.applying($0.preferredTransform) }
             let width = Int(abs(size?.width ?? 0))
             let height = Int(abs(size?.height ?? 0))
+            let coordinate = quickTime.location.flatMap {
+                ImportLocation.usable(latitude: $0.latitude, longitude: $0.longitude)
+            }
             return ImportedMediaMetadata(
                 id: hash,
                 bookmarkData: bookmark,
                 fileName: url.lastPathComponent,
                 contentHash: hash,
                 captureDate: captureDate,
-                captureDateSource: creationDate == nil ? .fileDateFallback : .asset,
-                timeZoneOffsetMinutes: nil,
-                latitude: nil,
-                longitude: nil,
+                captureDateSource: date == nil ? .fileDateFallback : .asset,
+                timeZoneOffsetMinutes: date?.offsetMinutes,
+                latitude: coordinate?.latitude,
+                longitude: coordinate?.longitude,
                 width: width,
                 height: height,
                 kind: .video,
                 duration: duration,
-                exactCaptureDate: creationDate?.dateValue,
-                dateHintUTC: creationDate == nil ? captureDate : nil,
-                timeConfidence: creationDate == nil ? .low : .exact,
-                timeZoneIdentifier: nil,
+                exactCaptureDate: date == nil || wallClockDate != nil ? nil : captureDate,
+                dateHintUTC: date == nil ? captureDate : nil,
+                timeConfidence: date == nil ? .low : (wallClockDate == nil ? .exact : .zoneUnknown),
+                timeZoneIdentifier: date?.offsetMinutes.flatMap { TimeZone(secondsFromGMT: $0 * 60)?.identifier },
                 parentDirectoryKey: url.deletingLastPathComponent().standardizedFileURL.path,
-                appleContentIdentifier: Self.appleContentIdentifier(from: assetMetadata ?? [])
+                appleContentIdentifier: Self.appleContentIdentifier(from: assetMetadata),
+                wallClockDate: wallClockDate
             )
         }
+    }
+
+    /// The QuickTime values a video's place and time come from, as text.
+    struct QuickTimeValues: Equatable {
+        /// `com.apple.quicktime.location.ISO6709`, or the user-data and
+        /// common location an MP4 may carry instead.
+        var location: GeoPoint?
+        /// `com.apple.quicktime.creationdate`, which phones write with the
+        /// local offset, e.g. `2026-01-01T12:34:56+0200`.
+        var creationDate: QuickTimeMetadata.CreationDate?
+        /// The asset's own creation date (the movie header's UTC time).
+        var assetCreationDate: Date?
+    }
+
+    private static func quickTimeValues(from metadata: [AVMetadataItem], creationItem: AVMetadataItem?) async -> QuickTimeValues {
+        var values = QuickTimeValues()
+        // Phones write the full metadata key; older cameras and MP4 files the
+        // user-data or common one. The first readable one wins, in this order.
+        let locationIdentifiers: [AVMetadataIdentifier] = [
+            .quickTimeMetadataLocationISO6709,
+            .quickTimeUserDataLocationISO6709,
+            .commonIdentifierLocation
+        ]
+        for identifier in locationIdentifiers where values.location == nil {
+            for item in metadata where item.identifier == identifier {
+                if let text = try? await item.load(.stringValue),
+                   let point = QuickTimeMetadata.location(iso6709: text) {
+                    values.location = point
+                    break
+                }
+            }
+        }
+        for item in metadata where item.identifier == .quickTimeMetadataCreationDate {
+            if let text = try? await item.load(.stringValue),
+               let parsed = QuickTimeMetadata.creationDate(text) {
+                values.creationDate = parsed
+                break
+            }
+        }
+        if let creationItem {
+            let text = try? await creationItem.load(.stringValue)
+            let parsed = text.flatMap(QuickTimeMetadata.creationDate)
+            if values.creationDate == nil { values.creationDate = parsed }
+            // A zone-less text's date value was read in this Mac's zone, not
+            // the place's, so only a value with a zone (or none) is absolute.
+            if parsed?.isWallClock != true {
+                values.assetCreationDate = try? await creationItem.load(.dateValue)
+            }
+        }
+        return values
+    }
+
+    /// A stated offset or `Z` wins; then the movie header's UTC time; a
+    /// zone-less wall-clock value comes last, so the import resolves its zone
+    /// from the place the same way it does for offset-less photos.
+    static func videoCaptureDate(quickTime: QuickTimeValues) -> QuickTimeMetadata.CreationDate? {
+        if let parsed = quickTime.creationDate, !parsed.isWallClock { return parsed }
+        if let absolute = quickTime.assetCreationDate {
+            return QuickTimeMetadata.CreationDate(date: absolute, offsetMinutes: nil, isWallClock: false)
+        }
+        return quickTime.creationDate
     }
 
     private func mediaKind(for url: URL, contentType: UTType?) -> MediaKind {

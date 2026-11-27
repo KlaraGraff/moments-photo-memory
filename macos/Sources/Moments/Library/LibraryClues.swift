@@ -653,9 +653,8 @@ struct LibraryScopeHeading: View {
     }
 }
 
-/// The people in one Library section, as small faces beside its title: the
-/// named ones first, then the unnamed groups the row of faces asks about. A
-/// face opens that person's photos.
+/// The named people in one Library section, as small faces beside its
+/// title. A face opens that person's photos.
 struct LibrarySectionFaces: View {
     let sectionID: String
     let itemIDs: [String]
@@ -669,7 +668,7 @@ struct LibrarySectionFaces: View {
         var hasher = Hasher()
         hasher.combine(sectionID)
         hasher.combine(itemIDs.count)
-        for entry in state.peopleEntries {
+        for entry in state.peopleEntries where entry.name != nil {
             hasher.combine(entry.id)
             hasher.combine(entry.photoCount)
         }
@@ -698,7 +697,7 @@ struct LibrarySectionFaces: View {
         }
         .task(id: key) {
             var found: [PeopleStripEntry] = []
-            for entry in state.peopleEntries {
+            for entry in state.peopleEntries where entry.name != nil {
                 let isHere: Bool = itemIDs.contains { (id: String) -> Bool in entry.mediaIDs.contains(id) }
                 if isHere { found.append(entry) }
                 if found.count == Self.limit { break }

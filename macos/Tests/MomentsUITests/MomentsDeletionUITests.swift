@@ -115,33 +115,6 @@ final class MomentsDeletionUITests: XCTestCase {
         capture(app, "delete-07-recently-deleted-empty-evidence")
     }
 
-    func testRemovingAnImportedFolderMovesItsPhotos() {
-        let app = launch(language: "zh-Hans", extra: ["-MomentsUITestImportSource", "-moments.settings.tab", "imports"])
-        _ = firstPhoto(app)
-        app.typeKey(",", modifierFlags: .command)
-        let remove = element(app, "settings.imports.remove.Synthetic folder")
-        XCTAssertTrue(remove.waitForExistence(timeout: timeout), "Settings › Imports does not list the folder")
-        // By the window's own name: the button goes with the folder.
-        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
-        capture(settings, "delete-08-settings-imports-evidence")
-        remove.click()
-        let confirm = alertButton(app, "settings.imports.remove.confirm", title: "移除")
-        XCTAssertTrue(confirm.exists, "Remove did not ask")
-        capture(settings, "delete-09-remove-folder-confirm-evidence")
-        confirm.click()
-        XCTAssertTrue(element(app, "settings.imports.removed").waitForExistence(timeout: timeout), "No word on what was removed")
-        capture(settings, "delete-10-folder-removed-evidence")
-        app.typeKey("w", modifierFlags: .command)
-        // Exactly the folder's three photos wait in Recently Deleted.
-        let trash = element(app, "sidebar.recently-deleted")
-        XCTAssertTrue(trash.waitForExistence(timeout: timeout), "No Recently Deleted after removing the folder")
-        trash.click()
-        let deleted = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "recently-deleted.photo."))
-        XCTAssertTrue(deleted.element(boundBy: 2).waitForExistence(timeout: timeout))
-        XCTAssertEqual(deleted.count, 3, "Recently Deleted does not hold exactly the folder's three photos")
-        capture(app, "delete-11-folder-in-recently-deleted-evidence")
-    }
-
     /// The alert's button by its identifier, or by its title where the
     /// system alert does not carry SwiftUI identifiers.
     private func alertButton(_ app: XCUIApplication, _ identifier: String, title: String) -> XCUIElement {

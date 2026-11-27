@@ -6,19 +6,8 @@ import UniformTypeIdentifiers
 
 private enum MomentsSection: Hashable {
     case library
-    case people
-    case map
-    case timeline
     case trips
-    case group(String)
     case recentlyDeleted
-}
-
-enum GroupEditorKind: String, Equatable, Identifiable {
-    case newManual
-    case newSmart
-
-    var id: String { rawValue }
 }
 
 private typealias MomentsPalette = Paper
@@ -33,93 +22,32 @@ struct ContentView: View {
     /// The shared library lists; fetched once for every page instead of once
     /// per page, and refreshed when something the sidebar groups by changes.
     @Environment(LibraryStore.self) private var store
-    /// "My groups" only; chapters live on the Chapters page, and stack
-    /// records are not groups anyone made.
-    @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" }, sort: \UserGroup.name)
-    private var groups: [UserGroup]
-    @Query private var groupItems: [UserGroupItem]
     @AppStorage(LibraryLaunchState.appStorageKey) private var firstLaunchCompleted = false
-    @State private var groupEditorKind: GroupEditorKind?
-    @State private var groupToEdit: UserGroup?
-    @State private var groupToDelete: UserGroup?
-    @State private var cachedGroupCounts: [String: Int] = [:]
+
+    /// A click on a page in the sidebar also leaves the large map, even when
+    /// that page was already the one behind it: a list tells nobody about a
+    /// click on the row it already shows as selected, so no row is selected
+    /// while the map is up.
+    private var sidebarSelection: Binding<MomentsSection?> {
+        Binding(
+            get: { shared.mapScope == nil ? selection : nil },
+            set: { section in
+                selection = section
+                if shared.mapScope != nil { shared.mapScope = nil }
+            }
+        )
+    }
 
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
-                List(selection: $selection) {
+                List(selection: sidebarSelection) {
+                    // The two pages the app is for: the photos, and the
+                    // chapters to look back on. People and places are not
+                    // pages: they show on the photos and chapters themselves.
                     Section {
                         sidebarRow("Library", icon: "photo.on.rectangle.angled", section: .library, identifier: "sidebar.library")
-                        sidebarRow("People", icon: "person.2", section: .people, identifier: "sidebar.people")
-                        sidebarRow("Map", icon: "map.circle", section: .map, identifier: "sidebar.map")
-                        sidebarRow("Timeline", icon: "timeline.selection", section: .timeline, identifier: "sidebar.timeline")
                         sidebarRow("Chapters", icon: "book.pages", section: .trips, identifier: "sidebar.trips")
-                    }
-
-                    Section {
-                        ForEach(groups, id: \.id) { group in
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Image(systemName: group.kind == .smart ? "sparkles" : "folder")
-                                    .foregroundStyle(MomentsPalette.accent)
-                                Text(group.name)
-                                    .lineLimit(1)
-                                Spacer(minLength: 2)
-                                Text("\(groupItemCount(group))")
-                                    .font(.caption2.monospacedDigit())
-                                    .foregroundStyle(MomentsPalette.muted)
-                                Text(group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
-                                    .font(.caption2)
-                                    .foregroundStyle(MomentsPalette.muted)
-                            }
-                            .tag(MomentsSection.group(group.id))
-                            .contentShape(Rectangle())
-                            .accessibilityIdentifier("sidebar.group.\(group.id)")
-                            .onDrop(of: [.text], isTargeted: nil) { providers in
-                                receiveDrop(providers, into: group)
-                            }
-                            .contextMenu {
-                                Button(String(localized: "Rename")) {
-                                    groupToEdit = group
-                                    groupEditorKind = group.kind == .smart ? .newSmart : .newManual
-                                }
-                                if UserGroupRuleEngine.canDelete(group) {
-                                    Button(String(localized: "Delete group"), role: .destructive) {
-                                        groupToDelete = group
-                                    }
-                                }
-                            }
-                        }
-
-                        Menu {
-                            Button(String(localized: "New manual group")) {
-                                groupToEdit = nil
-                                groupEditorKind = .newManual
-                            }
-                            Button(String(localized: "New smart group")) {
-                                groupToEdit = nil
-                                groupEditorKind = .newSmart
-                            }
-                        } label: {
-                            // A quiet row like the ones above it, not a bordered button.
-                            Label {
-                                Text(String(localized: "New group"))
-                                    .foregroundStyle(MomentsPalette.muted)
-                            } icon: {
-                                Image(systemName: "plus")
-                                    .foregroundStyle(MomentsPalette.accent)
-                            }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
-                        }
-                        .menuStyle(.button)
-                        .buttonStyle(.plain)
-                        .menuIndicator(.hidden)
-                        .accessibilityIdentifier("sidebar.new-group")
-                    } header: {
-                        Text(String(localized: "My groups"))
-                            .font(.caption2.weight(.semibold))
-                            .textCase(.uppercase)
-                            .foregroundStyle(MomentsPalette.muted)
                     }
 
                     // Shown once something was deleted, like a Trash that
@@ -150,7 +78,7 @@ struct ContentView: View {
                 .tint(MomentsPalette.accent)
 
                 // Importing lives in the toolbar's + and the File menu; the
-                // sidebar foot keeps only the way into Settings.
+                // sidebar foot keeps the way into Settings.
                 HStack {
                     SettingsLink {
                         Image(systemName: "gearshape")
@@ -163,7 +91,7 @@ struct ContentView: View {
                     .help(String(localized: "Settings"))
                     .accessibilityLabel(String(localized: "Settings"))
                     .accessibilityIdentifier("sidebar.settings")
-                    Spacer()
+                    Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -173,21 +101,19 @@ struct ContentView: View {
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
         } detail: {
             Group {
-                switch selection ?? .library {
-                case .library:
-                    LibraryView(state: libraryState, firstLaunchCompleted: $firstLaunchCompleted)
-                case .people:
-                    PeopleScreen()
-                case .map:
+                if shared.mapScope != nil {
+                    // The large map: a small map somewhere was clicked. It
+                    // stands in front of the page until Back.
                     MapScreen()
-                case .timeline:
-                    TimelineScreen()
-                case .trips:
-                    TripsScreen()
-                case .group(let groupID):
-                    GroupDetailView(groupID: groupID, state: libraryState)
-                case .recentlyDeleted:
-                    RecentlyDeletedScreen()
+                } else {
+                    switch selection ?? .library {
+                    case .library:
+                        LibraryView(state: libraryState, firstLaunchCompleted: $firstLaunchCompleted)
+                    case .trips:
+                        TripsScreen()
+                    case .recentlyDeleted:
+                        RecentlyDeletedScreen()
+                    }
                 }
             }
             // After a correction to dates, places or people: what changed, and
@@ -197,8 +123,9 @@ struct ContentView: View {
                 if shared.viewerRequest == nil { CorrectionUndoBar() }
             }
             .toolbar {
-                // Each page's + adds that page's thing; People and Trips bring their own.
-                if selection != .people && selection != .trips && selection != .recentlyDeleted {
+                // Each page's + adds that page's thing: photos in the
+                // Library; Chapters brings its own.
+                if (selection ?? .library) == .library && shared.mapScope == nil {
                     ToolbarItem(placement: .primaryAction) {
                         ImportToolbarButton()
                     }
@@ -239,12 +166,6 @@ struct ContentView: View {
         )) {
             DateAdjustmentSheet(itemIDs: shared.dateAdjustmentItemIDs ?? [])
         }
-        .sheet(isPresented: Binding(
-            get: { shared.isShowingPlacesEditor },
-            set: { shared.isShowingPlacesEditor = $0 }
-        )) {
-            PlacesEditorSheet()
-        }
         // One accent everywhere, sheets included: no system blue controls.
         .tint(MomentsPalette.accent)
         .onChange(of: selection) { _, _ in
@@ -259,9 +180,6 @@ struct ContentView: View {
             }
             switch destination {
             case .library: selection = .library
-            case .people: selection = .people
-            case .map: selection = .map
-            case .timeline: selection = .timeline
             case .trips: selection = .trips
             }
             shared.requestedDestination = nil
@@ -273,57 +191,15 @@ struct ContentView: View {
             DeleteShortcutMonitor.install()
             TitleBarDoubleClick.install()
         }
-        // The key and the recount live in a small child view with their own
-        // queries, so they run when those change, not on every redraw here.
-        .background { SidebarGroupCounts(counts: $cachedGroupCounts) }
-        .sheet(item: $groupEditorKind) { kind in
-            GroupEditorSheet(kind: kind, group: groupToEdit, onDismiss: { groupToEdit = nil })
-        }
-        .alert(String(localized: "Delete group?"), isPresented: Binding(
-            get: { groupToDelete != nil },
-            set: { if !$0 { groupToDelete = nil } }
-        ), presenting: groupToDelete) { group in
-            Button(String(localized: "Delete"), role: .destructive) {
-                guard UserGroupRuleEngine.canDelete(group) else { return }
-                for membership in groupItems where membership.groupID == group.id {
-                    modelContext.delete(membership)
-                }
-                modelContext.delete(group)
-                try? modelContext.save()
-                if case .group(group.id) = selection { selection = .library }
-                groupToDelete = nil
-            }
-            Button(String(localized: "Cancel"), role: .cancel) { groupToDelete = nil }
-        } message: { group in
-            Text(String(format: String(localized: "Delete group message"), group.name))
-        }
     }
 
     @Environment(\.modelContext) private var modelContext
-
-    private func groupItemCount(_ group: UserGroup) -> Int {
-        cachedGroupCounts[group.id] ?? 0
-    }
 
     /// The shared library's live photos, not fetched again per sidebar page.
     private var items: [MediaItem] { store.items }
 
     /// Photos in Recently Deleted, most recently deleted first.
     private var deletedItems: [MediaItem] { store.deletedItems }
-
-    private func receiveDrop(_ providers: [NSItemProvider], into group: UserGroup) -> Bool {
-        for provider in providers {
-            provider.loadObject(ofClass: NSString.self) { object, _ in
-                guard let id = object as? String else { return }
-                DispatchQueue.main.async {
-                    guard let item = items.first(where: { $0.id == id }) else { return }
-                    UserGroupRuleEngine.add(item, to: group, memberships: groupItems, context: modelContext)
-                    try? modelContext.save()
-                }
-            }
-        }
-        return true
-    }
 
     private func sidebarRow(
         _ title: LocalizedStringKey,
@@ -334,79 +210,6 @@ struct ContentView: View {
         Label(title, systemImage: icon)
             .tag(section)
             .accessibilityIdentifier(identifier)
-    }
-}
-
-/// Works out the sidebar's group counts, in its own view: the key hashes only
-/// the store's revisions, so SwiftUI re-runs it when one of them moves instead
-/// of on every ContentView redraw. The five group-source entities (groups,
-/// memberships, memories, media tags, place overrides) reach the key through
-/// `LibraryStore.groupSourcesRevision`, which moves on every save of one of
-/// them, so the view no longer queries them: it fetches groups and memberships
-/// itself, and only when it recounts.
-private struct SidebarGroupCounts: View {
-    @Binding var counts: [String: Int]
-    @Environment(LibraryStore.self) private var store
-    @Environment(\.modelContext) private var modelContext
-    /// Whether any group's rules read place names; a place-only save changes a
-    /// count only then, so only then does the key follow `placeRevision`.
-    @State private var rulesReadPlaces = false
-
-    var body: some View {
-        Color.clear
-            .frame(width: 0, height: 0)
-            .accessibilityHidden(true)
-            .onChange(of: key, initial: true) { _, _ in refresh() }
-    }
-
-    private var key: Int {
-        #if DEBUG
-        ScrollProbe.count("sidebar.groupCountsKey")
-        let started: CFTimeInterval = CACurrentMediaTime()
-        defer {
-            PageProbe.tally("sidebar group key", seconds: CACurrentMediaTime() - started)
-        }
-        #endif
-        var hasher = Hasher()
-        hasher.combine(store.photoFaceRevision)
-        // A favorite save leaves `revision` alone; smart groups can have a
-        // favorite rule, so their counts follow this one too.
-        hasher.combine(store.favoriteRevision)
-        // Groups, memberships, memories, media tags and place overrides all
-        // arrive through this one revision, so the key reads none of them.
-        hasher.combine(store.groupSourcesRevision)
-        // Smart groups read place names only through a place rule; a save that
-        // changed only places recounts them only then.
-        if rulesReadPlaces { hasher.combine(store.placeRevision) }
-        return hasher.finalize()
-    }
-
-    private func refresh() {
-        #if DEBUG
-        let started: CFTimeInterval = CACurrentMediaTime()
-        #endif
-        // The same predicate and sort the removed query had: "My groups" only;
-        // chapters live on the Chapters page, and stack records are not groups
-        // anyone made.
-        let descriptor: FetchDescriptor<UserGroup> = FetchDescriptor<UserGroup>(
-            predicate: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" },
-            sortBy: [SortDescriptor<UserGroup>(\.name)]
-        )
-        let groups: [UserGroup] = (try? modelContext.fetch(descriptor)) ?? []
-        let groupItems: [UserGroupItem] = (try? modelContext.fetch(FetchDescriptor<UserGroupItem>())) ?? []
-        var counts: [String: Int] = [:]
-        let personIndex: [String: Set<String>] = UserGroupRuleEngine.makePersonIndex(store.faces)
-        for group in groups {
-            counts[group.id] = UserGroupRuleEngine.visibleItems(for: group, from: store.items, memberships: groupItems, observations: store.faces, personIDsByMediaID: personIndex).count
-        }
-        self.counts = counts
-        let readsPlaces: Bool = groups.contains { (group: UserGroup) -> Bool in
-            UserGroupRule.anyReadsPlaces(group.rules.rules)
-        }
-        self.rulesReadPlaces = readsPlaces
-        #if DEBUG
-        PageProbe.tally("sidebar group counts", seconds: CACurrentMediaTime() - started)
-        #endif
     }
 }
 

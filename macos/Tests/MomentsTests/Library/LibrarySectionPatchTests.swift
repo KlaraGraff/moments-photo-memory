@@ -64,7 +64,8 @@ final class LibrarySectionPatchTests: XCTestCase {
     }
 
     /// Groupings whose sections move when a photo's date or trip moves.
-    private let groupings: [LibraryGrouping] = [.trip, .month]
+    /// `.story` is what the Library shows; the other two are its halves.
+    private let groupings: [LibraryGrouping] = [.story, .trip, .month]
 
     private func full(
         _ items: [MediaItem],

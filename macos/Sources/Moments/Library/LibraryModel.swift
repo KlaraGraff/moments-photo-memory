@@ -25,6 +25,10 @@ enum LibraryMemoryFilter: String, CaseIterable, Sendable {
 }
 
 enum LibraryGrouping: String, CaseIterable, Sendable {
+    /// What the Library shows: each chapter is a section, and photos in no
+    /// chapter are sections by month, so the whole page reads as one line of
+    /// time.
+    case story
     case trip
     case place
     case type
@@ -47,6 +51,16 @@ enum LibraryScreenshotFilter: String, CaseIterable, Sendable {
 struct LibraryPlaceOption: Identifiable, Equatable, Sendable {
     let id: String
     let name: String
+}
+
+/// Where the Library keeps what was typed into its search field.
+enum LibraryFilterKeys {
+    static let query = "moments.library.query"
+
+    /// Clears the search.
+    static func clearAll(_ defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: query)
+    }
 }
 
 /// The filters that shape the Library before it is grouped.
@@ -259,9 +273,10 @@ enum LibraryFilterEngine {
         _ items: [MediaItem],
         by criteria: LibraryFilterCriteria,
         calendar: Calendar = .current,
-        personIDsByMediaID: [String: Set<String>] = [:]
+        personIDsByMediaID: [String: Set<String>] = [:],
+        searchExtras: [String: [String]] = [:]
     ) -> [MediaItem] {
-        items.filter { matches($0, criteria: criteria, calendar: calendar, hidesScreenshots: true, personIDsByMediaID: personIDsByMediaID) }
+        items.filter { matches($0, criteria: criteria, calendar: calendar, hidesScreenshots: true, personIDsByMediaID: personIDsByMediaID, searchExtras: searchExtras) }
     }
 
     /// Evaluates a single item against the shared filter semantics. Screenshot
@@ -272,7 +287,8 @@ enum LibraryFilterEngine {
         criteria: LibraryFilterCriteria,
         calendar: Calendar = .current,
         hidesScreenshots: Bool = false,
-        personIDsByMediaID: [String: Set<String>] = [:]
+        personIDsByMediaID: [String: Set<String>] = [:],
+        searchExtras: [String: [String]] = [:]
     ) -> Bool {
         if criteria.mediaType == .screenshot {
             guard item.isScreenshot else { return false }
@@ -313,7 +329,11 @@ enum LibraryFilterEngine {
            !personIDsByMediaID[item.id, default: []].contains(personID) {
             return false
         }
-        if !criteria.searchText.isEmpty, !matchesSearch(item, criteria.searchText) { return false }
+        if !criteria.searchText.isEmpty {
+            // Besides the photo's own words: who is in it, and when it was taken.
+            let extras: [String] = (searchExtras[item.id] ?? []) + dateWords(of: item, calendar: calendar)
+            if !matchesSearch(item, criteria.searchText, extras: extras) { return false }
+        }
         switch criteria.memoryFilter {
         case .all:
             break
@@ -338,14 +358,37 @@ enum LibraryFilterEngine {
         }
     }
 
+    /// A search that also looks in `extras`: each word may be in the photo's
+    /// own text or in one of them (a person's name, the year, the month).
+    static func matchesSearch(_ item: MediaItem, _ text: String, extras: [String]) -> Bool {
+        guard !extras.isEmpty else { return matchesSearch(item, text) }
+        let words = text.split(whereSeparator: \.isWhitespace)
+        return words.allSatisfy { word in
+            extras.contains { $0.localizedStandardContains(word) } || matchesSearch(item, String(word))
+        }
+    }
+
+    /// The year and month a photo was taken, the ways someone would type
+    /// them: "2024", "2024-05", "2024年5月", "May 2024".
+    static func dateWords(of item: MediaItem, calendar: Calendar) -> [String] {
+        guard let date = item.effectiveCaptureDate else { return [] }
+        let parts = calendar.dateComponents([.year, .month], from: date)
+        guard let year = parts.year, let month = parts.month else { return [] }
+        let symbols: [String] = calendar.monthSymbols
+        let monthName: String = month >= 1 && month <= symbols.count ? symbols[month - 1] : ""
+        let padded: String = month < 10 ? "0\(month)" : "\(month)"
+        return ["\(year)", "\(year)-\(padded)", "\(year)年\(month)月", "\(monthName) \(year)"]
+    }
+
     static func filteredItems(
         _ items: [MediaItem],
         by criteria: LibraryFilterCriteria,
         preservingEditingItemID editingItemID: String?,
         calendar: Calendar = .current,
-        personIDsByMediaID: [String: Set<String>] = [:]
+        personIDsByMediaID: [String: Set<String>] = [:],
+        searchExtras: [String: [String]] = [:]
     ) -> [MediaItem] {
-        let filtered = filteredItems(items, by: criteria, calendar: calendar, personIDsByMediaID: personIDsByMediaID)
+        let filtered = filteredItems(items, by: criteria, calendar: calendar, personIDsByMediaID: personIDsByMediaID, searchExtras: searchExtras)
         guard criteria.memoryFilter != .all,
               let editingItemID,
               !filtered.contains(where: { $0.id == editingItemID }) else {
@@ -355,7 +398,7 @@ enum LibraryFilterEngine {
         var withoutMemoryFilter = criteria
         withoutMemoryFilter.memoryFilter = .all
         guard let editingItem = items.first(where: { $0.id == editingItemID }),
-              filteredItems([editingItem], by: withoutMemoryFilter, calendar: calendar, personIDsByMediaID: personIDsByMediaID).isEmpty == false else {
+              filteredItems([editingItem], by: withoutMemoryFilter, calendar: calendar, personIDsByMediaID: personIDsByMediaID, searchExtras: searchExtras).isEmpty == false else {
             return filtered
         }
         return filtered + [editingItem]
@@ -363,13 +406,18 @@ enum LibraryFilterEngine {
 
     /// Screenshots are a Library-only segment. Other screens receive the same
     /// filters without the segment selector narrowing them to screenshots.
-    static func publishedItems(_ items: [MediaItem], by criteria: LibraryFilterCriteria, personIDsByMediaID: [String: Set<String>] = [:]) -> [MediaItem] {
+    static func publishedItems(
+        _ items: [MediaItem],
+        by criteria: LibraryFilterCriteria,
+        personIDsByMediaID: [String: Set<String>] = [:],
+        searchExtras: [String: [String]] = [:]
+    ) -> [MediaItem] {
         guard criteria.mediaType == .screenshot else {
-            return filteredItems(items, by: criteria, personIDsByMediaID: personIDsByMediaID)
+            return filteredItems(items, by: criteria, personIDsByMediaID: personIDsByMediaID, searchExtras: searchExtras)
         }
         var withoutScreenshotSegment = criteria
         withoutScreenshotSegment.mediaType = .all
-        return filteredItems(items, by: withoutScreenshotSegment, personIDsByMediaID: personIDsByMediaID)
+        return filteredItems(items, by: withoutScreenshotSegment, personIDsByMediaID: personIDsByMediaID, searchExtras: searchExtras)
     }
 
     /// What `regroup` reads from the filters: the grid's photos before and
@@ -389,9 +437,10 @@ enum LibraryFilterEngine {
         hasScope: Bool,
         criteria: LibraryFilterCriteria,
         editingItemID: String?,
-        personIDsByMediaID: [String: Set<String>]
+        personIDsByMediaID: [String: Set<String>],
+        searchExtras: [String: [String]] = [:]
     ) -> RegroupPasses {
-        let filtered = filteredItems(scopedItems, by: criteria, personIDsByMediaID: personIDsByMediaID)
+        let filtered = filteredItems(scopedItems, by: criteria, personIDsByMediaID: personIDsByMediaID, searchExtras: searchExtras)
 
         // Keeping a photo that the memory filter drops is the rare case: only
         // while someone edits that photo's memory.
@@ -407,7 +456,8 @@ enum LibraryFilterEngine {
                 scopedItems,
                 by: criteria,
                 preservingEditingItemID: editingItemID,
-                personIDsByMediaID: personIDsByMediaID
+                personIDsByMediaID: personIDsByMediaID,
+                searchExtras: searchExtras
             )
         }
 
@@ -417,7 +467,7 @@ enum LibraryFilterEngine {
         if !hasScope && criteria.mediaType != .screenshot {
             publishedIDs = Set(filtered.map(\.id))
         } else {
-            publishedIDs = Set(publishedItems(allItems, by: criteria, personIDsByMediaID: personIDsByMediaID).map(\.id))
+            publishedIDs = Set(publishedItems(allItems, by: criteria, personIDsByMediaID: personIDsByMediaID, searchExtras: searchExtras).map(\.id))
         }
         return RegroupPasses(filtered: filtered, visible: visible, publishedIDs: publishedIDs)
     }
@@ -551,6 +601,10 @@ enum LibraryFilterEngine {
 
     private static func groupKey(for item: MediaItem, grouping: LibraryGrouping) -> String {
         switch grouping {
+        case .story:
+            if let tripID = item.tripID { return "trip:\(tripID)" }
+            guard let date = item.effectiveCaptureDate else { return "month:unknown" }
+            return "month:\(monthFormatter.string(from: date))"
         case .trip:
             return "trip:\(item.tripID ?? "unassigned")"
         case .place:
@@ -565,6 +619,10 @@ enum LibraryFilterEngine {
 
     private static func groupTitle(for item: MediaItem, grouping: LibraryGrouping) -> String {
         switch grouping {
+        case .story:
+            if item.tripID != nil { return item.trip?.effectiveName ?? String(localized: "Unsorted") }
+            guard let date = item.effectiveCaptureDate else { return String(localized: "Undated") }
+            return date.formatted(.dateTime.year().month(.wide))
         case .trip:
             return item.trip?.effectiveName ?? String(localized: "Unsorted")
         case .place:
@@ -601,6 +659,9 @@ enum LibraryFilterEngine {
 @MainActor
 @Observable
 final class LibraryViewState {
+    /// The people of the library for the row of faces and the small faces on
+    /// section titles; worked out once per change to faces or names.
+    var peopleEntries: [PeopleStripEntry] = []
     /// Your own memory on a photo while it is typed, by media ID, so
     /// switching views never loses the words before they are saved.
     var memoryDrafts: [String: String] = [:]

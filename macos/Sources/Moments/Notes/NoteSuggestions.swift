@@ -215,7 +215,7 @@ public enum NoteOrganizerError: LocalizedError, Equatable {
         case .unavailable(let reason):
             return reason
         case .missingKey:
-            return String(localized: "Add an API key in Settings › AI Model.")
+            return String(localized: "Add an API key in Settings.")
         case .badResponse:
             return String(localized: "The model's answer could not be read.")
         case .refused:

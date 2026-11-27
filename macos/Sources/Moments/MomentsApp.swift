@@ -17,7 +17,6 @@ struct MomentsApp: App {
     @State private var peopleController = PeopleScanController()
     @State private var photoStacks = PhotoStackModel()
     @State private var stackAnalyzer = PhotoStackAnalyzer()
-    @State private var reorganize = ReorganizeController()
     @State private var libraryStore = LibraryStore()
     @State private var photosImportController = PhotosImportController(importer: PhotosImporter(source: PhotoKitAssetSource()))
     @State private var showingPhotosImport = false
@@ -146,21 +145,17 @@ struct MomentsApp: App {
             // The on-disk UI-test store holds only what the test imports.
             if Self.uiTestStoreDirectory == nil {
                 try? DemoSeeder.seedIfNeeded(context: container.mainContext)
-                if ProcessInfo.processInfo.arguments.contains("-MomentsUITestReviewItems") {
-                    try? DemoSeeder.flagUndatedDemoItemsForReview(context: container.mainContext)
-                }
                 if ProcessInfo.processInfo.arguments.contains("-MomentsUITestPeople") {
                     try? DemoSeeder.seedPeopleForUITests(context: container.mainContext)
                 }
                 if ProcessInfo.processInfo.arguments.contains("-MomentsUITestBurst") {
                     try? DemoSeeder.addSyntheticBurst(context: container.mainContext)
                 }
-                if ProcessInfo.processInfo.arguments.contains("-MomentsUITestImportSource") {
-                    try? DemoSeeder.addSyntheticImportSource(context: container.mainContext)
-                }
             }
             if isUITesting || testStoreURL != nil, let count = Self.uiTestStressCount {
-                try? DemoSeeder.generateSyntheticLibrary(count: count, spacing: Self.uiTestStressSpacing, context: container.mainContext)
+                // -MomentsUITestStressNoTrip: no chapter, so the Library lists them by month.
+                let inTrip: Bool = !ProcessInfo.processInfo.arguments.contains("-MomentsUITestStressNoTrip")
+                try? DemoSeeder.generateSyntheticLibrary(count: count, spacing: Self.uiTestStressSpacing, inTrip: inTrip, context: container.mainContext)
             }
             #endif
             // Once: words saved before they became memories right away. Test
@@ -231,7 +226,6 @@ struct MomentsApp: App {
                     .environment(peopleController)
                     .environment(photoStacks)
                     .environment(libraryStore)
-                    .environment(reorganize)
                     .environment(photosImportController)
                     .environment(sharing)
                     .modelContainer(modelContainer)
@@ -241,8 +235,10 @@ struct MomentsApp: App {
                         peopleController.configure(container: modelContainer)
                         photosImportController.configure(container: modelContainer)
                         stackAnalyzer.configure(container: modelContainer)
-                        reorganize.configure(container: modelContainer, people: peopleController, stacks: stackAnalyzer)
                         stackAnalyzer.analyzeIfNeeded()
+                        // A face scan cut short by quitting picks up here;
+                        // there is no People page or button to start it.
+                        peopleController.resumeIfInterrupted()
                         photoStacks.refresh(container: modelContainer)
                         #if DEBUG
                         PageProbe.attach(container: modelContainer, selection: selection, people: peopleController, stacks: stackAnalyzer)
@@ -263,17 +259,14 @@ struct MomentsApp: App {
                     .onReceive(NotificationCenter.default.publisher(for: .momentsShowPhotosImport)) { _ in
                         showingPhotosImport = true
                     }
-                    // Builds the Timeline and then Chapters ahead of time
-                    // while the app is quiet, so their first visit reuses a
-                    // finished build. The trigger lives in its own tiny view,
+                    // Builds Chapters ahead of time while the app is quiet,
+                    // so the first visit reuses a finished build. The trigger lives in its own tiny view,
                     // so values that move on every import save re-evaluate
                     // only that view, not this whole root view.
                     .background {
                         PagePrebuildDriver(
                             container: modelContainer,
                             store: libraryStore,
-                            selection: selection,
-                            stacks: photoStacks,
                             importController: importController,
                             photosImportController: photosImportController,
                             stackAnalyzer: stackAnalyzer
@@ -322,10 +315,6 @@ struct MomentsApp: App {
                     .keyboardShortcut("i", modifiers: [.command, .shift])
                 Button("Import from Apple Photos…") { showingPhotosImport = true }
                     .keyboardShortcut("p", modifiers: [.command, .shift])
-                Divider()
-                Button(String(localized: "Reorganize all memories")) { reorganize.run(.all) }
-                    .disabled(reorganize.running != nil || importController.isRunning || photosImportController.isRunning)
-                    .accessibilityIdentifier("reorganize.menu.all")
             }
         }
 

@@ -64,8 +64,6 @@ struct TripsScreen: View {
     /// The `wantedBuild` the shown result was built for.
     @State private var shownBuild = -1
     @State private var isBuilding = false
-    /// The kind shown, or every kind when empty.
-    @State private var filterRaw = ""
     /// The last finished build, kept across visits to the page: SwiftUI drops
     /// the page's `@State` when it is left, but the built values stay valid
     /// as long as the inputs key below is unchanged.
@@ -255,13 +253,7 @@ struct TripsScreen: View {
         return dated + undated
     }
 
-    /// The shelf with the chosen kind only; photos in no trip go with Trips.
-    private var shelf: [TimelineTrip] {
-        guard !filterRaw.isEmpty else { return allChapters }
-        return allChapters.filter { chapterType(of: $0).raw == filterRaw || ($0.isUnsorted && filterRaw == ChapterType.trip.raw) }
-    }
-
-    /// The kinds that have chapters, presets first, for the filter.
+    /// The kinds that have chapters, presets first, for a new chapter's kind.
     private var typesPresent: [ChapterType] {
         let present = Set(allChapters.filter { !$0.isUnsorted }.map { chapterType(of: $0) })
         let custom = present.filter { if case .custom = $0 { return true } else { return false } }.sorted { $0.label < $1.label }
@@ -312,9 +304,7 @@ struct TripsScreen: View {
                 .transition(.opacity)
             } else {
                 TripShelfView(
-                    trips: shelf,
-                    types: typesPresent,
-                    filterRaw: $filterRaw,
+                    trips: allChapters,
                     target: target(of:),
                     itemByID: itemByID,
                     covers: TripCoverChoice.decode(coverStore),
@@ -352,7 +342,7 @@ struct TripsScreen: View {
         }
         .sheet(isPresented: $isCreatingTrip) {
             ChapterNewSheet(
-                initialType: filterRaw.isEmpty ? .trip : ChapterType(raw: filterRaw),
+                initialType: .trip,
                 customTypes: typesPresent.filter { if case .custom = $0 { return true } else { return false } },
                 onCreate: createChapter
             )
@@ -414,7 +404,7 @@ struct TripsScreen: View {
         calendar: Calendar
     ) -> ChaptersBuildInputs {
         let placeIndex = NearestPlaceIndex(places: store.places)
-        let memoriesByPhotoID = TimelineScreen.memoriesByPhotoID(memories)
+        let memoriesByPhotoID = Self.memoriesByPhotoID(memories)
         let sourceItems: [TimelineItemSnapshot] = store.items.map { (item: MediaItem) -> TimelineItemSnapshot in
             TimelineItemSnapshot(item: item, placeHint: nil, memories: memoriesByPhotoID[item.persistentModelID] ?? [])
         }
@@ -457,7 +447,7 @@ struct TripsScreen: View {
         // snapshots below belong to.
         let revisionAtStart: Int = store.photoPlaceRevision
         let placeIndex = NearestPlaceIndex(places: store.places)
-        let memoriesByPhotoID = TimelineScreen.memoriesByPhotoID(memories)
+        let memoriesByPhotoID = Self.memoriesByPhotoID(memories)
         let items: [MediaItem] = store.items
         var sourceItems: [TimelineItemSnapshot] = []
         sourceItems.reserveCapacity(items.count)
@@ -596,6 +586,18 @@ struct TripsScreen: View {
                 endDate: info.endDate
             )
         }
+    }
+
+    /// The page's grouped memories: every `Memory` once, under the photo its
+    /// own inverse relationship names. A memory without a photo is left out,
+    /// exactly as `item.memories` never showed it.
+    static func memoriesByPhotoID(_ records: [Memory]) -> [PersistentIdentifier: [Memory]] {
+        var grouped: [PersistentIdentifier: [Memory]] = [:]
+        for memory in records {
+            guard let photo = memory.mediaItem else { continue }
+            grouped[photo.persistentModelID, default: []].append(memory)
+        }
+        return grouped
     }
 
     /// The place name a snapshot's photo would have been labelled with, from
@@ -972,8 +974,6 @@ private struct TripNoticeBar: View {
 
 private struct TripShelfView: View {
     let trips: [TimelineTrip]
-    let types: [ChapterType]
-    @Binding var filterRaw: String
     let target: (String) -> ChapterTarget?
     let itemByID: [String: MediaItem]
     let covers: [String: String]
@@ -983,21 +983,18 @@ private struct TripShelfView: View {
     let onOpen: (TimelineTrip) -> Void
     let onNew: () -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     private var chapterCount: Int { trips.filter { !$0.isUnsorted }.count }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .center, spacing: 18) {
-                    if types.count > 1 || !filterRaw.isEmpty {
-                        ChapterFilterBar(types: types, filterRaw: $filterRaw)
-                            .frame(maxWidth: 880, alignment: .leading)
-                    }
+                    // Where the chapters happened, as one small map over
+                    // the cards: a stamp opens its chapter, the map itself
+                    // the large map of every photo.
+                    ChapterFootprints(trips: trips, onOpen: onOpen)
                     // Cards sit straight in the lazy stack so only visible ones
-                    // are built. A new filter fades cards in and out; the bar
-                    // above keeps its identity so its thumb can slide.
+                    // are built.
                     ForEach(trips) { trip in
                         TripCoverCard(
                             trip: trip,
@@ -1012,7 +1009,6 @@ private struct TripShelfView: View {
                         .transition(.opacity)
                     }
                 }
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: filterRaw)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, PaperMetrics.screenInset)
                 .padding(.top, PaperMetrics.screenTopInset)
@@ -1032,7 +1028,6 @@ private struct TripShelfView: View {
                     .help(String(localized: "New chapter"))
                     .accessibilityIdentifier("trips.new")
                 }
-                ToolbarItem(placement: .primaryAction) { ReorganizeToolbarButton(kind: .chapters) }
             }
             .onAppear {
                 if let returnTripID { proxy.scrollTo(returnTripID, anchor: .center) }
@@ -1054,6 +1049,76 @@ private struct TripShelfView: View {
               let chosen = itemByID[chosenID] else { return automatic }
         let second = automatic.first { $0.id != chosenID }
         return [chosen] + (second.map { [$0] } ?? [])
+    }
+}
+
+/// Where the chapters happened: one stamp per chapter that has places, on a
+/// small drawn map over the cards. A stamp opens its chapter; the map itself
+/// opens the large map of every photo.
+private struct ChapterFootprints: View {
+    let trips: [TimelineTrip]
+    let onOpen: (TimelineTrip) -> Void
+    @Environment(SelectionModel.self) private var selection
+
+    static let inset = CGSize(width: 34, height: 26)
+    /// More stamps than this would only cover each other.
+    static let limit = 40
+
+    private struct Mark: Identifiable {
+        let id: String
+        let trip: TimelineTrip
+        let stop: TripRouteStop
+    }
+
+    /// One stamp per chapter, at the middle of its places, newest first.
+    private var marks: [Mark] {
+        var result: [Mark] = []
+        for trip in trips where !trip.isUnsorted {
+            let stops: [TripRouteStop] = trip.routeStops
+            guard !stops.isEmpty else { continue }
+            let latitude: Double = stops.map(\.latitude).reduce(0, +) / Double(stops.count)
+            let longitude: Double = stops.map(\.longitude).reduce(0, +) / Double(stops.count)
+            result.append(Mark(id: trip.id, trip: trip, stop: TripRouteStop(name: TripText.name(trip), latitude: latitude, longitude: longitude)))
+            if result.count == Self.limit { break }
+        }
+        return result
+    }
+
+    var body: some View {
+        let marks: [Mark] = self.marks
+        if !marks.isEmpty {
+            let stops: [TripRouteStop] = marks.map(\.stop)
+            Button {
+                selection.showMap(title: String(localized: "Map"), itemIDs: nil)
+            } label: {
+                TripRouteMap(stops: stops, showsRoute: false, inset: Self.inset)
+                    .frame(maxWidth: 880)
+                    .frame(height: 150)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(String(localized: "Open the map"))
+            .accessibilityLabel(String(localized: "Open the map"))
+            .accessibilityIdentifier("trips.footprints")
+            .overlay {
+                GeometryReader { proxy in
+                    let box = CGRect(origin: .zero, size: proxy.size).insetBy(dx: Self.inset.width, dy: Self.inset.height)
+                    let points: [CGPoint] = TripRouteMap.layout(stops, in: box)
+                    ForEach(Array(marks.enumerated()), id: \.element.id) { index, mark in
+                        Button { onOpen(mark.trip) } label: {
+                            Color.clear
+                                .frame(width: 22, height: 22)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(mark.stop.name)
+                        .accessibilityLabel(mark.stop.name)
+                        .accessibilityIdentifier("trips.footprint.\(mark.id)")
+                        .position(points[index])
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1365,6 +1430,7 @@ private struct TripDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top, spacing: 24) {
                 VStack(alignment: .leading, spacing: 10) {
                     // The trip's name is in the title bar; its dates lead the page
                     // and change when clicked.
@@ -1403,6 +1469,8 @@ private struct TripDetailView: View {
                             .font(.callout)
                             .foregroundStyle(Paper.ink)
                     }
+                    // Who is in these photos; a face opens that person's photos.
+                    ChapterPeopleRow(itemIDs: Set(trip.orderedItems.map(\.id)), stackSpacing: 10)
                     if !trip.isUnsorted {
                         TripMemoryLines(
                             scope: .trip,
@@ -1414,6 +1482,23 @@ private struct TripDetailView: View {
                         .frame(maxWidth: 640, alignment: .leading)
                         .padding(.top, 4)
                     }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // The route, drawn small; a click opens the large map with
+                // this chapter's photos.
+                if !trip.routeStops.isEmpty {
+                    Button {
+                        selection.showMap(title: TripText.name(trip), itemIDs: Set(trip.orderedItems.map(\.id)))
+                    } label: {
+                        TripRouteMap(stops: trip.routeStops)
+                            .frame(width: 220, height: 150)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Open the map"))
+                    .accessibilityLabel(String(localized: "Open the map"))
+                    .accessibilityIdentifier("trips.map")
+                }
                 }
                 .padding(.bottom, 30)
 
@@ -1594,18 +1679,14 @@ private struct TripAroundSection: View {
     }
 }
 
-/// One day: its heading, its memory line, then its places and travel.
-/// Shared by a trip ("Day 2") and the Timeline (the date as the heading,
-/// with the trips that day belongs to).
+/// One day of a chapter: its heading ("Day 2", or the date), its memory
+/// line, then its places and travel.
 struct TripDaySection: View {
     let day: TimelineDay
     let number: Int?
     let memories: [CollectionMemory]
     let itemByID: [String: MediaItem]
     let onOpen: (String) -> Void
-    /// Trips this day belongs to, shown as links on the Timeline.
-    var trips: [TripLink] = []
-    var onOpenTrip: (String) -> Void = { _ in }
     /// Inside a trip: take the day out, or start a new trip from it.
     var dayActions: TripDayActions? = nil
     @Environment(\.locale) private var locale
@@ -1635,16 +1716,6 @@ struct TripDaySection: View {
                     Text("Date to add")
                         .font(.system(size: 21, weight: .medium, design: .serif))
                         .foregroundStyle(Paper.muted)
-                }
-                ForEach(trips) { trip in
-                    Button { onOpenTrip(trip.id) } label: {
-                        Label(trip.name, systemImage: "airplane.departure")
-                            .font(.caption)
-                            .foregroundStyle(Paper.accent)
-                    }
-                    .buttonStyle(.plain)
-                    .help(String(localized: "Open this trip"))
-                    .accessibilityIdentifier("timeline.trip.\(trip.id)")
                 }
                 Spacer()
                 Text(String(localized: "\(photoCount) photos"))

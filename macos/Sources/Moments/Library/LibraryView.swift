@@ -18,64 +18,6 @@ private enum LibraryRegroupProbe {
 }
 
 #endif
-/// The group memberships the Library last fetched, kept across visits to the
-/// page: SwiftUI drops the page's `@State` when it is left, and a page switch
-/// must not fetch every `UserGroupItem` again. Keyed by the store's
-/// `groupSourcesRevision` and the model context's container, the two things a
-/// fetched result depends on.
-@MainActor
-enum LibraryMembershipsCache {
-    /// How many times the memberships were fetched; tests read it to prove a
-    /// cache hit did not fetch again.
-    private(set) static var fetchCount = 0
-
-    private struct Key: Equatable {
-        let revision: Int
-        let container: ObjectIdentifier
-    }
-
-    private static var last: (key: Key, items: [UserGroupItem])?
-    /// Held weakly: a freed container's address can be reused by a new one, so
-    /// identity, not just its `ObjectIdentifier`, has to match.
-    private static weak var lastContainer: ModelContainer?
-
-    /// Forgets the last fetch, so a test starts from an empty cache.
-    static func resetForTests() {
-        last = nil
-        lastContainer = nil
-        fetchCount = 0
-    }
-
-    /// The cached rows when the same revision and container were used before
-    /// and every row is still live; otherwise calls `fetch`, keeps and returns
-    /// its rows.
-    static func memberships(
-        revision: Int,
-        context: ModelContext,
-        fetch: () -> [UserGroupItem]
-    ) -> [UserGroupItem] {
-        let key: Key = Key(revision: revision, container: ObjectIdentifier(context.container))
-        if let cached = last, cached.key == key, lastContainer === context.container, isUsable(cached.items, in: context) {
-            return cached.items
-        }
-        let items: [UserGroupItem] = fetch()
-        fetchCount += 1
-        last = (key: key, items: items)
-        lastContainer = context.container
-        return items
-    }
-
-    /// A reused row must still be live in the context that fetched it. A save
-    /// that deletes a membership moves `groupSourcesRevision`, but a delete
-    /// can be registered before that save arrives; handing a dead model to a
-    /// photo menu would edit nothing. Such a row forces a fetch instead.
-    private static func isUsable(_ items: [UserGroupItem], in context: ModelContext) -> Bool {
-        items.allSatisfy { (item: UserGroupItem) -> Bool in
-            !item.isDeleted && item.modelContext?.container === context.container
-        }
-    }
-}
-
 struct LibraryView: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(ImportController.self) private var importController
@@ -83,8 +25,6 @@ struct LibraryView: View {
     @Environment(LibraryStore.self) private var store
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// Which review items on-device Vision is sure are not camera photos.
-    private var reviewNoise: ReviewNoiseStore { .shared }
     // The library's photos, screenshots, faces and places come from the shared
     // store, which fetches them once for every page.
     private var regularItems: [MediaItem] { store.regularItems }
@@ -96,13 +36,6 @@ struct LibraryView: View {
     private var allPlaces: [Place] { store.places }
     @Query(sort: \PlaceOverride.id)
     private var placeOverrides: [PlaceOverride]
-    /// "My groups" only; chapters live on the Chapters page, and stack
-    /// records are not groups anyone made.
-    @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "chapter" && $0.kindRaw != "stack" }, sort: \UserGroup.name)
-    private var allGroups: [UserGroup]
-    /// Group memberships, fetched when the store's `groupSourcesRevision`
-    /// moves, instead of a query SwiftData refreshes on every save.
-    @State private var cachedGroupItems: [UserGroupItem] = []
     @Query(sort: \Person.name) private var people: [Person]
     private var faceObservations: [FaceObservation] { store.faces }
     /// What someone changed about bursts: covers, unstacked, photos taken out.
@@ -116,15 +49,9 @@ struct LibraryView: View {
     let state: LibraryViewState
     @Binding var firstLaunchCompleted: Bool
 
-    @AppStorage("moments.library.type") private var typeRaw = LibraryMediaTypeFilter.all.rawValue
+    /// The search field is the one thing typed to find photos; people and
+    /// places are clicked where they show.
     @AppStorage(LibraryFilterKeys.query) private var query = ""
-    @AppStorage("moments.library.grouping") private var groupingRaw = LibraryGrouping.trip.rawValue
-    @AppStorage("moments.library.fromDate") private var fromDateInterval = 0.0
-    @AppStorage("moments.library.toDate") private var toDateInterval = 0.0
-    @AppStorage("moments.library.place") private var placeFilterID = ""
-    @AppStorage("moments.library.trip") private var tripFilterKey = ""
-    @AppStorage("moments.library.memory") private var memoryFilterRaw = LibraryMemoryFilter.all.rawValue
-    @AppStorage("moments.library.person") private var personFilterID = ""
 
     @State private var cachedSections: [LibrarySection] = []
     /// Each section's photos before stacks were folded.
@@ -134,12 +61,7 @@ struct LibraryView: View {
     @State private var cachedItemByID: [String: MediaItem] = [:]
     @State private var cachedVisibleCount = 0
     @State private var hasGrouped = false
-    @State private var showingSmartGroupEditor = false
     @State private var cachedPersonIndex: [String: Set<String>] = [:]
-    /// Photos the import flagged for a look; shown as a banner, not a sidebar row.
-    @State private var cachedReviewCount = 0
-    @State private var showingReview = false
-    @State private var cachedFilterOptions = LibraryFilterOptionSet()
     /// Each section's day-memory keys, built once with the sections.
     @State private var cachedSectionDayKeys: [String: Set<String>] = [:]
     /// Each section's photos, looked up once per regroup instead of on every redraw.
@@ -152,9 +74,6 @@ struct LibraryView: View {
     /// What one full `regroup()` computes from its inputs, as plain values, so
     /// a later visit can show the same result without walking the photos again.
     private struct LibraryRegroupResult {
-        let reviewCount: Int
-        /// The photos behind `reviewCount`, so a patch can adjust it.
-        let reviewIDs: Set<String>
         let personIndex: [String: Set<String>]
         let itemByID: [String: MediaItem]
         let sections: [LibrarySection]
@@ -189,21 +108,11 @@ struct LibraryView: View {
     }
 
     private var criteria: LibraryFilterCriteria {
-        LibraryFilterCriteria(
-            fromDate: fromDateInterval == 0 ? nil : Date(timeIntervalSince1970: fromDateInterval),
-            toDate: toDateInterval == 0 ? nil : Date(timeIntervalSince1970: toDateInterval),
-            placeID: placeFilterID.isEmpty ? nil : placeFilterID,
-            mediaType: LibraryMediaTypeFilter(rawValue: typeRaw) ?? .all,
-            tripKey: tripFilterKey.isEmpty ? nil : tripFilterKey,
-            memoryFilter: LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all,
-            personID: personFilterID.isEmpty ? nil : personFilterID,
-            searchText: query
-        )
+        LibraryFilterCriteria(searchText: query)
     }
 
-    private var items: [MediaItem] {
-        typeRaw == LibraryMediaTypeFilter.screenshot.rawValue ? screenshotItems : regularItems
-    }
+    /// Screenshots are imported but stay out of the Library's photos.
+    private var items: [MediaItem] { regularItems }
 
     private var allItems: [MediaItem] {
         regularItems + screenshotItems
@@ -215,9 +124,9 @@ struct LibraryView: View {
     private var stackPhotosKey: Int { store.stackFieldsKey }
     private var stackPhotoCount: Int { store.items.count }
 
-    private var grouping: LibraryGrouping {
-        LibraryGrouping(rawValue: groupingRaw) ?? .trip
-    }
+    /// One order for everyone: chapters as sections, the other photos by
+    /// month, newest first.
+    private var grouping: LibraryGrouping { .story }
 
     /// A stacked cell stands for every photo in its burst, as in Photos.
     private func deletionScope(_ ids: [String]) -> [String] {
@@ -228,32 +137,6 @@ struct LibraryView: View {
         }
         .filter { seen.insert($0).inserted }
     }
-
-    /// The Place and Trip menus' rows, rebuilt with the sections in regroup().
-    /// Computing them here walked every item and its place on each render,
-    /// which showed up as a stall when the Library re-rendered mid-scroll.
-    private var places: [LibraryPlaceOption] { cachedFilterOptions.places }
-
-    private var trips: [String] { cachedFilterOptions.trips }
-
-    private var selectedPlaceName: String? {
-        places.first(where: { $0.id == placeFilterID })?.name
-    }
-
-    private var selectedTripName: String? {
-        guard !tripFilterKey.isEmpty else { return nil }
-        return selectedTripName(for: tripFilterKey)
-    }
-
-    private var selectedMemoryFilter: LibraryMemoryFilter {
-        LibraryMemoryFilter(rawValue: memoryFilterRaw) ?? .all
-    }
-
-    private var visiblePeople: [Person] {
-        people.filter { !$0.hidden && ($0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) }
-    }
-
-    private var selectedPersonName: String? { people.first(where: { $0.id == personFilterID })?.name }
 
     private var personIDsByMediaID: [String: Set<String>] {
         cachedPersonIndex
@@ -274,28 +157,20 @@ struct LibraryView: View {
         ScrollProbe.count("library.groupingKey")
         #endif
         var hasher = Hasher()
-        hasher.combine(typeRaw)
-        hasher.combine(groupingRaw)
-        hasher.combine(fromDateInterval)
-        hasher.combine(toDateInterval)
-        hasher.combine(placeFilterID)
-        hasher.combine(tripFilterKey)
-        hasher.combine(memoryFilterRaw)
-        hasher.combine(personFilterID)
         hasher.combine(query)
-        // The photo being written on stays in a memory filter's results
-        // until it is left; without that filter, focus changes nothing.
-        if memoryFilterRaw != LibraryMemoryFilter.all.rawValue { hasher.combine(state.focusedMemoryItemID) }
         hasher.combine(selection.libraryScope?.itemIDs)
         // All photos and faces the pages group by, as one revision.
         if includingPhotos { hasher.combine(store.photoFaceRevision) }
-        // Sections read place names only when grouped by place, filtered by a
-        // place, or searched; a place-only save regroups only then.
-        let readsPlaceNames: Bool = groupingRaw == LibraryGrouping.place.rawValue || !placeFilterID.isEmpty || !query.isEmpty
-        if readsPlaceNames { hasher.combine(store.placeRevision) }
-        // A favorite save leaves `revision` alone, so the Favorites filter
-        // (and the Favorites segment) follows its own revision.
-        if criteria.favoritesOnly { hasher.combine(store.favoriteRevision) }
+        // A search reads place names and people's names; a save of those
+        // alone regroups only then.
+        if !query.isEmpty {
+            hasher.combine(store.placeRevision)
+            for person in people {
+                hasher.combine(person.id)
+                hasher.combine(person.name)
+                hasher.combine(person.hidden)
+            }
+        }
         for trip in allTrips {
             hasher.combine(trip.id)
             hasher.combine(trip.name)
@@ -315,8 +190,6 @@ struct LibraryView: View {
         }
         // Bursts regroup when someone changes a stack or new analysis arrives.
         hasher.combine(stacks.generation)
-        // New noise answers change the review banner.
-        hasher.combine(reviewNoise.revision)
         for record in stackRecords {
             hasher.combine(record.id)
             hasher.combine(record.rulesData)
@@ -329,16 +202,7 @@ struct LibraryView: View {
     /// from, so the page probe can name the one that moved.
     private var groupingKeyParts: [(String, Int)] {
         var filters = Hasher()
-        filters.combine(typeRaw)
-        filters.combine(groupingRaw)
-        filters.combine(fromDateInterval)
-        filters.combine(toDateInterval)
-        filters.combine(placeFilterID)
-        filters.combine(tripFilterKey)
-        filters.combine(memoryFilterRaw)
-        filters.combine(personFilterID)
         filters.combine(query)
-        if memoryFilterRaw != LibraryMemoryFilter.all.rawValue { filters.combine(state.focusedMemoryItemID) }
         filters.combine(selection.libraryScope?.itemIDs)
         var trips = Hasher()
         for trip in allTrips {
@@ -365,18 +229,15 @@ struct LibraryView: View {
             records.combine(record.id)
             records.combine(record.rulesData)
         }
-        let favoriteRevision: Int = criteria.favoritesOnly ? store.favoriteRevision : -1
-        let readsPlaceNames: Bool = groupingRaw == LibraryGrouping.place.rawValue || !placeFilterID.isEmpty || !query.isEmpty
+        let readsPlaceNames: Bool = !query.isEmpty
         return [
             ("filters", filters.finalize()),
             ("store.photoFaceRevision", store.photoFaceRevision),
             ("store.placeRevision", readsPlaceNames ? store.placeRevision : -1),
-            ("favoriteRevision", favoriteRevision),
             ("trips", trips.finalize()),
             ("place overrides", overrides.finalize()),
             ("memories", memories.finalize()),
             ("stacks.generation", stacks.generation),
-            ("review noise", reviewNoise.revision),
             ("stack records", records.finalize())
         ]
     }
@@ -408,12 +269,14 @@ struct LibraryView: View {
             }
         }
         .background(LibraryPalette.content)
+        #if DEBUG
+        // Tests wait here for a folder import to end, on the first-launch
+        // screen as well as over the photos.
+        .background(alignment: .topTrailing) { ImportFinishedProbe() }
+        #endif
         .endsTextEditingOnOutsideClick()
         .onChange(of: store.items.count, initial: true) { _, count in
             if count > 0 { firstLaunchCompleted = true }
-        }
-        .onChange(of: people.map(\.id), initial: true) { _, ids in
-            if !personFilterID.isEmpty && !ids.contains(personFilterID) { personFilterID = "" }
         }
         #if DEBUG
         .onAppear {
@@ -452,59 +315,16 @@ struct LibraryView: View {
             )
             applySectionMemories(memories)
         }
-        // A place-only save may not regroup; the Place menu's names still follow it.
-        .onChange(of: store.placeRevision) { _, _ in
-            cachedFilterOptions = LibraryFilterOptionsCache.options(
-                for: store.items,
-                key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips),
-                sourceKey: LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
-            )
-        }
-        // Memberships are fetched when a save touched a group source, not by a
-        // query SwiftData refreshes on every save.
-        .onChange(of: store.groupSourcesRevision, initial: true) { _, _ in
-            refreshGroupItems()
-        }
-        // One background pass over the review items Vision has not seen yet.
-        .task {
-            reviewNoise.start(container: modelContext.container)
-        }
-        // An import of saved web images can add review items after the first
-        // pass; it changes the photo count, and the pass skips what it already
-        // answered, so asking again costs one fetch.
-        .onChange(of: store.items.count) { _, _ in
-            reviewNoise.start(container: modelContext.container)
-        }
-        .sheet(isPresented: $showingReview) {
-            ReviewSheet()
-        }
-        // A jump to another place (such as Show in Library) closes the list.
-        .onChange(of: selection.requestedDestination) { _, destination in
-            if destination != nil { showingReview = false }
-        }
-        // The large viewer opens in the window behind the sheet; close the
-        // list so a photo clicked there is seen.
-        .onChange(of: selection.viewerRequest == nil) { _, isClosed in
-            if !isClosed { showingReview = false }
-        }
-        .sheet(
-            isPresented: Binding(
-                get: { importController.reviewSummary != nil },
-                set: { if !$0 { importController.dismissReview() } }
-            )
-        ) {
-            if let summary = importController.reviewSummary {
-                ImportReviewView(summary: summary)
-            }
-        }
     }
 
+    /// The page opens straight on its photos: a row of the people in them,
+    /// then the photos, newest chapter first. While it shows only some photos
+    /// (a face or a place name was clicked) a heading says whose or where, and
+    /// one button goes back to all of them.
     private var libraryContent: some View {
         VStack(spacing: 0) {
-            libraryHeader
-            filterBar
-            if cachedReviewCount > 0 {
-                reviewBanner
+            if let scope = selection.libraryScope {
+                LibraryScopeHeading(scope: scope, photoCount: cachedVisibleCount)
             }
             ImportStatusView()
                 .padding(.horizontal, 34)
@@ -518,147 +338,6 @@ struct LibraryView: View {
                 results
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) { ReorganizeToolbarButton(kind: .all) }
-            ToolbarItem(placement: .primaryAction) { LibraryZoomControl(state: state) }
-        }
-        .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search places, trips, notes")))
-        .navigationTitle(String(localized: "Library"))
-        .modifier(LibrarySelectionSubtitle(idle: String(localized: "\(cachedVisibleCount) photos")))
-    }
-
-    /// "12 photos to confirm" under the filters; opens the review list.
-    private var reviewBanner: some View {
-        Button {
-            showingReview = true
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle")
-                    .foregroundStyle(LibraryPalette.accent)
-                    .inlineIcon()
-                Text(String(localized: "\(cachedReviewCount) photos to confirm"))
-                    .foregroundStyle(LibraryPalette.ink)
-                Spacer(minLength: 8)
-                Text(String(localized: "Review"))
-                    .foregroundStyle(LibraryPalette.accent)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(LibraryPalette.accent)
-                    .inlineIcon()
-            }
-            .font(.callout)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(LibraryPalette.well, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, PaperMetrics.screenInset)
-        .padding(.top, 10)
-        // Room before the first section title, so the banner never sits on it.
-        .padding(.bottom, 14)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("library.review-banner")
-    }
-
-    /// The page name and photo count live in the window's title bar; the
-    /// page itself opens straight on its controls.
-    private var libraryHeader: some View {
-        // One fixed row at every width, so the grid never moves while the
-        // sidebar animates (a ViewThatFits here switched between one, two and
-        // three rows). The page title is in the window's title bar; the type
-        // bar is short enough to share the row with Group by.
-        HStack(alignment: .center, spacing: 22) {
-            libraryTypePicker
-            Spacer(minLength: 8)
-            libraryGroupingPicker
-        }
-        .padding(.horizontal, PaperMetrics.screenInset)
-        .padding(.top, PaperMetrics.screenTopInset)
-        .padding(.bottom, 14)
-    }
-
-    /// The everyday choices as segments; Live Photos and Screenshots, picked
-    /// rarely, wait in More. Fixed size, so the control never turns into a
-    /// scrolling strip.
-    private var libraryTypePicker: some View {
-        let lessUsed: [(LibraryMediaTypeFilter, String)] = [
-            (.live, String(localized: "Live Photos")),
-            (.screenshot, String(localized: "Screenshots")),
-        ]
-        let pickedLessUsed = lessUsed.first { $0.0.rawValue == typeRaw }
-        return HStack(spacing: 8) {
-            Picker(String(localized: "Media type"), selection: $typeRaw) {
-                Text(String(localized: "All")).tag(LibraryMediaTypeFilter.all.rawValue)
-                Label(String(localized: "Favorites"), systemImage: "star").tag(LibraryMediaTypeFilter.favorite.rawValue)
-                Text(String(localized: "Photos")).tag(LibraryMediaTypeFilter.photo.rawValue)
-                Text(String(localized: "Videos")).tag(LibraryMediaTypeFilter.video.rawValue)
-                if let pickedLessUsed {
-                    Text(pickedLessUsed.1).tag(pickedLessUsed.0.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
-            // The segments name themselves; a visible "Media type" label wrapped
-            // onto two lines in narrow windows. VoiceOver still reads it.
-            .labelsHidden()
-            .fixedSize()
-            .accessibilityIdentifier("library.type-filter")
-
-            Menu {
-                ForEach(lessUsed, id: \.0) { option in
-                    Button {
-                        typeRaw = option.0.rawValue
-                    } label: {
-                        Label(option.1, systemImage: typeRaw == option.0.rawValue ? "checkmark" : "circle")
-                    }
-                }
-            } label: {
-                Text(String(localized: "More"))
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help(String(localized: "Live Photos and Screenshots"))
-            .accessibilityIdentifier("library.type-more")
-        }
-    }
-
-    private var libraryGroupingPicker: some View {
-        Picker(String(localized: "Group by"), selection: $groupingRaw) {
-            Text(String(localized: "By trip")).tag(LibraryGrouping.trip.rawValue)
-            Text(String(localized: "By place")).tag(LibraryGrouping.place.rawValue)
-            Text(String(localized: "By type")).tag(LibraryGrouping.type.rawValue)
-            Text(String(localized: "By month")).tag(LibraryGrouping.month.rawValue)
-        }
-        .pickerStyle(.menu)
-        // Sized to the longest option so "Nach Reise" never truncates.
-        .fixedSize()
-        .accessibilityIdentifier("library.grouping")
-    }
-
-    private var filterBar: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            LibraryFilterChips(showsScope: true)
-
-            // The count is in the title bar; this row only appears for a
-            // filter that could become a smart group. A scope is a one-off
-            // list, not a rule a smart group could keep.
-            // Favorites and search have no smart-group rule yet, so a filter
-            // using them can't be saved without losing part of it.
-            if criteria.isFiltered && !criteria.favoritesOnly && criteria.searchText.isEmpty && selection.libraryScope == nil {
-                HStack {
-                    Spacer(minLength: 12)
-                    Button(String(localized: "Save this filter as a smart group")) {
-                        showingSmartGroupEditor = true
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
-                    .foregroundStyle(LibraryPalette.accent)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .accessibilityIdentifier("library.save-smart-group")
-                }
-            }
-        }
         // Tests read the count here; people see it in the title bar.
         .background(alignment: .topLeading) {
             Text(String(cachedVisibleCount))
@@ -668,32 +347,32 @@ struct LibraryView: View {
                 .accessibilityValue(String(cachedVisibleCount))
                 .accessibilityIdentifier("library.photoCount")
         }
-        .padding(.horizontal, PaperMetrics.screenInset)
-        .padding(.vertical, 13)
-        // A band one tone down sets the filters apart; no rules above or below.
-        .background(Paper.well.opacity(0.45))
-        .sheet(isPresented: $showingSmartGroupEditor) {
-            GroupEditorSheet(kind: .newSmart, group: nil, initialCriteria: criteria)
+        .background { LibraryPeopleIndexer(state: state) }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) { LibraryZoomControl(state: state) }
         }
+        .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, notes")))
+        .navigationTitle(String(localized: "Library"))
+        .modifier(LibrarySelectionSubtitle(idle: String(localized: "\(cachedVisibleCount) photos")))
     }
 
     @ViewBuilder
     private var results: some View {
-        // The memberships cached by `refreshGroupItems()`, read once per body.
-        let memberships: [UserGroupItem] = cachedGroupItems
         ScrollViewReader { proxy in
             ScrollView {
                 // Headings and section grids space themselves (LibrarySectionView).
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    // The people in these photos, before the photos: it
+                    // scrolls away with them. Not while only some photos show.
+                    if selection.libraryScope == nil && query.isEmpty {
+                        LibraryPeopleStrip(entries: state.peopleEntries)
+                    }
                     ForEach(cachedSections) { section in
                         LibrarySectionView(
                             section: section,
                             items: cachedSectionItems[section.id] ?? section.itemIDs.compactMap { cachedItemByID[$0] },
                             state: state,
-                            allGroups: allGroups,
-                            groupItems: memberships,
                             stackCounts: cachedStackCounts,
-                            allItemIDs: cachedUnfoldedSectionItems[section.id] ?? section.itemIDs,
                             memories: cachedSectionMemories[section.id] ?? [],
                             placeNotes: placeNotes
                         )
@@ -758,8 +437,8 @@ struct LibraryView: View {
         return VStack(spacing: 13) {
             ContentUnavailableView(
                 isFiltered ? String(localized: "No matching photos") : String(localized: "No photos yet"),
-                systemImage: isFiltered ? "line.3.horizontal.decrease.circle" : "photo.on.rectangle",
-                description: Text(isFiltered ? String(localized: "Try changing your filters.") : String(localized: "Add a photo or import a folder to begin."))
+                systemImage: isFiltered ? "magnifyingglass" : "photo.on.rectangle",
+                description: Text(isFiltered ? String(localized: "Try other words.") : String(localized: "Add a photo or import a folder to begin."))
             )
             if !isFiltered {
                 Button {
@@ -782,46 +461,6 @@ struct LibraryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var dateFilterLabel: String? {
-        guard fromDateInterval != 0 || toDateInterval != 0 else { return nil }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        if fromDateInterval != 0, toDateInterval != 0 {
-            return "\(String(localized: "Date:")) \(formatter.string(from: Date(timeIntervalSince1970: fromDateInterval))) – \(formatter.string(from: Date(timeIntervalSince1970: toDateInterval)))"
-        }
-        if fromDateInterval != 0 {
-            return "\(String(localized: "From:")) \(formatter.string(from: Date(timeIntervalSince1970: fromDateInterval)))"
-        }
-        return "\(String(localized: "To:")) \(formatter.string(from: Date(timeIntervalSince1970: toDateInterval)))"
-    }
-
-    private var hasActiveFilters: Bool {
-        placeFilterID.isEmpty == false || tripFilterKey.isEmpty == false || dateFilterLabel != nil || selectedMemoryFilter != .all || personFilterID.isEmpty == false
-    }
-
-    private func memoryFilterLabel(_ filter: LibraryMemoryFilter) -> String {
-        switch filter {
-        case .all: return String(localized: "All memories")
-        case .hasMemory: return String(localized: "Has memory")
-        case .noMemory: return String(localized: "No memory")
-        }
-    }
-
-    private func selectedTripName(for tripID: String) -> String {
-        cachedFilterOptions.tripNames[tripID] ?? tripID
-    }
-
-    private func clearFilters() {
-        fromDateInterval = 0
-        toDateInterval = 0
-        placeFilterID = ""
-        tripFilterKey = ""
-        memoryFilterRaw = LibraryMemoryFilter.all.rawValue
-        personFilterID = ""
-        typeRaw = LibraryMediaTypeFilter.all.rawValue
-        selection.libraryScope = nil
-    }
-
     private func regroup() {
         // Taken before anything is read: these are the inputs this pass uses,
         // and a change during it must not be stored under a newer key.
@@ -840,7 +479,6 @@ struct LibraryView: View {
             // once, without the filter passes or the sections. What does not
             // come from the cache is rebuilt exactly as the full path does.
             let result = cached.result
-            cachedReviewCount = result.reviewCount
             cachedPersonIndex = result.personIndex
             cachedItemByID = result.itemByID
             cachedSections = result.sections
@@ -857,12 +495,6 @@ struct LibraryView: View {
                 decisions: stackRecords,
                 photosKey: stackPhotosKey,
                 photoCount: stackPhotoCount
-            )
-            // The menus build from the whole store and have their own cache.
-            cachedFilterOptions = LibraryFilterOptionsCache.options(
-                for: store.items,
-                key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips),
-                sourceKey: LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
             )
             cachedSectionItems = result.sectionItems
             if result.sectionDayKeys != cachedSectionDayKeys {
@@ -896,15 +528,6 @@ struct LibraryView: View {
         #if DEBUG
         step("allItems")
         #endif
-        var reviewIDs = Set<String>()
-        for item in all where item.needsImportReview {
-            let id: String = item.id
-            if !reviewNoise.isNoise(id) { reviewIDs.insert(id) }
-        }
-        cachedReviewCount = reviewIDs.count
-        #if DEBUG
-        step("review count")
-        #endif
         let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
         cachedPersonIndex = personIndex
         #if DEBUG
@@ -918,6 +541,21 @@ struct LibraryView: View {
         #if DEBUG
         step("scope")
         #endif
+        // A search also finds photos by who is in them.
+        var searchExtras: [String: [String]] = [:]
+        if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            var names: [String: String] = [:]
+            for person in people where !person.hidden {
+                let name: String = person.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !name.isEmpty { names[person.id] = name }
+            }
+            if !names.isEmpty {
+                for (mediaID, personIDs) in personIndex {
+                    let found: [String] = personIDs.compactMap { (id: String) -> String? in names[id] }
+                    if !found.isEmpty { searchExtras[mediaID] = found }
+                }
+            }
+        }
         // One call for all three results, so each photo is tested once.
         let passes = LibraryFilterEngine.regroupPasses(
             scopedItems: scopedItems,
@@ -925,7 +563,8 @@ struct LibraryView: View {
             hasScope: selection.libraryScope != nil,
             criteria: criteria,
             editingItemID: state.focusedMemoryItemID,
-            personIDsByMediaID: personIndex
+            personIDsByMediaID: personIndex,
+            searchExtras: searchExtras
         )
         #if DEBUG
         step("filter passes")
@@ -963,17 +602,6 @@ struct LibraryView: View {
         hasGrouped = true
         #if DEBUG
         step("publish sections")
-        #endif
-        // The chips build from `store.items` too, so both callers hand the
-        // cache the same photos in the same order: the trip name taken for a
-        // trip whose photos disagree can otherwise depend on the order.
-        cachedFilterOptions = LibraryFilterOptionsCache.options(
-            for: store.items,
-            key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips),
-            sourceKey: LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
-        )
-        #if DEBUG
-        step("filter options")
         #endif
         // Day memories are matched per section; reading every photo's day in
         // the section's body repeated that pass on each render.
@@ -1023,8 +651,6 @@ struct LibraryView: View {
         // Stored last, under the key taken before anything was read, so only a
         // finished regroup is ever reused.
         let result = LibraryRegroupResult(
-            reviewCount: cachedReviewCount,
-            reviewIDs: reviewIDs,
             personIndex: personIndex,
             itemByID: cachedItemByID,
             sections: cachedSections,
@@ -1045,23 +671,6 @@ struct LibraryView: View {
         Self.lastRegroup = (key: key, result: result)
     }
 
-    /// Fetches the group memberships the sections hand to the photo menus.
-    /// Runs when `groupSourcesRevision` moves, so a save of anything else
-    /// leaves them alone. The fetch itself is shared with the last visit to
-    /// the page through `LibraryMembershipsCache`.
-    private func refreshGroupItems() {
-        cachedGroupItems = LibraryMembershipsCache.memberships(
-            revision: store.groupSourcesRevision,
-            context: modelContext
-        ) {
-            #if DEBUG
-            let started: CFTimeInterval = CACurrentMediaTime()
-            defer { PageProbe.tally("library memberships fetch", seconds: CACurrentMediaTime() - started) }
-            #endif
-            return (try? modelContext.fetch(FetchDescriptor<UserGroupItem>())) ?? []
-        }
-    }
-
     /// A save that moved only a few photos (a place name found, a time zone
     /// repaired) is patched into the last regroup: only the sections those
     /// photos left or joined are built, folded and read again. Every other
@@ -1079,7 +688,6 @@ struct LibraryView: View {
               old.photoFaceRevision != photoFaceRevision,
               !criteria.isFiltered,
               selection.libraryScope == nil,
-              typeRaw != LibraryMediaTypeFilter.screenshot.rawValue,
               old.visibleCount == items.count,
               let changed = store.changedPhotoIDs(sincePhotoFaceRevision: old.photoFaceRevision),
               changed.count <= Self.patchLimit
@@ -1121,16 +729,6 @@ struct LibraryView: View {
             with: stackIndex
         )
 
-        // Only a changed photo can have joined or left the review count.
-        var reviewIDs: Set<String> = old.reviewIDs
-        for id in changed {
-            if let model = store.itemsByID[id], model.needsImportReview, !reviewNoise.isNoise(id) {
-                reviewIDs.insert(id)
-            } else {
-                reviewIDs.remove(id)
-            }
-        }
-        cachedReviewCount = reviewIDs.count
         cachedPersonIndex = old.personIndex
         cachedItemByID = itemByID
         cachedSections = folded.sections
@@ -1147,11 +745,6 @@ struct LibraryView: View {
         state.gridSections = gridSections
         state.viewerItemIDs = viewerItemIDs
         hasGrouped = true
-        cachedFilterOptions = LibraryFilterOptionsCache.options(
-            for: store.items,
-            key: LibraryFilterOptionsCache.key(revision: store.revision, trips: allTrips),
-            sourceKey: LibraryFilterOptionsCache.sourceKey(photoFaceRevision: store.photoFaceRevision, trips: allTrips)
-        )
         var sectionItemsByID: [String: [MediaItem]] = old.sectionItems
         var sectionDayKeys: [String: Set<String>] = old.sectionDayKeys
         for id in patch.affectedIDs {
@@ -1183,8 +776,6 @@ struct LibraryView: View {
             selection.focusedItemID = selection.selectedItemIDs.first
         }
         let result = LibraryRegroupResult(
-            reviewCount: cachedReviewCount,
-            reviewIDs: reviewIDs,
             personIndex: old.personIndex,
             itemByID: itemByID,
             sections: folded.sections,
@@ -1226,13 +817,6 @@ struct LibraryView: View {
     private func revealRequestedSelectionIfNeeded(in sections: [LibrarySection], using proxy: ScrollViewProxy) {
         guard selection.shouldRevealSelectionInLibrary,
               let focus = selection.focusedItemID else { return }
-
-        if typeRaw == LibraryMediaTypeFilter.screenshot.rawValue,
-           let focusedItem = allItems.first(where: { $0.id == focus }),
-           !focusedItem.isScreenshot {
-            typeRaw = LibraryMediaTypeFilter.all.rawValue
-            return
-        }
 
         guard let target = sections.first(where: { $0.itemIDs.contains(focus) }) else {
             // A shot inside a stack (Show in Library from the viewer): the
@@ -1276,7 +860,6 @@ struct LibraryView: View {
         var hasher = Hasher()
         hasher.combine(selection.shouldRevealSelectionInLibrary)
         hasher.combine(selection.focusedItemID)
-        hasher.combine(typeRaw)
         for section in cachedSections {
             hasher.combine(section.id)
             for itemID in section.itemIDs {
@@ -1298,7 +881,7 @@ private struct FirstLaunchImportView: View {
             Text(String(localized: "Bring your photos into Moments"))
                 .font(.system(size: 30, weight: .medium, design: .serif))
                 .foregroundStyle(LibraryPalette.ink)
-            Text(String(localized: "Choose a folder and Moments will arrange your library by trips and places."))
+            Text(String(localized: "Import your photos, write a line under any of them, and look back on them trip by trip."))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(LibraryPalette.muted)
                 .frame(maxWidth: 400)
@@ -1327,12 +910,7 @@ private struct LibrarySectionView: View {
     let section: LibrarySection
     let items: [MediaItem]
     let state: LibraryViewState
-    var allGroups: [UserGroup] = []
-    var groupItems: [UserGroupItem] = []
-    var group: UserGroup? = nil
     var stackCounts: [String: Int] = [:]
-    /// The section's photos with each stack's shots, for "Show only these".
-    var allItemIDs: [String]? = nil
     /// The section's memories and the place notes its photos show, matched and
     /// queried once by the page instead of by every section.
     var memories: [CollectionMemory] = []
@@ -1385,19 +963,32 @@ private struct LibrarySectionView: View {
                 .accessibilityIdentifier("library.section.\(section.id)")
                 .contextMenu {
                     Button(String(localized: "Select these photos")) { selectSection() }
-                    Button(String(localized: "Show only these photos")) {
-                        selection.showInLibrary(allItemIDs ?? section.itemIDs, title: section.title)
-                    }
-                    if let tripID = sectionTripID {
+                    if let tripID = sectionTripID, section.id != "trip:unassigned" {
                         Button(String(localized: "Show Trip")) { selection.showTrip(tripID) }
-                    }
-                    if let first = section.itemIDs.first {
-                        Button(String(localized: "Show on Map")) { selection.showOnMap(first) }
                     }
                 }
                 Text(dateSpan)
                     .font(.caption)
                     .foregroundStyle(LibraryPalette.muted)
+                // A chapter's photos lead to the chapter: its days, places,
+                // people and map.
+                if let tripID = sectionTripID, section.id != "trip:unassigned" {
+                    Button { selection.showTrip(tripID) } label: {
+                        Image(systemName: "book.pages")
+                            .font(.caption)
+                            .foregroundStyle(LibraryPalette.muted)
+                            .frame(width: 22, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Show Trip"))
+                    .accessibilityLabel(String(localized: "Show Trip"))
+                    .accessibilityIdentifier("library.chapter-link.\(tripID)")
+                }
+                // Who is in these photos.
+                if !state.peopleEntries.isEmpty {
+                    LibrarySectionFaces(sectionID: section.id, itemIDs: section.itemIDs, state: state)
+                }
                 Spacer()
                 Text(String(localized: "\(section.count) photos"))
                     .font(.caption.monospacedDigit())
@@ -1414,7 +1005,7 @@ private struct LibrarySectionView: View {
 
         LazyVGrid(columns: gridColumns, alignment: .leading, spacing: size.rowSpacing) {
             ForEach(items, id: \.id) { item in
-                LibraryPhotoCell(item: item, state: state, allGroups: allGroups, groupItems: groupItems, group: group, placeNotes: placeNotes, isCompact: size.isCompact, stackCount: stackCounts[item.id] ?? 1, probeToken: pageProbePhaseToken)
+                LibraryPhotoCell(item: item, state: state, placeNotes: placeNotes, isCompact: size.isCompact, stackCount: stackCounts[item.id] ?? 1, probeToken: pageProbePhaseToken)
             }
         }
         .padding(.bottom, LibrarySectionView.sectionSpacing)
@@ -1448,9 +1039,6 @@ private struct LibraryPhotoCell: View {
     @Environment(SelectionModel.self) private var selection
     let item: MediaItem
     let state: LibraryViewState
-    let allGroups: [UserGroup]
-    let groupItems: [UserGroupItem]
-    var group: UserGroup? = nil
     var placeNotes: [PlaceNote] = []
     /// The smallest zoom levels: a dense grid of photos only; place, memory
     /// and note are read and written in the large viewer.
@@ -1459,7 +1047,6 @@ private struct LibraryPhotoCell: View {
     var stackCount = 1
     /// The page probe phase this cell was built in (DEBUG only).
     var probeToken: UInt64? = nil
-    @State private var isHovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -1504,8 +1091,22 @@ private struct LibraryPhotoCell: View {
                         .padding(isCompact ? 0 : 5)
                         .allowsHitTesting(false)
                 }
+                // A video or a Live Photo says so on its thumbnail, so nobody
+                // needs a switch to tell them apart.
+                .overlay(alignment: .bottomLeading) {
+                    if item.kind != .photo {
+                        Image(systemName: item.kind == .video ? "video.fill" : "livephoto")
+                            .font(.caption)
+                            .foregroundStyle(.white)
+                            .shadow(color: Paper.shadow.opacity(0.4), radius: 2)
+                            .padding(isCompact ? 7 : 12)
+                            .allowsHitTesting(false)
+                            .accessibilityLabel(item.kind == .video ? String(localized: "Videos") : String(localized: "Live Photos"))
+                            .accessibilityIdentifier("library.kind.\(item.kind.rawValue).\(item.id)")
+                    }
+                }
 
-                LibraryPhotoMarks(item: item, isCompact: isCompact, isHovering: isHovering)
+                LibraryPhotoMarks(item: item, isCompact: isCompact)
             }
 
             if !isCompact {
@@ -1515,9 +1116,10 @@ private struct LibraryPhotoCell: View {
                 PhotoMemories(item: item, state: state)
             }
         }
-        .onHover { isHovering = $0 }
-        .modifier(LibraryPhotoMenu(item: item, state: state, stackCount: stackCount, group: group, allGroups: allGroups, groupItems: groupItems, open: open))
-        .onDrag { NSItemProvider(object: item.id as NSString) }
+        // No hover handler here. With one on every lazily built photo, a
+        // trip heading scrolling in under a held rubber band sent SwiftUI's
+        // layout round and round and the app stopped answering.
+        .modifier(LibraryPhotoMenu(item: item, state: state, stackCount: stackCount, open: open))
     }
 
     @ViewBuilder
@@ -1555,13 +1157,11 @@ private struct LibraryPhotoCell: View {
     }
 }
 
-/// The select circle and the star over a photo.
+/// The select circle over a photo.
 private struct LibraryPhotoMarks: View {
     @Environment(SelectionModel.self) private var selection
-    @Environment(\.modelContext) private var modelContext
     let item: MediaItem
     let isCompact: Bool
-    let isHovering: Bool
 
     var body: some View {
         HStack(spacing: 6) {
@@ -1579,24 +1179,11 @@ private struct LibraryPhotoMarks: View {
             .accessibilityLabel(String(localized: "Select"))
 
             Spacer()
-
-            Button {
-                item.setFavorite(!item.isFavorite, context: modelContext)
-                try? modelContext.save()
-            } label: {
-                Image(systemName: item.isFavorite ? "star.fill" : "star")
-                    .font(isCompact ? .body : .title3)
-                    .foregroundStyle(item.isFavorite ? .yellow : .white)
-                    .shadow(color: Paper.shadow.opacity(0.35), radius: 2)
-                    // Confirmations get one small, friendly bounce.
-                    .symbolEffect(.bounce, value: item.isFavorite)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(String(localized: "Favorite"))
         }
         .padding(isCompact ? 6 : 11)
-        // In the dense grid the marks show on hover, or when they mean something.
-        .opacity(!isCompact || isHovering || selection.isSelected(item.id) || item.isFavorite ? 1 : 0)
+        // The dense grid is photos only: the circle shows on selected ones.
+        // Command-click and the rubber band select there, as in the Finder.
+        .opacity(!isCompact || selection.isSelected(item.id) ? 1 : 0)
     }
 }
 
@@ -1635,9 +1222,6 @@ private struct LibraryPhotoMenu: ViewModifier {
     let item: MediaItem
     let state: LibraryViewState
     let stackCount: Int
-    let group: UserGroup?
-    let allGroups: [UserGroup]
-    let groupItems: [UserGroupItem]
     let open: () -> Void
 
     func body(content: Content) -> some View {
@@ -1649,42 +1233,13 @@ private struct LibraryPhotoMenu: ViewModifier {
                         stacks.unstack(stack, context: modelContext, undoManager: undoManager)
                     }
                 }
-                Button(selection.isSelected(item.id) ? String(localized: "Deselect") : String(localized: "Select")) {
-                    selection.toggle(item.id)
-                }
-                Button(item.isFavorite ? String(localized: "Unfavorite") : String(localized: "Favorite")) {
-                    item.setFavorite(!item.isFavorite, context: modelContext)
-                    try? modelContext.save()
-                }
                 Button(selection.isSelected(item.id) && selection.selectedItemIDs.count > 1
                        ? String(localized: "Adjust Date and Time of \(selection.selectedItemIDs.count) Photos…")
                        : String(localized: "Adjust Date and Time…")) {
                     selection.adjustDateAndTime(for: item.id)
                 }
-                Divider()
-                if item.latitude != nil {
-                    Button(String(localized: "Show on Map")) { selection.showOnMap(item.id) }
-                }
                 if let tripID = item.tripID {
                     Button(String(localized: "Show Trip")) { selection.showTrip(tripID) }
-                }
-                if let group {
-                    Button(String(localized: "Remove from this group")) {
-                        UserGroupRuleEngine.remove(item, from: group, memberships: groupItems, context: modelContext)
-                        try? modelContext.save()
-                    }
-                }
-                if !allGroups.isEmpty {
-                    Menu(String(localized: "Add to group")) {
-                        ForEach(allGroups, id: \.id) { target in
-                            Button {
-                                UserGroupRuleEngine.add(item, to: target, memberships: groupItems, context: modelContext)
-                                try? modelContext.save()
-                            } label: {
-                                Label(target.name, systemImage: target.kind == .smart ? "sparkles" : "folder")
-                            }
-                        }
-                    }
                 }
                 Divider()
                 Button(String(localized: "Delete from Moments"), role: .destructive) {
@@ -1930,657 +1485,5 @@ struct MemoryEditor: View {
         } catch {
             // Keep the draft in LibraryViewState so a transient save failure does not lose input.
         }
-    }
-}
-
-/// The review list in a sheet, opened from the Library banner.
-struct ReviewSheet: View {
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ReviewListView()
-            HStack {
-                Spacer()
-                Button(String(localized: "Done")) { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityIdentifier("review.done")
-            }
-            .controlSize(.large)
-            .padding(.horizontal, PaperMetrics.sheetInset)
-            .padding(.vertical, 14)
-            .background(Paper.well.opacity(0.6))
-        }
-        .frame(minWidth: 640, idealWidth: 720, minHeight: 480, idealHeight: 620)
-        .background(Paper.canvas)
-        .tint(Paper.accent)
-    }
-}
-
-struct ReviewListView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Environment(SelectionModel.self) private var selection
-    @Environment(LibraryStore.self) private var store
-    private var items: [MediaItem] { store.items }
-    /// The last confirmation, so it can be taken back.
-    @State private var lastConfirmed: [(id: String, decision: ImportReviewDecision)] = []
-
-    private var pending: [MediaItem] {
-        items
-            .filter { $0.needsImportReview && !ReviewNoiseStore.shared.isNoise($0.id) }
-            .sorted { (first: MediaItem, second: MediaItem) -> Bool in
-                (first.effectiveCaptureDate ?? .distantPast) < (second.effectiveCaptureDate ?? .distantPast)
-            }
-    }
-
-    var body: some View {
-        let pending = self.pending
-        VStack(alignment: .leading, spacing: 0) {
-            PaperScreenHeader(String(localized: "To review")) {
-                if !pending.isEmpty { Text("\(pending.count)") }
-            } trailing: {
-                if !lastConfirmed.isEmpty {
-                    Button(String(localized: "Undo")) { undo() }
-                        .keyboardShortcut("z", modifiers: .command)
-                        .accessibilityIdentifier("review.undo")
-                }
-                if pending.count > 1 {
-                    Button(String(localized: "Confirm all")) { confirm(pending) }
-                        .accessibilityIdentifier("review.confirm-all")
-                }
-            }
-            if pending.isEmpty {
-                ContentUnavailableView(String(localized: "Nothing to review"), systemImage: "checkmark.circle", description: Text(String(localized: "Import review items will appear here.")))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(pending, id: \.id) { item in
-                            HStack(spacing: 14) {
-                                Button {
-                                    selection.select(item.id)
-                                    selection.openViewer(item.id, in: pending.map(\.id))
-                                } label: {
-                                    ThumbnailView(item: item, width: 180, height: 140)
-                                        .frame(width: 90, height: 70)
-                                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                                }
-                                .buttonStyle(.plain)
-                                .help(String(localized: "Open photo"))
-                                .accessibilityIdentifier("review.photo.\(item.id)")
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(item.title.isEmpty ? item.id : item.title)
-                                        .foregroundStyle(LibraryPalette.ink)
-                                    Text(item.importReviewReasons.map(\.label).joined(separator: " · "))
-                                        .font(.caption)
-                                        .foregroundStyle(LibraryPalette.muted)
-                                }
-                                Spacer(minLength: 8)
-                                Button(String(localized: "Show in Library")) {
-                                    selection.select(item.id)
-                                    selection.requestedDestination = .library
-                                }
-                                .buttonStyle(.borderless)
-                                .accessibilityIdentifier("review.show.\(item.id)")
-                                Button(String(localized: "Confirm")) { confirm([item]) }
-                                    .buttonStyle(.bordered)
-                                    .accessibilityIdentifier("review.confirm.\(item.id)")
-                            }
-                            .paperCard(cornerRadius: 10, padding: 10)
-                        }
-                    }
-                    .padding(.horizontal, PaperMetrics.screenInset)
-                    .padding(.bottom, 24)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(LibraryPalette.content)
-    }
-
-    /// Confirming keeps Moments' suggestion as it is and clears the flag.
-    private func confirm(_ confirmed: [MediaItem]) {
-        lastConfirmed = confirmed.map { ($0.id, $0.importDecision) }
-        for item in confirmed {
-            item.importDecision = .accepted
-            item.updatedAt = .now
-            item.updatedBy = MomentsAccount.localID
-        }
-        try? modelContext.save()
-    }
-
-    private func undo() {
-        let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        for entry in lastConfirmed {
-            guard let item = byID[entry.id] else { continue }
-            item.importDecision = entry.decision
-            item.updatedAt = .now
-            item.updatedBy = MomentsAccount.localID
-        }
-        try? modelContext.save()
-        lastConfirmed = []
-    }
-}
-
-struct GroupDetailView: View {
-    let groupID: String
-    let state: LibraryViewState
-    @Environment(SelectionModel.self) private var selection
-
-    @Environment(\.modelContext) private var modelContext
-    @Environment(LibraryStore.self) private var store
-    @Query(filter: #Predicate<UserGroup> { $0.kindRaw != "stack" }) private var groups: [UserGroup]
-    private var items: [MediaItem] { store.items }
-    @Query private var memberships: [UserGroupItem]
-    @Query private var memoryRecords: [Memory]
-    @Query private var mediaTags: [MediaTag]
-    @Query(sort: \PlaceOverride.id) private var placeOverrides: [PlaceOverride]
-    /// The place notes every section's photos show, queried once here
-    /// instead of by each section on screen.
-    @Query private var placeNotes: [PlaceNote]
-    /// Day and trip memories, shown under the sections that match them.
-    @Query(sort: \CollectionMemory.createdAt) private var collectionMemories: [CollectionMemory]
-    private var faceObservations: [FaceObservation] { store.faces }
-    @State private var showingEditor = false
-    @State private var showingDeleteConfirmation = false
-    @State private var cachedVisibleItemIDs: [String] = []
-    @State private var cachedVisibleItemsByID: [String: MediaItem] = [:]
-    @State private var cachedPersonIndex: [String: Set<String>] = [:]
-    /// Each section's day-memory keys, built once with the section list.
-    @State private var cachedSectionDayKeys: [String: Set<String>] = [:]
-    /// Bumped when `refreshVisibleItems()` writes new day keys, so the
-    /// section memories are matched again.
-    @State private var dayKeysGeneration = 0
-
-    init(groupID: String, state: LibraryViewState) {
-        self.groupID = groupID
-        self.state = state
-    }
-
-    private var group: UserGroup? { groups.first(where: { $0.id == groupID }) }
-
-    private var visibleItems: [MediaItem] {
-        cachedVisibleItemIDs.compactMap { cachedVisibleItemsByID[$0] }
-    }
-
-    private var visibleItemsKey: Int {
-        var hasher = Hasher()
-        hasher.combine(groupID)
-        if let group {
-            hasher.combine(group.updatedAt)
-            hasher.combine(group.kind.rawValue)
-            hasher.combine(group.rules.mode.rawValue)
-            for rule in group.rules.rules {
-                hasher.combine(rule.field.rawValue)
-                hasher.combine(rule.op.rawValue)
-                hasher.combine(rule.value)
-                hasher.combine(rule.secondaryValue)
-            }
-        }
-        // Photos, faces and places, as one revision.
-        hasher.combine(store.revision)
-        // Place renames reach rules through overrides.
-        for override in placeOverrides {
-            hasher.combine(override.id)
-            hasher.combine(override.nameOverride)
-        }
-        for membership in memberships {
-            hasher.combine(membership.groupID)
-            hasher.combine(membership.mediaID)
-            hasher.combine(membership.excluded)
-        }
-        for memory in memoryRecords {
-            hasher.combine(memory.id)
-            hasher.combine(memory.mediaID)
-            hasher.combine(memory.updatedAt)
-            hasher.combine(memory.revision)
-        }
-        for mediaTag in mediaTags {
-            hasher.combine(mediaTag.id)
-            hasher.combine(mediaTag.mediaID)
-            hasher.combine(mediaTag.tagID)
-            hasher.combine(mediaTag.updatedAt)
-        }
-        return hasher.finalize()
-    }
-
-    private func refreshVisibleItems() {
-        guard let group else {
-            cachedVisibleItemIDs = []
-            cachedVisibleItemsByID = [:]
-            return
-        }
-        let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
-        cachedPersonIndex = personIndex
-        let sorted = UserGroupRuleEngine.visibleItems(for: group, from: items, memberships: memberships, observations: faceObservations, personIDsByMediaID: personIndex)
-            .sorted { ($0.effectiveCaptureDate ?? .distantPast, $0.id) > ($1.effectiveCaptureDate ?? .distantPast, $1.id) }
-        cachedVisibleItemIDs = sorted.map(\.id)
-        cachedVisibleItemsByID = Dictionary(uniqueKeysWithValues: sorted.map { ($0.id, $0) })
-        let nextSections = sections
-        state.gridSections = nextSections.map(\.itemIDs)
-        // GroupDetailView has no regroup() of its own; its section list is
-        // rebuilt here, so its day-memory keys are built here too.
-        var sectionDayKeys: [String: Set<String>] = [:]
-        sectionDayKeys.reserveCapacity(nextSections.count)
-        for section in nextSections {
-            let sectionItems: [MediaItem] = section.itemIDs.compactMap { cachedVisibleItemsByID[$0] }
-            let keys: Set<String> = Set(sectionItems.compactMap { PhotoNoteDay.key(for: $0) })
-            sectionDayKeys[section.id] = keys
-        }
-        if sectionDayKeys != cachedSectionDayKeys {
-            cachedSectionDayKeys = sectionDayKeys
-            dayKeysGeneration &+= 1
-        }
-    }
-
-    private var sections: [LibrarySection] {
-        LibraryFilterEngine.sections(forVisibleItems: visibleItems, by: .month, sortOrder: .newestFirst)
-    }
-
-    var body: some View {
-        Group {
-            if let group {
-                VStack(spacing: 0) {
-                    if sections.isEmpty {
-                        ContentUnavailableView(
-                            String(localized: "This group is empty"),
-                            systemImage: group.kind == .smart ? "sparkles" : "folder",
-                            description: Text(
-                                group.kind == .smart
-                                    ? (group.rules.rules.isEmpty
-                                        ? String(localized: "Add a condition to collect photos")
-                                        : String(localized: "Matching items will appear here automatically."))
-                                    : String(localized: "Add photos from the Library context menu or drag them onto this group.")
-                            )
-                        )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        ScrollViewReader { proxy in
-                            ScrollView {
-                                LazyVStack(alignment: .leading, spacing: 0) {
-                                    // Worked out once per body, not once per section.
-                                    let sectionMemories: [String: [CollectionMemory]] = LibrarySectionMemories.make(
-                                        sections: sections,
-                                        dayKeysBySection: cachedSectionDayKeys,
-                                        memories: collectionMemories
-                                    )
-                                    ForEach(sections) { section in
-                                        LibrarySectionView(
-                                            section: section,
-                                            items: section.itemIDs.compactMap { cachedVisibleItemsByID[$0] },
-                                            state: state,
-                                            allGroups: groups.filter { $0.kindRaw != UserGroup.Kind.chapter.rawValue },
-                                            groupItems: memberships,
-                                            group: group,
-                                            memories: sectionMemories[section.id] ?? [],
-                                            placeNotes: placeNotes
-                                        )
-                                    }
-                                }
-                                .reportsLibraryGridColumns(to: state)
-                                .padding(.horizontal, PaperMetrics.screenInset)
-                                .padding(.vertical, 24)
-                                .libraryMarqueeSelection(state: state, selection: selection)
-                            }
-                            .libraryGridInteraction(state: state, proxy: proxy)
-                        }
-                    }
-                }
-                .background(LibraryPalette.content)
-                .navigationTitle(group.name)
-                .modifier(LibrarySelectionSubtitle(
-                    idle: String(localized: "\(visibleItems.count) photos") + " · "
-                        + (group.kind == .smart ? String(localized: "Smart") : String(localized: "Manual"))
-                ))
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) { LibraryZoomControl(state: state) }
-                    ToolbarItemGroup {
-                        Button(String(localized: "Edit")) { showingEditor = true }
-                        if group.kind == .smart {
-                            Button(String(localized: "Convert to manual")) {
-                                UserGroupRuleEngine.convertToManual(group, items: items, memberships: memberships, observations: faceObservations, context: modelContext)
-                                try? modelContext.save()
-                            }
-                        }
-                        if UserGroupRuleEngine.canDelete(group) {
-                            Button(String(localized: "Delete group"), role: .destructive) {
-                                showingDeleteConfirmation = true
-                            }
-                        }
-                    }
-                }
-                .sheet(isPresented: $showingEditor) {
-                    GroupEditorSheet(
-                        kind: group.kind == .smart ? .newSmart : .newManual,
-                        group: group
-                    )
-                }
-                .confirmationDialog(String(localized: "Delete group?"), isPresented: $showingDeleteConfirmation, titleVisibility: .visible) {
-                    Button(String(localized: "Delete"), role: .destructive) {
-                        guard UserGroupRuleEngine.canDelete(group) else { return }
-                        for membership in memberships where membership.groupID == group.id { modelContext.delete(membership) }
-                        modelContext.delete(group)
-                        try? modelContext.save()
-                    }
-                    Button(String(localized: "Cancel"), role: .cancel) {}
-                }
-            } else {
-                ContentUnavailableView(String(localized: "Group unavailable"), systemImage: "folder")
-            }
-        }
-        .onChange(of: visibleItemsKey, initial: true) { _, _ in
-            refreshVisibleItems()
-        }
-    }
-}
-
-struct GroupEditorSheet: View {
-    let kind: GroupEditorKind
-    let group: UserGroup?
-    var initialCriteria: LibraryFilterCriteria? = nil
-    var onDismiss: () -> Void = {}
-
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var modelContext
-    @Environment(LibraryStore.self) private var store
-    private var items: [MediaItem] { store.items }
-    @Query(sort: \Person.name) private var people: [Person]
-    private var faceObservations: [FaceObservation] { store.faces }
-    @Query(sort: \Trip.id) private var trips: [Trip]
-    @Query(sort: \Tag.displayName) private var tags: [Tag]
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var name = ""
-    @State private var mode: UserGroupRuleSet.MatchMode = .all
-    @State private var rules: [UserGroupRule] = []
-
-    init(
-        kind: GroupEditorKind,
-        group: UserGroup? = nil,
-        initialCriteria: LibraryFilterCriteria? = nil,
-        onDismiss: @escaping () -> Void = {}
-    ) {
-        self.kind = kind
-        self.group = group
-        self.initialCriteria = initialCriteria
-        self.onDismiss = onDismiss
-    }
-
-    private var isSmart: Bool { kind == .newSmart || group?.kind == .smart }
-    private var matchCount: Int {
-        UserGroupRuleEngine.matchingItems(items, ruleSet: UserGroupRuleSet(mode: mode, rules: rules), observations: faceObservations, personIDsByMediaID: UserGroupRuleEngine.makePersonIndex(faceObservations)).count
-    }
-
-    var body: some View {
-        PaperSheet(isSmart ? String(localized: "Edit smart group") : String(localized: "Edit group")) {
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 16) {
-                GridRow {
-                    PaperFormLabel(String(localized: "Group name"))
-                    TextField(String(localized: "Group name"), text: $name)
-                        .textFieldStyle(.paper)
-                        .labelsHidden()
-                }
-                if isSmart {
-                    GridRow {
-                        PaperFormLabel(String(localized: "Match"))
-                        Picker(String(localized: "Match"), selection: $mode) {
-                            Text(String(localized: "All conditions")).tag(UserGroupRuleSet.MatchMode.all)
-                            Text(String(localized: "Any condition")).tag(UserGroupRuleSet.MatchMode.any)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .fixedSize()
-                    }
-                    // First-baseline: the label lines up with the first condition's text.
-                    GridRow {
-                        PaperFormLabel(String(localized: "Conditions"))
-                        VStack(alignment: .leading, spacing: 10) {
-                            if rules.count > 5 {
-                                // A long list scrolls so the buttons stay on screen.
-                                ScrollView { ruleList }
-                                    .frame(height: 250)
-                                    .paperWell(padding: 0)
-                            } else if !rules.isEmpty {
-                                ruleList
-                                    .paperWell()
-                            }
-                            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                                Button {
-                                    withAnimation(Motion.animation(Motion.snap, reduceMotion: reduceMotion)) {
-                                        rules.append(UserGroupRule(field: .type, value: LibraryMediaTypeFilter.photo.rawValue))
-                                    }
-                                } label: {
-                                    Label(String(localized: "Add condition"), systemImage: "plus")
-                                }
-                                .buttonStyle(.borderless)
-                                .foregroundStyle(Paper.accent)
-                                .accessibilityIdentifier("groupEditor.addCondition")
-                                Text(String(format: String(localized: "Matches now message"), matchCount))
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(Paper.muted)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    }
-                }
-            }
-        } footer: {
-            Button(String(localized: "Cancel")) { dismissEditor() }
-                .keyboardShortcut(.cancelAction)
-            Button(String(localized: "Save")) { save() }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-        .onAppear {
-            guard name.isEmpty else { return }
-            if let group {
-                name = group.name
-                mode = group.rules.mode
-                rules = group.rules.rules
-            } else if let initialCriteria {
-                name = String(localized: "New smart group")
-                rules = Self.rules(from: initialCriteria)
-            }
-        }
-        .frame(width: isSmart ? 620 : 440)
-        .frame(minHeight: isSmart ? 320 : 0)
-    }
-
-    private var ruleList: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach($rules) { $rule in
-                ruleRow($rule)
-            }
-        }
-        .padding(rules.count > 5 ? 10 : 0)
-    }
-
-    /// One condition on a single line. Field and condition menus have fixed
-    /// widths so every row's value starts in the same column.
-    private func ruleRow(_ rule: Binding<UserGroupRule>) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Picker(String(localized: "Field"), selection: fieldBinding(for: rule)) {
-                Text(String(localized: "Place")).tag(UserGroupRuleField.place)
-                Text(String(localized: "Trip")).tag(UserGroupRuleField.trip)
-                Text(String(localized: "Type")).tag(UserGroupRuleField.type)
-                Text(String(localized: "Date range")).tag(UserGroupRuleField.dateRange)
-                Text(String(localized: "Has memory")).tag(UserGroupRuleField.hasMemory)
-                Text(String(localized: "Tag")).tag(UserGroupRuleField.tag)
-                Text(String(localized: "Person")).tag(UserGroupRuleField.person)
-            }
-            .labelsHidden()
-            .frame(width: 128)
-            Picker(String(localized: "Condition"), selection: rule.op) {
-                Text(String(localized: "is")).tag(UserGroupRuleOperator.equals)
-                Text(String(localized: "is not")).tag(UserGroupRuleOperator.isNot)
-            }
-            .labelsHidden()
-            .frame(width: 84)
-            valueControl(rule)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button {
-                withAnimation(Motion.animation(Motion.snap, reduceMotion: reduceMotion)) {
-                    rules.removeAll { $0.id == rule.wrappedValue.id }
-                }
-            } label: {
-                Image(systemName: "minus.circle")
-                    .foregroundStyle(Paper.muted)
-            }
-            .buttonStyle(.borderless)
-            .help(String(localized: "Remove condition"))
-            .accessibilityLabel(String(localized: "Remove condition"))
-        }
-    }
-
-    /// The value as a choice from what is in the library, never a raw ID to type.
-    @ViewBuilder
-    private func valueControl(_ rule: Binding<UserGroupRule>) -> some View {
-        switch rule.wrappedValue.field {
-        case .place:
-            valuePicker(rule, options: placeOptions)
-        case .trip:
-            valuePicker(rule, options: tripOptions)
-        case .tag:
-            valuePicker(rule, options: tagOptions)
-        case .type:
-            valuePicker(rule, options: [
-                (LibraryMediaTypeFilter.photo.rawValue, String(localized: "Photos")),
-                (LibraryMediaTypeFilter.video.rawValue, String(localized: "Videos")),
-                (LibraryMediaTypeFilter.live.rawValue, String(localized: "Live Photos")),
-                (LibraryMediaTypeFilter.screenshot.rawValue, String(localized: "Screenshots")),
-            ])
-        case .hasMemory:
-            valuePicker(rule, options: [
-                ("true", String(localized: "Has memory")),
-                ("false", String(localized: "No memory")),
-            ])
-        case .dateRange:
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                DatePicker(String(localized: "From date"), selection: dayBinding(rule.value), displayedComponents: .date)
-                    .labelsHidden()
-                Text(verbatim: "–")
-                    .foregroundStyle(Paper.muted)
-                DatePicker(String(localized: "To date"), selection: dayBinding(secondaryBinding(for: rule)), displayedComponents: .date)
-                    .labelsHidden()
-            }
-            .datePickerStyle(.field)
-        case .person:
-            valuePicker(rule, options: personOptions)
-        }
-    }
-
-    private func valuePicker(_ rule: Binding<UserGroupRule>, options: [(String, String)]) -> some View {
-        Picker(String(localized: "Value"), selection: rule.value) {
-            // A rule saved before its value disappeared still shows what it holds.
-            if !options.contains(where: { $0.0 == rule.wrappedValue.value }) {
-                Text(rule.wrappedValue.value.isEmpty ? String(localized: "Choose…") : rule.wrappedValue.value)
-                    .tag(rule.wrappedValue.value)
-            }
-            ForEach(options.indices, id: \.self) { index in
-                Text(options[index].1).tag(options[index].0)
-            }
-        }
-        .labelsHidden()
-    }
-
-    /// Changing the field starts the value over with that field's first choice.
-    private func fieldBinding(for rule: Binding<UserGroupRule>) -> Binding<UserGroupRuleField> {
-        Binding(
-            get: { rule.wrappedValue.field },
-            set: { field in
-                guard field != rule.wrappedValue.field else { return }
-                rule.wrappedValue.field = field
-                rule.wrappedValue.secondaryValue = nil
-                switch field {
-                case .place: rule.wrappedValue.value = placeOptions.first?.0 ?? ""
-                case .trip: rule.wrappedValue.value = tripOptions.first?.0 ?? ""
-                case .tag: rule.wrappedValue.value = tagOptions.first?.0 ?? ""
-                case .type: rule.wrappedValue.value = LibraryMediaTypeFilter.photo.rawValue
-                case .hasMemory: rule.wrappedValue.value = "true"
-                case .dateRange:
-                    rule.wrappedValue.value = UserGroupRuleSet.localDayKey(for: Calendar.current.date(byAdding: .month, value: -1, to: .now) ?? .now)
-                    rule.wrappedValue.secondaryValue = UserGroupRuleSet.localDayKey(for: .now)
-                case .person: rule.wrappedValue.value = personOptions.first?.0 ?? ""
-                }
-            }
-        )
-    }
-
-    /// A YYYY-MM-DD rule value edited with a date picker.
-    private func dayBinding(_ value: Binding<String>) -> Binding<Date> {
-        Binding(
-            get: {
-                let parts = value.wrappedValue.split(separator: "-").compactMap { Int($0) }
-                guard parts.count == 3,
-                      let date = Calendar.current.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2])) else { return .now }
-                return date
-            },
-            set: { value.wrappedValue = UserGroupRuleSet.localDayKey(for: $0) }
-        )
-    }
-
-    private var placeOptions: [(String, String)] {
-        PlaceNames.options(for: items).map { ($0.id, $0.name) }
-    }
-
-    private var tripOptions: [(String, String)] {
-        trips.map { ($0.id, $0.effectiveName) }
-            .sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
-    }
-
-    private var personOptions: [(String, String)] {
-        people.filter { !$0.hidden && $0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
-            .map { ($0.id, $0.name ?? String(localized: "Unnamed person")) }
-    }
-
-    private var tagOptions: [(String, String)] {
-        tags.map { ($0.id, $0.displayName) }
-            .sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
-    }
-
-    private func dismissEditor() {
-        onDismiss()
-        dismiss()
-    }
-
-    private func save() {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        let ruleSet = UserGroupRuleSet(mode: mode, rules: isSmart ? rules : [])
-        if let group {
-            group.name = trimmed
-            group.kind = isSmart ? .smart : .manual
-            group.rules = ruleSet
-            group.updatedAt = .now
-        } else {
-            modelContext.insert(UserGroup(name: trimmed, kind: isSmart ? .smart : .manual, rules: ruleSet))
-        }
-        try? modelContext.save()
-        dismissEditor()
-    }
-
-    private func secondaryBinding(for rule: Binding<UserGroupRule>) -> Binding<String> {
-        Binding(
-            get: { rule.wrappedValue.secondaryValue ?? "" },
-            set: { rule.wrappedValue.secondaryValue = $0.isEmpty ? nil : $0 }
-        )
-    }
-
-    private static func rules(from criteria: LibraryFilterCriteria) -> [UserGroupRule] {
-        var result: [UserGroupRule] = []
-        if let placeID = criteria.placeID { result.append(UserGroupRule(field: .place, value: placeID)) }
-        if let tripKey = criteria.tripKey { result.append(UserGroupRule(field: .trip, value: tripKey)) }
-        if criteria.mediaType != .all { result.append(UserGroupRule(field: .type, value: criteria.mediaType.rawValue)) }
-        if criteria.fromDate != nil || criteria.toDate != nil {
-            let from = criteria.fromDate.map { UserGroupRuleSet.localDayKey(for: $0) } ?? "0001-01-01"
-            let to = criteria.toDate.map { UserGroupRuleSet.localDayKey(for: $0) }
-            result.append(UserGroupRule(field: .dateRange, value: from, secondaryValue: to))
-        }
-        if criteria.memoryFilter != .all {
-            result.append(UserGroupRule(field: .hasMemory, value: criteria.memoryFilter == .hasMemory ? "true" : "false"))
-        }
-        if let tagID = criteria.tagID { result.append(UserGroupRule(field: .tag, value: tagID)) }
-        if let personID = criteria.personID { result.append(UserGroupRule(field: .person, value: personID)) }
-        return result
     }
 }

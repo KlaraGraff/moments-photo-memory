@@ -3,29 +3,10 @@ import CloudKit
 import SwiftData
 import SwiftUI
 
-/// Settings > Sharing as a page of its own: the sections below in a Form.
-struct SharingSettingsPage: View {
-    /// Without a library there is nothing to share (and no store to query).
-    var hasStore = true
-
-    var body: some View {
-        Form {
-            SharingSettingsSections(hasStore: hasStore)
-            AuthorNamesSection()
-        }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .frame(width: SettingsLayout.width, height: SettingsLayout.height)
-        .background(Paper.canvas)
-        .tint(Paper.accent)
-        .accessibilityIdentifier("settings.sharing")
-    }
-}
-
 /// Sharing in settings: invite the other person, choose which trips are
 /// shared, see how syncing is going, and stop sharing. Follows the approved
-/// mock-up (handoff/sharing-mock-2026-11-26.html). Only sections, so it can
-/// sit in any settings Form.
+/// mock-up (handoff/sharing-mock-2026-11-26.html). Only sections: they sit
+/// on the one settings page.
 struct SharingSettingsSections: View {
     @Environment(SharingController.self) private var sharing
     /// Without a library there is nothing to share (and no store to query).

@@ -9,6 +9,7 @@ struct PhotoInfoPanel: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(SelectionModel.self) private var selection
+    @Environment(LibraryStore.self) private var store
     let item: MediaItem
     let libraryState: LibraryViewState
     /// True while one of the column's own fields is being typed in, so the
@@ -46,25 +47,29 @@ struct PhotoInfoPanel: View {
             VStack(alignment: .leading, spacing: 18) {
                 dateSection
                 row(String(localized: "Place")) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    // The name is typed over in place. Under it, the small
+                    // map opens the large one at this photo, and the link
+                    // shows every photo taken here.
+                    VStack(alignment: .leading, spacing: 6) {
                         placeField
-                        if item.latitude != nil {
-                            Button { selection.showOnMap(item.id) } label: {
-                                Image(systemName: "map")
-                                    .font(.callout)
-                                    .foregroundStyle(LibraryPalette.muted)
-                                    .frame(width: 24, height: 20)
-                                    .contentShape(Rectangle())
+                        if let latitude = item.latitude, let longitude = item.longitude {
+                            PhotoMiniMap(stops: [TripRouteStop(name: "", latitude: latitude, longitude: longitude)], width: 150, height: 72) {
+                                selection.showOnMap(item.id, title: item.namedPlace ?? String(localized: "Map"))
                             }
-                            .buttonStyle(.plain)
-                            .help(String(localized: "Show on Map"))
-                            .accessibilityLabel(String(localized: "Show on Map"))
                             .accessibilityIdentifier("viewer.place.map")
+                        }
+                        if let name = item.namedPlace {
+                            Button(String(localized: "Photos taken here")) {
+                                PlaceClue.showPhotos(at: name, store: store, selection: selection)
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                            .accessibilityIdentifier("viewer.place.photos")
                         }
                     }
                 }
                 row(String(localized: "Trip")) { tripField }
-                if !visibleFaces.isEmpty {
+                if !visibleFaces.isEmpty || !ignoredFaces.isEmpty {
                     row(String(localized: "People")) { peopleList }
                 }
                 row(String(localized: "Memory")) {
@@ -288,6 +293,15 @@ struct PhotoInfoPanel: View {
         faces.filter { face in face.personID.map { !hiddenPersonIDs.contains($0) } ?? true }
     }
 
+    /// Faces of groups the person chose to ignore. They are listed last, so
+    /// that choice can be taken back from any photo the face is in.
+    private var ignoredFaces: [FaceObservation] {
+        let ignoredIDs: Set<String> = Set(PeopleStoreActions.ignoredPeople(people).map { (person: Person) -> String in person.id })
+        return faces.filter { (face: FaceObservation) -> Bool in
+            face.personID.map { (id: String) -> Bool in ignoredIDs.contains(id) } ?? false
+        }
+    }
+
     private var namedPeople: [Person] {
         people
             .filter { !$0.hidden && $0.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
@@ -305,7 +319,20 @@ struct PhotoInfoPanel: View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(visibleFaces, id: \.id) { face in
                 HStack(spacing: 8) {
-                    FaceCropView(data: face.cropData, cacheKey: face.id, size: 26)
+                    // The face itself is the way to that person's photos.
+                    if let personID = face.personID, name(of: face) != nil {
+                        Button {
+                            PersonClue.showPhotos(ofPerson: personID, name: name(of: face), store: store, selection: selection)
+                        } label: {
+                            FaceCropView(data: face.cropData, cacheKey: face.id, size: 30)
+                        }
+                        .buttonStyle(.plain)
+                        .help(String(localized: "Show photos of \(name(of: face) ?? String(localized: "this person"))"))
+                        .accessibilityLabel(String(localized: "Show photos of \(name(of: face) ?? String(localized: "this person"))"))
+                        .accessibilityIdentifier("viewer.face.photos.\(face.id)")
+                    } else {
+                        FaceCropView(data: face.cropData, cacheKey: face.id, size: 30)
+                    }
                     if namingFaceID == face.id {
                         TextField("", text: $faceNameText, prompt: Text(String(localized: "Name")))
                             .textFieldStyle(.plain)
@@ -326,7 +353,34 @@ struct PhotoInfoPanel: View {
                     }
                 }
             }
+            ForEach(ignoredFaces, id: \.id) { face in
+                HStack(spacing: 8) {
+                    FaceCropView(data: face.cropData, cacheKey: face.id, size: 30)
+                        .opacity(0.55)
+                    ignoredMenu(face)
+                }
+            }
         }
+    }
+
+    /// An ignored face reads "Ignored"; its one choice brings the whole group
+    /// back as faces nobody has named yet.
+    private func ignoredMenu(_ face: FaceObservation) -> some View {
+        Menu {
+            Button(String(localized: "Stop ignoring")) { stopIgnoring(face) }
+        } label: {
+            InlineMenuLabel(text: String(localized: "Ignored"), isPlaceholder: true)
+        }
+        .inlineMenuStyle()
+        .accessibilityIdentifier("viewer.face.ignored.\(face.id)")
+    }
+
+    private func stopIgnoring(_ face: FaceObservation) {
+        guard let personID = face.personID else { return }
+        PeopleStoreActions.restoreIgnored(personID: personID, observations: store.faces, context: modelContext)
+        save()
+        // The released faces are grouped again by the next scan.
+        NotificationCenter.default.post(name: .momentsPeopleScanRequested, object: nil)
     }
 
     private func faceMenu(_ face: FaceObservation) -> some View {
@@ -346,7 +400,7 @@ struct PhotoInfoPanel: View {
             if let personID = face.personID {
                 Divider()
                 Button(String(localized: "Show photos of \(current ?? String(localized: "this person"))")) {
-                    selection.showPhotos(ofPerson: personID)
+                    PersonClue.showPhotos(ofPerson: personID, name: current, store: store, selection: selection)
                 }
                 Button(String(localized: "Not \(current ?? String(localized: "this person"))")) {
                     PeopleStoreActions.remove(face: face)

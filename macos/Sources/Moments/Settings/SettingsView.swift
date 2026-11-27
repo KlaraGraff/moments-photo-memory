@@ -1,206 +1,35 @@
-import AppKit
 import SwiftUI
 
-/// Settings in tabs, like other Mac apps: General, Imports, AI Model, Sharing.
+/// Settings is one page: sharing with your partner, what the two of you
+/// are called, AI organizing, and backups. Everything else the app decides
+/// on its own (the language follows the Mac, photos are organized after
+/// every import), so there is nothing else to set.
 struct SettingsView: View {
-    @AppStorage(SettingsTab.storageKey) private var tab = SettingsTab.general
-    /// Without a store there are no imports to list.
+    /// Without a store there is nothing to share or back up yet.
     var hasStore = true
 
     var body: some View {
-        TabView(selection: $tab) {
-            GeneralSettingsView()
-                .tabItem { Label(String(localized: "General"), systemImage: "gearshape") }
-                .tag(SettingsTab.general)
-            if hasStore {
-                ImportSourcesSettingsView()
-                    .tabItem { Label(String(localized: "Imports"), systemImage: "tray.and.arrow.down") }
-                    .tag(SettingsTab.imports)
-            }
-            AISettingsView()
-                .tabItem { Label(String(localized: "AI Model"), systemImage: "sparkles") }
-                .tag(SettingsTab.aiModel)
-            SharingSettingsView(hasStore: hasStore)
-                .tabItem { Label(String(localized: "Sharing"), systemImage: "person.2") }
-                .tag(SettingsTab.sharing)
-        }
-        .tint(Paper.accent)
-    }
-}
-
-/// Settings is its own window, as on every Mac: one fixed size for every
-/// tab, so switching tabs never resizes the window. It fits General; a
-/// shorter tab sits at the top, a longer one scrolls.
-enum SettingsLayout {
-    static let width: CGFloat = 600
-    static let height: CGFloat = 470
-}
-
-/// The open Settings tab; a link such as "AI model settings" picks its tab
-/// before it opens the window.
-enum SettingsTab: String {
-    case general
-    case imports
-    case aiModel
-    case sharing
-
-    static let storageKey = "moments.settings.tab"
-
-    static func select(_ tab: SettingsTab) {
-        UserDefaults.standard.set(tab.rawValue, forKey: storageKey)
-    }
-}
-
-/// The app language, what happens after an import, where the library lives,
-/// and finding people.
-struct GeneralSettingsView: View {
-    @AppStorage(ImportSettings.autoOrganizeKey) private var autoOrganize = true
-    @Environment(PeopleScanController.self) private var scanner
-
-    var body: some View {
         Form {
-            LanguageSettingsSection()
-
-            Section {
-                Toggle(String(localized: "Organize automatically after import"), isOn: $autoOrganize)
-                    .accessibilityIdentifier("settings.auto-organize")
-            } footer: {
-                Text(String(localized: "Finds the people in new photos and shows what was sorted into trips and places. Turned off, new photos still land in trips; look for people from People when you like."))
-            }
-
-            Section(String(localized: "Library")) {
-                folderRow(String(localized: "Library location"), url: ImportSettings.libraryFolder, identifier: "settings.library-folder")
-                BackupSettingsRow()
-                Text(String(localized: "Your original photos stay where they are; the library keeps memories, people and places. It is backed up every day, and the last 14 days are kept."))
-                    .font(.caption)
-                    .foregroundStyle(Paper.muted)
-            }
-
-            CorrectionLogSettingsSection()
-
-            Section(String(localized: "People")) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(String(localized: "Scan for people"))
-                        Text(String(localized: "Looks for faces in photos that haven't been checked yet. Names you gave stay as they are."))
-                            .font(.caption)
-                            .foregroundStyle(Paper.muted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 12)
-                    if scanner.isScanning {
-                        ProgressView().controlSize(.small)
-                    }
-                    Button(String(localized: "Scan now")) { scanner.start() }
-                        .disabled(!scanner.isAvailable || scanner.isScanning)
-                        .accessibilityIdentifier("settings.scan-people")
-                }
-            }
+            SharingSettingsSections(hasStore: hasStore)
+            AuthorNamesSection()
+            AISettingsSections()
+            if hasStore { BackupSettingsSection() }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .background(Paper.canvas)
         .tint(Paper.accent)
         .frame(width: SettingsLayout.width, height: SettingsLayout.height)
-    }
-
-    private func folderRow(_ title: String, url: URL?, identifier: String) -> some View {
-        LabeledContent(title) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(url.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? "—")
-                    .font(.callout)
-                    .foregroundStyle(Paper.muted)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                Button(String(localized: "Show in Finder")) {
-                    guard let url else { return }
-                    if FileManager.default.fileExists(atPath: url.path) {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    } else {
-                        NSWorkspace.shared.open(url.deletingLastPathComponent())
-                    }
-                }
-                .disabled(url == nil)
-            }
-        }
-        .accessibilityIdentifier(identifier)
+        .accessibilityIdentifier("settings.page")
     }
 }
 
-/// The hand correction log: who is correcting, how many entries there are,
-/// and buttons to export or clear it. The log stays on this Mac.
-struct CorrectionLogSettingsSection: View {
-    @AppStorage(TripCorrectionLog.editorKey) private var editor = ""
-    @State private var entries = 0
-    @State private var confirmingClear = false
-
-    var body: some View {
-        Section {
-            LabeledContent(String(localized: "Recorded by")) {
-                TextField(String(localized: "Name"), text: $editor)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 220)
-                    .accessibilityIdentifier("settings.correction-editor")
-            }
-            LabeledContent(String(localized: "Entries")) {
-                Text("\(entries)")
-                    .foregroundStyle(Paper.muted)
-                    .accessibilityIdentifier("settings.correction-count")
-            }
-            HStack(spacing: 10) {
-                Button(String(localized: "Export…")) { export() }
-                    .accessibilityIdentifier("settings.correction-export")
-                Button(String(localized: "Clear…"), role: .destructive) { confirmingClear = true }
-                    .accessibilityIdentifier("settings.correction-clear")
-                Spacer(minLength: 0)
-            }
-        } header: {
-            Text(String(localized: "Correction log"))
-        } footer: {
-            Text(String(localized: "Kept only on this Mac, to improve trip detection"))
-                .font(.caption)
-                .foregroundStyle(Paper.muted)
-        }
-        .task { entries = await TripCorrectionLog.shared.count() }
-        .confirmationDialog(String(localized: "Clear the correction log?"), isPresented: $confirmingClear) {
-            Button(String(localized: "Clear"), role: .destructive) {
-                Task {
-                    await TripCorrectionLog.shared.clear()
-                    entries = await TripCorrectionLog.shared.count()
-                }
-            }
-            Button(String(localized: "Cancel"), role: .cancel) {}
-        } message: {
-            Text(String(localized: "Every entry is removed. This cannot be undone."))
-        }
-        .accessibilityIdentifier("settings.correction-log")
-    }
-
-    private func export() {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "trip-corrections.jsonl"
-        panel.canCreateDirectories = true
-        panel.title = String(localized: "Export the correction log")
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let source = TripCorrectionLog.shared
-        Task {
-            do {
-                try await source.export(to: url)
-            } catch {
-                NSSound.beep()
-            }
-        }
-    }
-}
-
-/// Settings > Sharing; the page itself lives with the rest of sharing.
-struct SharingSettingsView: View {
-    var hasStore = true
-
-    var body: some View {
-        SharingSettingsPage(hasStore: hasStore)
-    }
+/// Settings is its own window, as on every Mac, at one fixed size.
+enum SettingsLayout {
+    static let width: CGFloat = 600
+    /// Tall enough for the whole page with sharing unavailable and AI on
+    /// with a custom model's fields, its longest form. A longer page scrolls.
+    static let height: CGFloat = 750
 }
 
 /// What the two of you are called next to what you write.
@@ -229,23 +58,5 @@ struct AuthorNamesSection: View {
                 .font(.caption)
                 .foregroundStyle(Paper.muted)
         }
-    }
-}
-
-enum ImportSettings {
-    /// When on (the default), an import is followed by a face scan and the
-    /// sheet that shows how the photos were organized.
-    static let autoOrganizeKey = "moments.import.autoOrganize"
-
-    static var autoOrganize: Bool {
-        UserDefaults.standard.object(forKey: autoOrganizeKey) as? Bool ?? true
-    }
-
-    static var libraryFolder: URL? {
-        try? MomentsPersistence.defaultStoreURL().deletingLastPathComponent()
-    }
-
-    static var backupsFolder: URL? {
-        libraryFolder?.appending(path: "Backups", directoryHint: .isDirectory)
     }
 }

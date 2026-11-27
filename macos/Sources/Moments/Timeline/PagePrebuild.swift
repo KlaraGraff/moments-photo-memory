@@ -3,11 +3,11 @@ import QuartzCore
 import SwiftData
 import SwiftUI
 
-/// Builds the Timeline and Chapters pages ahead of time, while the app is
-/// quiet, so the first visit takes the page's existing cached path instead of
-/// waiting for a full build.
+/// Builds the Chapters page ahead of time, while the app is quiet, so the
+/// first visit takes the page's existing cached path instead of waiting for
+/// a full build.
 ///
-/// One page at a time, app-wide. A pre-build stores its result only under the
+/// One build at a time, app-wide. A pre-build stores its result only under the
 /// key it was built for, and only while that key is still the current one. A
 /// page that opens while its pre-build runs joins it; a page that opens for
 /// another key cancels it and builds itself.
@@ -15,24 +15,13 @@ import SwiftUI
 final class PagePrebuilder {
     static let shared = PagePrebuilder()
 
-    enum Page: Equatable {
-        case timeline
-        case chapters
-    }
-
-    /// A pre-build running now: the page, its key and the task producing it.
-    private enum Running {
-        case timeline(id: Int, key: Int, task: Task<TimelineBuildResult?, Never>)
-        case chapters(id: Int, key: Int, task: Task<ChaptersBuildResult?, Never>)
-
-        /// Distinguishes two runs of the same page, so the late finish of an
-        /// older run never clears a newer one.
-        var id: Int {
-            switch self {
-            case let .timeline(id, _, _): return id
-            case let .chapters(id, _, _): return id
-            }
-        }
+    /// A pre-build running now: its key and the task producing it.
+    private struct Running {
+        /// Distinguishes two runs, so the late finish of an older run never
+        /// clears a newer one.
+        let id: Int
+        let key: Int
+        let task: Task<ChaptersBuildResult?, Never>
     }
 
     /// How many builds this pre-builder started. A second run with nothing
@@ -50,24 +39,17 @@ final class PagePrebuilder {
     private var activePrebuild: Int?
     private var nextPrebuildToken = 0
 
-    // MARK: Both pages
+    // MARK: Pre-building
 
-    /// Builds the Timeline, then Chapters, one at a time. Returns when both
-    /// are cached, when the library moved during a sliced read (a later quiet
-    /// window retries), or when the task is cancelled.
-    func prebuild(
-        context: ModelContext,
-        store: LibraryStore,
-        selection: SelectionModel,
-        stacks: PhotoStackModel
-    ) async {
+    /// Builds Chapters. Returns when it is cached, when the library moved
+    /// during a sliced read (a later quiet window retries), or when the task
+    /// is cancelled.
+    func prebuild(context: ModelContext, store: LibraryStore) async {
         cancel()
         let token: Int = nextPrebuildToken
         nextPrebuildToken &+= 1
         activePrebuild = token
         await withTaskCancellationHandler {
-            guard await prebuildTimeline(context: context, store: store, selection: selection, stacks: stacks) else { return }
-            guard !Task.isCancelled else { return }
             _ = await prebuildChapters(context: context, store: store)
         } onCancel: {
             // The trigger's `.task` is cancelled when an input moves: stop the
@@ -90,113 +72,31 @@ final class PagePrebuilder {
     func cancel() {
         cancelCount &+= 1
         guard let running else { return }
-        switch running {
-        case let .timeline(_, _, task):
-            task.cancel()
-        case let .chapters(_, _, task):
-            task.cancel()
-        }
+        running.task.cancel()
         self.running = nil
     }
 
-    // MARK: Joining from a page
+    // MARK: Joining from the page
 
-    /// The running pre-build for this page and key, awaited; nil when nothing
-    /// runs for this page, when it runs for another key (which is cancelled),
-    /// or when it was cancelled or dropped as stale.
-    func joinTimeline(key: Int) async -> TimelineBuildResult? {
-        guard case let .timeline(id, runningKey, task) = running else { return nil }
-        guard runningKey == key else {
-            cancel()
-            return nil
-        }
-        tally("prebuild timeline joined")
-        let result: TimelineBuildResult? = await task.value
-        clearRunning(id)
-        return result
-    }
-
-    /// The Chapters counterpart of `joinTimeline(key:)`.
+    /// The running pre-build for this key, awaited; nil when nothing runs,
+    /// when it runs for another key (which is cancelled), or when it was
+    /// cancelled or dropped as stale.
     func joinChapters(key: Int) async -> ChaptersBuildResult? {
-        guard case let .chapters(id, runningKey, task) = running else { return nil }
-        guard runningKey == key else {
+        guard let running else { return nil }
+        guard running.key == key else {
             cancel()
             return nil
         }
         tally("prebuild chapters joined")
-        let result: ChaptersBuildResult? = await task.value
-        clearRunning(id)
+        let result: ChaptersBuildResult? = await running.task.value
+        clearRunning(running.id)
         return result
-    }
-
-    // MARK: Timeline
-
-    /// Returns false when the pre-build must stop: the library moved during
-    /// the sliced read, the build was cancelled, or its result was stale.
-    private func prebuildTimeline(
-        context: ModelContext,
-        store: LibraryStore,
-        selection: SelectionModel,
-        stacks: PhotoStackModel
-    ) async -> Bool {
-        // Taken before anything is read: a change during the read must not
-        // end up under this key.
-        let revisionBefore: Int = store.photoPlaceRevision
-        let rows: TimelineRows = Self.timelineRows(context: context)
-        let key: Int = TimelineScreen.buildKey(
-            store: store,
-            selection: selection,
-            memories: rows.memories,
-            trips: rows.trips,
-            stacks: stacks,
-            stackRecords: rows.stackRecords,
-            calendar: Calendar.autoupdatingCurrent
-        )
-        // The rows the key was taken from must still be the library's rows.
-        guard store.photoPlaceRevision == revisionBefore, !Task.isCancelled else { return false }
-        if TimelineScreen.cachedBuild(key: key) != nil {
-            tally("prebuild timeline skipped (cached)")
-            return true
-        }
-        let cancelsAtStart: Int = cancelCount
-        guard let inputs: TimelineBuildInputs = await TimelineScreen.buildInputsSliced(
-            key: key,
-            store: store,
-            selection: selection,
-            memories: rows.memories,
-            calendar: Calendar.autoupdatingCurrent
-        ) else {
-            // The library moved under the read; no photo is touched further.
-            return false
-        }
-        // A page opened and called `cancel()` while the photos were sliced:
-        // it builds itself now, so this one must not start beside it.
-        guard cancelsAtStart == cancelCount, !Task.isCancelled else { return false }
-        let id: Int = startRun()
-        let task: Task<TimelineBuildResult?, Never> = Task { @MainActor () -> TimelineBuildResult? in
-            let startedAt: CFTimeInterval = CACurrentMediaTime()
-            let built: TimelineBuildResult = await TimelineScreen.build(inputs, priority: .utility)
-            // A cancelled pre-build stores nothing.
-            guard !Task.isCancelled else { return nil }
-            // The key must still be the current one, read from freshly
-            // fetched rows, or the result is dropped: an old build never
-            // overwrites a newer page build.
-            guard Self.timelineKey(context: context, store: store, selection: selection, stacks: stacks) == key else {
-                tally("prebuild timeline dropped (stale)")
-                return nil
-            }
-            TimelineScreen.storeBuild(built, key: key)
-            tally("prebuild timeline built", seconds: CACurrentMediaTime() - startedAt)
-            return built
-        }
-        running = .timeline(id: id, key: key, task: task)
-        let result: TimelineBuildResult? = await task.value
-        clearRunning(id)
-        return result != nil
     }
 
     // MARK: Chapters
 
+    /// Returns false when the pre-build must stop: the library moved during
+    /// the sliced read, the build was cancelled, or its result was stale.
     private func prebuildChapters(context: ModelContext, store: LibraryStore) async -> Bool {
         // Taken before anything is read: a change during the read must not
         // end up under this key.
@@ -226,14 +126,21 @@ final class PagePrebuilder {
             memories: rows.memories,
             calendar: Calendar.autoupdatingCurrent
         ) else {
+            // The library moved under the read; no photo is touched further.
             return false
         }
+        // The page opened and called `cancel()` while the photos were sliced:
+        // it builds itself now, so this one must not start beside it.
         guard cancelsAtStart == cancelCount, !Task.isCancelled else { return false }
         let id: Int = startRun()
         let task: Task<ChaptersBuildResult?, Never> = Task { @MainActor () -> ChaptersBuildResult? in
             let startedAt: CFTimeInterval = CACurrentMediaTime()
             let built: ChaptersBuildResult = await TripsScreen.build(inputs, priority: .utility)
+            // A cancelled pre-build stores nothing.
             guard !Task.isCancelled else { return nil }
+            // The key must still be the current one, read from freshly
+            // fetched rows, or the result is dropped: an old build never
+            // overwrites a newer page build.
             guard Self.chaptersKey(context: context, store: store) == key else {
                 tally("prebuild chapters dropped (stale)")
                 return nil
@@ -242,19 +149,13 @@ final class PagePrebuilder {
             tally("prebuild chapters built", seconds: CACurrentMediaTime() - startedAt)
             return built
         }
-        running = .chapters(id: id, key: key, task: task)
+        running = Running(id: id, key: key, task: task)
         let result: ChaptersBuildResult? = await task.value
         clearRunning(id)
         return result != nil
     }
 
     // MARK: Rows and keys
-
-    private struct TimelineRows {
-        let trips: [Trip]
-        let memories: [Memory]
-        let stackRecords: [UserGroup]
-    }
 
     private struct ChaptersRows {
         let trips: [Trip]
@@ -263,7 +164,7 @@ final class PagePrebuilder {
         let memories: [Memory]
     }
 
-    /// Every memory, oldest `updatedAt` first, as the pages' `@Query`s hold
+    /// Every memory, oldest `updatedAt` first, as the page's `@Query` holds
     /// them. The key sums each row's own hash, so the order is not part of
     /// it, but the fetch matches the page for the build's memory lines.
     private static func memories(context: ModelContext) -> [Memory] {
@@ -271,12 +172,6 @@ final class PagePrebuilder {
         return fetched.sorted { (first: Memory, second: Memory) -> Bool in
             first.updatedAt < second.updatedAt
         }
-    }
-
-    private static func stackRecords(context: ModelContext) -> [UserGroup] {
-        (try? context.fetch(
-            FetchDescriptor<UserGroup>(predicate: #Predicate<UserGroup> { $0.kindRaw == "stack" })
-        )) ?? []
     }
 
     private static func chapterGroups(context: ModelContext) -> [UserGroup] {
@@ -293,41 +188,14 @@ final class PagePrebuilder {
         (try? context.fetch(FetchDescriptor<Trip>())) ?? []
     }
 
-    /// The rows the Timeline's `@Query`s hold, fetched from this context with
-    /// the same filters, so the key is the one the page computes.
-    private static func timelineRows(context: ModelContext) -> TimelineRows {
-        TimelineRows(
-            trips: trips(context: context),
-            memories: memories(context: context),
-            stackRecords: stackRecords(context: context)
-        )
-    }
-
+    /// The rows the page's `@Query`s hold, fetched from this context with the
+    /// same filters, so the key is the one the page computes.
     private static func chaptersRows(context: ModelContext) -> ChaptersRows {
         ChaptersRows(
             trips: trips(context: context),
             chapterGroups: chapterGroups(context: context),
             groupItems: groupItems(context: context),
             memories: memories(context: context)
-        )
-    }
-
-    /// The Timeline key recomputed from freshly fetched rows.
-    private static func timelineKey(
-        context: ModelContext,
-        store: LibraryStore,
-        selection: SelectionModel,
-        stacks: PhotoStackModel
-    ) -> Int {
-        let rows: TimelineRows = timelineRows(context: context)
-        return TimelineScreen.buildKey(
-            store: store,
-            selection: selection,
-            memories: rows.memories,
-            trips: rows.trips,
-            stacks: stacks,
-            stackRecords: rows.stackRecords,
-            calendar: Calendar.autoupdatingCurrent
         )
     }
 
@@ -347,7 +215,7 @@ final class PagePrebuilder {
     // MARK: Run bookkeeping
 
     /// Starts one run and returns its id, so a late finish cannot clear a
-    /// newer run of the same page.
+    /// newer run.
     private func startRun() -> Int {
         let id: Int = nextRunID
         nextRunID &+= 1
@@ -371,8 +239,6 @@ final class PagePrebuilder {
 /// the quiet window, and a running pre-build is replaced.
 struct PagePrebuildTrigger: Hashable {
     let photoPlaceRevision: Int
-    let visibleGeneration: Int
-    let stackGeneration: Int
     let isImporting: Bool
     let isImportingPhotos: Bool
     let isAnalyzingStacks: Bool
@@ -383,9 +249,8 @@ struct PagePrebuildTrigger: Hashable {
     }
 }
 
-/// The rule both sliced input reads follow between photo slices: the library
-/// and, where the page has them, the Library filters must not have moved, and
-/// the task must not be cancelled. A read that fails it returns nil and
+/// The rule the sliced input read follows between photo slices: the library
+/// must not have moved, and the task must not be cancelled. A read that fails it returns nil and
 /// touches no further photo.
 enum PagePrebuildSliceRule {
     /// Photos per slice: small enough that one slice of a 20 000-photo
@@ -408,12 +273,10 @@ enum PagePrebuildSliceRule {
 
 /// The app-level pre-build trigger, in its own tiny view so the App body does
 /// not read values that change on every import save. Only this view is
-/// re-evaluated when the library, the selection or a running job moves.
+/// re-evaluated when the library or a running job moves.
 struct PagePrebuildDriver: View {
     let container: ModelContainer
     let store: LibraryStore
-    let selection: SelectionModel
-    let stacks: PhotoStackModel
     let importController: ImportController
     let photosImportController: PhotosImportController
     let stackAnalyzer: PhotoStackAnalyzer
@@ -421,8 +284,6 @@ struct PagePrebuildDriver: View {
     private var trigger: PagePrebuildTrigger {
         PagePrebuildTrigger(
             photoPlaceRevision: store.photoPlaceRevision,
-            visibleGeneration: selection.visibleGeneration,
-            stackGeneration: stacks.generation,
             isImporting: importController.isRunning,
             isImportingPhotos: photosImportController.isRunning,
             isAnalyzingStacks: stackAnalyzer.isRunning
@@ -437,12 +298,7 @@ struct PagePrebuildDriver: View {
                 guard !trigger.isBusy else { return }
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled else { return }
-                await PagePrebuilder.shared.prebuild(
-                    context: container.mainContext,
-                    store: store,
-                    selection: selection,
-                    stacks: stacks
-                )
+                await PagePrebuilder.shared.prebuild(context: container.mainContext, store: store)
             }
     }
 }

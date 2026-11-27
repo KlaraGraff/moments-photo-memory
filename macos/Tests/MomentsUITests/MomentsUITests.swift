@@ -52,11 +52,11 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "memory-01-typed-evidence")
         XCTAssertTrue((memory.value as? String ?? "").contains(text), "The typed words are not in the field: \(String(describing: memory.value))")
 
-        for destination in ["sidebar.map", "sidebar.timeline", "sidebar.people", "sidebar.library"] {
+        for destination in ["sidebar.trips", "sidebar.library"] {
             let item = element(in: app, identifier: destination)
             XCTAssertTrue(item.waitForExistence(timeout: launchTimeout), "Missing sidebar item \(destination)")
             item.click()
-            if destination == "sidebar.map" { capture(app, named: "memory-02-left-evidence") }
+            if destination == "sidebar.trips" { capture(app, named: "memory-02-left-evidence") }
         }
 
         XCTAssertTrue(memory.waitForExistence(timeout: launchTimeout))
@@ -236,11 +236,23 @@ final class MomentsUITests: XCTestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(NSEvent.doubleClickInterval + 0.3))
     }
 
-    /// Opens the Map and zooms from the globe to the photos.
-    private func openMapAtPhotos(_ app: XCUIApplication) -> XCUIElement {
-        element(in: app, identifier: "sidebar.map").click()
+    /// Opens the large map of every photo the way a person does: Chapters,
+    /// then the small map over the cards. The click lands on the small map's
+    /// margin, clear of the stamps (a stamp opens its chapter instead).
+    @discardableResult
+    private func openLargeMap(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+        element(in: app, identifier: "sidebar.trips").click()
+        let footprints = element(in: app, identifier: "trips.footprints")
+        XCTAssertTrue(footprints.waitForExistence(timeout: launchTimeout), "Chapters has no small map over the cards", file: file, line: line)
+        footprints.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.92)).click()
         let map = element(in: app, identifier: "map.view")
-        XCTAssertTrue(map.waitForExistence(timeout: 30))
+        XCTAssertTrue(map.waitForExistence(timeout: 30), "The small map did not open the large map", file: file, line: line)
+        return map
+    }
+
+    /// Opens the large map and zooms from the globe to the photos.
+    private func openMapAtPhotos(_ app: XCUIApplication) -> XCUIElement {
+        let map = openLargeMap(app)
         let fit = element(in: app, identifier: "map.fit")
         XCTAssertTrue(fit.waitForExistence(timeout: launchTimeout))
         // The fitted region needs the clustered snapshot; give it a moment.
@@ -286,40 +298,118 @@ final class MomentsUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(done.waitForNonExistence(timeout: launchTimeout))
 
-        // The place under a photo shows it on the map.
+        // The place under a photo shows the photos taken there, right in
+        // the Library, with a heading that leads back to every photo.
+        let allCount = libraryPhotoCount(app)
         let place = anyID("library.place.")
         XCTAssertTrue(place.waitForExistence(timeout: launchTimeout), "The place under a photo is not a control")
         place.click()
-        XCTAssertTrue(element(in: app, identifier: "map.panel").waitForExistence(timeout: launchTimeout), "Clicking the place did not show it on the map")
-        Thread.sleep(forTimeInterval: 1.0)
-        capture(app, named: "\(prefix)-02-place-on-map-evidence")
+        let heading = element(in: app, identifier: "library.scope")
+        XCTAssertTrue(heading.waitForExistence(timeout: launchTimeout), "Clicking the place did not show its photos")
+        let placeCount = libraryPhotoCount(app)
+        XCTAssertGreaterThan(placeCount, 0)
+        XCTAssertLessThan(placeCount, allCount, "Only the place's photos should be listed")
+        capture(app, named: "\(prefix)-02-place-photos-evidence")
+
+        // The heading's small map opens the large map with those photos; Back returns.
+        let smallMap = element(in: app, identifier: "library.scope.map")
+        XCTAssertTrue(smallMap.waitForExistence(timeout: launchTimeout), "The place's heading has no small map")
+        smallMap.click()
+        XCTAssertTrue(element(in: app, identifier: "map.view").waitForExistence(timeout: 30), "The small map did not open the large map")
+        Thread.sleep(forTimeInterval: 1.5)
+        capture(app, named: "\(prefix)-03-place-on-map-evidence")
+        let back = element(in: app, identifier: "map.back")
+        XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The large map has no Back")
+        back.click()
+        XCTAssertTrue(heading.waitForExistence(timeout: launchTimeout), "Back did not return to the place's photos")
+
+        let close = element(in: app, identifier: "library.scope.close")
+        close.click()
+        XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout), "All photos did not leave the place")
+        XCTAssertEqual(libraryPhotoCount(app), allCount)
     }
 
-    /// People's + adds a person; the window's import + is not shown there.
-    func testPeoplePlusAddsAPerson() {
-        exercisePeoplePlus(launch(language: "en"), prefix: "people-plus")
+    /// People are a row of faces over the photos, not a page. A face shows
+    /// that person's photos in place; a group nobody named is named there.
+    func testFacesOverThePhotosShowAPersonsPhotos() {
+        exerciseFaces(launch(language: "en", extraArguments: ["-MomentsUITestPeople"]), prefix: "faces")
     }
 
-    func testPeoplePlusAddsAPersonInASmallWindow() {
-        exercisePeoplePlus(launch(language: "en", smallWindow: true), prefix: "people-plus-small")
+    func testFacesOverThePhotosShowAPersonsPhotosInASmallWindow() {
+        exerciseFaces(launch(language: "en", smallWindow: true, extraArguments: ["-MomentsUITestPeople"]), prefix: "faces-small")
     }
 
-    private func exercisePeoplePlus(_ app: XCUIApplication, prefix: String) {
-        XCTAssertTrue(element(in: app, identifier: "toolbar.import").waitForExistence(timeout: launchTimeout))
-        element(in: app, identifier: "sidebar.people").click()
-        let add = element(in: app, identifier: "people.add")
-        XCTAssertTrue(add.waitForExistence(timeout: launchTimeout), "People has no Add person button")
-        XCTAssertTrue(element(in: app, identifier: "toolbar.import").waitForNonExistence(timeout: launchTimeout), "People still shows the import +")
-        add.click()
-        let name = element(in: app, identifier: "people.add.name")
-        XCTAssertTrue(name.waitForExistence(timeout: launchTimeout), "Add person did not open its sheet")
-        XCTAssertFalse(element(in: app, identifier: "people.add.save").isEnabled, "Add is enabled with no name and no faces")
-        capture(app, named: "\(prefix)-01-sheet-evidence")
-        app.typeKey(.escape, modifierFlags: [])
-        XCTAssertTrue(name.waitForNonExistence(timeout: launchTimeout))
-        // Back on the Library the import + returns.
-        element(in: app, identifier: "sidebar.library").click()
-        XCTAssertTrue(element(in: app, identifier: "toolbar.import").waitForExistence(timeout: launchTimeout))
+    private func exerciseFaces(_ app: XCUIApplication, prefix: String) {
+        let allCount = libraryPhotoCount(app)
+        let strip = element(in: app, identifier: "library.people")
+        XCTAssertTrue(strip.waitForExistence(timeout: launchTimeout), "The Library has no row of faces")
+        let alex = element(in: app, identifier: "library.person.Alex")
+        XCTAssertTrue(alex.waitForExistence(timeout: launchTimeout), "A named person is missing from the row of faces")
+        capture(app, named: "\(prefix)-01-row-evidence")
+        alex.click()
+
+        // The Library narrows in place: a heading with the face and name,
+        // only that person's photos, and the way back.
+        let heading = element(in: app, identifier: "library.scope")
+        XCTAssertTrue(heading.waitForExistence(timeout: launchTimeout), "A face did not show that person's photos")
+        XCTAssertEqual(libraryPhotoCount(app), 2, "Alex is in two synthetic photos")
+        XCTAssertTrue(strip.waitForNonExistence(timeout: launchTimeout), "The row of faces should give way to the heading")
+        capture(app, named: "\(prefix)-02-person-evidence")
+        element(in: app, identifier: "library.scope.close").click()
+        XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout))
+        XCTAssertEqual(libraryPhotoCount(app), allCount)
+
+        // A group nobody has named: the name is typed in the heading.
+        let unnamed = element(in: app, identifier: "library.person.unnamed")
+        XCTAssertTrue(unnamed.waitForExistence(timeout: launchTimeout), "The unnamed group is missing from the row of faces")
+        unnamed.click()
+        let name = app.textFields["library.scope.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: launchTimeout), "The unnamed group has no name field")
+        XCTAssertEqual(libraryPhotoCount(app), 5, "The unnamed group is in five synthetic photos")
+        name.click()
+        name.typeText("Robin\r")
+        capture(app, named: "\(prefix)-03-named-evidence")
+        element(in: app, identifier: "library.scope.close").click()
+        XCTAssertTrue(element(in: app, identifier: "library.person.Robin").waitForExistence(timeout: launchTimeout), "The named group did not join the row of faces")
+        XCTAssertTrue(unnamed.waitForNonExistence(timeout: launchTimeout), "The group still asks for a name")
+
+        // A name someone else has: the app asks before joining the two, and
+        // then shows both people's photos as one person's.
+        alex.click()
+        XCTAssertTrue(name.waitForExistence(timeout: launchTimeout), "Alex's heading has no name field")
+        XCTAssertEqual(libraryPhotoCount(app), 2)
+        name.click()
+        name.typeKey("a", modifierFlags: .command)
+        name.typeText("Robin\r")
+        let merge = app.buttons["Merge"].firstMatch
+        XCTAssertTrue(merge.waitForExistence(timeout: launchTimeout), "Typing another person's name did not ask before merging")
+        XCTAssertEqual(libraryPhotoCount(app), 2, "The two people were joined before the question was answered")
+        capture(app, named: "\(prefix)-04-merge-question-evidence")
+        // Return takes the default answer, Merge. Not a click: the first
+        // match can be the Touch Bar's copy of the button, which cannot be
+        // clicked.
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(merge.waitForNonExistence(timeout: launchTimeout))
+        let joined: Int = libraryPhotoCount(app)
+        XCTAssertEqual(joined, 7, "After the merge the heading should show both people's photos: Alex's two and the group's five")
+        capture(app, named: "\(prefix)-05-merged-evidence")
+        element(in: app, identifier: "library.scope.close").click()
+        XCTAssertTrue(alex.waitForNonExistence(timeout: launchTimeout), "Alex is still in the row of faces after joining Robin")
+        XCTAssertTrue(element(in: app, identifier: "library.person.Robin").waitForExistence(timeout: launchTimeout), "Robin left the row of faces")
+    }
+
+    /// The search field finds people by name, as it finds places and trips.
+    func testSearchFindsAPersonByName() {
+        let app = launch(language: "en", extraArguments: ["-MomentsUITestPeople"])
+        let allCount = libraryPhotoCount(app)
+        let search = app.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: launchTimeout), "The Library has no search field")
+        search.click()
+        search.typeText("Alex")
+        let narrowed = NSPredicate(format: "value == %@", "2")
+        let count = element(in: app, identifier: "library.photoCount")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: narrowed, evaluatedWith: count)], timeout: launchTimeout), .completed, "Searching a person's name did not find their photos (\(count.value as? String ?? "") of \(allCount))")
+        capture(app, named: "search-01-person-evidence")
     }
 
     func testPlacesMapHasSyntheticMarkers() {
@@ -374,8 +464,9 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "map-03-panel-closed")
     }
 
-    /// Settings (language, AI model) are reachable from the sidebar, not only via ⌘,.
-    func testSidebarOpensAIModelSettings() {
+    /// Settings are reachable from the sidebar, not only via ⌘,, and are one
+    /// page: no tabs and no language picker; AI organizing is rows of it.
+    func testSidebarOpensSettingsAsOnePage() {
         let app = launch(language: "en")
         let gear = element(in: app, identifier: "sidebar.settings")
         XCTAssertTrue(gear.waitForExistence(timeout: launchTimeout))
@@ -391,18 +482,31 @@ final class MomentsUITests: XCTestCase {
             capture(app, named: "settings-00b-gear-no-window-evidence")
             print("SIDEBAR-GEAR frame=\(gear.frame) hittable=\(gear.isHittable) window=\(app.windows.firstMatch.frame)")
         }
-        XCTAssertGreaterThan(app.windows.count, windowsBefore, "The AI model settings window did not open")
-        capture(app, named: "settings-01-from-sidebar-evidence")
+        XCTAssertGreaterThan(app.windows.count, windowsBefore, "The settings window did not open")
+        // Sharing and the backup sit on the same page.
+        XCTAssertTrue(element(in: app, identifier: "settings.backup-status").waitForExistence(timeout: launchTimeout), "Settings has no backup section")
+        let window = app.windows.containing(.any, identifier: "settings.backup-status").firstMatch
+        let aboutSharing = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Sharing", "Sharing")
+        XCTAssertTrue(window.staticTexts.matching(aboutSharing).firstMatch.waitForExistence(timeout: launchTimeout), "Settings has no sharing section")
+        // AI organizing is a few rows of the same page.
+        XCTAssertTrue(element(in: app, identifier: "settings.ai-enabled").waitForExistence(timeout: launchTimeout), "Settings has no AI switch")
+        XCTAssertFalse(element(in: app, identifier: "settings.language").exists, "The language picker is back in Settings")
+        XCTAssertFalse(element(in: app, identifier: "settings.auto-organize").exists, "The organize switch is back in Settings")
+        XCTAssertEqual(window.toolbars.buttons.count, 0, "Settings has tabs again")
+        let attachment = XCTAttachment(screenshot: window.screenshot())
+        attachment.name = "settings-01-one-page-evidence"
+        attachment.lifetime = .keepAlways
+        add(attachment)
         app.typeKey("w", modifierFlags: .command)
     }
 
-    /// Settings › AI Model: AI starts on, and a custom model is an address,
-    /// a model name and a key, tied to no one provider.
+    /// Settings: AI starts on, and a custom model is an address, a model
+    /// name and a key, tied to no one provider.
     func testAISettingsStartOnAndACustomModelIsJustThreeFields() {
-        let app = launch(language: "en", extraArguments: ["-moments.settings.tab", "aiModel", "-moments.ai.engine", "cloud"])
+        let app = launch(language: "en", extraArguments: ["-moments.ai.engine", "cloud"])
         app.typeKey(",", modifierFlags: .command)
         let toggle = element(in: app, identifier: "settings.ai-enabled")
-        XCTAssertTrue(toggle.waitForExistence(timeout: launchTimeout), "Settings › AI Model has no switch")
+        XCTAssertTrue(toggle.waitForExistence(timeout: launchTimeout), "Settings has no AI switch")
         let value: String = String(describing: toggle.value ?? "nil")
         XCTAssertTrue(["1", "true"].contains(value), "AI does not start on: \(value)")
         for identifier in ["settings.ai-engine", "settings.ai-address", "settings.ai-model", "settings.ai-key"] {
@@ -415,17 +519,15 @@ final class MomentsUITests: XCTestCase {
         add(attachment)
     }
 
-    /// Settings › General offers the app language, readable in German at the
-    /// small window size and in Chinese.
-    func testSettingsOfferLanguage() {
-        // The sidebar and the picker's label come from the catalog, not the
-        // English keys.
+    /// The app follows the Mac's language: the sidebar comes from the
+    /// catalog in German (small window) and in Chinese.
+    func testSidebarIsTranslated() {
         let cases = [
-            ("de", true, "Mediathek", "Sprache"),
-            ("zh-Hans", false, "图库", "语言"),
+            ("de", true, "Mediathek"),
+            ("zh-Hans", false, "图库"),
         ]
-        for (language, smallWindow, libraryLabel, languageLabel) in cases {
-            let app = launch(language: language, smallWindow: smallWindow, extraArguments: ["-moments.settings.tab", "general"])
+        for (language, smallWindow, libraryLabel) in cases {
+            let app = launch(language: language, smallWindow: smallWindow)
             // The small window may start with the sidebar folded away.
             let library = element(in: app, identifier: "sidebar.library")
             let sidebarShown = library.waitForExistence(timeout: smallWindow ? 5 : launchTimeout)
@@ -436,38 +538,28 @@ final class MomentsUITests: XCTestCase {
                 let texts = parts.flatMap { [$0.label, $0.title, $0.value as? String ?? ""] }.filter { !$0.isEmpty }
                 XCTAssertTrue(texts.contains(libraryLabel), "The sidebar reads \(texts), not \(libraryLabel), in \(language)")
             }
-            app.typeKey(",", modifierFlags: .command)
-            let picker = element(in: app, identifier: "settings.language")
-            XCTAssertTrue(picker.waitForExistence(timeout: launchTimeout), "Settings › General has no language picker (\(language))")
-            let window = app.windows.containing(.any, identifier: "settings.language").firstMatch
-            // A Form row may show the picker's label as a separate static text,
-            // with its text in the value.
-            let settingsParts = [picker] + window.staticTexts.allElementsBoundByIndex
-            let settingsTexts = settingsParts.flatMap { [$0.label, $0.title, $0.value as? String ?? ""] }.filter { !$0.isEmpty }
-            XCTAssertTrue(settingsTexts.contains(languageLabel), "Settings reads \(settingsTexts), no \(languageLabel), in \(language)")
-            let attachment = XCTAttachment(screenshot: window.screenshot())
-            attachment.name = "settings-02-language-\(language)-evidence"
-            attachment.lifetime = .keepAlways
-            add(attachment)
+            capture(app, named: "language-01-\(language)-evidence")
             app.terminate()
         }
     }
 
-    /// Settings › General › Library shows the automatic backup and the one
-    /// button there is, also at the small window size. The in-memory test
+    /// Settings shows the automatic backup and the one button there is, also
+    /// at the small window size. The in-memory test
     /// store has no backups, so the row says so.
     func testSettingsShowAutomaticBackup() {
-        let app = launch(language: "en", smallWindow: true, extraArguments: ["-moments.settings.tab", "general"])
+        let app = launch(language: "en", smallWindow: true)
         app.typeKey(",", modifierFlags: .command)
         let status = element(in: app, identifier: "settings.backup-status")
-        XCTAssertTrue(status.waitForExistence(timeout: launchTimeout), "Settings › General has no backup row")
+        XCTAssertTrue(status.waitForExistence(timeout: launchTimeout), "Settings has no backup row")
         let restore = element(in: app, identifier: "settings.backup-restore")
         XCTAssertTrue(restore.exists, "The backup row has no Restore from Backup button")
         let window = app.windows.containing(.any, identifier: "settings.backup-status").firstMatch
-        let texts: [String] = window.staticTexts.allElementsBoundByIndex.flatMap { (text: XCUIElement) -> [String] in
-            [text.label, text.value as? String ?? ""]
-        }
-        XCTAssertTrue(texts.contains("No backup yet"), "The backup row reads \(texts)")
+        // The row's own text, not a walk over every text on the page: the
+        // AI rows above gain a status line a moment after the page opens,
+        // and a list taken by index then misses its last entry.
+        let reads = NSPredicate(format: "label == %@ OR value == %@", "No backup yet", "No backup yet")
+        let settled = XCTWaiter.wait(for: [expectation(for: reads, evaluatedWith: status)], timeout: launchTimeout)
+        XCTAssertEqual(settled, .completed, "The backup row reads \(status.label) / \(status.value as? String ?? "")")
         let attachment = XCTAttachment(screenshot: window.screenshot())
         attachment.name = "settings-03-backup-evidence"
         attachment.lifetime = .keepAlways
@@ -480,34 +572,50 @@ final class MomentsUITests: XCTestCase {
         assertGlobeFullyVisible(app, screenshot: "map-04-globe-evidence")
     }
 
-    /// In the smallest window nothing overlaps: the Library's type bar has
-    /// no scroll bar and the Map's countries card clears its controls.
+    /// In the smallest window nothing overlaps: the Library has no rows of
+    /// controls over its photos, Chapters keeps its small map inside the
+    /// window, and the large map's countries card clears its controls.
     func testSmallWindowHasNoOverlaps() {
-        let app = launch(language: "en", smallWindow: true)
-        XCTAssertTrue(element(in: app, identifier: "library.type-filter").waitForExistence(timeout: launchTimeout))
+        let app = launch(language: "en", smallWindow: true, extraArguments: ["-MomentsUITestPeople"])
+        XCTAssertTrue(element(in: app, identifier: "library.photoCount").waitForExistence(timeout: launchTimeout))
+        // The rows that used to sit above the photos are gone.
+        for identifier in ["toolbar.filter", "library.type-filter", "filter.date", "library.grouping", "library.review-banner"] {
+            XCTAssertFalse(element(in: app, identifier: identifier).exists, "\(identifier) is back above the photos")
+        }
+        let window = app.windows.firstMatch.frame
+        let strip = element(in: app, identifier: "library.people")
+        XCTAssertTrue(strip.waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(window.contains(strip.frame), "The row of faces \(strip.frame) spills outside the window \(window)")
         capture(app, named: "small-01-library-evidence")
 
-        element(in: app, identifier: "sidebar.map").click()
+        element(in: app, identifier: "sidebar.trips").click()
+        let footprints = element(in: app, identifier: "trips.footprints")
+        XCTAssertTrue(footprints.waitForExistence(timeout: launchTimeout), "Chapters has no small map over the cards")
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(footprints.frame), "The small map \(footprints.frame) spills outside the window")
+        capture(app, named: "small-02-chapters-evidence")
+
+        openLargeMap(app)
         let stats = element(in: app, identifier: "map.stats")
         let toolbar = element(in: app, identifier: "map.toolbar")
         XCTAssertTrue(stats.waitForExistence(timeout: 30))
         XCTAssertTrue(toolbar.waitForExistence(timeout: launchTimeout))
         Thread.sleep(forTimeInterval: 1.5)
-        capture(app, named: "small-02-map-evidence")
+        capture(app, named: "small-03-map-evidence")
         XCTAssertFalse(stats.frame.intersects(toolbar.frame), "Countries card \(stats.frame) overlaps the map controls \(toolbar.frame)")
+        let back = element(in: app, identifier: "map.back")
+        XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The large map has no Back in the small window")
+        back.click()
+        XCTAssertTrue(footprints.waitForExistence(timeout: launchTimeout), "Back did not return to Chapters")
 
-        element(in: app, identifier: "sidebar.library").click()
-        let date = element(in: app, identifier: "filter.date")
-        XCTAssertTrue(date.waitForExistence(timeout: launchTimeout))
-        date.click()
-        XCTAssertTrue(app.popovers.firstMatch.waitForExistence(timeout: launchTimeout), "Date did not open its calendar")
-        XCTAssertFalse(element(in: app, identifier: "filter.date-chip").exists, "Opening the calendar must not apply a date")
-        capture(app, named: "small-03-date-picker-evidence")
-        app.typeKey(.escape, modifierFlags: [])
-
-        element(in: app, identifier: "sidebar.timeline").click()
-        XCTAssertTrue(element(in: app, identifier: "toolbar.filter").waitForExistence(timeout: launchTimeout), "The Timeline has no Filter button")
-        capture(app, named: "small-04-timeline-evidence")
+        // A chapter: its people, its route map and its days fit side by side.
+        element(in: app, identifier: "trips.card.journeyA").click()
+        let tripMemory = element(in: app, identifier: "trips.memory.trip")
+        XCTAssertTrue(tripMemory.waitForExistence(timeout: launchTimeout))
+        let route = element(in: app, identifier: "trips.map")
+        XCTAssertTrue(route.waitForExistence(timeout: launchTimeout), "The chapter has no route map")
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(route.frame), "The route map \(route.frame) spills outside the window")
+        XCTAssertFalse(route.frame.intersects(tripMemory.frame), "The route map overlaps the memory line")
+        capture(app, named: "small-04-chapter-evidence")
     }
 
     func testFootprintsGlobeFitsSmallWindow() {
@@ -519,14 +627,9 @@ final class MomentsUITests: XCTestCase {
     /// map for the first and last bright pixels. A cropped globe touches the
     /// map's edges.
     private func assertGlobeFullyVisible(_ app: XCUIApplication, screenshot name: String, file: StaticString = #filePath, line: UInt = #line) {
-        let mapRow = element(in: app, identifier: "sidebar.map")
-        XCTAssertTrue(mapRow.waitForExistence(timeout: launchTimeout), file: file, line: line)
-        mapRow.click()
-
-        // The Map opens on the globe. The first MapKit globe of a test run
-        // can take longer to appear.
-        let globe = element(in: app, identifier: "map.view")
-        XCTAssertTrue(globe.waitForExistence(timeout: 30), file: file, line: line)
+        // The large map of every photo opens on the globe. The first MapKit
+        // globe of a test run can take longer to appear.
+        let globe = openLargeMap(app, file: file, line: line)
         Thread.sleep(forTimeInterval: 3.0)
         capture(app, named: name)
 
@@ -584,40 +687,73 @@ final class MomentsUITests: XCTestCase {
         add(note)
     }
 
-    func testSidebarHasFourDestinations() {
+    /// The sidebar holds the two pages the app is for and nothing else:
+    /// people, the map and the timeline are not pages, and nothing is tucked
+    /// under a "More" row.
+    func testSidebarHasOnlyLibraryAndChapters() {
         let app = launch(language: "en")
-        for identifier in ["sidebar.library", "sidebar.people", "sidebar.map", "sidebar.timeline"] {
+        for identifier in ["sidebar.library", "sidebar.trips", "sidebar.settings"] {
             XCTAssertTrue(element(in: app, identifier: identifier).waitForExistence(timeout: launchTimeout), "Missing \(identifier)")
         }
-        for identifier in ["sidebar.review", "sidebar.places", "sidebar.footprints", "sidebar.import"] {
+        for identifier in ["sidebar.more", "sidebar.map", "sidebar.people", "sidebar.timeline", "sidebar.review", "sidebar.places", "sidebar.footprints", "sidebar.import", "sidebar.new-group"] {
             XCTAssertFalse(element(in: app, identifier: identifier).exists, "\(identifier) should have left the sidebar")
         }
-        // Without photos to confirm there is no banner.
-        XCTAssertFalse(element(in: app, identifier: "library.review-banner").exists)
+        // The Library opens straight on its photos: no banner, no rows of controls.
+        for identifier in ["library.review-banner", "library.type-filter", "toolbar.filter", "reorganize.all"] {
+            XCTAssertFalse(element(in: app, identifier: identifier).exists, "\(identifier) is back")
+        }
+        capture(app, named: "sidebar-01-two-pages-evidence")
 
         let importButton = element(in: app, identifier: "toolbar.import")
-        XCTAssertTrue(importButton.waitForExistence(timeout: launchTimeout), "The toolbar + import button is missing")
         importButton.click()
         // Scoped to the button: the File menu has the same two commands.
         XCTAssertTrue(importButton.menuItems["Import Folder…"].waitForExistence(timeout: launchTimeout), "The + button did not open its menu")
         XCTAssertTrue(importButton.menuItems["Import from Apple Photos…"].exists)
         capture(app, named: "toolbar-01-import-menu-evidence")
         app.typeKey(.escape, modifierFlags: [])
+
+        // Chapters brings its own +; the import + belongs to the Library.
+        element(in: app, identifier: "sidebar.trips").click()
+        XCTAssertTrue(element(in: app, identifier: "trips.new").waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(importButton.waitForNonExistence(timeout: launchTimeout), "Chapters still shows the import +")
     }
 
-    func testReviewBannerOpensTheReviewList() {
-        let app = launch(language: "zh-Hans", reviewItems: true)
-        let banner = element(in: app, identifier: "library.review-banner")
-        XCTAssertTrue(banner.waitForExistence(timeout: launchTimeout), "Photos to confirm should show a banner in the Library")
-        capture(app, named: "library-03-review-banner-evidence")
-        banner.click()
-        XCTAssertTrue(app.sheets.firstMatch.waitForExistence(timeout: launchTimeout), "The banner did not open the review list")
-        Thread.sleep(forTimeInterval: 0.6)
-        capture(app, named: "library-04-review-sheet-evidence")
-        let done = element(in: app, identifier: "review.done")
-        XCTAssertTrue(done.waitForExistence(timeout: launchTimeout))
-        done.click()
-        XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: launchTimeout))
+    /// A chapter shows who is in it and where it went. A face opens that
+    /// person's photos; the route map opens the large map with the chapter's
+    /// photos, and Back returns to the chapter.
+    func testChapterShowsItsPeopleAndOpensItsMap() {
+        let app = launch(language: "en", extraArguments: ["-MomentsUITestPeople"])
+        element(in: app, identifier: "sidebar.trips").click()
+        let card = element(in: app, identifier: "trips.card.journeyA")
+        XCTAssertTrue(card.waitForExistence(timeout: launchTimeout))
+
+        // A stamp on the small map over the cards opens its chapter.
+        let stamp = element(in: app, identifier: "trips.footprint.journeyA")
+        XCTAssertTrue(stamp.waitForExistence(timeout: launchTimeout), "The chapter has no stamp on the small map")
+        capture(app, named: "chapter-01-footprints-evidence")
+        stamp.click()
+        let tripMemory = element(in: app, identifier: "trips.memory.trip")
+        XCTAssertTrue(tripMemory.waitForExistence(timeout: launchTimeout), "The stamp did not open its chapter")
+
+        let route = element(in: app, identifier: "trips.map")
+        XCTAssertTrue(route.waitForExistence(timeout: launchTimeout), "The chapter has no route map")
+        let people = element(in: app, identifier: "trips.people")
+        XCTAssertTrue(people.waitForExistence(timeout: launchTimeout), "The chapter does not show who is in it")
+        capture(app, named: "chapter-02-people-and-map-evidence")
+
+        route.click()
+        XCTAssertTrue(element(in: app, identifier: "map.view").waitForExistence(timeout: 30), "The route map did not open the large map")
+        Thread.sleep(forTimeInterval: 1.5)
+        capture(app, named: "chapter-03-large-map-evidence")
+        let back = element(in: app, identifier: "map.back")
+        XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The large map has no Back")
+        back.click()
+        XCTAssertTrue(tripMemory.waitForExistence(timeout: launchTimeout), "Back did not return to the chapter")
+
+        // A face opens that person's photos in the Library.
+        element(in: app, identifier: "trips.person.Alex").click()
+        XCTAssertTrue(element(in: app, identifier: "library.scope").waitForExistence(timeout: launchTimeout), "A face on the chapter did not show that person's photos")
+        XCTAssertEqual(libraryPhotoCount(app), 2)
     }
 
     func testTripsOpenATripWriteItsMemoryAndOpenAPhoto() {
@@ -675,29 +811,9 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "trips-04-shelf-with-memory-evidence")
     }
 
-    func testTimelineShowsDaysAndLinksToTheirTrip() {
-        let app = launch(language: "en")
-        element(in: app, identifier: "sidebar.timeline").click()
-
-        // Every photo by day, each day with its memory line.
-        let dayLine = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.memory.day."))
-            .firstMatch
-        XCTAssertTrue(dayLine.waitForExistence(timeout: launchTimeout), "Timeline days have no memory line")
-        let photo = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.photo.")).firstMatch
-        XCTAssertTrue(photo.exists, "Timeline days show their photos")
-
-        // A day inside a trip links to that trip.
-        let tripLink = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.trip.")).firstMatch
-        XCTAssertTrue(tripLink.waitForExistence(timeout: launchTimeout), "A trip day has no link to its trip")
-        capture(app, named: "timeline-01-days-evidence")
-        tripLink.click()
-        XCTAssertTrue(element(in: app, identifier: "trips.memory.trip").waitForExistence(timeout: launchTimeout), "The trip link did not open the trip")
-    }
-
     func testDoubleClickRenamesATripInPlace() {
         let app = launch(language: "en")
-        // Library groups by trip by default; a trip's title renames in place.
+        // The Library lists chapters as sections; a chapter's title renames in place.
         // Newest trips come first, so take whichever trip title is on screen.
         let title = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trip.title."))
@@ -770,7 +886,7 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(notice.waitForNonExistence(timeout: launchTimeout))
     }
 
-    func testNewCelebrationChapterGetsItsOwnCardAndFilter() {
+    func testNewCelebrationChapterGetsItsOwnCard() {
         let app = launch(language: "en")
         element(in: app, identifier: "sidebar.trips").click()
         element(in: app, identifier: "trips.new").click()
@@ -783,7 +899,8 @@ final class MomentsUITests: XCTestCase {
         capture(app, named: "chapters-01-new-celebration-evidence")
         element(in: app, identifier: "trips.new.create").click()
 
-        // The new chapter opens; back on the shelf it has its own card and a filter.
+        // The new chapter opens; back on the shelf it has its own card, next
+        // to the trips: there is no row of kinds to filter by.
         let back = element(in: app, identifier: "trips.back")
         XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The new chapter did not open")
         back.click()
@@ -791,14 +908,9 @@ final class MomentsUITests: XCTestCase {
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "trips.card.chapter."))
             .firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: launchTimeout), "The celebration has no card")
-        let filter = element(in: app, identifier: "chapters.filter.celebration")
-        XCTAssertTrue(filter.waitForExistence(timeout: launchTimeout), "No filter for celebrations")
+        XCTAssertTrue(element(in: app, identifier: "trips.card.journeyA").exists, "The trips left the shelf")
+        XCTAssertFalse(element(in: app, identifier: "chapters.filter.celebration").exists, "The row of kinds is back")
         capture(app, named: "chapters-02-shelf-evidence")
-        filter.click()
-        XCTAssertTrue(element(in: app, identifier: "trips.card.journeyA").waitForNonExistence(timeout: launchTimeout), "The filter kept the trips")
-        capture(app, named: "chapters-03-filtered-evidence")
-        element(in: app, identifier: "chapters.filter.all").click()
-        XCTAssertTrue(element(in: app, identifier: "trips.card.journeyA").waitForExistence(timeout: launchTimeout))
     }
 
     func testSplitATripAtADayAndUndo() {
@@ -865,8 +977,8 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(place.waitForExistence(timeout: launchTimeout), "Trip place name was not exposed")
         place.click()
 
-        let chip = element(in: app, identifier: "library.scope-chip")
-        XCTAssertTrue(chip.waitForExistence(timeout: launchTimeout), "Library should show the place as a removable chip")
+        let chip = element(in: app, identifier: "library.scope")
+        XCTAssertTrue(chip.waitForExistence(timeout: launchTimeout), "Library should show the place as a heading over its photos")
         let scopedCount = libraryPhotoCount(app)
         XCTAssertGreaterThan(scopedCount, 0)
         XCTAssertLessThan(scopedCount, allCount, "Only the place's photos should be listed")
@@ -877,62 +989,34 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout))
         XCTAssertTrue(photo.isHittable, "The place's photos should be in view")
         // A sliver at the edge counts as hittable; the whole card must be visible
-        // below the filter chips and inside the window.
+        // below the heading and inside the window.
         let window = app.windows.firstMatch.frame
         let frame = photo.frame
         XCTAssertGreaterThanOrEqual(frame.minY, chip.frame.maxY - 1, "The card is cut off at the top (card \(frame), chip \(chip.frame))")
         XCTAssertLessThanOrEqual(frame.maxY, window.maxY + 1, "The card is cut off at the bottom (card \(frame), window \(window))")
         capture(app, named: "trips-05-place-in-library-evidence")
 
-        chip.click()
-        XCTAssertTrue(chip.waitForNonExistence(timeout: 5), "Clicking the chip should remove the scope")
+        element(in: app, identifier: "library.scope.close").click()
+        XCTAssertTrue(chip.waitForNonExistence(timeout: 5), "All photos should leave the place")
         XCTAssertEqual(libraryPhotoCount(app), allCount)
     }
 
-    /// The Map has the Library's filters, and a filter set there is set in
-    /// the Library too.
-    func testMapFiltersFollowTheLibrary() {
-        let app = launch(language: "en")
-        element(in: app, identifier: "sidebar.map").click()
-        let filterButton = element(in: app, identifier: "toolbar.filter")
-        XCTAssertTrue(filterButton.waitForExistence(timeout: 30), "The Map has no Filter button")
-        XCTAssertTrue(app.searchFields.firstMatch.exists, "The Map has no search field")
-        filterButton.click()
-        let popover = app.popovers.firstMatch
-        XCTAssertTrue(popover.waitForExistence(timeout: launchTimeout), "Filter did not open its options")
-        capture(app, named: "map-06-filter-popover-evidence")
-        let trip = popover.descendants(matching: .any).matching(identifier: "filter.trip").firstMatch
-        XCTAssertTrue(trip.waitForExistence(timeout: launchTimeout))
-        trip.click()
-        let journey = app.menuItems["journeyA"].firstMatch
-        XCTAssertTrue(journey.waitForExistence(timeout: launchTimeout))
-        journey.click()
-        Thread.sleep(forTimeInterval: 1.5)
-        capture(app, named: "map-07-filtered-evidence")
-        app.typeKey(.escape, modifierFlags: [])
-
-        element(in: app, identifier: "sidebar.library").click()
-        let chip = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "journeyA")).firstMatch
-        XCTAssertTrue(chip.waitForExistence(timeout: launchTimeout), "The trip picked on the Map is not set in the Library")
-        capture(app, named: "map-08-filter-in-library-evidence")
-        chip.click()
-    }
-
-    /// Leaving the Map removes its map view, so MapKit stops drawing frames
-    /// while you browse the Library or People.
+    /// Leaving the large map removes its map view, so MapKit stops drawing
+    /// frames while you browse the Library or Chapters.
     func testMapViewIsReleasedAfterLeavingTheMap() {
         let app = launch(language: "en", mapProbe: true)
         let probe = element(in: app, identifier: "debug.mapviews")
         XCTAssertTrue(probe.waitForExistence(timeout: launchTimeout))
         XCTAssertEqual(probe.label, "mapviews=0")
-        element(in: app, identifier: "sidebar.map").click()
-        XCTAssertTrue(element(in: app, identifier: "toolbar.filter").waitForExistence(timeout: 30))
         let onMap = NSPredicate(format: "label != %@", "mapviews=0")
-        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: onMap, evaluatedWith: probe)], timeout: 10), .completed, "The probe found no map view on the Map")
-        for destination in ["sidebar.library", "sidebar.people", "sidebar.timeline"] {
-            element(in: app, identifier: destination).click()
-            let gone = NSPredicate(format: "label == %@", "mapviews=0")
-            XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: gone, evaluatedWith: probe)], timeout: 5), .completed, "A map view is still alive on \(destination): \(probe.label)")
+        let gone = NSPredicate(format: "label == %@", "mapviews=0")
+        // Back, and a click on either page in the sidebar, all leave the map.
+        for exit in ["map.back", "sidebar.library", "sidebar.trips"] {
+            openLargeMap(app)
+            XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: onMap, evaluatedWith: probe)], timeout: 10), .completed, "The probe found no map view on the large map")
+            element(in: app, identifier: exit).click()
+            XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: gone, evaluatedWith: probe)], timeout: 5), .completed, "A map view is still alive after \(exit): \(probe.label)")
+            XCTAssertTrue(element(in: app, identifier: "map.view").waitForNonExistence(timeout: launchTimeout), "\(exit) did not leave the large map")
         }
     }
 
@@ -940,7 +1024,7 @@ final class MomentsUITests: XCTestCase {
     func testMapCountryShowsItsPhotosInLibrary() {
         let app = launch(language: "en")
         let allCount = libraryPhotoCount(app)
-        element(in: app, identifier: "sidebar.map").click()
+        openLargeMap(app)
         let stats = element(in: app, identifier: "map.stats")
         XCTAssertTrue(stats.waitForExistence(timeout: 30), "The globe has no countries card")
         // The card has a Countries and a Cities half; each opens its own list.
@@ -950,42 +1034,11 @@ final class MomentsUITests: XCTestCase {
             .firstMatch
         XCTAssertTrue(button.waitForExistence(timeout: launchTimeout), "Country row has no photos button")
         button.click()
-        XCTAssertTrue(element(in: app, identifier: "library.scope-chip").waitForExistence(timeout: launchTimeout))
+        XCTAssertTrue(element(in: app, identifier: "library.scope").waitForExistence(timeout: launchTimeout))
         let scopedCount = libraryPhotoCount(app)
         XCTAssertGreaterThan(scopedCount, 0)
         XCTAssertLessThanOrEqual(scopedCount, allCount)
         capture(app, named: "map-06-country-in-library-evidence")
-    }
-
-    /// The count lives in the title bar now; the type picker stays put while
-    /// it changes, and the header never widens the window.
-    func testLibraryCountNeitherOverlapsNorMovesThePicker() {
-        let app = launch(language: "en")
-        let picker = element(in: app, identifier: "library.type-filter")
-        XCTAssertTrue(picker.waitForExistence(timeout: launchTimeout))
-        let before = picker.frame
-        for segment in ["Videos", "Photos", "All"] {
-            app.radioButtons[segment].firstMatch.click()
-            Thread.sleep(forTimeInterval: 0.5)
-            XCTAssertEqual(picker.frame.minX, before.minX, accuracy: 0.5, "The picker moved after choosing \(segment)")
-        }
-        // The header never makes the window's content wider than the window.
-        let window = app.windows.firstMatch.frame
-        let grouping = element(in: app, identifier: "library.grouping")
-        XCTAssertLessThanOrEqual(grouping.frame.maxX, window.maxX + 0.5, "The header pushes past the window's right edge")
-        XCTAssertGreaterThanOrEqual(element(in: app, identifier: "sidebar.library").frame.minX, window.minX - 0.5, "The sidebar was pushed off the window")
-        capture(app, named: "library-05-header-evidence")
-    }
-
-    /// "Save as smart group" is offered only once a filter is set.
-    func testSmartGroupButtonOnlyWithFilter() {
-        let app = launch(language: "en")
-        XCTAssertTrue(element(in: app, identifier: "library.type-filter").waitForExistence(timeout: launchTimeout))
-        XCTAssertFalse(element(in: app, identifier: "library.save-smart-group").exists)
-        XCTAssertFalse(element(in: app, identifier: "library.add-filter").exists, "The dead Add filter stub is gone")
-        app.radioButtons["Photos"].firstMatch.click()
-        XCTAssertTrue(element(in: app, identifier: "library.save-smart-group").waitForExistence(timeout: launchTimeout))
-        app.radioButtons["All"].firstMatch.click()
     }
 
     private func libraryPhotoCount(_ app: XCUIApplication) -> Int {
@@ -1001,10 +1054,7 @@ final class MomentsUITests: XCTestCase {
         XCTAssertTrue(library.waitForExistence(timeout: launchTimeout))
         capture(app, named: "\(prefix)-01-library-evidence")
 
-        let map = element(in: app, identifier: "sidebar.map")
-        XCTAssertTrue(map.waitForExistence(timeout: launchTimeout))
-        map.click()
-        XCTAssertTrue(element(in: app, identifier: "map.view").waitForExistence(timeout: 30))
+        openLargeMap(app)
         if settleMap { Thread.sleep(forTimeInterval: 2.0) }
         capture(app, named: "\(prefix)-02-map-globe-evidence")
 
@@ -1013,16 +1063,7 @@ final class MomentsUITests: XCTestCase {
         fit.click()
         if settleMap { Thread.sleep(forTimeInterval: 2.0) }
         capture(app, named: "\(prefix)-03-map-places-evidence")
-
-        let timeline = element(in: app, identifier: "sidebar.timeline")
-        XCTAssertTrue(timeline.waitForExistence(timeout: launchTimeout))
-        timeline.click()
-        // Locale-independent: a month header proves the screen rendered.
-        let month = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.month."))
-            .firstMatch
-        XCTAssertTrue(month.waitForExistence(timeout: launchTimeout))
-        capture(app, named: "\(prefix)-04-timeline-evidence")
+        element(in: app, identifier: "map.back").click()
 
         let trips = element(in: app, identifier: "sidebar.trips")
         XCTAssertTrue(trips.waitForExistence(timeout: launchTimeout))
@@ -1046,11 +1087,10 @@ final class MomentsUITests: XCTestCase {
         element(in: app, identifier: "trips.back").click()
     }
 
-    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, reviewItems: Bool = false, mapProbe: Bool = false, extraArguments: [String] = []) -> XCUIApplication {
+    private func launch(language: String, darkMode: Bool = false, smallWindow: Bool = false, mapProbe: Bool = false, extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-MomentsUITesting", "-AppleLanguages", "(\(language))", "-AppleLocale", language] + extraArguments
         if mapProbe { app.launchArguments += ["-MomentsUITestMapProbe"] }
-        if reviewItems { app.launchArguments += ["-MomentsUITestReviewItems"] }
         if darkMode { app.launchArguments += ["-MomentsUITestDarkMode"] }
         if smallWindow { app.launchArguments += ["-MomentsUITestSmallWindow"] }
         // No window-state arguments: with -MomentsUITesting, both

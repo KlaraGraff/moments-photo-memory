@@ -223,25 +223,6 @@ struct PhotoViewer: View {
                 stackActions(stack)
             }
             if let item {
-                Button {
-                    item.setFavorite(!item.isFavorite, context: modelContext)
-                    try? modelContext.save()
-                } label: {
-                    Image(systemName: item.isFavorite ? "star.fill" : "star")
-                        .foregroundStyle(item.isFavorite ? .yellow : LibraryPalette.muted)
-                        .symbolEffect(.bounce, value: item.isFavorite)
-                        #if DEBUG
-                        .onChange(of: item.isFavorite) {
-                            // The edit reached the screen: the star now shows the new value.
-                            PageProbe.contentReady(token: PageProbe.phaseToken)
-                        }
-                        #endif
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderless)
-                .help(String(localized: "Favorite"))
-                .accessibilityLabel(String(localized: "Favorite"))
                 if item.deletedAt == nil, RecentlyDeleted.canDelete(item) {
                     headerButton("trash", label: String(localized: "Delete from Moments"), identifier: "viewer.delete") {
                         deleteOpenPhoto(confirm: true)

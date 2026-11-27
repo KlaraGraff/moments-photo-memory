@@ -46,7 +46,6 @@ struct TripShareButton: View {
             sharing.setTrip(tripID, shared: true)
         default:
             sharing.preselect(tripID: tripID)
-            SettingsTab.select(.sharing)
             openSettings()
         }
     }

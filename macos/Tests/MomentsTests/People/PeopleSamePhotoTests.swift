@@ -118,27 +118,6 @@ final class PeopleSamePhotoTests: XCTestCase {
         XCTAssertEqual(byID["x"]?.clusterID, byID["z"]?.clusterID)
     }
 
-    func testZoomCropIsASquareAroundTheFace() {
-        // Vision rect (normalized, y-up) at the centre of a 1000×500 photo.
-        let rect = PeopleFaceZoom.cropRect(faceRect: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2), imageSize: CGSize(width: 1000, height: 500))
-        // Normalized inputs carry float error, and the pixel rect rounds outward.
-        XCTAssertEqual(rect.minX, 320, accuracy: 1)
-        XCTAssertEqual(rect.minY, 70, accuracy: 1)
-        XCTAssertEqual(rect.width, 360, accuracy: 2)
-        XCTAssertEqual(rect.height, 360, accuracy: 2)
-    }
-
-    func testZoomCropStaysInsideThePhoto() {
-        // A face in the top-left corner: y-up 0.9 is the top in y-down pixels.
-        let corner = PeopleFaceZoom.cropRect(faceRect: CGRect(x: 0, y: 0.9, width: 0.1, height: 0.1), imageSize: CGSize(width: 1000, height: 1000))
-        XCTAssertEqual(corner, CGRect(x: 0, y: 0, width: 180, height: 180))
-        // A face too big to give context shrinks to the photo's short side.
-        let big = PeopleFaceZoom.cropRect(faceRect: CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8), imageSize: CGSize(width: 400, height: 300))
-        XCTAssertEqual(big.width, 300)
-        XCTAssertEqual(big.height, 300)
-        XCTAssertTrue(CGRect(x: 0, y: 0, width: 400, height: 300).contains(big))
-    }
-
     @MainActor
     func testWriteBackNeverPointsAFaceAtADeletedPerson() async throws {
         // A scan suggested "gone" for a face, then the user merged "gone" away

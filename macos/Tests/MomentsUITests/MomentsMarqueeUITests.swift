@@ -75,7 +75,7 @@ final class MomentsMarqueeUITests: XCTestCase {
         if let folder { try? FileManager.default.removeItem(atPath: folder) }
         var arguments = [
             "-MomentsUITestStressCount", "26", "-MomentsUITestStressSpacing", "200000",
-            "-moments.library.grouping", "month",
+            "-MomentsUITestStressNoTrip",
         ]
         if let folder { arguments += ["-MomentsUITestMarqueeProbe", folder] }
         let app = launch(smallWindow: true, extraArguments: arguments)
@@ -113,7 +113,7 @@ final class MomentsMarqueeUITests: XCTestCase {
         // About 13 photos a month, grouped by month, as in the recording.
         var arguments = [
             "-MomentsUITestStressCount", "600", "-MomentsUITestStressSpacing", "200000",
-            "-moments.library.grouping", "month",
+            "-MomentsUITestStressNoTrip",
         ]
         if let folder { arguments += ["-MomentsUITestMarqueeProbe", folder] }
         let app = launch(extraArguments: arguments)

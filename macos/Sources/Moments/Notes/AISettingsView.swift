@@ -1,19 +1,5 @@
 import SwiftUI
 
-/// Settings › AI Model as a page of its own.
-struct AISettingsView: View {
-    var body: some View {
-        Form {
-            AISettingsSections()
-        }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .background(Paper.canvas)
-        .tint(Paper.accent)
-        .frame(width: SettingsLayout.width, height: SettingsLayout.height)
-    }
-}
-
 /// AI organizing, in a few rows: on or off, which model, and for a custom
 /// model its address, name and key. On by default with the on-device model;
 /// a custom model is whatever service the person points it at. Only

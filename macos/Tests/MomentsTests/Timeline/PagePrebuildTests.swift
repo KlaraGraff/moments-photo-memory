@@ -3,8 +3,8 @@ import SwiftData
 import XCTest
 @testable import Moments
 
-/// The app-level pre-builder fills the pages' build caches ahead of time, so a
-/// first visit takes the "last build reused" path. These tests use an
+/// The app-level pre-builder fills the Chapters build cache ahead of time, so
+/// a first visit takes the "last build reused" path. These tests use an
 /// in-memory store and synthetic photos only.
 @MainActor
 final class PagePrebuildTests: XCTestCase {
@@ -23,10 +23,6 @@ final class PagePrebuildTests: XCTestCase {
         let store: LibraryStore = LibraryStore()
         store.start(context: context)
         return store
-    }
-
-    private func makeStacks() -> PhotoStackModel {
-        PhotoStackModel(analysis: PhotoStackAnalysisStore(fileURL: nil))
     }
 
     /// One synthetic trip with `count` photos, each with one memory, and one
@@ -72,32 +68,9 @@ final class PagePrebuildTests: XCTestCase {
         return trip
     }
 
-    /// The same rows in another `ModelContext`, as the page's `@Query`s hold
-    /// them: the pre-builder's key must not depend on the order they come in.
-    private func reversedRows(
-        from context: ModelContext,
-        store: LibraryStore,
-        selection: SelectionModel,
-        stacks: PhotoStackModel
-    ) throws -> Int {
-        let other: ModelContext = ModelContext(try XCTUnwrap(container))
-        let trips: [Trip] = try other.fetch(FetchDescriptor<Trip>())
-        let memories: [Memory] = try other.fetch(FetchDescriptor<Memory>())
-        let stackRecords: [UserGroup] = try other.fetch(
-            FetchDescriptor<UserGroup>(predicate: #Predicate<UserGroup> { $0.kindRaw == "stack" })
-        )
-        return TimelineScreen.buildKey(
-            store: store,
-            selection: selection,
-            memories: Array(memories.reversed()),
-            trips: Array(trips.reversed()),
-            stacks: stacks,
-            stackRecords: stackRecords,
-            calendar: Calendar.autoupdatingCurrent
-        )
-    }
-
-    /// The Chapters key, from the same reversed rows in another context.
+    /// The Chapters key from the same rows, reversed, in another
+    /// `ModelContext`, as the page's `@Query`s hold them: the pre-builder's
+    /// key must not depend on the order they come in.
     private func reversedChaptersKey(
         from context: ModelContext,
         store: LibraryStore
@@ -119,112 +92,56 @@ final class PagePrebuildTests: XCTestCase {
         )
     }
 
-    /// One quiet pre-build fills both pages' caches, under the key each page
+    /// One quiet pre-build fills the page's cache, under the key the page
     /// computes for itself.
-    func testPrebuildFillsBothPageCaches() async throws {
+    func testPrebuildFillsTheChaptersCache() async throws {
         let context: ModelContext = try makeContext()
         try makeLibrary(context: context, prefix: "first", count: 3)
         let store: LibraryStore = makeStore(context: context)
-        let selection: SelectionModel = SelectionModel()
-        let stacks: PhotoStackModel = makeStacks()
         let buildsBefore: Int = PagePrebuilder.shared.buildsStarted
 
-        await PagePrebuilder.shared.prebuild(
-            context: context,
-            store: store,
-            selection: selection,
-            stacks: stacks
-        )
+        await PagePrebuilder.shared.prebuild(context: context, store: store)
 
-        let timelineKey: Int = try reversedRows(from: context, store: store, selection: selection, stacks: stacks)
         let chaptersKey: Int = try reversedChaptersKey(from: context, store: store)
-
-        let timelineBuild: TimelineBuildResult? = TimelineScreen.cachedBuild(key: timelineKey)
         let chaptersBuild: ChaptersBuildResult? = TripsScreen.cachedBuild(key: chaptersKey)
-        XCTAssertNotNil(timelineBuild, "the pre-build must fill the Timeline cache")
         XCTAssertNotNil(chaptersBuild, "the pre-build must fill the Chapters cache")
         XCTAssertEqual(
             PagePrebuilder.shared.buildsStarted,
-            buildsBefore + 2,
-            "one quiet window starts exactly two builds: Timeline, then Chapters"
+            buildsBefore + 1,
+            "one quiet window starts exactly one build"
         )
-        XCTAssertEqual(timelineBuild?.viewerOrder.count, 3)
         let chapterItems: Int = (chaptersBuild?.document.trips ?? []).reduce(into: 0) { (total: inout Int, trip: TimelineTrip) in
             total += trip.itemCount
         }
         XCTAssertEqual(chapterItems, 3)
     }
 
-    /// With the caches warm, another quiet window builds nothing and leaves
-    /// exactly the same results in place.
+    /// With the cache warm, another quiet window builds nothing and leaves
+    /// exactly the same result in place.
     func testSecondPrebuildStartsNoNewBuild() async throws {
         let context: ModelContext = try makeContext()
         try makeLibrary(context: context, prefix: "second", count: 4)
         let store: LibraryStore = makeStore(context: context)
-        let selection: SelectionModel = SelectionModel()
-        let stacks: PhotoStackModel = makeStacks()
 
-        await PagePrebuilder.shared.prebuild(
-            context: context,
-            store: store,
-            selection: selection,
-            stacks: stacks
-        )
-        let timelineKey: Int = try reversedRows(from: context, store: store, selection: selection, stacks: stacks)
+        await PagePrebuilder.shared.prebuild(context: context, store: store)
         let chaptersKey: Int = try reversedChaptersKey(from: context, store: store)
-        let firstTimeline: TimelineBuildResult? = TimelineScreen.cachedBuild(key: timelineKey)
         let firstChapters: ChaptersBuildResult? = TripsScreen.cachedBuild(key: chaptersKey)
-        let firstMonths: [String] = (firstTimeline?.months ?? []).map { (month: TimelineMonth) -> String in month.id }
-        let firstOrder: [String] = firstTimeline?.viewerOrder ?? []
         let firstChapterDocs: [String: TimelineTrip] = firstChapters?.chapterDocs ?? [:]
         let firstDocs: [String] = firstChapterDocs.keys.sorted()
         let buildsAfterFirst: Int = PagePrebuilder.shared.buildsStarted
 
-        await PagePrebuilder.shared.prebuild(
-            context: context,
-            store: store,
-            selection: selection,
-            stacks: stacks
-        )
+        await PagePrebuilder.shared.prebuild(context: context, store: store)
 
-        let secondTimeline: TimelineBuildResult? = TimelineScreen.cachedBuild(key: timelineKey)
         let secondChapters: ChaptersBuildResult? = TripsScreen.cachedBuild(key: chaptersKey)
-        let secondMonths: [String] = (secondTimeline?.months ?? []).map { (month: TimelineMonth) -> String in month.id }
-        let secondOrder: [String] = secondTimeline?.viewerOrder ?? []
         let secondChapterDocs: [String: TimelineTrip] = secondChapters?.chapterDocs ?? [:]
         let secondDocs: [String] = secondChapterDocs.keys.sorted()
         XCTAssertEqual(PagePrebuilder.shared.buildsStarted, buildsAfterFirst, "a warm cache starts no build")
-        XCTAssertEqual(secondMonths, firstMonths)
-        XCTAssertEqual(secondOrder, firstOrder)
         XCTAssertEqual(secondDocs, firstDocs)
-        XCTAssertFalse(firstMonths.isEmpty, "the first pre-build built real months")
         XCTAssertFalse(firstDocs.isEmpty, "the first pre-build built the chapter")
     }
 
     /// The sliced read takes every photo, in slices, exactly as the page's own
     /// `buildInputs` would: more photos than one slice, and all of them there.
-    func testSlicedTimelineInputsTakeEveryPhoto() async throws {
-        let context: ModelContext = try makeContext()
-        try makeLibrary(context: context, prefix: "sliced", count: 520)
-        let store: LibraryStore = makeStore(context: context)
-        let selection: SelectionModel = SelectionModel()
-        let memories: [Memory] = try context.fetch(FetchDescriptor<Memory>())
-
-        let inputs: TimelineBuildInputs? = await TimelineScreen.buildInputsSliced(
-            key: 1,
-            store: store,
-            selection: selection,
-            memories: memories,
-            calendar: Calendar.autoupdatingCurrent
-        )
-
-        XCTAssertEqual(inputs?.sourceItems.count, 520)
-        XCTAssertEqual(inputs?.sourceItems.first?.id, "sliced-photo-0")
-        XCTAssertEqual(inputs?.sourceItems.last?.id, "sliced-photo-519")
-        XCTAssertEqual(inputs?.key, 1)
-    }
-
-    /// The Chapters sliced read does the same, over more than one slice.
     func testSlicedChaptersInputsTakeEveryPhoto() async throws {
         let context: ModelContext = try makeContext()
         try makeLibrary(context: context, prefix: "chapters", count: 510)
@@ -258,27 +175,33 @@ final class PagePrebuildTests: XCTestCase {
         let context: ModelContext = try makeContext()
         try makeLibrary(context: context, prefix: "cancelled", count: 600)
         let store: LibraryStore = makeStore(context: context)
-        let selection: SelectionModel = SelectionModel()
+        let trips: [Trip] = try context.fetch(FetchDescriptor<Trip>())
+        let groups: [UserGroup] = try context.fetch(
+            FetchDescriptor<UserGroup>(predicate: #Predicate<UserGroup> { $0.kindRaw == "chapter" })
+        )
+        let members: [UserGroupItem] = try context.fetch(FetchDescriptor<UserGroupItem>())
         let memories: [Memory] = try context.fetch(FetchDescriptor<Memory>())
 
-        let task: Task<TimelineBuildInputs?, Never> = Task { @MainActor () -> TimelineBuildInputs? in
-            await TimelineScreen.buildInputsSliced(
+        let task: Task<ChaptersBuildInputs?, Never> = Task { @MainActor () -> ChaptersBuildInputs? in
+            await TripsScreen.buildInputsSliced(
                 key: 3,
                 store: store,
-                selection: selection,
+                trips: trips,
+                chapterGroups: groups,
+                groupItems: members,
                 memories: memories,
                 calendar: Calendar.autoupdatingCurrent
             )
         }
         task.cancel()
-        let inputs: TimelineBuildInputs? = await task.value
+        let inputs: ChaptersBuildInputs? = await task.value
 
         XCTAssertNil(inputs, "a cancelled read must not hand inputs to a build")
     }
 
-    /// The gate both sliced reads use: a moved photo-and-place revision, a
-    /// moved Library filter generation, or cancellation all stop the read; an
-    /// unchanged library lets it go on.
+    /// The gate the sliced read uses: a moved photo-and-place revision, a
+    /// moved generation, or cancellation all stop the read; an unchanged
+    /// library lets it go on.
     func testSliceRuleStopsWhenTheLibraryMoved() {
         XCTAssertTrue(PagePrebuildSliceRule.readIsCurrent(
             startedAtPhotoPlaceRevision: 7,
@@ -300,7 +223,7 @@ final class PagePrebuildTests: XCTestCase {
             startedAtVisibleGeneration: 3,
             visibleGeneration: 4,
             isCancelled: false
-        ), "moved Library filters must stop the read")
+        ), "a moved generation must stop the read")
         XCTAssertFalse(PagePrebuildSliceRule.readIsCurrent(
             startedAtPhotoPlaceRevision: 7,
             photoPlaceRevision: 7,
@@ -324,21 +247,12 @@ final class PagePrebuildTests: XCTestCase {
         let context: ModelContext = try makeContext()
         try makeLibrary(context: context, prefix: "join", count: 4)
         let store: LibraryStore = makeStore(context: context)
-        let selection: SelectionModel = SelectionModel()
-        let stacks: PhotoStackModel = makeStacks()
 
-        let idleTimeline: TimelineBuildResult? = await PagePrebuilder.shared.joinTimeline(key: 1_234_567)
         let idleChapters: ChaptersBuildResult? = await PagePrebuilder.shared.joinChapters(key: 1_234_567)
-        XCTAssertNil(idleTimeline, "nothing runs: no join")
-        XCTAssertNil(idleChapters)
-        await PagePrebuilder.shared.prebuild(
-            context: context,
-            store: store,
-            selection: selection,
-            stacks: stacks
-        )
-        let finishedTimeline: TimelineBuildResult? = await PagePrebuilder.shared.joinTimeline(key: 7_654_321)
-        XCTAssertNil(finishedTimeline, "a finished pre-build is not running")
+        XCTAssertNil(idleChapters, "nothing runs: no join")
+        await PagePrebuilder.shared.prebuild(context: context, store: store)
+        let finishedChapters: ChaptersBuildResult? = await PagePrebuilder.shared.joinChapters(key: 7_654_321)
+        XCTAssertNil(finishedChapters, "a finished pre-build is not running")
         PagePrebuilder.shared.cancel()
     }
 }

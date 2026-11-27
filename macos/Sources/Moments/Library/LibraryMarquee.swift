@@ -65,6 +65,11 @@ final class LibraryMarquee {
     /// A frame came in or counted again since the last hit test.
     private var framesChanged = false
     private var press: Press?
+    /// Where the press started that a display frame ended because the mouse
+    /// button was already up. While the main thread was busy the button can
+    /// go up before the press's last drag events are handled; those events
+    /// still arrive afterwards, and they belong to the press that is over.
+    private var endedEarlyStart: CGPoint?
     weak var anchorView: NSView?
     private weak var scrollView: NSScrollView?
     private var displayLink: CADisplayLink?
@@ -117,7 +122,14 @@ final class LibraryMarquee {
     /// Called for every change of the background's drag gesture, from the
     /// mouse-down on.
     func dragChanged(_ value: DragGesture.Value, selection: SelectionModel, order: @escaping () -> [String]) {
+        if press == nil, endedEarlyStart == value.startLocation {
+            // Late events of a press a display frame already ended. Starting
+            // again here made a Command-drag flip its photos twice. A new
+            // mouse-down on the very same spot is a new press.
+            guard NSApp.currentEvent?.type == .leftMouseDown else { return }
+        }
         if press == nil || press?.start != value.startLocation {
+            endedEarlyStart = nil
             begin(at: value.startLocation, location: value.location, selection: selection, order: order)
         }
         guard var current = press else { return }
@@ -137,9 +149,11 @@ final class LibraryMarquee {
     /// Mouse up. A press that never moved is a click on the background:
     /// it clears the selection, unless Command or Shift is held.
     func dragEnded(selection: SelectionModel) {
+        // The gesture is over, and with it any late events of its press.
+        endedEarlyStart = nil
         guard let current = press else { return }
         if current.isDragging {
-            finish()
+            finish(because: "the gesture ended")
         } else {
             press = nil
             if current.mode == .replace { selection.clear() }
@@ -206,7 +220,8 @@ final class LibraryMarquee {
         lastTick = 0
     }
 
-    private func finish() {
+    /// `reason` goes to the UI tests' press log only.
+    private func finish(because reason: String) {
         guard let current = press else { return }
         #if DEBUG
         // Photos inside the rectangle whose frames the drag did not count.
@@ -222,7 +237,8 @@ final class LibraryMarquee {
         MarqueeProbe.dragEnded(
             selected: selection?.selectedItemIDs.count ?? 0,
             scrolledTo: scrollView?.contentView.bounds.origin.y ?? 0,
-            uncounted: uncounted.map { "\($0)\(live[$0] != nil ? " (on screen)" : "")" }
+            uncounted: uncounted.map { "\($0)\(live[$0] != nil ? " (on screen)" : "")" },
+            reason: reason
         )
         #endif
         guard let selection else { return }
@@ -243,7 +259,11 @@ final class LibraryMarquee {
     fileprivate func tick(_ link: CADisplayLink) {
         // A mouse-up the gesture never reported (the window lost the drag).
         guard NSEvent.pressedMouseButtons & 1 == 1 else {
-            finish()
+            // The rectangle ends where the pointer is now; the press's own
+            // last events may still be waiting behind this frame.
+            if let point = pointerInContent() { update(to: point) }
+            endedEarlyStart = press?.start
+            finish(because: "the mouse button was up at a display frame")
             return
         }
         guard let scrollView, let document = scrollView.documentView else { return }
@@ -549,6 +569,39 @@ enum MarqueeProbe {
     private static var autoscrolledTo: CGFloat?
     private static var snapBacks = 0
     private static var worstSnapBack: CGFloat = 0
+    private static var watchdogStarted = false
+    /// When the main thread last answered the watchdog (uptime in ns).
+    private nonisolated(unsafe) static var lastAnswer: UInt64 = 0
+
+    /// From the first press on, a background thread asks the main thread to
+    /// answer once a second. When it has not answered for three seconds the
+    /// thread writes the main thread's stack to `marquee-report-stuck-<pid>-N.txt`:
+    /// a drag report is written on the main thread, so a main thread that
+    /// stopped answering could never say where it is.
+    private static func startWatchdogIfNeeded() {
+        guard let folder, !watchdogStarted else { return }
+        watchdogStarted = true
+        MainThreadSampler.prepareForStuckStacks()
+        lastAnswer = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        Thread.detachNewThread {
+            var written = 0
+            while written < 3 {
+                DispatchQueue.main.async { MarqueeProbe.lastAnswer = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) }
+                usleep(1_000_000)
+                let now: UInt64 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+                let last: UInt64 = MarqueeProbe.lastAnswer
+                guard now > last else { continue }
+                let silent: Double = Double(now - last) / 1e9
+                guard silent > 3 else { continue }
+                written += 1
+                var text = String(format: "marquee stuck %d: the main thread has not answered for %.1f s\n", written, silent)
+                text += "  launched with: \(ProcessInfo.processInfo.arguments.dropFirst().joined(separator: " "))\n"
+                text += MainThreadSampler.stuckStacks()
+                try? text.write(to: folder.appending(path: "marquee-report-stuck-\(ProcessInfo.processInfo.processIdentifier)-\(written).txt"), atomically: true, encoding: .utf8)
+                usleep(4_000_000)
+            }
+        }
+    }
 
     static func dragStarted() {
         guard folder != nil else { return }
@@ -612,16 +665,17 @@ enum MarqueeProbe {
     /// `finish` still leaves a trace in `marquee-presses.txt`.
     static func pressBegan(eventType: String, eventFlags: String, keyboardFlags: String, mode: String) {
         guard folder != nil else { return }
+        startWatchdogIfNeeded()
         pressCount += 1
         let line = "press \(pressCount): event \(eventType), event flags \(eventFlags), keyboard flags \(keyboardFlags), mode \(mode)"
         appendPressLine(line)
     }
 
-    static func dragEnded(selected: Int, scrolledTo offset: CGFloat, uncounted: [String]) {
+    static func dragEnded(selected: Int, scrolledTo offset: CGFloat, uncounted: [String], reason: String) {
         guard let folder else { return }
         // Says how the drag ended and what it left selected; a press whose
         // "drag started" line has no matching line here never ended.
-        appendPressLine("press \(pressCount): ended, selected \(selected)")
+        appendPressLine("press \(pressCount): ended (\(reason)), selected \(selected)")
         reports += 1
         let frame = 1.0 / 60.0
         let sorted = intervals.sorted()

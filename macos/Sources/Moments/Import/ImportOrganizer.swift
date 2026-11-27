@@ -784,6 +784,7 @@ struct ImportOrganizer {
         segmenter.maximumTimeGap = configuration.maximumTimeGap
         segmenter.maximumTripDistanceMeters = configuration.maximumTripDistanceMeters
         segmenter.fixedUsualPlace = configuration.homeCoordinate
+        (configuration.knownPlaces ?? KnownPlaceStore.book()).apply(to: &segmenter)
         // A folder from a camera without GPS is more likely an outing than
         // a pile of screenshots.
         segmenter.locationlessDefaultsToAway = isFolder

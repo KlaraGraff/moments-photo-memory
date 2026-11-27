@@ -57,6 +57,14 @@ struct TripsScreen: View {
     /// the only place that changes them.
     @State private var coverStore = TripAssignmentLocks.store.string(forKey: TripCoverChoice.defaultsKey) ?? ""
     @State private var isCreatingTrip = false
+    /// The trip "This is not a trip" was chosen on.
+    @State private var notTripRequest: NotTripRequest?
+    /// Places the photos call home, found after the photos change.
+    @State private var foundPlaces: [FoundPlace] = []
+    /// Shown once after an import, when nobody named a place yet.
+    @State private var confirmingPlaces: [FoundPlace] = []
+    @State private var placeBook = KnownPlaceStore.book()
+    @State private var isConfirmingPlaces = false
     /// Chapters that are not trips, built like trips, by "chapter.<id>".
     @State private var chapterDocs: [String: TimelineTrip] = [:]
     /// Moves each time `inputKey` changes.
@@ -313,6 +321,19 @@ struct TripsScreen: View {
                     onOpen: open,
                     onNew: { isCreatingTrip = true }
                 )
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if let place = newPlace {
+                        NewPlaceBanner(
+                            place: place,
+                            onWork: { answer(place, role: .work) },
+                            onTrip: { answerTrip(place) },
+                            onLater: { answer(place, role: nil) }
+                        )
+                        .padding(.horizontal, 24)
+                        .padding(.top, 12)
+                        .transition(.opacity)
+                    }
+                }
                 .transition(.opacity)
             }
         }
@@ -343,6 +364,31 @@ struct TripsScreen: View {
             guard let notice, notice.offer == nil else { return }
             try? await Task.sleep(for: .seconds(10))
             if self.notice?.id == notice.id { self.notice = nil }
+        }
+        .sheet(item: $notTripRequest) { request in
+            NotTripSheet(
+                tripName: request.name,
+                summary: request.summary,
+                placeName: request.place?.name,
+                usedTypes: typesPresent.compactMap { if case let .custom(label) = $0 { return label } else { return nil } },
+                onDone: { choice, remember in markNotTrip(request, as: choice, remember: remember) }
+            )
+        }
+        .sheet(isPresented: $isConfirmingPlaces) {
+            PlaceConfirmSheet(
+                places: confirmingPlaces,
+                onConfirm: confirmPlaces,
+                onLater: {
+                    KnownPlaceStore.change(context: nil) { $0.markAsked(confirmingPlaces.map(\.candidate.centre)) }
+                    isConfirmingPlaces = false
+                }
+            )
+            .interactiveDismissDisabled()
+        }
+        .task(id: store.photoPlaceRevision) { await findPlaces() }
+        .onReceive(NotificationCenter.default.publisher(for: .libraryDecisionChanged)) { note in
+            guard note.object as? String == KnownPlaceStore.key else { return }
+            placeBook = KnownPlaceStore.book()
         }
         .sheet(isPresented: $isCreatingTrip) {
             ChapterNewSheet(
@@ -687,6 +733,9 @@ struct TripsScreen: View {
                     TripCorrectionRecorder.record(.rename, before: before, after: [log.chapter(group)])
                 }
             },
+            notTrip: { trip in
+                notTripRequest = NotTripRequest(trip: trip, summary: notTripSummary(trip), place: KnownPlaceStore.placeOfTrip(trip.items))
+            },
             setCover: { tripID, itemID in
                 var choices = TripCoverChoice.decode(coverStore)
                 choices[tripID] = itemID
@@ -788,6 +837,7 @@ struct TripsScreen: View {
     private func undo(_ notice: TripNotice) {
         undoManager?.removeAllActions(withTarget: selection)
         TripEdits.undo(notice.undo, context: modelContext)
+        if let places = notice.placesBefore { KnownPlaceStore.save(places) }
         self.notice = nil
     }
 
@@ -796,11 +846,132 @@ struct TripsScreen: View {
         undoManager?.removeAllActions(withTarget: selection)
         let context = modelContext
         let undo = notice.undo
+        let places = notice.placesBefore
         undoManager?.registerUndo(withTarget: selection) { _ in
-            MainActor.assumeIsolated { TripEdits.undo(undo, context: context) }
+            MainActor.assumeIsolated {
+                TripEdits.undo(undo, context: context)
+                if let places { KnownPlaceStore.save(places) }
+            }
         }
         undoManager?.setActionName(notice.message)
         self.notice = notice
+    }
+
+    // MARK: Places
+
+    /// A place the photos newly call home, asked about above the chapters
+    /// once the person has named a place of their own.
+    private var newPlace: FoundPlace? {
+        guard !isConfirmingPlaces, placeBook.places.contains(where: { $0.role != .notTrip }) else { return nil }
+        let unasked = placeBook.unasked(foundPlaces.map(\.candidate))
+        return foundPlaces.first { place in
+            place.candidate.isCurrent && unasked.contains { $0.centre == place.candidate.centre }
+        }
+    }
+
+    /// Looks for the places the photos call home once the photos settle.
+    /// The first time, before any place is named, they are asked about
+    /// in one sheet.
+    private func findPlaces() async {
+        guard !items.isEmpty, !ProcessInfo.processInfo.arguments.contains("-MomentsUITesting") else { return }
+        // An import saves in steps; look once it is done.
+        try? await Task.sleep(for: .seconds(3))
+        guard !Task.isCancelled else { return }
+        let found = await KnownPlaceStore.findPlaces(items: items, book: KnownPlaceStore.book())
+        guard !Task.isCancelled else { return }
+        placeBook = KnownPlaceStore.book()
+        foundPlaces = found
+        let unasked = placeBook.unasked(found.map(\.candidate))
+        guard !isConfirmingPlaces, !unasked.isEmpty,
+              !placeBook.places.contains(where: { $0.role != .notTrip }) else { return }
+        confirmingPlaces = Array(found.filter { place in unasked.contains { $0.centre == place.candidate.centre } }.prefix(5))
+        isConfirmingPlaces = true
+    }
+
+    private func confirmPlaces(_ choices: [(FoundPlace, PlaceRole?)]) {
+        KnownPlaceStore.change(context: modelContext) { book in
+            for (place, role) in choices {
+                if let role {
+                    book.confirm(place.candidate, name: place.name, role: role, now: .now)
+                } else {
+                    book.decline(place.candidate.centre)
+                }
+            }
+            book.markAsked(choices.map(\.0.candidate.centre))
+        }
+        placeBook = KnownPlaceStore.book()
+        isConfirmingPlaces = false
+    }
+
+    /// The banner's answer: a work site, or `nil` to ask again only in Settings.
+    private func answer(_ place: FoundPlace, role: PlaceRole?) {
+        KnownPlaceStore.change(context: modelContext) { book in
+            if let role { book.confirm(place.candidate, name: place.name, role: role, now: .now) }
+            book.markAsked([place.candidate.centre])
+        }
+        placeBook = KnownPlaceStore.book()
+    }
+
+    /// "It was a trip": the place is no home, and its weeks become a trip.
+    private func answerTrip(_ place: FoundPlace) {
+        KnownPlaceStore.change(context: modelContext) { book in
+            book.decline(place.candidate.centre)
+            book.markAsked([place.candidate.centre])
+        }
+        placeBook = KnownPlaceStore.book()
+        createTrip(named: place.name, start: place.candidate.firstDate, end: place.candidate.lastDate)
+    }
+
+    /// "Oct 10 – 12, 2026 · 86 photos"
+    private func notTripSummary(_ trip: Trip) -> String {
+        var parts: [String] = []
+        if let start = trip.startDate {
+            let formatter = DateIntervalFormatter()
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .none
+            parts.append(formatter.string(from: start, to: max(trip.endDate ?? start, start)))
+        }
+        parts.append(String(localized: "\(trip.items.count) photos"))
+        return parts.joined(separator: " · ")
+    }
+
+    /// The trip becomes daily life, or a chapter of the kind typed, and
+    /// visits to its place can be remembered as no trip. One Undo puts it
+    /// all back.
+    private func markNotTrip(_ request: NotTripRequest, as choice: NotTripChoice, remember: Bool) {
+        let trip = request.trip
+        let name = trip.effectiveName
+        let dates = trip.items.compactMap(\.effectiveCaptureDate)
+        closeTrip()
+        let session = TripEdits.Session(context: modelContext)
+        var chapterID: String?
+        var message: String
+        switch choice {
+        case let .custom(label):
+            if let start = trip.startDate ?? dates.min(), let end = trip.endDate ?? dates.max() {
+                let group = TripEdits.createChapter(named: name, type: .custom(label), symbol: "tag", start: start, end: max(start, end), session: session)
+                chapterID = Self.chapterID(group)
+                message = String(localized: "“\(name)” is now a chapter of the kind “\(label)”.")
+            } else {
+                message = String(localized: "“\(name)” is daily life now.")
+            }
+        case .dailyLife:
+            message = String(localized: "“\(name)” is daily life now.")
+        }
+        TripEdits.delete(trip, session: session)
+        var placesBefore: KnownPlaceBook?
+        if remember, let place = request.place {
+            // Only what comes later: chapters already made stay as they are.
+            placesBefore = KnownPlaceStore.change(context: nil) { $0.rememberNotTrip(name: place.name, centre: place.centre, now: .now) }
+            message += " " + String(localized: "Visits to \(place.name) are no trip from now on.")
+            placeBook = KnownPlaceStore.book()
+        }
+        post(TripNotice(message: message, undo: session.undo, placesBefore: placesBefore))
+        if let chapterID {
+            withAnimation(Motion.animation(Motion.settle, reduceMotion: reduceMotion)) {
+                selection.openTripID = chapterID
+            }
+        }
     }
 
     // MARK: Lookups
@@ -854,6 +1025,8 @@ struct TripActions {
     var merge: (Trip, Trip) -> Void
     var delete: (ChapterTarget) -> Void
     var rename: (ChapterTarget, String) -> Void
+    /// Opens "This is not a trip" for the trip.
+    var notTrip: (Trip) -> Void
     var setCover: (String, String) -> Void
 }
 
@@ -915,6 +1088,19 @@ struct TripNotice: Identifiable {
     let message: String
     let undo: TripEdits.Undo
     var offer: Offer?
+    /// The places as they were, when the change also named a place.
+    var placesBefore: KnownPlaceBook?
+}
+
+/// A trip someone said is not a trip, with what the sheet shows.
+struct NotTripRequest: Identifiable {
+    let trip: Trip
+    let summary: String
+    /// Where its photos were taken, if they have locations.
+    let place: (name: String, centre: GeoPoint)?
+
+    var id: String { trip.id }
+    var name: String { trip.effectiveName }
 }
 
 /// Photos in no trip from one day just before or after a trip.
@@ -1671,6 +1857,11 @@ private struct TripDetailView: View {
                                         .accessibilityIdentifier("trips.merge.\(other.id)")
                                 }
                             }
+                        }
+                        if let model {
+                            Button(String(localized: "This is not a trip…")) { actions.notTrip(model) }
+                                .accessibilityIdentifier("trips.nottrip")
+                            Divider()
                         }
                         Button(String(localized: "Delete this chapter"), role: .destructive) {
                             actions.delete(target)

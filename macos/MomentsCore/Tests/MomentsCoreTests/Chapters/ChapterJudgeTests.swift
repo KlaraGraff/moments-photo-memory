@@ -190,6 +190,45 @@ final class ChapterJudgeTests: XCTestCase {
         XCTAssertEqual(book.verdict(for: "t1")?.kind, .custom("Visit"))
     }
 
+    func testSureOrdinaryDaysAreRemovedOrAskedAndUndoKeepsLaterAnswers() {
+        let evidence = SyntheticSegments.library()[0].evidence
+        let now = evidence.end
+        var book = ChapterJudgeBook()
+        book.record(ChapterVerdict(kind: .daily, confidence: .high, source: .rules), for: "sure", signature: "s", now: now)
+        book.record(ChapterVerdict(kind: .daily, confidence: .medium, source: .rules), for: "unsure", signature: "s", now: now)
+        book.record(ChapterVerdict(kind: .trip, confidence: .high, source: .rules), for: "trip", signature: "s", now: now)
+        book.decide(.daily, for: "theirs", title: "Site", evidence: evidence, now: now)
+        // Only the judge's sure answer, never the person's own.
+        XCTAssertEqual(book.removals(among: ["sure", "unsure", "trip", "theirs", "gone"]), ["sure"])
+        var off = book
+        off.enabled = false
+        XCTAssertTrue(off.removals(among: ["sure"]).isEmpty)
+
+        // A trip someone touched, or one brought back, is asked about instead.
+        var asked = book
+        asked.askInstead(["sure", "theirs"])
+        XCTAssertTrue(asked.removals(among: ["sure"]).isEmpty)
+        XCTAssertTrue(asked.isQuestion("sure", now: now))
+        XCTAssertEqual(asked.verdict(for: "theirs"), book.verdict(for: "theirs"))
+
+        // Undo puts back one chapter's entry and keeps a later answer.
+        let before = book.entries(for: ["trip"])
+        book.decide(.daily, for: "trip", title: "Bay", evidence: evidence, now: now)
+        book.decide(.businessTrip, for: "unsure", title: "Inland", evidence: evidence, now: now)
+        book.askLevel = .less
+        book.restore(before)
+        XCTAssertEqual(book.verdict(for: "trip")?.source, .rules)
+        XCTAssertFalse(book.examples.contains { $0.id == "trip" })
+        XCTAssertEqual(book.verdict(for: "unsure"), .person(.businessTrip))
+        XCTAssertTrue(book.examples.contains { $0.id == "unsure" })
+        XCTAssertEqual(book.askLevel, .less)
+        // A chapter that had no entry has none again.
+        let none = book.entries(for: ["new"])
+        book.record(ChapterVerdict(kind: .trip, confidence: .high, source: .rules), for: "new", signature: "s", now: now)
+        book.restore(none)
+        XCTAssertNil(book.verdict(for: "new"))
+    }
+
     func testBookStorageRoundTripsAndToleratesGaps() {
         let evidence = SyntheticSegments.library()[3].evidence
         var book = ChapterJudgeBook()

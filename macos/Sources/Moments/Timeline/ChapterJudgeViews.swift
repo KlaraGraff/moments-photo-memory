@@ -151,7 +151,8 @@ struct ChapterQuestionBanner: View {
 /// One chapter to ask about.
 struct ChapterQuestion: Identifiable {
     let id: String
-    let place: String
+    /// The city the photos were taken in, if they say.
+    let place: String?
     let photos: [MediaItem]
     let facts: String
     let verdict: ChapterVerdict
@@ -178,7 +179,7 @@ struct ChapterAskSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             if let question {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(question.place.isEmpty ? String(localized: "What were these days?") : String(localized: "What were these days in \(question.place)?"))
+                    Text(question.place.map { String(localized: "What were these days in \($0)?") } ?? String(localized: "What were these days?"))
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(Paper.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -500,7 +501,11 @@ struct ChapterCheckBar: View {
 
 struct ChapterJudgeSettingsSection: View {
     @State private var book = ChapterJudgeStore.book()
-    private let engine = ChapterJudgeEngine.current()
+    /// Read when Settings shows, and again when the AI choice changes.
+    @State private var engine: ChapterJudgeEngine = .rules
+    @AppStorage(AISettings.enabledKey) private var aiEnabled = true
+    @AppStorage(AISettings.engineKey) private var aiEngine = AISettings.defaultEngine.rawValue
+    @AppStorage(AISettings.modelKey) private var aiModel = ""
 
     private var modelStatus: String {
         switch engine {
@@ -566,7 +571,7 @@ struct ChapterJudgeSettingsSection: View {
             } header: {
                 Text(String(localized: "Learned (\(book.examples.count))"))
             } footer: {
-                Text(String(localized: "For each chapter only a short text is kept: its dates and weekdays, how far it was from home or work, and roughly what the photos show. No photos. With the on-device model nothing leaves this Mac. With a cloud model only that text is sent, without photos, coordinates or the names of your places. Deleting an entry leaves your chapters as they are; it is only no longer used."))
+                Text(String(localized: "For each chapter only a short text is kept: its dates and weekdays, how far it was from home or work, roughly what the photos show, the city and the chapter's title. No photos. With the on-device model nothing leaves this Mac. With a cloud model only that text is sent, without photos or coordinates, and without the names of your home, work or home town. Deleting an entry leaves your chapters as they are; it is only no longer used."))
                     .foregroundStyle(Paper.muted)
             }
         }
@@ -574,6 +579,7 @@ struct ChapterJudgeSettingsSection: View {
             guard note.object as? String == ChapterJudgeStore.key else { return }
             book = ChapterJudgeStore.book()
         }
+        .task(id: "\(aiEnabled)|\(aiEngine)|\(aiModel)") { engine = ChapterJudgeEngine.current() }
     }
 
     private func change(_ edit: (inout ChapterJudgeBook) -> Void) {

@@ -1,5 +1,6 @@
 import Foundation
 import MomentsCore
+import Observation
 import SwiftData
 import Vision
 #if canImport(FoundationModels)
@@ -116,21 +117,21 @@ enum ChapterEvidenceBuilder {
     }
 
     /// The photos to look at for scenes: up to eight, spread over the trip.
-    static func scenePhotos(of items: [MediaItem], limit: Int = 8) -> [PhotoStackAnalysis.PendingPhoto] {
+    static func scenePhotos(of items: [MediaItem], limit: Int = 8) -> [PhotoStackAnalyzer.PendingPhoto] {
         let stills = items.filter { $0.kind != .video && !$0.isScreenshot && ($0.photosLocalIdentifier != nil || $0.originalBookmarkData != nil) }
         guard !stills.isEmpty else { return [] }
         let step = max(1, stills.count / limit)
         return stride(from: 0, to: stills.count, by: step).prefix(limit).map { index in
             let item = stills[index]
-            return PhotoStackAnalysis.PendingPhoto(id: item.id, photosLocalIdentifier: item.photosLocalIdentifier, bookmark: item.originalBookmarkData)
+            return PhotoStackAnalyzer.PendingPhoto(id: item.id, photosLocalIdentifier: item.photosLocalIdentifier, bookmark: item.originalBookmarkData)
         }
     }
 
     /// What each photo shows, in the classifier's words, off the main thread.
-    nonisolated static func scenes(_ photos: [PhotoStackAnalysis.PendingPhoto]) async -> [[String]] {
+    nonisolated static func scenes(_ photos: [PhotoStackAnalyzer.PendingPhoto]) async -> [[String]] {
         var scenes: [[String]] = []
         for photo in photos {
-            guard !Task.isCancelled, let image = await PhotoStackAnalysis.loadImage(photo) else { continue }
+            guard !Task.isCancelled, let image = await PhotoStackAnalyzer.loadImage(photo) else { continue }
             let request = VNClassifyImageRequest()
             let handler = VNImageRequestHandler(cgImage: image, options: [:])
             try? handler.perform([request])
@@ -313,25 +314,31 @@ final class ChapterJudgeRunner {
     /// Trips being judged in this pass, and how many are done.
     private(set) var total = 0
     private(set) var done = 0
-    private(set) var engine: ChapterJudgeEngine = .rules
+    /// Which pass the counts belong to, so a pass that was cancelled and
+    /// ends late leaves the newer pass's counts alone.
+    private var pass = 0
 
     var isRunning: Bool { total > 0 && done < total }
 
-    /// A trip with photos to look at.
-    static func isJudgeable(_ trip: Trip) -> Bool { !trip.items.isEmpty }
-
-    /// Nobody changed it: an untouched suggestion the judge may remove.
-    static func isUntouched(_ trip: Trip) -> Bool {
-        trip.isSuggestion && trip.overrideName == nil && trip.confirmedAt == nil && trip.updatedBy == nil
+    /// What the judge's answers rest on besides the photos: the person's
+    /// places and the model. When these change, its answers are redone.
+    static func contextKey(bases: [EvidenceBase], engine: ChapterJudgeEngine) -> String {
+        let places = bases
+            .map { "\($0.role.rawValue):\(Int(($0.centre.latitude * 100).rounded())),\(Int(($0.centre.longitude * 100).rounded()))" }
+            .sorted()
+            .joined(separator: ";")
+        return "\(engine)|\(places)"
     }
 
-    /// Judges every trip that needs it. Returns the trips the judge called
-    /// ordinary days with confidence, for the page to remove with one Undo.
-    func run(trips: [Trip], places: KnownPlaceBook, found: [FoundPlace]) async -> [Trip] {
+    /// Judges every trip that needs it. What to remove or ask about is the
+    /// page's to decide afterwards, from the book.
+    func run(trips: [Trip], places: KnownPlaceBook, found: [FoundPlace]) async {
         var book = ChapterJudgeStore.book()
-        guard book.enabled, !trips.isEmpty else { return [] }
+        guard book.enabled, !trips.isEmpty else { return }
         let bases = ChapterEvidenceBuilder.bases(places: places, found: found)
         let names = ChapterEvidenceBuilder.privateNames(places: places, found: found)
+        let engine = ChapterJudgeEngine.current()
+        let context = Self.contextKey(bases: bases, engine: engine)
 
         struct Pending {
             let trip: Trip
@@ -341,42 +348,45 @@ final class ChapterJudgeRunner {
             let signature: String
         }
         var work: [Pending] = []
-        for trip in trips where Self.isJudgeable(trip) {
+        for trip in trips where !trip.items.isEmpty {
             let items = trip.orderedItems
             let stops = ChapterEvidenceBuilder.stops(of: items)
             let calendar = ChapterEvidenceBuilder.calendar(for: items)
             guard let quick = SegmentEvidence.make(photos: stops, bases: bases, calendar: calendar) else { continue }
-            guard book.needsJudging(trip.id, signature: quick.signature) else { continue }
-            work.append(Pending(trip: trip, items: items, stops: stops, calendar: calendar, signature: quick.signature))
+            let signature = quick.signature + "|" + context
+            guard book.needsJudging(trip.id, signature: signature) else { continue }
+            work.append(Pending(trip: trip, items: items, stops: stops, calendar: calendar, signature: signature))
         }
         book.prune(keeping: Set(trips.map(\.id)))
         ChapterJudgeStore.save(book)
-        guard !work.isEmpty else { return [] }
+        guard !work.isEmpty else { return }
         // Newest first: what was just imported is judged first.
         work.sort { ($0.trip.startDate ?? .distantPast) > ($1.trip.startDate ?? .distantPast) }
 
-        engine = ChapterJudgeEngine.current()
+        pass &+= 1
+        let current = pass
         total = work.count
         done = 0
-        defer { total = 0; done = 0 }
+        defer {
+            if pass == current { total = 0; done = 0 }
+        }
+        func step() { if pass == current { done += 1 } }
 
-        var removable: [Trip] = []
         for entry in work {
             guard !Task.isCancelled else { break }
             let photos = ChapterEvidenceBuilder.scenePhotos(of: entry.items)
             let scenes = await Task.detached(priority: .utility) { await ChapterEvidenceBuilder.scenes(photos) }.value
             guard !Task.isCancelled else { break }
             // The trip may have gone while its photos were looked at.
-            guard !entry.trip.isDeleted, entry.trip.modelContext != nil else { done += 1; continue }
-            let title = entry.trip.overrideName
-            guard let evidence = SegmentEvidence.make(
-                photos: entry.stops,
-                bases: bases,
-                scenes: scenes,
-                calendar: entry.calendar,
-                placeName: ChapterEvidenceBuilder.placeName(of: entry.items),
-                title: title
-            ) else { continue }
+            guard !entry.trip.isDeleted, entry.trip.modelContext != nil,
+                  let evidence = SegmentEvidence.make(
+                      photos: entry.stops,
+                      bases: bases,
+                      scenes: scenes,
+                      calendar: entry.calendar,
+                      placeName: ChapterEvidenceBuilder.placeName(of: entry.items),
+                      title: entry.trip.overrideName
+                  ) else { step(); continue }
             book = ChapterJudgeStore.book()
             var verdict = RuleJudge.judge(evidence, book: book)
             if engine != .rules {
@@ -385,24 +395,15 @@ final class ChapterJudgeRunner {
                     verdict = RuleJudge.combine(rules: verdict, model: model, evidence: evidence, book: book)
                 }
                 guard !Task.isCancelled else { break }
-                guard !entry.trip.isDeleted, entry.trip.modelContext != nil else { done += 1; continue }
+                guard !entry.trip.isDeleted, entry.trip.modelContext != nil else { step(); continue }
             }
             // The person may have answered meanwhile; their answer stays.
             book = ChapterJudgeStore.book()
-            guard book.enabled, book.needsJudging(entry.trip.id, signature: entry.signature) else { done += 1; continue }
-            // Only a suggestion nobody changed is removed; any other trip
-            // called ordinary days becomes a question.
-            if verdict.kind == .daily && !Self.isUntouched(entry.trip) {
-                verdict.confidence = min(verdict.confidence, .medium)
-            }
+            guard book.enabled, book.needsJudging(entry.trip.id, signature: entry.signature) else { step(); continue }
             book.record(verdict, for: entry.trip.id, signature: entry.signature, now: .now)
             ChapterJudgeStore.save(book)
-            if ConfidencePolicy.action(for: verdict, level: book.askLevel) == .apply && verdict.kind == .daily {
-                removable.append(entry.trip)
-            }
-            done += 1
+            step()
         }
-        return removable
     }
 }
 

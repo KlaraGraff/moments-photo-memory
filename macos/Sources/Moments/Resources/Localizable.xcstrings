@@ -22513,24 +22513,24 @@
         }
       }
     },
-    "For each chapter only a short text is kept: its dates and weekdays, how far it was from home or work, and roughly what the photos show. No photos. With the on-device model nothing leaves this Mac. With a cloud model only that text is sent, without photos, coordinates or the names of your places. Deleting an entry leaves your chapters as they are; it is only no longer used." : {
+    "For each chapter only a short text is kept: its dates and weekdays, how far it was from home or work, roughly what the photos show, the city and the chapter's title. No photos. With the on-device model nothing leaves this Mac. With a cloud model only that text is sent, without photos or coordinates, and without the names of your home, work or home town. Deleting an entry leaves your chapters as they are; it is only no longer used." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Für jedes Kapitel wird nur ein kurzer Text gespeichert: Daten und Wochentage, wie weit es von Zuhause oder der Arbeit entfernt war und grob, was die Fotos zeigen. Keine Fotos. Mit dem Modell auf dem Gerät verlässt nichts diesen Mac. Mit einem Cloud-Modell wird nur dieser Text gesendet, ohne Fotos, Koordinaten oder die Namen deiner Orte. Ein gelöschter Eintrag ändert deine Kapitel nicht; er wird nur nicht mehr genutzt."
+            "value" : "Für jedes Kapitel wird nur ein kurzer Text gespeichert: Daten und Wochentage, wie weit es von Zuhause oder der Arbeit entfernt war, grob, was die Fotos zeigen, die Stadt und der Titel des Kapitels. Keine Fotos. Mit dem Modell auf dem Gerät verlässt nichts diesen Mac. Mit einem Cloud-Modell wird nur dieser Text gesendet, ohne Fotos oder Koordinaten und ohne die Namen deines Zuhauses, deiner Arbeit oder deiner Heimatstadt. Ein gelöschter Eintrag ändert deine Kapitel nicht; er wird nur nicht mehr genutzt."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "For each chapter only a short text is kept: its dates and weekdays, how far it was from home or work, and roughly what the photos show. No photos. With the on-device model nothing leaves this Mac. With a cloud model only that text is sent, without photos, coordinates or the names of your places. Deleting an entry leaves your chapters as they are; it is only no longer used."
+            "value" : "For each chapter only a short text is kept: its dates and weekdays, how far it was from home or work, roughly what the photos show, the city and the chapter's title. No photos. With the on-device model nothing leaves this Mac. With a cloud model only that text is sent, without photos or coordinates, and without the names of your home, work or home town. Deleting an entry leaves your chapters as they are; it is only no longer used."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每段只记一份文字说明：日期、星期、离家或工作地多远、照片里大致有什么，不存照片。用本机模型时，什么都不离开这台 Mac；用云端模型时只发这份文字说明，不发照片、坐标和你的地名。删掉一条，已有篇章不变，以后不再参考它。"
+            "value" : "每段只记一份文字说明：日期、星期、离家或工作地多远、照片里大致有什么、所在城市和篇章标题，不存照片。用本机模型时，什么都不离开这台 Mac；用云端模型时只发这份文字说明，不发照片和坐标，也不发你家、工作地和老家的名字。删掉一条，已有篇章不变，以后不再参考它。"
           }
         }
       }

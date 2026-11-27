@@ -175,6 +175,55 @@ public struct ChapterJudgeBook: Codable, Equatable, Sendable {
         return true
     }
 
+    /// Chapters among `ids` the judge is sure were ordinary days, to remove
+    /// if nobody touched them. The person's own answers are never here.
+    public func removals(among ids: [String]) -> [String] {
+        guard enabled else { return [] }
+        return ids.filter { id in
+            guard let stored = verdicts[id], stored.verdict.source != .person, stored.verdict.kind == .daily else { return false }
+            return action(for: id) == .apply
+        }
+    }
+
+    /// The judge's answer for these chapters stays, but it asks first: for a
+    /// chapter someone touched, or one brought back with Undo.
+    public mutating func askInstead(_ ids: [String]) {
+        for id in ids {
+            guard var stored = verdicts[id], stored.verdict.source != .person else { continue }
+            stored.verdict.confidence = min(stored.verdict.confidence, .low)
+            stored.deferredAt = nil
+            verdicts[id] = stored
+        }
+    }
+
+    /// What the book holds for some chapters, to put back with Undo.
+    public struct Entries: Equatable, Sendable {
+        public let ids: [String]
+        let verdicts: [String: StoredVerdict]
+        let examples: [JudgeExample]
+    }
+
+    public func entries(for ids: [String]) -> Entries {
+        let wanted = Set(ids)
+        return Entries(
+            ids: ids,
+            verdicts: verdicts.filter { wanted.contains($0.key) },
+            examples: examples.filter { wanted.contains($0.id) }
+        )
+    }
+
+    /// Puts back what `entries` held for its chapters, leaving everything
+    /// else, such as later answers about other chapters, as it is.
+    public mutating func restore(_ entries: Entries) {
+        let ids = Set(entries.ids)
+        for id in ids { verdicts[id] = entries.verdicts[id] }
+        examples.removeAll { ids.contains($0.id) }
+        for example in entries.examples {
+            let index = examples.firstIndex { $0.addedAt < example.addedAt } ?? examples.endIndex
+            examples.insert(example, at: index)
+        }
+    }
+
     /// The one-line check was answered "yes", or put away.
     public mutating func closeCheck(for id: String, now: Date) {
         verdicts[id]?.checkClosedAt = now

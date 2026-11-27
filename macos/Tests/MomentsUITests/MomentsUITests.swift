@@ -1233,51 +1233,34 @@ final class MomentsUITests: XCTestCase {
         XCTAssertEqual(libraryPhotoCount(app), allCount)
     }
 
-    /// A link in the open photo's column leads elsewhere; Back returns to
-    /// that photo, open as it was, and the next Back closes it.
-    func testBackReopensThePhotoALinkWasClickedIn() {
+    /// A chapter opened from the Library: Back returns to the Library, not
+    /// to the Chapters shelf. (Back reopening a photo a link was clicked in
+    /// is covered by SelectionModelBackTests: the links in the photo's
+    /// column are not reachable as their own elements in UI tests.)
+    func testBackFromAChapterOpenedInTheLibraryReturnsToTheLibrary() {
         let app = launch(language: "en")
         let allCount = libraryPhotoCount(app)
-        let first = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo.")).element(boundBy: 0)
-        XCTAssertTrue(first.waitForExistence(timeout: launchTimeout))
-        first.doubleClick()
-        let viewer = element(in: app, identifier: "viewer")
-        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout))
-        // The first photo with a place name has the link to the photos taken
-        // there. Not the column's scroll view, which also answers to it; a
-        // link-styled button may be reported as a link rather than a button.
-        let scrollViewType: NSNumber = NSNumber(value: XCUIElement.ElementType.scrollView.rawValue)
-        let linkQuery: NSPredicate = NSPredicate(format: "identifier == %@ AND elementType != %@", "viewer.place.photos", scrollViewType)
-        let link = app.descendants(matching: .any).matching(linkQuery).firstMatch
-        let next = element(in: app, identifier: "viewer.next")
-        var found: Bool = link.waitForExistence(timeout: 3)
-        for _ in 0..<15 where !found {
-            guard next.isEnabled else { break }
-            next.click()
-            found = link.waitForExistence(timeout: 2)
+        let links = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.chapter-link."))
+        XCTAssertTrue(links.firstMatch.waitForExistence(timeout: launchTimeout), "No section leads to its chapter")
+        let link: XCUIElement? = links.allElementsBoundByIndex.first { (link: XCUIElement) -> Bool in link.isHittable }
+        guard let link else {
+            XCTFail("No chapter link is in view")
+            return
         }
-        XCTAssertTrue(found, "No synthetic photo has a place name")
-        let counter = element(in: app, identifier: "viewer.counter")
-        let openedAt: String = (counter.value as? String) ?? ""
         link.click()
-        let heading = element(in: app, identifier: "library.scope")
-        XCTAssertTrue(heading.waitForExistence(timeout: launchTimeout), "The link did not show the photos taken there")
-        XCTAssertTrue(viewer.waitForNonExistence(timeout: launchTimeout), "The viewer stayed open over the place's photos")
-        capture(app, named: "back-01-place-from-viewer-evidence")
-
+        let count = element(in: app, identifier: "library.photoCount")
+        XCTAssertTrue(count.waitForNonExistence(timeout: launchTimeout), "The chapter link did not leave the Library")
         let back = element(in: app, identifier: "window.back")
-        XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The place's photos have no Back")
-        back.click()
-        XCTAssertTrue(viewer.waitForExistence(timeout: launchTimeout), "Back did not reopen the photo the link was clicked in")
-        XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout), "Back did not leave the place's photos")
-        XCTAssertEqual(counter.value as? String, openedAt, "Back reopened another photo")
-        capture(app, named: "back-02-photo-reopened-evidence")
+        XCTAssertTrue(back.waitForExistence(timeout: launchTimeout), "The chapter has no Back")
+        Thread.sleep(forTimeInterval: 0.8)
+        capture(app, named: "back-01-chapter-from-library-evidence")
 
-        app.typeKey("[", modifierFlags: .command)
-        XCTAssertTrue(viewer.waitForNonExistence(timeout: launchTimeout), "Command-[ did not close the photo")
-        XCTAssertTrue(back.waitForNonExistence(timeout: launchTimeout), "All photos have nothing to go back to, yet show Back")
+        back.click()
+        XCTAssertTrue(count.waitForExistence(timeout: launchTimeout), "Back did not return to the Library the chapter was opened from")
         XCTAssertEqual(libraryPhotoCount(app), allCount)
+        XCTAssertTrue(back.waitForNonExistence(timeout: launchTimeout), "All photos have nothing to go back to, yet show Back")
+        capture(app, named: "back-02-library-again-evidence")
     }
 
     /// Leaving the large map removes its map view, so MapKit stops drawing

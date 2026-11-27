@@ -127,7 +127,7 @@ enum LibraryBackup {
     /// are kept in the store rather than in user defaults.
     static let decisionsInStoreSchema = "9.0.0"
 
-    /// The schema the running app opens stores with, "9.0.0".
+    /// The schema the running app opens stores with, "10.0.0".
     static var currentSchemaVersion: String {
         let version = MomentsMigrationPlan.schemas.last?.versionIdentifier ?? SchemaV8.versionIdentifier
         return "\(version.major).\(version.minor).\(version.patch)"

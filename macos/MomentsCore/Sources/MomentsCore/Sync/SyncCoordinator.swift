@@ -112,6 +112,8 @@ public final class SyncCoordinator {
             // Per photo, or (with no photo) a whole place.
             if let mediaID = ref(record, "mediaID") { return [SyncRecordKey(.mediaItem, mediaID)] }
             return ref(record, "placeID").map { [SyncRecordKey(.place, $0)] } ?? []
+        case .comment:
+            return ref(record, "memoryID").map { [SyncRecordKey(.memory, $0)] } ?? []
         case .memoryRevision:
             let id = ref(record, "memoryID")
             let types: [SyncRecordType] = [.memory, .photoNote, .placeNote, .collectionMemory]
@@ -329,6 +331,18 @@ public final class SyncCoordinator {
 
     // MARK: Receiving
 
+    /// Whether a record about to be passed to ``fetched(_:recordName:systemFields:)``
+    /// is new words from the other person worth a notification. Call it
+    /// first: after `fetched` the record is known.
+    public func arrival(of serverRecord: SyncRecord) -> SyncArrival? {
+        let record = accounts.fromWire(decodeID(serverRecord))
+        let known = state.baseEntry(for: record.key) != nil || local.record(for: record.key) != nil
+        return SyncArrivalNotices.arrival(of: record, known: known, accounts: accounts) { key in
+            guard let found = self.local.record(for: key) else { return nil }
+            return .some(found.fields["authorAccountID"]?.stringValue)
+        }
+    }
+
     /// A record changed on the server (sent by the other person or by this
     /// person's other device).
     @discardableResult
@@ -410,7 +424,7 @@ public final class SyncCoordinator {
     }
 
     /// Restores the Moments ID from ``SyncSchema/idField`` and drops it.
-    private func decodeID(_ record: SyncRecord) -> SyncRecord {
+    func decodeID(_ record: SyncRecord) -> SyncRecord {
         var copy = record
         if let id = record.fields[SyncSchema.idField]?.stringValue { copy.id = id }
         copy.fields[SyncSchema.idField] = nil

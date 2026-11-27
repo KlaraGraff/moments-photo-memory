@@ -657,6 +657,7 @@ struct TripsScreen: View {
                 edit(String(localized: "Merged “\(name)” into this trip")) { TripEdits.merge(other, into: trip, session: $0) }
             },
             delete: { target in
+                if case let .group(group) = target, !UserGroupRuleEngine.canDelete(group) { return }
                 let name = target.name
                 closeTrip()
                 edit(String(localized: "Deleted “\(name)”")) { session in
@@ -670,6 +671,8 @@ struct TripsScreen: View {
                 switch target {
                 case let .trip(trip): TripRenaming.rename(trip, to: name, context: modelContext)
                 case let .group(group):
+                    // Only whoever made the chapter renames it (issue #28).
+                    guard UserGroupRuleEngine.canEdit(group) else { return }
                     let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !value.isEmpty, value != group.name else { return }
                     let log = TripCorrectionSnapshotBuilder(context: modelContext)
@@ -2133,7 +2136,7 @@ private struct TripWindowTitle: ViewModifier {
     let rename: (ChapterTarget, String) -> Void
 
     func body(content: Content) -> some View {
-        if let target {
+        if let target, Self.isRenamable(target) {
             content.navigationTitle(Binding(
                 get: { name },
                 set: { rename(target, $0) }
@@ -2141,6 +2144,12 @@ private struct TripWindowTitle: ViewModifier {
         } else {
             content.navigationTitle(name)
         }
+    }
+
+    /// A chapter the other person made is theirs to rename (issue #28).
+    static func isRenamable(_ target: ChapterTarget) -> Bool {
+        if case let .group(group) = target { return UserGroupRuleEngine.canEdit(group) }
+        return true
     }
 }
 

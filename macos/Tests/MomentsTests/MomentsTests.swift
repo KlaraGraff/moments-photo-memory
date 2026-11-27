@@ -196,6 +196,15 @@ final class MomentsTests: XCTestCase {
         )
     }
 
+    /// Issue #28: each sitting keeps the words it replaced once, not every
+    /// pause in typing, and an empty memory leaves nothing in the history.
+    func testEditHistoryKeepsTheOldWordsOncePerSitting() {
+        XCTAssertTrue(LibraryMemoryPersistence.keepsPreviousText(previous: "Old words", new: "New words", alreadyKept: false))
+        XCTAssertFalse(LibraryMemoryPersistence.keepsPreviousText(previous: "Old words", new: "New words!", alreadyKept: true))
+        XCTAssertFalse(LibraryMemoryPersistence.keepsPreviousText(previous: "Same", new: "Same", alreadyKept: false))
+        XCTAssertFalse(LibraryMemoryPersistence.keepsPreviousText(previous: "  ", new: "First words", alreadyKept: false))
+    }
+
     func testLibraryMemoryPersistenceSkipsUntouchedAndNoOpDrafts() {
         let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
         let memory = Memory(id: "memory-no-op", text: "same", updatedAt: timestamp, revision: 4)

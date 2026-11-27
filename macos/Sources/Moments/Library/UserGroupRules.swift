@@ -54,8 +54,14 @@ public struct UserGroupRuleSet: Codable, Equatable, Sendable {
 }
 
 enum UserGroupRuleEngine {
-    static func canDelete(_ group: UserGroup, accountID: String = MomentsAccount.localID) -> Bool {
+    /// Only the person who made a group renames it, edits its rules or
+    /// deletes it (issue #28); adding and removing photos is open to both.
+    static func canEdit(_ group: UserGroup, accountID: String = MomentsAccount.localID) -> Bool {
         group.ownerAccountID == accountID
+    }
+
+    static func canDelete(_ group: UserGroup, accountID: String = MomentsAccount.localID) -> Bool {
+        canEdit(group, accountID: accountID)
     }
     static func matches(_ item: MediaItem, ruleSet: UserGroupRuleSet, calendar: Calendar = .current) -> Bool {
         guard !ruleSet.rules.isEmpty else { return false }

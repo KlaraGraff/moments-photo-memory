@@ -1447,6 +1447,8 @@ struct MemoryEditor: View {
     /// The text when typing began, to hand only new words to the AI.
     @State private var textAtFocus: String?
     @State private var savedCount = 0
+    /// The words before this sitting are already in the edit history.
+    @State private var keptPreviousText = false
     @FocusState private var isFocused: Bool
 
     /// Only ever this person's own: the other person's memories are shown
@@ -1503,6 +1505,7 @@ struct MemoryEditor: View {
                 if focused {
                     state.focusedMemoryItemID = item.id
                     textAtFocus = state.draft(for: item)
+                    keptPreviousText = false
                 } else {
                     if state.focusedMemoryItemID == item.id {
                         state.focusedMemoryItemID = nil
@@ -1578,6 +1581,17 @@ struct MemoryEditor: View {
             modelContext.delete(memory)
         case .update:
             guard let memory else { return }
+            if baseline != nil, LibraryMemoryPersistence.keepsPreviousText(previous: memory.text, new: newText, alreadyKept: keptPreviousText) {
+                modelContext.insert(MemoryRevision(
+                    text: memory.text,
+                    editedBy: memory.updatedBy ?? MomentsAccount.localID,
+                    editedAt: memory.updatedAt,
+                    baseRevision: memory.revision,
+                    reason: "edit",
+                    memory: memory
+                ))
+                keptPreviousText = true
+            }
             if baseline == nil, memory.text != newText {
                 modelContext.insert(MemoryRevision(
                     text: memory.text,

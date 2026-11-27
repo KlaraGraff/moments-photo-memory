@@ -18578,6 +18578,28 @@
           }
         }
       }
+    },
+    "This file may also be present in an Apple Photos import." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Datei ist möglicherweise auch in einem Import aus Apple Fotos enthalten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This file may also be present in an Apple Photos import."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这个文件可能也在某次 Apple Photos 导入中。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

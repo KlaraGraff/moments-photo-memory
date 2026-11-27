@@ -116,6 +116,65 @@ final class FolderImportTests: XCTestCase {
         XCTAssertNotNil(duplicate.originalContentHash)
     }
 
+    func testFolderImportAfterApplePhotosFlagsTheSamePhotoWithoutLocation() async throws {
+        let folder = try SyntheticMediaFixture.makeFolder()
+        defer { SyntheticMediaFixture.removeFolder(folder) }
+        let date = Date(timeIntervalSince1970: 1_767_225_600)
+        let same = folder.appendingPathComponent("same.jpg")
+        try SyntheticMediaFixture.writeJPEG(at: same, date: date, marker: 41)
+        // A later burst frame: the same picture, but 1.7 s after the Photos asset.
+        try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("burst.jpg"), date: date.addingTimeInterval(2), marker: 42)
+        try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("other.jpg"), date: date.addingTimeInterval(60), marker: 43)
+        let sameMetadata = try await MediaMetadataReader().read(url: same)
+        let sameHash = try XCTUnwrap(sameMetadata.perceptualHash)
+        let otherHash = String(format: "%016llx", ~(UInt64(sameHash, radix: 16) ?? 0))
+
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        context.insert(MediaItem(id: "synthetic-photos-same", captureDate: date.addingTimeInterval(0.3), width: sameMetadata.width, height: sameMetadata.height, source: .photos, title: "synthetic-photos-same", photosLocalIdentifier: "synthetic-local-same", perceptualHash: sameHash))
+        context.insert(MediaItem(id: "synthetic-photos-other", captureDate: date.addingTimeInterval(60), width: sameMetadata.width, height: sameMetadata.height, source: .photos, title: "synthetic-photos-other", photosLocalIdentifier: "synthetic-local-other", perceptualHash: otherHash))
+        try context.save()
+
+        let importer = FolderImporter(
+            geocoder: SyntheticGeocoder(result: ImportGeocodeResult(city: "Synthetic City")),
+            geocodeCache: ImportGeocodeCache()
+        )
+        let summary = try await importer.importFolder(folder, container: container)
+        let duplicateFlags = summary.flags.filter { $0.reasons.contains(.nearDuplicate) }.map(\.fileName)
+        let files = try context.fetch(FetchDescriptor<MediaItem>()).filter { $0.source == .file }
+        let byName = Dictionary(uniqueKeysWithValues: files.map { ($0.title, $0) })
+
+        XCTAssertEqual(duplicateFlags, ["same.jpg"])
+        XCTAssertEqual(files.count, 3, "flagged, never merged")
+        XCTAssertTrue(byName["same.jpg"]?.importReviewReasons.contains(.nearDuplicate) == true)
+        XCTAssertEqual(byName["same.jpg"]?.reviewDecisionRaw, ImportReviewDecision.pending.rawValue)
+        XCTAssertFalse(byName["burst.jpg"]?.importReviewReasons.contains(.nearDuplicate) == true)
+        XCTAssertFalse(byName["other.jpg"]?.importReviewReasons.contains(.nearDuplicate) == true)
+    }
+
+    func testFolderImportAfterApplePhotosFlagsTheSamePhotoWithLocation() async throws {
+        let folder = try SyntheticMediaFixture.makeFolder()
+        defer { SyntheticMediaFixture.removeFolder(folder) }
+        let date = Date(timeIntervalSince1970: 1_767_225_600)
+        try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("near.jpg"), date: date, latitude: 0.01, longitude: 0.02, marker: 51)
+        try SyntheticMediaFixture.writeJPEG(at: folder.appendingPathComponent("far.jpg"), date: date.addingTimeInterval(60), latitude: 0.01, longitude: 0.02, marker: 52)
+
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        // Both have a location, so the hash is not needed (and differs here).
+        context.insert(MediaItem(id: "synthetic-photos-near", captureDate: date, latitude: 0.0102, longitude: 0.02, width: 4, height: 4, source: .photos, title: "synthetic-photos-near", photosLocalIdentifier: "synthetic-local-near", perceptualHash: "ffffffffffffffff"))
+        context.insert(MediaItem(id: "synthetic-photos-far", captureDate: date.addingTimeInterval(60), latitude: 0.02, longitude: 0.02, width: 4, height: 4, source: .photos, title: "synthetic-photos-far", photosLocalIdentifier: "synthetic-local-far"))
+        try context.save()
+
+        let importer = FolderImporter(
+            geocoder: SyntheticGeocoder(result: ImportGeocodeResult(city: "Synthetic City", timeZoneIdentifier: "UTC")),
+            geocodeCache: ImportGeocodeCache()
+        )
+        let summary = try await importer.importFolder(folder, container: container)
+
+        XCTAssertEqual(summary.flags.filter { $0.reasons.contains(.nearDuplicate) }.map(\.fileName), ["near.jpg"])
+    }
+
     func testSyntheticImportUsesLocalExifOffsetForDayBoundary() async throws {
         let folder = try SyntheticMediaFixture.makeFolder()
         defer { SyntheticMediaFixture.removeFolder(folder) }

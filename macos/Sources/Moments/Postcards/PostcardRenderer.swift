@@ -338,13 +338,23 @@ enum PostcardRenderer {
         return base
     }
 
-    /// A handwriting-like face where the Mac has one; the serif otherwise.
+    /// The message's face: Baskerville, with Songti SC for Chinese. Both
+    /// come with macOS. Faces that macOS only downloads on first use (Kaiti
+    /// SC, STKaiti) are never asked for by name: asking blocks the caller
+    /// until the download ends, which froze the sheet for minutes.
     private static func hand(_ points: Double) -> NSFont {
-        for name in ["Kaiti SC", "STKaiti", "Baskerville"] {
-            if let font = NSFont(name: name, size: mm(points)) { return font }
+        let size = mm(points)
+        guard installedFamilies.contains("Baskerville"), let base = NSFont(name: "Baskerville", size: size) else {
+            return serif(points)
         }
-        return serif(points)
+        guard installedFamilies.contains("Songti SC") else { return base }
+        let chinese = NSFontDescriptor(fontAttributes: [.family: "Songti SC"])
+        let descriptor = base.fontDescriptor.addingAttributes([.cascadeList: [chinese]])
+        return NSFont(descriptor: descriptor, size: size) ?? base
     }
+
+    /// The font families installed on this Mac, read once.
+    private static let installedFamilies = Set(CTFontManagerCopyAvailableFontFamilyNames() as? [String] ?? [])
 
     private static func drawImage(_ image: CGImage, in rect: CGRect, context: CGContext) {
         context.saveGState()

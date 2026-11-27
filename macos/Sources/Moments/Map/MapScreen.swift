@@ -1137,14 +1137,6 @@ struct MapScreen: View {
 
     private func moveCamera(to position: MapCameraPosition, isGlobe: Bool, animated: Bool = true) {
         isShowingGlobeOverview = isGlobe
-        // TEMPORARY, for the before measurement only: the old animation.
-        if animated && !reduceMotion {
-            awaitingProgrammaticCamera = isGlobe && position != cameraPosition
-            withAnimation(.easeInOut(duration: 0.45)) {
-                cameraPosition = position
-            }
-            return
-        }
         guard animated, !reduceMotion, let target = flightCamera(for: position) else {
             cameraWatch.endFlight()
             // MapKit reports nothing for a move to where the camera already is,

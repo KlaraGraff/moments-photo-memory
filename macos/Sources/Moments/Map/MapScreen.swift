@@ -330,6 +330,9 @@ struct MapScreen: View {
         .accessibilityLabel(Text("Map"))
         .mapCameraKeyframeAnimator(trigger: flightTrigger) { initial in
             let start = MapFlightCamera(initial)
+            #if DEBUG
+            MapCameraTrace.note("keyframes from \(Int(initial.distance))")
+            #endif
             let flight = MapFlight(from: start, to: flightTarget ?? start, distanceCeiling: flightCeiling)
             let frames: [MapFlightCamera] = flight.frames(perSecond: Self.flightFramesPerSecond)
             let step: Double = flight.stepDuration(perSecond: Self.flightFramesPerSecond)
@@ -1137,7 +1140,24 @@ struct MapScreen: View {
 
     private func moveCamera(to position: MapCameraPosition, isGlobe: Bool, animated: Bool = true) {
         isShowingGlobeOverview = isGlobe
-        guard animated, !reduceMotion, let target = flightCamera(for: position) else {
+        var reducesMotion: Bool = reduceMotion
+        #if DEBUG
+        MapCameraTrace.note("reduceMotion=\(reduceMotion)")
+        if MapCameraTrace.forcesMotion { reducesMotion = false }
+        if MapCameraTrace.usesOldAnimation, animated, !reducesMotion {
+            // TEMPORARY, before/after measurement only: the old animation.
+            MapCameraTrace.note("path=old")
+            awaitingProgrammaticCamera = isGlobe && position != cameraPosition
+            withAnimation(.easeInOut(duration: 0.45)) {
+                cameraPosition = position
+            }
+            return
+        }
+        #endif
+        guard animated, !reducesMotion, let target = flightCamera(for: position) else {
+            #if DEBUG
+            MapCameraTrace.note("path=instant")
+            #endif
             cameraWatch.endFlight()
             // MapKit reports nothing for a move to where the camera already is,
             // so only a real move waits for its report.
@@ -1159,6 +1179,9 @@ struct MapScreen: View {
         // zooming in the last frames (see MapFlight).
         let ceiling: Double = FootprintsCameraTarget.globeDistance(fitting: mapSize)
         let flight = MapFlight(from: start, to: target, distanceCeiling: ceiling)
+        #if DEBUG
+        MapCameraTrace.note("path=flight \(String(format: "%.2f", flight.duration))s")
+        #endif
         let token: Int = cameraWatch.beginFlight(to: target)
         flightTarget = target
         flightCeiling = ceiling

@@ -1183,7 +1183,17 @@ final class MomentsUITests: XCTestCase {
     /// zoom levels: slow at the start, fastest in the middle, slow at the end,
     /// instead of saving most of the zoom for one jump at the end (or start).
     func testMapButtonsZoomSmoothly() {
-        let app = launch(language: "en", extraArguments: ["-MomentsUITestCameraProbe"])
+        // TEMPORARY: the old animation first, measured and printed only, as
+        // the before numbers for the same moves.
+        measureMapButtons(extraArguments: ["-MomentsUITestOldCameraAnimation"], asserting: false)
+        measureMapButtons(extraArguments: [], asserting: true)
+    }
+
+    private func measureMapButtons(extraArguments: [String], asserting: Bool) {
+        // A runner with Reduce Motion on would jump; the move is what is measured.
+        let arguments: [String] = ["-MomentsUITestCameraProbe", "-MomentsUITestForceMotion"] + extraArguments
+        let app = launch(language: "en", extraArguments: arguments)
+        defer { app.terminate() }
         openLargeMap(app)
         let probe = element(in: app, identifier: "debug.cameraTrace")
         XCTAssertTrue(probe.waitForExistence(timeout: launchTimeout), "The camera probe is missing")
@@ -1194,13 +1204,13 @@ final class MomentsUITests: XCTestCase {
 
         fit.click()
         let zoomIn: [CameraSample] = cameraTrace(probe, press: 1)
-        checkSmoothZoom(zoomIn, named: "zoom to photos")
-        capture(app, named: "map-camera-01-photos-evidence")
+        checkSmoothZoom(zoomIn, named: "zoom to photos", asserting: asserting)
+        if asserting { capture(app, named: "map-camera-01-photos-evidence") }
 
         element(in: app, identifier: "map.globe").click()
         let zoomOut: [CameraSample] = cameraTrace(probe, press: 2)
-        checkSmoothZoom(zoomOut, named: "whole world")
-        capture(app, named: "map-camera-02-globe-evidence")
+        checkSmoothZoom(zoomOut, named: "whole world", asserting: asserting)
+        if asserting { capture(app, named: "map-camera-02-globe-evidence") }
     }
 
     private struct CameraSample {
@@ -1217,7 +1227,9 @@ final class MomentsUITests: XCTestCase {
         // Longer than any move, plus the probe's quarter-second refresh.
         Thread.sleep(forTimeInterval: 3.0)
         let label: String = probe.label
-        let body: Substring = label.dropFirst(prefix.count)
+        let body: Substring = label.dropFirst(prefix.count).prefix { character in
+            character != "|"
+        }
         let samples: [CameraSample] = body.split(separator: ",").compactMap { entry in
             let parts: [Substring] = entry.split(separator: ":")
             guard parts.count == 2, let milliseconds = Double(parts[0]), let distance = Double(parts[1]), distance > 0 else { return nil }
@@ -1230,28 +1242,30 @@ final class MomentsUITests: XCTestCase {
     /// The share of the whole zoom (in zoom levels, not metres) done in the
     /// first and last 15 % of the move must be small, and the move must be
     /// animated, not a cut.
-    private func checkSmoothZoom(_ samples: [CameraSample], named name: String, file: StaticString = #filePath, line: UInt = #line) {
+    private func checkSmoothZoom(_ samples: [CameraSample], named name: String, asserting: Bool, file: StaticString = #filePath, line: UInt = #line) {
         guard let first = samples.first, let last = samples.last, samples.count >= 2 else {
-            XCTFail("\(name): too few camera reports (\(samples.count))", file: file, line: line)
+            print("CAMERA-TRACE \(name): too few camera reports (\(samples.count))")
+            if asserting { XCTFail("\(name): too few camera reports (\(samples.count))", file: file, line: line) }
             return
         }
         let total: Double = Foundation.log(last.distance / first.distance)
-        XCTAssertGreaterThan(abs(total), Foundation.log(4.0), "\(name): the camera barely zoomed (\(first.distance) → \(last.distance) m)", file: file, line: line)
         // The move ends when the distance is within 1 % of where it stopped.
         let endIndex: Int = samples.firstIndex { sample in
             abs(Foundation.log(sample.distance / last.distance)) < 0.01
         } ?? samples.count - 1
-        guard endIndex >= 1 else {
-            XCTFail("\(name): the camera did not move", file: file, line: line)
-            return
-        }
+        let moving: Int = endIndex
         let end: Double = samples[endIndex].time
-        let moving: Int = samples[1...endIndex].count
+        var startShare: Double = 1
+        var endShare: Double = 1
+        if endIndex >= 1, abs(total) > 0 {
+            startShare = Foundation.log(logDistance(samples, at: end * 0.15) / first.distance) / total
+            endShare = Foundation.log(last.distance / logDistance(samples, at: end * 0.85)) / total
+        }
+        print("CAMERA-TRACE \(name)\(asserting ? "" : " (old)"): \(moving) reports in \(String(format: "%.2f", end)) s, first 15 % of the time did \(Int((startShare * 100).rounded())) %, last 15 % did \(Int((endShare * 100).rounded())) % of the zoom")
+        guard asserting else { return }
+        XCTAssertGreaterThan(abs(total), Foundation.log(4.0), "\(name): the camera barely zoomed (\(first.distance) → \(last.distance) m)", file: file, line: line)
         XCTAssertGreaterThanOrEqual(moving, 8, "\(name): only \(moving) camera reports during the move; it jumped instead of moving", file: file, line: line)
         XCTAssertGreaterThan(end, 0.3, "\(name): the move took only \(end) s", file: file, line: line)
-        let startShare: Double = Foundation.log(logDistance(samples, at: end * 0.15) / first.distance) / total
-        let endShare: Double = Foundation.log(last.distance / logDistance(samples, at: end * 0.85)) / total
-        print("CAMERA-TRACE \(name): \(String(format: "%.2f", end)) s, first 15 % did \(Int((startShare * 100).rounded())) %, last 15 % did \(Int((endShare * 100).rounded())) % of the zoom")
         XCTAssertLessThan(startShare, 0.2, "\(name): the first 15 % of the move did \(Int(startShare * 100)) % of the zoom", file: file, line: line)
         XCTAssertLessThan(endShare, 0.2, "\(name): the last 15 % of the move did \(Int(endShare * 100)) % of the zoom", file: file, line: line)
     }

@@ -13,6 +13,18 @@ enum MapCameraTrace {
     private static var startedAt: CFTimeInterval?
     private static var samples: [(time: CFTimeInterval, distance: Double)] = []
     private static var generation = 0
+    private static var notes: [String] = []
+    /// Ignore the Mac's Reduce Motion setting, so a runner that has it on
+    /// still plays the move the test measures.
+    static let forcesMotion = ProcessInfo.processInfo.arguments.contains("-MomentsUITestForceMotion")
+    /// TEMPORARY: play the old SwiftUI animation, for a before/after measurement.
+    static let usesOldAnimation = ProcessInfo.processInfo.arguments.contains("-MomentsUITestOldCameraAnimation")
+
+    /// What the screen decided for this move (path, Reduce Motion).
+    static func note(_ text: String) {
+        guard isEnabled else { return }
+        notes.append(text)
+    }
 
     /// A button moved the camera: start a fresh trace from `distance`, the
     /// camera's distance when it was pressed.
@@ -20,6 +32,7 @@ enum MapCameraTrace {
         guard isEnabled else { return }
         startedAt = CACurrentMediaTime()
         samples = [(0, distance)]
+        notes = []
         generation += 1
     }
 
@@ -33,7 +46,7 @@ enum MapCameraTrace {
         let entries: [String] = samples.map { sample in
             "\(Int((sample.time * 1000).rounded())):\(Int(sample.distance.rounded()))"
         }
-        return "trace#\(generation)=" + entries.joined(separator: ",")
+        return "trace#\(generation)=" + entries.joined(separator: ",") + " | " + notes.joined(separator: "; ")
     }
 }
 

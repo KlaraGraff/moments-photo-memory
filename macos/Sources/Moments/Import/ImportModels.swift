@@ -209,7 +209,7 @@ public struct ImportConflictConfiguration: Codable, Equatable, Sendable {
     }
 }
 
-public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
+public struct ImportedMediaMetadata: Identifiable, Equatable, Codable, Sendable {
     public let id: String
     public let bookmarkData: Data
     public let fileName: String
@@ -228,7 +228,9 @@ public struct ImportedMediaMetadata: Identifiable, Equatable, Sendable {
     public let timeConfidence: ImportTimeConfidence
     public let timeZoneIdentifier: String?
     /// The source directory is kept only while an import is being organized.
-    /// It is intentionally not part of any persisted model or source reference.
+    /// It is intentionally not part of any persisted model or source reference;
+    /// only an unfinished import's resume checkpoint holds it, until the import
+    /// is saved (see `ImportResumeStore`).
     public let parentDirectoryKey: String?
     /// Apple Live Photo content identifier, used only for pairing in memory.
     public let appleContentIdentifier: String?

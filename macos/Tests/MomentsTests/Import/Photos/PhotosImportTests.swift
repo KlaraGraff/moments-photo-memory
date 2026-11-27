@@ -397,6 +397,50 @@ final class PhotosImportTests: XCTestCase {
         XCTAssertEqual(items.filter { $0.source == .photos }.count, 1)
     }
 
+    func testFolderOverlapWithoutLocationIsFoundByThumbnailHash() async throws {
+        let date = Date(timeIntervalSince1970: 1_767_225_600)
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        // A solid synthetic thumbnail hashes to all zeros.
+        context.insert(MediaItem(id: "synthetic-folder-same", captureDate: date, latitude: 0.01, longitude: 0.02, width: 100, height: 80, source: .file, title: "synthetic-same.jpg", perceptualHash: "0000000000000000"))
+        context.insert(MediaItem(id: "synthetic-folder-rotated", captureDate: date.addingTimeInterval(60), width: 80, height: 100, source: .file, title: "synthetic-rotated.jpg", perceptualHash: "0000000000000003"))
+        context.insert(MediaItem(id: "synthetic-folder-other", captureDate: date.addingTimeInterval(120), width: 100, height: 80, source: .file, title: "synthetic-other.jpg", perceptualHash: "ffffffffffffffff"))
+        context.insert(MediaItem(id: "synthetic-folder-burst", captureDate: date.addingTimeInterval(180), width: 100, height: 80, source: .file, title: "synthetic-burst.jpg", perceptualHash: "0000000000000000"))
+        try context.save()
+
+        let source = SyntheticPhotosSource(assets: [
+            PhotosAssetDescriptor(localIdentifier: "synthetic-same", creationDate: date.addingTimeInterval(0.4), mediaType: .image, pixelWidth: 100, pixelHeight: 80),
+            PhotosAssetDescriptor(localIdentifier: "synthetic-rotated", creationDate: date.addingTimeInterval(60), mediaType: .image, pixelWidth: 100, pixelHeight: 80),
+            PhotosAssetDescriptor(localIdentifier: "synthetic-other", creationDate: date.addingTimeInterval(120), mediaType: .image, pixelWidth: 100, pixelHeight: 80),
+            // The next frame of a burst looks the same but was taken later.
+            PhotosAssetDescriptor(localIdentifier: "synthetic-burst-next", creationDate: date.addingTimeInterval(181.5), mediaType: .image, pixelWidth: 100, pixelHeight: 80),
+        ])
+        source.thumbnail = solidSyntheticImage()
+        let importer = PhotosImporter(source: source, geocoder: SyntheticPhotosGeocoder(), geocodeCache: ImportGeocodeCache())
+        _ = try await importer.importPhotos(selection: .all, container: container)
+        let flagged = Set(try context.fetch(FetchDescriptor<MediaItem>())
+            .filter { $0.source == .photos && $0.importReviewReasons.contains(.nearDuplicate) }
+            .compactMap(\.photosLocalIdentifier))
+
+        XCTAssertEqual(flagged, ["synthetic-same", "synthetic-rotated"])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<MediaItem>()).count, 8, "flagged, never merged")
+    }
+
+    func testAssetWithoutLocalThumbnailAndLocationIsNotFlagged() async throws {
+        let date = Date(timeIntervalSince1970: 1_767_225_600)
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        container.mainContext.insert(MediaItem(id: "synthetic-folder-item", captureDate: date, width: 100, height: 80, source: .file, title: "synthetic-folder.jpg", perceptualHash: "0000000000000000"))
+        try container.mainContext.save()
+
+        let source = SyntheticPhotosSource(assets: [
+            PhotosAssetDescriptor(localIdentifier: "synthetic-local-a", creationDate: date, mediaType: .image, pixelWidth: 100, pixelHeight: 80)
+        ])
+        let importer = PhotosImporter(source: source, geocoder: SyntheticPhotosGeocoder(), geocodeCache: ImportGeocodeCache())
+        let summary = try await importer.importPhotos(selection: .all, container: container)
+
+        XCTAssertFalse(summary.flags.contains { $0.reasons.contains(.nearDuplicate) })
+    }
+
     func testDeletedAssetIsMarkedMissingWithoutDeletingTheMediaItem() throws {
         let container = try MomentsPersistence.makeContainer(inMemory: true)
         let context = container.mainContext
@@ -428,6 +472,7 @@ private final class SyntheticPhotosSource: PhotosAssetSource {
     var failIdentifierFetch = false
     var identifierFetchDelayNanoseconds: UInt64 = 0
     var identifierFetchStarted = false
+    var thumbnail: CGImage?
     private var changeHandler: (@Sendable (PhotosChangeEvent) -> Void)?
 
     init(assets: [PhotosAssetDescriptor], status: PhotosAuthorizationStatus = .authorized) {
@@ -473,8 +518,23 @@ private final class SyntheticPhotosSource: PhotosAssetSource {
     }
 
     func thumbnailImage(forLocalIdentifier localIdentifier: String, targetSize: CGSize, networkAccessAllowed: Bool) async -> CGImage? {
-        nil
+        thumbnail
     }
+}
+
+private func solidSyntheticImage() -> CGImage {
+    let context = CGContext(
+        data: nil,
+        width: 16,
+        height: 16,
+        bitsPerComponent: 8,
+        bytesPerRow: 16,
+        space: CGColorSpaceCreateDeviceGray(),
+        bitmapInfo: CGImageAlphaInfo.none.rawValue
+    )!
+    context.setFillColor(gray: 0.5, alpha: 1)
+    context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+    return context.makeImage()!
 }
 
 private enum SyntheticPhotosSourceError: Error {

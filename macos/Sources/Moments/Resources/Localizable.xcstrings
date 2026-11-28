@@ -21242,7 +21242,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ort festlegen …"
+            "value" : "Standort festlegen …"
           }
         },
         "en" : {
@@ -21264,7 +21264,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ort von %lld Fotos festlegen …"
+            "value" : "Standort von %lld Fotos festlegen …"
           }
         },
         "en" : {
@@ -21308,7 +21308,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ort festlegen"
+            "value" : "Standort festlegen"
           }
         },
         "en" : {
@@ -21330,7 +21330,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ort von %lld Fotos festlegen"
+            "value" : "Standort von %lld Fotos festlegen"
           }
         },
         "en" : {
@@ -21496,7 +21496,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "和同一天的照片放在一起"
+            "value" : "和当天某张照片同一位置"
           }
         }
       }
@@ -21572,7 +21572,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kein Foto von diesem Tag hat einen Ort."
+            "value" : "Kein Foto von diesem Tag hat einen Standort."
           }
         },
         "en" : {
@@ -21616,7 +21616,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nur die %lld ohne Ort"
+            "value" : "Nur die %lld ohne Standort"
           }
         },
         "en" : {
@@ -21638,7 +21638,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Alle %1$lld, auch %2$lld mit Kamera-Ort"
+            "value" : "Alle %1$lld, auch %2$lld mit Kamera-Standort"
           }
         },
         "en" : {
@@ -21660,7 +21660,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Der Ort der Kamera bleibt erhalten und lässt sich wiederherstellen."
+            "value" : "Der Standort der Kamera bleibt erhalten und lässt sich wiederherstellen."
           }
         },
         "en" : {
@@ -21672,7 +21672,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "相机记录的位置会保留，随时可以恢复。"
+            "value" : "相机位置会保留，随时可以恢复。"
           }
         }
       }
@@ -21704,7 +21704,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kamera-Ort"
+            "value" : "Kamera-Standort"
           }
         },
         "en" : {
@@ -21716,7 +21716,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "相机记录"
+            "value" : "相机位置"
           }
         }
       }
@@ -21726,7 +21726,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ort ändern …"
+            "value" : "Standort ändern …"
           }
         },
         "en" : {
@@ -21748,7 +21748,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ort entfernen"
+            "value" : "Standort entfernen"
           }
         },
         "en" : {
@@ -21770,7 +21770,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kamera-Ort verwenden"
+            "value" : "Kamera-Standort verwenden"
           }
         },
         "en" : {
@@ -21792,7 +21792,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ort festgelegt"
+            "value" : "Standort festgelegt"
           }
         },
         "en" : {
@@ -21814,7 +21814,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ort für %lld Fotos festgelegt"
+            "value" : "Standort für %lld Fotos festgelegt"
           }
         },
         "en" : {
@@ -21836,7 +21836,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ort entfernt"
+            "value" : "Standort entfernt"
           }
         },
         "en" : {

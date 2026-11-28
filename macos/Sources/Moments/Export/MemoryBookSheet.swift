@@ -66,14 +66,16 @@ final class MemoryBookExportModel {
         let prepared = MemoryBookPlan.prepared(book.document, options: options)
         let sources = book.sources
         phase = .exporting(MemoryBookProgress(done: 0, total: prepared.photos.count, dayLabel: ""))
+        let report: @Sendable (MemoryBookProgress) -> Void = { [weak self] progress in
+            let model = self
+            Task { @MainActor in
+                guard let model, case .exporting = model.phase else { return }
+                model.phase = .exporting(progress)
+            }
+        }
         exportTask = Task { [weak self] in
             let work = Task.detached(priority: .userInitiated) {
-                try await MemoryBookExporter.export(prepared, sources: sources, format: format, strings: strings, to: url) { progress in
-                    Task { @MainActor [weak self] in
-                        guard let self, case .exporting = self.phase else { return }
-                        self.phase = .exporting(progress)
-                    }
-                }
+                try await MemoryBookExporter.export(prepared, sources: sources, format: format, strings: strings, to: url, progress: report)
             }
             let outcome = await withTaskCancellationHandler {
                 await work.result

@@ -295,7 +295,8 @@ public enum MemoryArchive {
         }
     }
 
-    static func photoComesFirst(_ lhs: MemoryBookPhoto, _ rhs: MemoryBookPhoto) -> Bool {
+    /// Photos by date, undated last, then by id, so the order never changes.
+    public static func photoComesFirst(_ lhs: MemoryBookPhoto, _ rhs: MemoryBookPhoto) -> Bool {
         switch (lhs.date, rhs.date) {
         case let (left?, right?) where left != right: return left < right
         case (.some, nil): return true

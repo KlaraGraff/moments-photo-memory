@@ -248,7 +248,7 @@ struct CollectionMemoryLines: View {
                         if AuthorNames.isLocal(memory.authorAccountID) {
                             Button(String(localized: "Delete"), role: .destructive) {
                                 modelContext.delete(memory)
-                                try? modelContext.save()
+                                modelContext.saveOrReport()
                             }
                         }
                     }

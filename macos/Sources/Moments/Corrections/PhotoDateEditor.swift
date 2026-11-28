@@ -136,7 +136,7 @@ struct PhotoDateEditor: View {
     }
 
     private func finish(_ snapshot: DateTimeAdjustment.Snapshot, message: String) {
-        try? modelContext.save()
+        modelContext.saveOrReport()
         if !snapshot.items.isEmpty {
             selection.recordCorrection(CorrectionUndo(
                 message: message,

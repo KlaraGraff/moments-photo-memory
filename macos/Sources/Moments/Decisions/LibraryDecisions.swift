@@ -72,7 +72,6 @@ final class LibraryDecisions: DecisionStore, @unchecked Sendable {
         LibraryDecisionKeys.all.filter { $0 != TripCorrectionLog.editorKey }
     }
 
-    private static let logger = Logger(subsystem: "org.example.Moments", category: "LibraryDecisions")
 
     private let lock = NSLock()
     private var values: [String: Any] = [:]
@@ -107,11 +106,7 @@ final class LibraryDecisions: DecisionStore, @unchecked Sendable {
                 context.insert(LocalDecision(key: Self.importedMarkerKey, value: marker))
                 loaded[Self.importedMarkerKey] = true
             }
-            do {
-                try context.save()
-            } catch {
-                Self.logger.error("Could not save imported decisions: \(error.localizedDescription, privacy: .public)")
-            }
+            context.saveOrReport()
         }
         lock.lock()
         for key in dirty {
@@ -193,11 +188,7 @@ final class LibraryDecisions: DecisionStore, @unchecked Sendable {
         for key in keys.sorted() {
             write(key: key, value: current[key])
         }
-        do {
-            try context?.save()
-        } catch {
-            Self.logger.error("Could not save decisions: \(error.localizedDescription, privacy: .public)")
-        }
+        context?.saveOrReport()
         for key in keys.sorted() {
             NotificationCenter.default.post(name: .libraryDecisionChanged, object: key)
         }
@@ -215,7 +206,7 @@ final class LibraryDecisions: DecisionStore, @unchecked Sendable {
         guard let data = Self.encode(value) else {
             // Not a property list: keep what the store had rather than lose it.
             assertionFailure("A library decision must be a property list: \(key)")
-            Self.logger.error("Could not encode the decision \(key, privacy: .public); the stored value was kept")
+            MomentsLog.error(.decisions, "decision-encode-failed")
             return
         }
         if let existing {

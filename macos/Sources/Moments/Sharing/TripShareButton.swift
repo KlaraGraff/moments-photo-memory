@@ -68,6 +68,12 @@ struct SharedTripBadge: View {
 /// The app delegate in every build. macOS hands it the invitation when the
 /// partner opens a share link; the debug unit-test host subclasses it.
 class MomentsAppDelegate: NSObject, NSApplicationDelegate {
+    /// Changes that could not be saved are tried once more; if they still
+    /// cannot be, quitting asks first instead of losing them.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated { SaveProblems.shared.confirmQuit() }
+    }
+
     func application(_ application: NSApplication, userDidAcceptCloudKitShareWith metadata: CKShare.Metadata) {
         Task { @MainActor in
             if let sharing = SharingController.current {

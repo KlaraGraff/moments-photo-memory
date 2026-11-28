@@ -107,10 +107,10 @@ struct PlaceNameBackfill: Sendable {
         } catch is CancellationError {
             // Whatever was applied is still in memory; write it before leaving
             // so a cancelled run keeps the names it already looked up.
-            try? save(context)
+            if context.hasChanges { context.saveOrReport() }
             throw CancellationError()
         } catch {
-            try? save(context)
+            if context.hasChanges { context.saveOrReport() }
             throw error
         }
         // The last batch, the `break` after repeated failures and the run that

@@ -160,7 +160,6 @@ struct ContentView: View {
             .toolbarBackground(MomentsPalette.content, for: .windowToolbar)
             .toolbarBackground(.visible, for: .windowToolbar)
         }
-        .frame(minWidth: 900, minHeight: 600)
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
             if libraryState.windowWidth != width { libraryState.windowWidth = width }
         }
@@ -179,6 +178,11 @@ struct ContentView: View {
             DeletionUndoBar()
         }
         .animation(reduceMotion ? nil : Motion.snap, value: shared.lastDeletion == nil)
+        // "Couldn't save your latest changes", under everything, the viewer
+        // included: below the pages, not over them, so it always takes clicks.
+        .safeAreaInset(edge: .bottom, spacing: 0) { SaveProblemStrip() }
+        // The strip shares the window's minimum size rather than adding to it.
+        .frame(minWidth: 900, minHeight: 600)
         .modifier(PhotoDeletionConfirmation())
         .sheet(isPresented: Binding(
             get: { shared.dateAdjustmentItemIDs != nil },

@@ -695,7 +695,7 @@ struct LibraryScopeHeading: View {
             if let target {
                 let shownName: String = target.name ?? pending.name
                 PeopleStoreActions.merge(sourceID: personID, into: target.id, people: people, observations: store.faces, context: modelContext)
-                try? modelContext.save()
+                modelContext.saveOrReport()
                 // Both people's photos, now one person's.
                 PersonClue.showPhotos(ofPerson: target.id, name: shownName, store: store, selection: selection, replacing: true)
             } else {
@@ -711,7 +711,7 @@ struct LibraryScopeHeading: View {
         person.updatedAt = .now
         // Otherwise a later naming would offer to fold the two together again.
         if keepSeparate { PeopleStoreActions.setKeepSeparate(person.id, true) }
-        try? modelContext.save()
+        modelContext.saveOrReport()
         selection.libraryScope = LibraryScope(title: value, itemIDs: scope.itemIDs, personID: person.id)
     }
 
@@ -732,7 +732,7 @@ struct LibraryScopeHeading: View {
             observations: store.faces,
             context: modelContext
         )
-        try? modelContext.save()
+        modelContext.saveOrReport()
         // The face picked while the group had no name stays its face, unless
         // it joined someone who already has one.
         if let shownID {
@@ -783,7 +783,7 @@ struct LibraryScopeHeading: View {
             nameText = oldName
             return
         }
-        try? modelContext.save()
+        modelContext.saveOrReport()
         let selection: SelectionModel = self.selection
         let store: LibraryStore = self.store
         selection.recordCorrection(CorrectionUndo(
@@ -812,7 +812,7 @@ struct LibraryScopeHeading: View {
         guard !free.isEmpty else { return }
         let snapshot = IgnoredFacesSnapshot(free)
         guard let person = PeopleStoreActions.ignore(faces: free, context: modelContext) else { return }
-        try? modelContext.save()
+        modelContext.saveOrReport()
         let hiddenPersonID: String = person.id
         selection.libraryScope = nil
         selection.recordCorrection(CorrectionUndo(

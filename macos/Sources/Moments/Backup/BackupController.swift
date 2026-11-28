@@ -58,7 +58,7 @@ final class BackupController {
             failure = nil
         case .failure(let error):
             failure = error.localizedDescription
-            LibraryBackup.logger.error("Daily backup failed: \(error.localizedDescription, privacy: .public)")
+            MomentsLog.error(.backup, "daily-backup-failed", error: error)
         }
         refresh()
     }

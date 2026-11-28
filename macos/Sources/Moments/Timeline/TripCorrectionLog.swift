@@ -18,8 +18,6 @@ actor TripCorrectionLog {
     /// Where the log lives; tests pass a temporary file.
     nonisolated let fileURL: URL
 
-    private static let logger = Logger(subsystem: "org.example.Moments", category: "TripCorrectionLog")
-
     init(fileURL: URL? = nil) {
         self.fileURL = fileURL ?? Self.defaultFileURL()
     }
@@ -64,7 +62,7 @@ actor TripCorrectionLog {
                 try data.write(to: fileURL, options: .atomic)
             }
         } catch {
-            Self.logger.error("Could not write a trip correction: \(error.localizedDescription, privacy: .public)")
+            MomentsLog.error(.trips, "correction-log-write-failed", error: error)
         }
     }
 
@@ -82,7 +80,7 @@ actor TripCorrectionLog {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data().write(to: fileURL, options: .atomic)
         } catch {
-            Self.logger.error("Could not clear the trip correction log: \(error.localizedDescription, privacy: .public)")
+            MomentsLog.error(.trips, "correction-log-clear-failed", error: error)
         }
     }
 

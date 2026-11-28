@@ -78,7 +78,7 @@ enum TripRenaming {
         let before = [log.trip(trip)]
         trip.overrideName = value.isEmpty || value == trip.name ? nil : value
         trip.updatedAt = .now
-        try? context.save()
+        context.saveOrReport()
         TripCorrectionRecorder.record(.rename, before: before, after: [log.trip(trip)])
     }
 }

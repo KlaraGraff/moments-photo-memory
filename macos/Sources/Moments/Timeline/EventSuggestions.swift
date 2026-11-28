@@ -53,7 +53,7 @@ enum EventSuggestions {
             created += 1
         }
         guard created > 0 else { return 0 }
-        try? context.save()
+        context.saveOrReport()
         defaults.set(Array(suggested).sorted(), forKey: suggestedDaysKey)
         return created
     }

@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Settings is one page: sharing with your partner, what the two of you
-/// are called, your places, AI organizing, and backups. Everything else the app decides
+/// are called, your places, AI organizing, backups, and which version this
+/// is. Everything else the app decides
 /// on its own (the language follows the Mac, photos are organized after
 /// every import), so there is nothing else to set.
 struct SettingsView: View {
@@ -16,6 +17,7 @@ struct SettingsView: View {
             AISettingsSections()
             if hasStore { ChapterJudgeSettingsSection() }
             if hasStore { BackupSettingsSection() }
+            AboutSettingsSection(hasStore: hasStore)
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)

@@ -145,13 +145,13 @@ public enum WrittenTextIndex {
     /// photos are indexed again.
     public struct Lookup: Sendable, Equatable {
         /// By photo id: its memories, their comments, its notes' words.
-        public private(set) var byPhoto: [String: [String]] = [:]
+        public internal(set) var byPhoto: [String: [String]] = [:]
         /// By `yyyy-MM-dd`: that day's memories and their comments.
-        public private(set) var byDay: [String: [String]] = [:]
+        public internal(set) var byDay: [String: [String]] = [:]
         /// By trip or chapter id: its name, memories and their comments.
-        public private(set) var byChapter: [String: [String]] = [:]
+        public internal(set) var byChapter: [String: [String]] = [:]
         /// By `placeKey(for:)`: that place's notes.
-        public private(set) var byPlace: [String: [String]] = [:]
+        public internal(set) var byPlace: [String: [String]] = [:]
 
         public init() {}
 
@@ -256,6 +256,172 @@ public enum WrittenTextIndex {
             changes.chapterKeys = differing(byChapter, old.byChapter)
             changes.placeKeys = differing(byPlace, old.byPlace)
             return changes
+        }
+    }
+
+    /// Everything written, kept record by record, so a save of a few records
+    /// updates only the days, chapters, places and photos they belong to
+    /// instead of gathering every record again. `lookup` always equals
+    /// `Lookup(sources:)` built from the records it holds.
+    public struct Book: Sendable {
+        /// One written record, as the app reads it.
+        public enum Record: Sendable, Equatable {
+            /// A memory or a note's words under one photo; `id` is the
+            /// memory's id, which its comments name (nil for a note).
+            case photo(id: String?, mediaID: String, text: String)
+            /// A memory about a whole day or a whole trip or chapter.
+            case collection(id: String, scope: CollectionText.Scope, key: String, text: String)
+            case place(placeName: String, text: String)
+            case comment(memoryID: String, text: String)
+            case tripName(tripID: String, name: String)
+        }
+
+        private enum Bucket: Hashable, Sendable {
+            case photo(String)
+            case day(String)
+            case chapter(String)
+            case place(String)
+        }
+
+        public private(set) var lookup = Lookup()
+        /// Records by the key the caller gave them.
+        private var records: [String: Record] = [:]
+        /// The records (not comments) filed in each bucket.
+        private var filed: [Bucket: Set<String>] = [:]
+        /// Where each memory sits, so its comments follow it, and which
+        /// record it is.
+        private var memoryBucket: [String: Bucket] = [:]
+        private var memoryRecord: [String: String] = [:]
+        /// The memories sitting in each bucket.
+        private var memoriesIn: [Bucket: Set<String>] = [:]
+        /// The comments under each memory id.
+        private var commentsUnder: [String: Set<String>] = [:]
+
+        public init() {}
+
+        /// How many records the book holds.
+        public var count: Int { records.count }
+
+        /// Sets each record by its key; nil removes it. Returns where the
+        /// lookup changed.
+        @discardableResult
+        public mutating func set(_ changes: [String: Record?]) -> Lookup.Changes {
+            var dirty = Set<Bucket>()
+            for (key, new) in changes {
+                let old: Record? = records[key]
+                if old == new { continue }
+                if let old { remove(key, old, &dirty) }
+                if let new { add(key, new, &dirty) }
+            }
+            var result = Lookup.Changes()
+            for bucket in dirty {
+                let texts: [String] = gather(bucket)
+                let value: [String]? = texts.isEmpty ? nil : texts
+                switch bucket {
+                case .photo(let id):
+                    if lookup.byPhoto[id] != value { lookup.byPhoto[id] = value; result.photoIDs.insert(id) }
+                case .day(let key):
+                    if lookup.byDay[key] != value { lookup.byDay[key] = value; result.dayKeys.insert(key) }
+                case .chapter(let key):
+                    if lookup.byChapter[key] != value { lookup.byChapter[key] = value; result.chapterKeys.insert(key) }
+                case .place(let key):
+                    if lookup.byPlace[key] != value { lookup.byPlace[key] = value; result.placeKeys.insert(key) }
+                }
+            }
+            return result
+        }
+
+        private static func bucket(of record: Record) -> Bucket? {
+            switch record {
+            case .photo(_, let mediaID, _): return .photo(mediaID)
+            case .collection(_, let scope, let key, _):
+                switch scope {
+                case .day: return .day(key)
+                case .chapter: return .chapter(key)
+                }
+            case .place(let name, _):
+                let key = placeKey(for: name)
+                return key.isEmpty ? nil : .place(key)
+            case .tripName(let tripID, _): return .chapter(tripID)
+            case .comment: return nil
+            }
+        }
+
+        private static func memoryID(of record: Record) -> String? {
+            switch record {
+            case .photo(let id, _, _): return id
+            case .collection(let id, _, _, _): return id
+            default: return nil
+            }
+        }
+
+        private static func text(of record: Record) -> String {
+            switch record {
+            case .photo(_, _, let text), .collection(_, _, _, let text), .place(_, let text), .comment(_, let text):
+                return text
+            case .tripName(_, let name):
+                return name
+            }
+        }
+
+        private mutating func remove(_ key: String, _ record: Record, _ dirty: inout Set<Bucket>) {
+            records[key] = nil
+            if case .comment(let memoryID, _) = record {
+                commentsUnder[memoryID]?.remove(key)
+                if let bucket = memoryBucket[memoryID] { dirty.insert(bucket) }
+                return
+            }
+            guard let bucket = Self.bucket(of: record) else { return }
+            filed[bucket]?.remove(key)
+            dirty.insert(bucket)
+            if let id = Self.memoryID(of: record), memoryRecord[id] == key {
+                memoryRecord[id] = nil
+                memoryBucket[id] = nil
+                memoriesIn[bucket]?.remove(id)
+            }
+        }
+
+        private mutating func add(_ key: String, _ record: Record, _ dirty: inout Set<Bucket>) {
+            records[key] = record
+            if case .comment(let memoryID, _) = record {
+                commentsUnder[memoryID, default: []].insert(key)
+                if let bucket = memoryBucket[memoryID] { dirty.insert(bucket) }
+                return
+            }
+            guard let bucket = Self.bucket(of: record) else { return }
+            filed[bucket, default: []].insert(key)
+            dirty.insert(bucket)
+            if let id = Self.memoryID(of: record) {
+                if let previous = memoryBucket[id], previous != bucket {
+                    memoriesIn[previous]?.remove(id)
+                    dirty.insert(previous)
+                }
+                memoryRecord[id] = key
+                memoryBucket[id] = bucket
+                memoriesIn[bucket, default: []].insert(id)
+            }
+        }
+
+        /// A bucket's texts: its records' and their comments', written ones
+        /// only, sorted as `Lookup` sorts them.
+        private func gather(_ bucket: Bucket) -> [String] {
+            func written(_ text: String) -> Bool {
+                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            var texts: [String] = []
+            for key in filed[bucket] ?? [] {
+                guard let record = records[key] else { continue }
+                let text = Self.text(of: record)
+                if written(text) { texts.append(text) }
+            }
+            for id in memoriesIn[bucket] ?? [] {
+                for key in commentsUnder[id] ?? [] {
+                    guard let record = records[key] else { continue }
+                    let text = Self.text(of: record)
+                    if written(text) { texts.append(text) }
+                }
+            }
+            return texts.sorted()
         }
     }
 }

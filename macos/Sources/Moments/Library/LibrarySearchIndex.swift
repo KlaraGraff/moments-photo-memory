@@ -14,9 +14,10 @@ import SwiftData
 /// name and memories, and its place's notes. Typing reads this index only.
 ///
 /// Nothing is built again in full on the main thread while someone types:
-/// - A save of something written reads again only that kind of record and
+/// - A save of something written reads again only the rows it saved and
 ///   updates only the photos whose texts changed (a comment: one photo; a
-///   day's memory: that day's photos).
+///   day's memory: that day's photos). Every row of a kind is read again
+///   only when the store cannot say which rows a save touched.
 /// - Reading every photo (the first time, or after places were renamed)
 ///   happens in slices between other main-thread work, while the index from
 ///   before keeps answering. A photo not read yet is matched the old way.
@@ -105,6 +106,8 @@ enum LibrarySearchIndex {
     /// Photos whose fields were read, and photos whose entries changed, for tests.
     static var photosRead: Int { state?.photosRead ?? 0 }
     static var entriesChanged: Int { state?.entriesChanged ?? 0 }
+    /// Written rows (memories, notes, comments, trips) read so far.
+    static var writtenRowsRead: Int { state?.rowsRead ?? 0 }
     /// True when every photo is read and nothing waits.
     static var isReady: Bool { state.map { $0.pending.isEmpty && !$0.fullReadRequested } ?? false }
     /// The longest a slice of a full read took, for the 50,000-photo test.
@@ -138,27 +141,6 @@ enum LibrarySearchIndex {
         var placeKeys: Set<String>
     }
 
-    /// Everything written, by kind, as read from the store.
-    private struct WrittenParts {
-        var memories: [WrittenTextIndex.PhotoText] = []
-        var notes: [WrittenTextIndex.PhotoText] = []
-        var collections: [WrittenTextIndex.CollectionText] = []
-        var collectionPhotoTexts: [WrittenTextIndex.PhotoText] = []
-        var places: [WrittenTextIndex.PlaceText] = []
-        var comments: [WrittenTextIndex.CommentText] = []
-        var trips: [WrittenTextIndex.TripName] = []
-
-        var sources: WrittenTextIndex.Sources {
-            WrittenTextIndex.Sources(
-                photoTexts: memories + notes + collectionPhotoTexts,
-                collectionTexts: collections,
-                placeTexts: places,
-                comments: comments,
-                tripNames: trips
-            )
-        }
-    }
-
     private static let writtenEntities: [String] = [
         String(describing: Memory.self),
         String(describing: PhotoNote.self),
@@ -167,6 +149,7 @@ enum LibrarySearchIndex {
         String(describing: Comment.self),
         String(describing: Trip.self),
     ]
+    private static let writtenEntitySet: Set<String> = Set(writtenEntities)
     private static let tagEntities: [String] = [String(describing: MediaTag.self), String(describing: Tag.self)]
     private static let chapterEntities: [String] = [String(describing: UserGroup.self), String(describing: UserGroupItem.self)]
     private static let placeOverrideEntity: String = String(describing: PlaceOverride.self)
@@ -183,8 +166,14 @@ enum LibrarySearchIndex {
         var tags: [String: [String]] = [:]
         var names: [String: [String]] = [:]
         var memberships: [String: [String]] = [:]
-        var written = WrittenParts()
-        var lookup = WrittenTextIndex.Lookup()
+        /// Everything written, record by record, and which records each
+        /// row gave, so a save reads again only the rows it changed.
+        var book = WrittenTextIndex.Book()
+        var recordKeysByRow: [PersistentIdentifier: [String]] = [:]
+        var rowIDs: [PersistentIdentifier: String] = [:]
+        var rowsByEntity: [String: Set<PersistentIdentifier>] = [:]
+        var writtenMark: LibraryStore.SearchSourceMark?
+        var rowsRead = 0
         var filed: [String: Filed] = [:]
         var photosByDay: [String: Set<String>] = [:]
         var photosByChapter: [String: Set<String>] = [:]
@@ -312,7 +301,7 @@ enum LibrarySearchIndex {
             var texts: [String] = own.texts
             texts += tags[id] ?? []
             texts += names[id] ?? []
-            texts += lookup.texts(for: photo)
+            texts += book.lookup.texts(for: photo)
             return texts
         }
 
@@ -407,19 +396,29 @@ enum LibrarySearchIndex {
             state.memberships = memberships
         }
 
-        // What people wrote, one kind of record at a time.
-        var writtenChanged = false
-        for entity in writtenEntities {
-            let key: Int = store.searchSourceRevision(of: entity)
-            guard state.sourceRevisions[entity] != key else { continue }
-            state.sourceRevisions[entity] = key
-            read(entity, into: &state.written, context: context)
-            writtenChanged = true
-        }
-        if writtenChanged {
-            let lookup = WrittenTextIndex.Lookup(sources: state.written.sources)
-            let changes: WrittenTextIndex.Lookup.Changes = lookup.changes(from: state.lookup)
-            state.lookup = lookup
+        // What people wrote: only the rows saved since, when the store can
+        // say which; otherwise every row of the kinds that changed.
+        let mark: LibraryStore.SearchSourceMark = store.searchSourceMark
+        if state.writtenMark != mark {
+            var records: [String: WrittenTextIndex.Book.Record?] = [:]
+            if let from = state.writtenMark, let rows = store.searchSourceChanges(of: writtenEntitySet, since: from) {
+                for row in rows.deleted { forget(row, in: state, into: &records) }
+                var savedByEntity: [String: [PersistentIdentifier]] = [:]
+                for row in rows.saved { savedByEntity[row.entityName, default: []].append(row) }
+                for (entity, rows) in savedByEntity {
+                    readRows(entity, rows, state: state, context: context, into: &records)
+                }
+                for entity in writtenEntities { state.sourceRevisions[entity] = store.searchSourceRevision(of: entity) }
+            } else {
+                for entity in writtenEntities {
+                    let key: Int = store.searchSourceRevision(of: entity)
+                    guard state.sourceRevisions[entity] != key else { continue }
+                    state.sourceRevisions[entity] = key
+                    readAll(entity, state: state, context: context, into: &records)
+                }
+            }
+            state.writtenMark = mark
+            let changes: WrittenTextIndex.Lookup.Changes = state.book.set(records)
             if !changes.isEmpty { touched.formUnion(state.photos(reachedBy: changes)) }
         }
 
@@ -516,53 +515,128 @@ enum LibrarySearchIndex {
         )
     }
 
-    /// Reads one kind of written record again.
-    private static func read(_ entity: String, into parts: inout WrittenParts, context: ModelContext) {
-        switch entity {
-        case String(describing: Memory.self):
+    /// The records one row gives, by key: a memory, note, day or trip
+    /// memory, comment or trip name gives one; a place note two when its
+    /// stored key no longer matches its name.
+    private static func records(of model: any PersistentModel) -> (id: String, records: [(String, WrittenTextIndex.Book.Record)])? {
+        switch model {
+        case let memory as Memory:
             // Both people's memories, also one whose photo link is not set yet.
-            parts.memories = ((try? context.fetch(FetchDescriptor<Memory>())) ?? []).compactMap { memory in
-                guard let mediaID = memory.mediaID ?? memory.mediaItem?.id else { return nil }
-                return .init(id: memory.id, mediaID: mediaID, text: memory.text)
-            }
-        case String(describing: PhotoNote.self):
+            guard let mediaID = memory.mediaID ?? memory.mediaItem?.id else { return (memory.id, []) }
+            return (memory.id, [("Memory/\(memory.id)", .photo(id: memory.id, mediaID: mediaID, text: memory.text))])
+        case let note as PhotoNote:
             // What was typed before the AI organized it.
-            parts.notes = ((try? context.fetch(FetchDescriptor<PhotoNote>())) ?? []).map { note in
-                .init(mediaID: note.mediaID, text: note.text)
+            return (note.id, [("PhotoNote/\(note.id)", .photo(id: nil, mediaID: note.mediaID, text: note.text))])
+        case let memory as CollectionMemory:
+            let record: WrittenTextIndex.Book.Record
+            switch memory.scope {
+            case .day: record = .collection(id: memory.id, scope: .day, key: memory.scopeKey, text: memory.text)
+            case .trip: record = .collection(id: memory.id, scope: .chapter, key: memory.scopeKey, text: memory.text)
+            // Not written by the app; a photo's memory is a `Memory`.
+            case .photo: record = .photo(id: memory.id, mediaID: memory.scopeKey, text: memory.text)
             }
-        case String(describing: CollectionMemory.self):
-            parts.collections = []
-            parts.collectionPhotoTexts = []
-            for memory in (try? context.fetch(FetchDescriptor<CollectionMemory>())) ?? [] {
-                switch memory.scope {
-                case .day:
-                    parts.collections.append(.init(id: memory.id, scope: .day, key: memory.scopeKey, text: memory.text))
-                case .trip:
-                    parts.collections.append(.init(id: memory.id, scope: .chapter, key: memory.scopeKey, text: memory.text))
-                case .photo:
-                    // Not written by the app; a photo's memory is a `Memory`.
-                    parts.collectionPhotoTexts.append(.init(id: memory.id, mediaID: memory.scopeKey, text: memory.text))
-                }
+            return (memory.id, [("CollectionMemory/\(memory.id)", record)])
+        case let note as PlaceNote:
+            var found: [(String, WrittenTextIndex.Book.Record)] = [("PlaceNote/\(note.id)", .place(placeName: note.placeName, text: note.text))]
+            // Keyed by its stored key too, in case the name was corrected since.
+            if note.placeKey != WrittenTextIndex.placeKey(for: note.placeName) {
+                found.append(("PlaceNote/\(note.id)#key", .place(placeName: note.placeKey, text: note.text)))
             }
-        case String(describing: PlaceNote.self):
-            parts.places = []
-            for note in (try? context.fetch(FetchDescriptor<PlaceNote>())) ?? [] {
-                parts.places.append(.init(placeName: note.placeName, text: note.text))
-                // Keyed by its stored key too, in case the name was corrected since.
-                if note.placeKey != WrittenTextIndex.placeKey(for: note.placeName) {
-                    parts.places.append(.init(placeName: note.placeKey, text: note.text))
-                }
-            }
-        case String(describing: Comment.self):
-            parts.comments = ((try? context.fetch(FetchDescriptor<Comment>())) ?? []).map { comment in
-                .init(memoryID: comment.memoryID, text: comment.text)
-            }
-        case String(describing: Trip.self):
-            parts.trips = ((try? context.fetch(FetchDescriptor<Trip>())) ?? []).map { trip in
-                .init(tripID: trip.id, name: trip.effectiveName)
-            }
+            return (note.id, found)
+        case let comment as Comment:
+            return (comment.id, [("Comment/\(comment.id)", .comment(memoryID: comment.memoryID, text: comment.text))])
+        case let trip as Trip:
+            return (trip.id, [("Trip/\(trip.id)", .tripName(tripID: trip.id, name: trip.effectiveName))])
         default:
-            break
+            return nil
+        }
+    }
+
+    /// Files what one row gives now in place of what it gave before.
+    private static func fileRow(_ row: PersistentIdentifier, _ model: any PersistentModel, in state: State, into changes: inout [String: WrittenTextIndex.Book.Record?]) {
+        guard let read = records(of: model) else { return }
+        state.rowsRead += 1
+        let newKeys: [String] = read.records.map(\.0)
+        for key in state.recordKeysByRow[row] ?? [] where !newKeys.contains(key) { changes[key] = .some(nil) }
+        for (key, record) in read.records { changes[key] = record }
+        state.recordKeysByRow[row] = newKeys
+        state.rowIDs[row] = read.id
+        state.rowsByEntity[row.entityName, default: []].insert(row)
+    }
+
+    /// Takes out what a deleted row gave.
+    private static func forget(_ row: PersistentIdentifier, in state: State, into changes: inout [String: WrittenTextIndex.Book.Record?]) {
+        for key in state.recordKeysByRow.removeValue(forKey: row) ?? [] { changes[key] = .some(nil) }
+        state.rowIDs[row] = nil
+        state.rowsByEntity[row.entityName]?.remove(row)
+    }
+
+    /// Reads every row of one kind of record again.
+    private static func readAll(_ entity: String, state: State, context: ModelContext, into changes: inout [String: WrittenTextIndex.Book.Record?]) {
+        let models: [any PersistentModel]
+        switch entity {
+        case String(describing: Memory.self): models = (try? context.fetch(FetchDescriptor<Memory>())) ?? []
+        case String(describing: PhotoNote.self): models = (try? context.fetch(FetchDescriptor<PhotoNote>())) ?? []
+        case String(describing: CollectionMemory.self): models = (try? context.fetch(FetchDescriptor<CollectionMemory>())) ?? []
+        case String(describing: PlaceNote.self): models = (try? context.fetch(FetchDescriptor<PlaceNote>())) ?? []
+        case String(describing: Comment.self): models = (try? context.fetch(FetchDescriptor<Comment>())) ?? []
+        case String(describing: Trip.self): models = (try? context.fetch(FetchDescriptor<Trip>())) ?? []
+        default: return
+        }
+        var gone: Set<PersistentIdentifier> = state.rowsByEntity[entity] ?? []
+        for model in models {
+            let row: PersistentIdentifier = model.persistentModelID
+            gone.remove(row)
+            fileRow(row, model, in: state, into: &changes)
+        }
+        for row in gone { forget(row, in: state, into: &changes) }
+    }
+
+    /// Reads the given rows of one kind of record again. A row read before
+    /// is fetched by its id, which brings back what another context saved;
+    /// a new one is looked up by its identifier.
+    private static func readRows(
+        _ entity: String,
+        _ rows: [PersistentIdentifier],
+        state: State,
+        context: ModelContext,
+        into changes: inout [String: WrittenTextIndex.Book.Record?]
+    ) {
+        var known: [String: PersistentIdentifier] = [:]
+        var found: [PersistentIdentifier: any PersistentModel] = [:]
+        for row in rows {
+            if let id = state.rowIDs[row] {
+                known[id] = row
+            } else {
+                // Saved, so it is there; deleted rows never come here.
+                let model: any PersistentModel = context.model(for: row)
+                if !model.isDeleted { found[row] = model }
+            }
+        }
+        let ids: [String] = Array(known.keys)
+        let wanted: Set<PersistentIdentifier> = Set(known.values)
+        for chunk in stride(from: 0, to: ids.count, by: 500).map({ Array(ids[$0..<min($0 + 500, ids.count)]) }) {
+            let models: [any PersistentModel]
+            switch entity {
+            case String(describing: Memory.self): models = (try? context.fetch(FetchDescriptor<Memory>(predicate: #Predicate { chunk.contains($0.id) }))) ?? []
+            case String(describing: PhotoNote.self): models = (try? context.fetch(FetchDescriptor<PhotoNote>(predicate: #Predicate { chunk.contains($0.id) }))) ?? []
+            case String(describing: CollectionMemory.self): models = (try? context.fetch(FetchDescriptor<CollectionMemory>(predicate: #Predicate { chunk.contains($0.id) }))) ?? []
+            case String(describing: PlaceNote.self): models = (try? context.fetch(FetchDescriptor<PlaceNote>(predicate: #Predicate { chunk.contains($0.id) }))) ?? []
+            case String(describing: Comment.self): models = (try? context.fetch(FetchDescriptor<Comment>(predicate: #Predicate { chunk.contains($0.id) }))) ?? []
+            case String(describing: Trip.self): models = (try? context.fetch(FetchDescriptor<Trip>(predicate: #Predicate { chunk.contains($0.id) }))) ?? []
+            default: models = []
+            }
+            for model in models where wanted.contains(model.persistentModelID) {
+                found[model.persistentModelID] = model
+            }
+        }
+        for row in rows {
+            if let model = found[row] {
+                fileRow(row, model, in: state, into: &changes)
+            } else {
+                // Saved, then gone before this read.
+                forget(row, in: state, into: &changes)
+            }
         }
     }
 

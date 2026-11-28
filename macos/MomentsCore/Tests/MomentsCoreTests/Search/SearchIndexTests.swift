@@ -115,6 +115,80 @@ final class SearchIndexTests: XCTestCase {
         XCTAssertEqual(lookup.texts(for: .init(id: "p2")), [])
     }
 
+    // MARK: A book kept record by record
+
+    private func sources(of records: [String: WrittenTextIndex.Book.Record]) -> WrittenTextIndex.Sources {
+        var sources = WrittenTextIndex.Sources()
+        for record in records.values {
+            switch record {
+            case .photo(let id, let mediaID, let text): sources.photoTexts.append(.init(id: id, mediaID: mediaID, text: text))
+            case .collection(let id, let scope, let key, let text): sources.collectionTexts.append(.init(id: id, scope: scope, key: key, text: text))
+            case .place(let name, let text): sources.placeTexts.append(.init(placeName: name, text: text))
+            case .comment(let memoryID, let text): sources.comments.append(.init(memoryID: memoryID, text: text))
+            case .tripName(let tripID, let name): sources.tripNames.append(.init(tripID: tripID, name: name))
+            }
+        }
+        return sources
+    }
+
+    func testABookFollowsItsCommentsWhenAMemoryMoves() {
+        var book = WrittenTextIndex.Book()
+        book.set(["c1": .comment(memoryID: "m1", text: "kite"), "m1": .photo(id: "m1", mediaID: "p1", text: "beach")])
+        XCTAssertEqual(book.lookup.byPhoto["p1"], ["beach", "kite"])
+        let moved = book.set(["m1": .collection(id: "m1", scope: .day, key: "2024-05-17", text: "beach")])
+        XCTAssertEqual(moved.photoIDs, ["p1"])
+        XCTAssertEqual(moved.dayKeys, ["2024-05-17"])
+        XCTAssertNil(book.lookup.byPhoto["p1"])
+        XCTAssertEqual(book.lookup.byDay["2024-05-17"], ["beach", "kite"])
+        XCTAssertTrue(book.set(["m1": .collection(id: "m1", scope: .day, key: "2024-05-17", text: "beach")]).isEmpty, "The same record again is no change")
+        book.set(["m1": nil])
+        XCTAssertEqual(book.lookup, WrittenTextIndex.Lookup(), "A comment whose memory is gone finds nothing")
+        XCTAssertEqual(book.count, 1)
+    }
+
+    /// Many random saves leave the book equal to a lookup built from the
+    /// same records at once, and each save reports what a rebuild would.
+    func testRandomSavesMatchALookupBuiltAtOnce() {
+        var generator = SearchIndexSeededGenerator(seed: 11)
+        let words: [String] = ["sea", "Café", "海边", "rain", " ", "", "trip"]
+        func word() -> String { words.randomElement(using: &generator) ?? "" }
+        func pick(_ count: Int) -> Int { Int.random(in: 0..<count, using: &generator) }
+        func randomRecord(for key: String) -> WrittenTextIndex.Book.Record {
+            let memoryID = "mem-\(key)"
+            switch pick(6) {
+            case 0: return .photo(id: memoryID, mediaID: "p\(pick(8))", text: word())
+            case 1: return .photo(id: nil, mediaID: "p\(pick(8))", text: word())
+            case 2: return .collection(id: memoryID, scope: Bool.random(using: &generator) ? .day : .chapter, key: "k\(pick(4))", text: word())
+            case 3: return .place(placeName: ["Harbor", " harbor ", "Hill", ""][pick(4)], text: word())
+            case 4: return .comment(memoryID: "mem-r\(pick(30))", text: word())
+            default: return .tripName(tripID: "k\(pick(4))", name: word())
+            }
+        }
+        var records: [String: WrittenTextIndex.Book.Record] = [:]
+        var book = WrittenTextIndex.Book()
+        var previous = WrittenTextIndex.Lookup()
+        for _ in 0..<300 {
+            var changes: [String: WrittenTextIndex.Book.Record?] = [:]
+            for _ in 0..<(1 + pick(5)) {
+                let key = "r\(pick(30))"
+                if pick(4) == 0 {
+                    changes[key] = .some(nil)
+                    records[key] = nil
+                } else {
+                    let record = randomRecord(for: key)
+                    changes[key] = record
+                    records[key] = record
+                }
+            }
+            let reported = book.set(changes)
+            let expected = WrittenTextIndex.Lookup(sources: sources(of: records))
+            XCTAssertEqual(book.lookup, expected)
+            XCTAssertEqual(reported, expected.changes(from: previous))
+            XCTAssertEqual(book.count, records.count)
+            previous = expected
+        }
+    }
+
     // MARK: 50,000 photos
 
     /// One photo's new text in a 50,000-photo index folds one chunk.

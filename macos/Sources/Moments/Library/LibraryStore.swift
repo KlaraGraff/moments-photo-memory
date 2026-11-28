@@ -21,6 +21,10 @@ struct SavedChanges: Sendable {
     /// Which of `searchSourceEntityNames` the save touched, so the search
     /// index reads again only those kinds of record.
     var touchedSearchSources: Set<String> = []
+    /// The rows of `searchSourceEntityNames` the save inserted or updated,
+    /// and the ones it deleted, so the search reads only those rows again.
+    var searchSourceSaved: [PersistentIdentifier] = []
+    var searchSourceDeleted: [PersistentIdentifier] = []
 
     var isEmpty: Bool { inserted.isEmpty && updated.isEmpty && deleted.isEmpty }
     var identifierCount: Int { inserted.count + updated.count + deleted.count }
@@ -35,6 +39,8 @@ struct SavedChanges: Sendable {
         touchesGroupSources = touchesGroupSources || other.touchesGroupSources
         touchesWrittenText = touchesWrittenText || other.touchesWrittenText
         touchedSearchSources.formUnion(other.touchedSearchSources)
+        searchSourceSaved += other.searchSourceSaved
+        searchSourceDeleted += other.searchSourceDeleted
     }
 }
 
@@ -146,6 +152,13 @@ final class LibraryStore {
     /// Moves when a save could not say what it touched; then every search
     /// source counts as changed.
     @ObservationIgnored private var unknownSaveRevision = 0
+    /// The rows of search sources each recent save changed, newest last,
+    /// numbered by `searchSourceSerial`. Read through `searchSourceChanges`.
+    @ObservationIgnored private var searchSourceLog: [(serial: Int, saved: Set<PersistentIdentifier>, deleted: Set<PersistentIdentifier>)] = []
+    @ObservationIgnored private var searchSourceSerial = 0
+    /// How many saves the log keeps, and how many rows at most.
+    static let searchSourceLogLength = 64
+    static let searchSourceLogMaximumIDs = 4_000
     /// Moves when someone picks the face that stands for a person. That
     /// choice is a library decision, not a save, so nothing else moves.
     private(set) var keyFaceRevision = 0
@@ -168,6 +181,53 @@ final class LibraryStore {
         hasher.combine(searchSourceRevisions[entityName] ?? 0)
         hasher.combine(unknownSaveRevision)
         return hasher.finalize()
+    }
+
+    /// Where the saves of search sources stand, to ask later what changed.
+    struct SearchSourceMark: Equatable {
+        fileprivate let serial: Int
+        fileprivate let unknown: Int
+    }
+
+    var searchSourceMark: SearchSourceMark {
+        SearchSourceMark(serial: searchSourceSerial, unknown: unknownSaveRevision)
+    }
+
+    /// The rows of the entities named in `entityNames` saved and deleted
+    /// since `mark`; a deleted row is in `deleted` only. Nil when that is not
+    /// known: a save that could not say what it touched, or more saves than
+    /// the log keeps. Then every row has to be read again.
+    func searchSourceChanges(
+        of entityNames: Set<String>,
+        since mark: SearchSourceMark
+    ) -> (saved: Set<PersistentIdentifier>, deleted: Set<PersistentIdentifier>)? {
+        guard mark.unknown == unknownSaveRevision, mark.serial <= searchSourceSerial else { return nil }
+        if mark.serial == searchSourceSerial { return ([], []) }
+        guard let first = searchSourceLog.first, first.serial <= mark.serial + 1 else { return nil }
+        var saved = Set<PersistentIdentifier>()
+        var deleted = Set<PersistentIdentifier>()
+        for entry in searchSourceLog where entry.serial > mark.serial {
+            for id in entry.saved where entityNames.contains(id.entityName) { saved.insert(id) }
+            for id in entry.deleted where entityNames.contains(id.entityName) { deleted.insert(id) }
+        }
+        saved.subtract(deleted)
+        return (saved, deleted)
+    }
+
+    /// Notes one save's search-source rows in the log.
+    private func logSearchSources(_ changes: SavedChanges) {
+        searchSourceSerial &+= 1
+        searchSourceLog.append((searchSourceSerial, Set(changes.searchSourceSaved), Set(changes.searchSourceDeleted)))
+        var total: Int = searchSourceLog.reduce(0) { $0 + $1.saved.count + $1.deleted.count }
+        while searchSourceLog.count > Self.searchSourceLogLength
+            || (searchSourceLog.count > 1 && total > Self.searchSourceLogMaximumIDs) {
+            let dropped = searchSourceLog.removeFirst()
+            total -= dropped.saved.count + dropped.deleted.count
+        }
+        if total > Self.searchSourceLogMaximumIDs {
+            // One save too big to list: ask for everything again.
+            searchSourceLog.removeAll()
+        }
     }
 
     /// The string ids of the photos that changed between `photoFaceRevision`
@@ -330,6 +390,7 @@ final class LibraryStore {
             if savedContext == nil || savedContext?.container === container {
                 if !changes.isKnown { unknownSaveRevision &+= 1 }
                 for name in changes.touchedSearchSources { searchSourceRevisions[name, default: 0] &+= 1 }
+                if changes.isKnown { logSearchSources(changes) }
             }
         }
         // Autosave fires often with nothing this store lists.
@@ -463,6 +524,8 @@ final class LibraryStore {
             }
             for id in ids where searchSourceEntityNames.contains(id.entityName) {
                 changes.touchedSearchSources.insert(id.entityName)
+                if name.contains("delete") { changes.searchSourceDeleted.append(id) }
+                else { changes.searchSourceSaved.append(id) }
             }
             let tracked = ids.filter { trackedEntityNames.contains($0.entityName) }
             if name.contains("insert") { changes.inserted += tracked; changes.isKnown = true }

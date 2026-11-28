@@ -203,6 +203,7 @@ final class LibrarySearchIndexTests: XCTestCase {
         LibrarySearchIndex.finishReading()
         var read: Int = LibrarySearchIndex.photosRead
         var changed: Int = LibrarySearchIndex.entriesChanged
+        var rows: Int = LibrarySearchIndex.writtenRowsRead
         #endif
 
         let revision: Int = fixture.store.writtenTextRevision
@@ -214,6 +215,7 @@ final class LibrarySearchIndexTests: XCTestCase {
         #if DEBUG
         XCTAssertEqual(LibrarySearchIndex.photosRead, read, "No photo is read again")
         XCTAssertEqual(LibrarySearchIndex.entriesChanged - changed, 1, "Only that day's photo changes")
+        XCTAssertEqual(LibrarySearchIndex.writtenRowsRead - rows, 1, "Only the saved memory is read, not every memory")
         #endif
 
         let memoryRevision: Int = fixture.store.writtenTextRevision
@@ -227,6 +229,7 @@ final class LibrarySearchIndexTests: XCTestCase {
         #if DEBUG
         read = LibrarySearchIndex.photosRead
         changed = LibrarySearchIndex.entriesChanged
+        rows = LibrarySearchIndex.writtenRowsRead
         #endif
         let afterMemory: Int = fixture.store.writtenTextRevision
         fixture.context.insert(Comment(memoryID: memory.id, text: "a waffle comment"))
@@ -237,6 +240,7 @@ final class LibrarySearchIndexTests: XCTestCase {
         #if DEBUG
         XCTAssertEqual(LibrarySearchIndex.photosRead, read, "No photo is read again")
         XCTAssertEqual(LibrarySearchIndex.entriesChanged - changed, 1, "Only the comment's photo changes")
+        XCTAssertEqual(LibrarySearchIndex.writtenRowsRead - rows, 1, "Only the saved comment is read")
         #endif
 
         // A place note reaches every photo at that place, and only those.
@@ -341,16 +345,28 @@ final class LibrarySearchIndexTests: XCTestCase {
             let found = matches(query)
             return LibraryFilterEngine.filteredItems(items, by: LibraryFilterCriteria(searchText: query), calendar: calendar, personIDsByMediaID: personIndex, searchMatches: found).map(\.id)
         }
-        /// Saves, waits for the store to see it, then times the next keystroke.
-        func afterSaving(_ query: String) async throws -> (whole: Duration, index: Duration, found: [String]) {
+        /// Saves, waits for the store to see it, then times the next
+        /// keystroke: the index (which takes in the save) and the filter
+        /// pass over every photo after it, apart.
+        func afterSaving(_ query: String) async throws -> (whole: Duration, index: Duration, rowsRead: Int, found: [String]) {
             try context.save()
             let revision: Int = store.writtenTextRevision
             _ = await waitUntil(timeout: 5) { store.writtenTextRevision != revision }
+            #if DEBUG
+            let rowsBefore: Int = LibrarySearchIndex.writtenRowsRead
+            #endif
+            var matched: Set<String>?
+            let index = clock.measure { matched = matches(query) }
             var found: [String] = []
-            let whole = clock.measure { found = newSearch(query) }
-            // The index alone, once more for the same word (nothing changed).
-            let index = clock.measure { _ = matches(query) }
-            return (whole, index, found)
+            let filter = clock.measure {
+                found = LibraryFilterEngine.filteredItems(items, by: LibraryFilterCriteria(searchText: query), calendar: calendar, personIDsByMediaID: personIndex, searchMatches: matched).map(\.id)
+            }
+            #if DEBUG
+            let rowsRead: Int = LibrarySearchIndex.writtenRowsRead - rowsBefore
+            #else
+            let rowsRead: Int = -1
+            #endif
+            return (index + filter, index, rowsRead, found)
         }
 
         let missQuery = "zzqx"
@@ -406,7 +422,7 @@ final class LibrarySearchIndexTests: XCTestCase {
         let readAfterWriting: Int = -1
         #endif
 
-        print("SEARCH-BENCH app photos=\(count) old-miss=\(oldMissTime) old-hit=\(oldHitTime) warm-up(background, incl. 1 s wait)=\(warmTime) longest-slice=\(longestSlice)s new-first-miss=\(firstMiss) new-miss=\(nextMiss) new-hit=\(nextHit) new-day-memory=\(dayHit) after-day-memory=\(afterDay.whole) after-comment=\(afterComment.whole) after-memory=\(afterMemory.whole) after-place-note=\(afterPlaceNote.whole) index-only-after-write=\(afterDay.index) photos-read-after-writes=\(readAfterWriting)")
+        print("SEARCH-BENCH app photos=\(count) old-miss=\(oldMissTime) old-hit=\(oldHitTime) warm-up(background, incl. 1 s wait)=\(warmTime) longest-slice=\(longestSlice)s new-first-miss=\(firstMiss) new-miss=\(nextMiss) new-hit=\(nextHit) new-day-memory=\(dayHit) after-day-memory=\(afterDay.whole) after-comment=\(afterComment.whole) after-memory=\(afterMemory.whole) after-place-note=\(afterPlaceNote.whole) index-after-day-memory=\(afterDay.index) index-after-comment=\(afterComment.index) index-after-memory=\(afterMemory.index) index-after-place-note=\(afterPlaceNote.index) filter-pass=\(afterMemory.whole - afterMemory.index) written-rows-read=\([afterDay.rowsRead, afterComment.rowsRead, afterMemory.rowsRead, afterPlaceNote.rowsRead]) photos-read-after-writes=\(readAfterWriting)")
         XCTAssertEqual(oldMiss, [])
         XCTAssertEqual(newMiss, [])
         XCTAssertEqual(Set(newHit), Set(oldHit), "The index finds what the old search found")
@@ -419,6 +435,11 @@ final class LibrarySearchIndexTests: XCTestCase {
         #if DEBUG
         XCTAssertEqual(dayPhotos, 144, "A day's memory updates that day's photos only")
         XCTAssertLessThanOrEqual(readAfterWriting, 1, "Writing reads no photo again (a new memory may re-read its own photo)")
+        for (what, step) in [("day memory", afterDay), ("comment", afterComment), ("memory", afterMemory), ("place note", afterPlaceNote)] {
+            XCTAssertEqual(step.rowsRead, 1, "Writing a \(what) reads that one row, not every row of its kind")
+            // Generous for a shared CI Mac; on the runner this is tens of milliseconds.
+            XCTAssertLessThan(step.index, .milliseconds(300), "Taking in a \(what) on the first keystroke after it")
+        }
         #endif
     }
 }

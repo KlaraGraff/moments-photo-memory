@@ -33,11 +33,27 @@ public struct StoredVerdict: Codable, Equatable, Sendable {
     public var checkClosedAt: Date?
     /// The person chose "Later" on the question.
     public var deferredAt: Date?
+    /// Someone touched the chapter, or brought it back with Undo: the judge
+    /// asks before it calls it daily life, however sure it is.
+    public var asksFirst = false
 
     public init(verdict: ChapterVerdict, signature: String, judgedAt: Date) {
         self.verdict = verdict
         self.signature = signature
         self.judgedAt = judgedAt
+    }
+
+    private enum CodingKeys: String, CodingKey { case verdict, signature, judgedAt, checkClosedAt, deferredAt, asksFirst }
+
+    /// An entry written before a field existed reads with that field unset.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        verdict = try container.decode(ChapterVerdict.self, forKey: .verdict)
+        signature = try container.decode(String.self, forKey: .signature)
+        judgedAt = try container.decode(Date.self, forKey: .judgedAt)
+        checkClosedAt = try container.decodeIfPresent(Date.self, forKey: .checkClosedAt)
+        deferredAt = try container.decodeIfPresent(Date.self, forKey: .deferredAt)
+        asksFirst = try container.decodeIfPresent(Bool.self, forKey: .asksFirst) ?? false
     }
 }
 
@@ -143,8 +159,21 @@ public struct ChapterJudgeBook: Codable, Equatable, Sendable {
         guard let kind = verdict.kind.normalized else { return }
         var verdict = verdict
         verdict.kind = kind
-        verdict.alternatives = verdict.alternatives.compactMap(\.normalized)
-        verdicts[id] = StoredVerdict(verdict: verdict, signature: signature, judgedAt: now)
+        verdict.alternatives = verdict.alternatives.compactMap(\.normalized).filter { $0 != kind }
+        let earlier = verdicts[id]
+        let asksFirst = earlier?.asksFirst ?? false
+        if asksFirst, kind == .daily { verdict.confidence = min(verdict.confidence, .low) }
+        var stored = StoredVerdict(verdict: verdict, signature: signature, judgedAt: now)
+        stored.asksFirst = asksFirst
+        // The same answer again: "Later" and the closed check still hold,
+        // and the check keeps its age while it is the same check.
+        if let earlier, earlier.verdict.source != .person, earlier.verdict.kind == kind {
+            stored.deferredAt = earlier.deferredAt
+            stored.checkClosedAt = earlier.checkClosedAt
+            let sameAction = ConfidencePolicy.action(for: earlier.verdict, level: askLevel) == ConfidencePolicy.action(for: verdict, level: askLevel)
+            if sameAction { stored.judgedAt = earlier.judgedAt }
+        }
+        verdicts[id] = stored
     }
 
     /// The person decided the chapter: the kind is theirs from now on, and
@@ -173,6 +202,56 @@ public struct ChapterJudgeBook: Codable, Equatable, Sendable {
         )
         if examples.count > Self.maximumExamples { examples.removeLast(examples.count - Self.maximumExamples) }
         return true
+    }
+
+    /// Chapters among `ids` the judge is sure were ordinary days, to remove
+    /// if nobody touched them. The person's own answers are never here.
+    public func removals(among ids: [String]) -> [String] {
+        guard enabled else { return [] }
+        return ids.filter { id in
+            guard let stored = verdicts[id], stored.verdict.source != .person, !stored.asksFirst, stored.verdict.kind == .daily else { return false }
+            return action(for: id) == .apply
+        }
+    }
+
+    /// The judge's answer for these chapters stays, but it asks first: for a
+    /// chapter someone touched, or one brought back with Undo.
+    public mutating func askInstead(_ ids: [String]) {
+        for id in ids {
+            guard var stored = verdicts[id], stored.verdict.source != .person else { continue }
+            stored.verdict.confidence = min(stored.verdict.confidence, .low)
+            stored.deferredAt = nil
+            stored.asksFirst = true
+            verdicts[id] = stored
+        }
+    }
+
+    /// What the book holds for some chapters, to put back with Undo.
+    public struct Entries: Equatable, Sendable {
+        public let ids: [String]
+        let verdicts: [String: StoredVerdict]
+        let examples: [JudgeExample]
+    }
+
+    public func entries(for ids: [String]) -> Entries {
+        let wanted = Set(ids)
+        return Entries(
+            ids: ids,
+            verdicts: verdicts.filter { wanted.contains($0.key) },
+            examples: examples.filter { wanted.contains($0.id) }
+        )
+    }
+
+    /// Puts back what `entries` held for its chapters, leaving everything
+    /// else, such as later answers about other chapters, as it is.
+    public mutating func restore(_ entries: Entries) {
+        let ids = Set(entries.ids)
+        for id in ids { verdicts[id] = entries.verdicts[id] }
+        examples.removeAll { ids.contains($0.id) }
+        for example in entries.examples {
+            let index = examples.firstIndex { $0.addedAt < example.addedAt } ?? examples.endIndex
+            examples.insert(example, at: index)
+        }
     }
 
     /// The one-line check was answered "yes", or put away.

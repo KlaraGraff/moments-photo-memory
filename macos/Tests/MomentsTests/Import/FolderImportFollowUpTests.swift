@@ -6,7 +6,7 @@ import MomentsCore
 @testable import Moments
 
 /// Folder import beyond choosing one folder: more file formats, files and
-/// folders dropped on the window, Try again after a failure, and a folder
+/// folders dropped on the window, Try Again after a failure, and a folder
 /// that moved. All files are synthetic, in a temporary folder.
 @MainActor
 final class FolderImportFollowUpTests: XCTestCase {

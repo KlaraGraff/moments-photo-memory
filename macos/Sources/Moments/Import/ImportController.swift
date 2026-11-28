@@ -175,7 +175,7 @@ final class ImportController {
     }
 
     /// Runs the last import again: after a cancel, the files already read
-    /// are not read again; after a failure, it is the Try again.
+    /// are not read again; after a failure, it is Try Again.
     func resume() {
         guard !lastJobs.isEmpty, !isRunning else { return }
         start(lastJobs)
@@ -265,7 +265,7 @@ struct ImportStatusView: View {
                         .lineLimit(1)
                         .help(message)
                     if controller.canRetry {
-                        Button("Try again") { controller.resume() }
+                        Button("Try Again") { controller.resume() }
                             .buttonStyle(.borderless)
                             .accessibilityIdentifier("import.retry")
                     }

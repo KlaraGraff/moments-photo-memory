@@ -18,7 +18,7 @@ struct MissingFolderRows: View {
                         Text(String(localized: "Can't find the folder “\(folder.name)”"))
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        Button("Locate…") { controller.locate(folder) }
+                        Button("Find Folder…") { controller.locate(folder) }
                             .buttonStyle(.borderless)
                             .accessibilityIdentifier("import.missingFolder.locate")
                         Button {

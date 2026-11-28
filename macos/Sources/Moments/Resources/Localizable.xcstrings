@@ -21259,24 +21259,24 @@
         }
       }
     },
-    "Locate…" : {
+    "Find Folder…" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ort wählen …"
+            "value" : "Ordner suchen …"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Locate…"
+            "value" : "Find Folder…"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择位置…"
+            "value" : "重新指定文件夹…"
           }
         }
       }
@@ -21343,6 +21343,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "松开即可导入"
+          }
+        }
+      }
+    },
+    "Try Again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erneut versuchen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try Again"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再试一次"
           }
         }
       }

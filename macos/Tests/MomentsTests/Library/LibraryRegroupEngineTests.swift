@@ -286,7 +286,7 @@ final class LibraryRegroupEngineTests: XCTestCase {
         _ context: ModelContext
     ) async throws -> [String: LibraryPhotoFacts] {
         let memories: [Memory] = try context.fetch(FetchDescriptor<Memory>())
-        let overrides: [PlaceOverride] = try context.fetch(FetchDescriptor<PlaceOverride>())
+        let overrides: [Moments.PlaceOverride] = try context.fetch(FetchDescriptor<Moments.PlaceOverride>())
         let result = await cache.facts(store: store, memories: memories, overrides: overrides, favoritesMatter: false)
         let unwrapped = try XCTUnwrap(result)
         var byID: [String: LibraryPhotoFacts] = [:]
@@ -391,7 +391,7 @@ final class LibraryRegroupEngineTests: XCTestCase {
         XCTAssertNil(store.liveItem(id: removedID))
 
         let memories: [Memory] = try context.fetch(FetchDescriptor<Memory>())
-        let overrides: [PlaceOverride] = try context.fetch(FetchDescriptor<PlaceOverride>())
+        let overrides: [Moments.PlaceOverride] = try context.fetch(FetchDescriptor<Moments.PlaceOverride>())
         let midBatch = try XCTUnwrap(await cache.facts(store: store, memories: memories, overrides: overrides, favoritesMatter: false))
         XCTAssertFalse(midBatch.regular.contains { $0.id == removedID })
 
@@ -413,7 +413,7 @@ final class LibraryRegroupEngineTests: XCTestCase {
         try await saveAndWait(context, store)
 
         let memories: [Memory] = try context.fetch(FetchDescriptor<Memory>())
-        let overrides: [PlaceOverride] = try context.fetch(FetchDescriptor<PlaceOverride>())
+        let overrides: [Moments.PlaceOverride] = try context.fetch(FetchDescriptor<Moments.PlaceOverride>())
         let cached = try XCTUnwrap(await cache.facts(store: store, memories: memories, overrides: overrides, favoritesMatter: false))
         let fresh = try XCTUnwrap(await LibraryPhotoFactsCache().facts(store: store, memories: memories, overrides: overrides, favoritesMatter: false))
         XCTAssertEqual(cached.regular, fresh.regular)

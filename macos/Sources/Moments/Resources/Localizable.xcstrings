@@ -21237,24 +21237,24 @@
         }
       }
     },
-    "“Export All Memories” saves what you both wrote as one Markdown file, without photos, that any text app can open." : {
+    "“Export All Memories” saves what you both wrote as one text file, without photos, that any text app can open." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "„Alle Erinnerungen exportieren“ sichert, was ihr beide geschrieben habt, als eine Markdown-Datei ohne Fotos, die jede Text-App öffnen kann."
+            "value" : "„Alle Erinnerungen exportieren“ sichert, was ihr beide geschrieben habt, als eine Textdatei ohne Fotos, die jede Text-App öffnen kann."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "“Export All Memories” saves what you both wrote as one Markdown file, without photos, that any text app can open."
+            "value" : "“Export All Memories” saves what you both wrote as one text file, without photos, that any text app can open."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "“导出全部回忆”会把你们俩写下的文字存成一个 Markdown 文件，不含照片，任何文本软件都能打开。"
+            "value" : "「导出全部回忆」会把你们俩写下的文字存成一个文本文件，不含照片，任何文本软件都能打开。"
           }
         }
       }
@@ -21435,24 +21435,24 @@
         }
       }
     },
-    "Saves what you both wrote as one Markdown file, without photos." : {
+    "Saves what you both wrote as one text file, without photos." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sichert, was ihr beide geschrieben habt, als eine Markdown-Datei ohne Fotos."
+            "value" : "Sichert, was ihr beide geschrieben habt, als eine Textdatei ohne Fotos."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Saves what you both wrote as one Markdown file, without photos."
+            "value" : "Saves what you both wrote as one text file, without photos."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "把你们俩写下的文字存成一个 Markdown 文件，不含照片。"
+            "value" : "把你们俩写下的文字存成一个文本文件，不含照片。"
           }
         }
       }
@@ -21474,7 +21474,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "读不了照片库。"
+            "value" : "没能读取资料库。"
           }
         }
       }
@@ -21787,24 +21787,24 @@
         }
       }
     },
-    "Markdown Folder" : {
+    "Text and pictures" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Markdown-Ordner"
+            "value" : "Text und Bilder"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Markdown Folder"
+            "value" : "Text and pictures"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Markdown 文件夹"
+            "value" : "文字和图片"
           }
         }
       }
@@ -21853,24 +21853,24 @@
         }
       }
     },
-    "Place notes" : {
+    "Place descriptions" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ortsnotizen"
+            "value" : "Ortsbeschreibungen"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Place notes"
+            "value" : "Place descriptions"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "地点笔记"
+            "value" : "地点介绍"
           }
         }
       }
@@ -22002,7 +22002,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "旅程和当天的回忆"
+            "value" : "旅行和当天的回忆"
           }
         }
       }
@@ -22073,24 +22073,24 @@
         }
       }
     },
-    "Photo memories: %lld · Trip and day memories: %lld · Place notes: %lld · Comments: %lld" : {
+    "Photo memories: %lld · Trip and day memories: %lld · Place descriptions: %lld · Comments: %lld" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fotoerinnerungen: %lld · Reise- und Tageserinnerungen: %lld · Ortsnotizen: %lld · Kommentare: %lld"
+            "value" : "Fotoerinnerungen: %lld · Reise- und Tageserinnerungen: %lld · Ortsbeschreibungen: %lld · Kommentare: %lld"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Photo memories: %lld · Trip and day memories: %lld · Place notes: %lld · Comments: %lld"
+            "value" : "Photo memories: %lld · Trip and day memories: %lld · Place descriptions: %lld · Comments: %lld"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "照片回忆：%lld · 旅程和当天的回忆：%lld · 地点笔记：%lld · 评论：%lld"
+            "value" : "照片回忆：%lld · 旅行和当天的回忆：%lld · 地点介绍：%lld · 评论：%lld"
           }
         }
       }
@@ -22222,7 +22222,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "回忆册没能存下：%@"
+            "value" : "没能保存回忆册：%@"
           }
         }
       }
@@ -22337,7 +22337,7 @@
         }
       }
     },
-    "A4 portrait · about %lld pages · photos at 300 dpi · no location or camera data" : {
+    "A4 portrait · about %lld pages · ready to print · no location or camera data" : {
       "localizations" : {
         "de" : {
           "variations" : {
@@ -22345,13 +22345,13 @@
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "A4 hoch · etwa 1 Seite · Fotos mit 300 dpi · keine Orts- oder Kameradaten"
+                  "value" : "A4 hoch · etwa 1 Seite · druckfertig · keine Standort- oder Kameradaten"
                 }
               },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "A4 hoch · etwa %lld Seiten · Fotos mit 300 dpi · keine Orts- oder Kameradaten"
+                  "value" : "A4 hoch · etwa %lld Seiten · druckfertig · keine Standort- oder Kameradaten"
                 }
               }
             }
@@ -22363,13 +22363,13 @@
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "A4 portrait · about 1 page · photos at 300 dpi · no location or camera data"
+                  "value" : "A4 portrait · about 1 page · ready to print · no location or camera data"
                 }
               },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "A4 portrait · about %lld pages · photos at 300 dpi · no location or camera data"
+                  "value" : "A4 portrait · about %lld pages · ready to print · no location or camera data"
                 }
               }
             }
@@ -22381,7 +22381,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "A4 竖版 · 约 %lld 页 · 照片 300 dpi · 不含位置和相机信息"
+                  "value" : "A4 竖版 · 约 %lld 页 · 适合打印 · 不含位置和相机信息"
                 }
               }
             }
@@ -22389,7 +22389,7 @@
         }
       }
     },
-    "1 .md file + %lld pictures (1,600 pixels on the long side) · no location or camera data" : {
+    "A text file and %lld smaller pictures, for keeping long term · no location or camera data" : {
       "localizations" : {
         "de" : {
           "variations" : {
@@ -22397,13 +22397,13 @@
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "1 .md-Datei + 1 Bild (1.600 Pixel an der langen Seite) · keine Orts- oder Kameradaten"
+                  "value" : "Eine Textdatei und 1 verkleinertes Bild, zum langfristigen Aufbewahren · keine Standort- oder Kameradaten"
                 }
               },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "1 .md-Datei + %lld Bilder (1.600 Pixel an der langen Seite) · keine Orts- oder Kameradaten"
+                  "value" : "Eine Textdatei und %lld verkleinerte Bilder, zum langfristigen Aufbewahren · keine Standort- oder Kameradaten"
                 }
               }
             }
@@ -22415,13 +22415,13 @@
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "1 .md file + 1 picture (1,600 pixels on the long side) · no location or camera data"
+                  "value" : "A text file and 1 smaller picture, for keeping long term · no location or camera data"
                 }
               },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "1 .md file + %lld pictures (1,600 pixels on the long side) · no location or camera data"
+                  "value" : "A text file and %lld smaller pictures, for keeping long term · no location or camera data"
                 }
               }
             }
@@ -22433,7 +22433,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "1 个 .md 文件 + %lld 张图片（长边 1600 像素）· 不含位置和相机信息"
+                  "value" : "1 个文本文件和 %lld 张缩小的图片，适合长期保存 · 不含位置和相机信息"
                 }
               }
             }

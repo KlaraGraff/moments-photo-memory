@@ -176,7 +176,7 @@ struct MemoryBookSheet: View {
                     PaperFormLabel(String(localized: "Format"))
                     HStack(spacing: 8) {
                         formatCard(.pdf, title: "PDF", detail: String(localized: "Ready to print, laid out as a book"))
-                        formatCard(.markdown, title: String(localized: "Markdown Folder"), detail: String(localized: "Text with smaller pictures, for keeping long term"))
+                        formatCard(.markdown, title: String(localized: "Text and pictures"), detail: String(localized: "Text with smaller pictures, for keeping long term"))
                     }
                 }
                 GridRow {
@@ -194,7 +194,7 @@ struct MemoryBookSheet: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Toggle(String(localized: "Trip and day memories"), isOn: $options.includesChapterAndDayMemories)
                             .accessibilityIdentifier("memoryBook.includeCollection")
-                        Toggle(String(localized: "Place notes"), isOn: $options.includesPlaceNotes)
+                        Toggle(String(localized: "Place descriptions"), isOn: $options.includesPlaceNotes)
                             .accessibilityIdentifier("memoryBook.includePlaceNotes")
                         Toggle(String(localized: "Comments on memories"), isOn: $options.includesComments)
                             .accessibilityIdentifier("memoryBook.includeComments")
@@ -308,9 +308,9 @@ struct MemoryBookSheet: View {
         let count = model.book.map { MemoryBookPlan.prepared($0.document, options: options).photos.count } ?? 0
         switch format {
         case .pdf:
-            return String(localized: "A4 portrait · about \(model.pageEstimate ?? 1) pages · photos at 300 dpi · no location or camera data")
+            return String(localized: "A4 portrait · about \(model.pageEstimate ?? 1) pages · ready to print · no location or camera data")
         case .markdown:
-            return String(localized: "1 .md file + \(count) pictures (1,600 pixels on the long side) · no location or camera data")
+            return String(localized: "A text file and \(count) smaller pictures, for keeping long term · no location or camera data")
         }
     }
 

@@ -171,7 +171,7 @@ final class MemoryBookExportTests: XCTestCase {
             title: "Our memories",
             subtitle: "Robin and Kai",
             notInAChapter: "Memories not in a chapter",
-            placeNotes: "Place notes"
+            placeNotes: "Place descriptions"
         )
         let text = MemoryArchive.markdown(input, order: .byDate, strings: strings)
         for words in ["Robin", "Kai", "Bright cold morning on the pier", "The gulls stole the bread", "Agreed, worth it", "A long walk along the water", "Fish stall by the steps"] {

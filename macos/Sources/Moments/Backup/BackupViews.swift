@@ -14,7 +14,7 @@ struct BackupSettingsSection: View {
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(String(localized: "Moments backs up the library each day it changes and keeps the last 14 backups. Original photos are not in the backup."))
-                Text(String(localized: "“Export All Memories” saves what you both wrote as one Markdown file, without photos, that any text app can open."))
+                Text(String(localized: "“Export All Memories” saves what you both wrote as one text file, without photos, that any text app can open."))
             }
             .font(.caption)
             .foregroundStyle(Paper.muted)

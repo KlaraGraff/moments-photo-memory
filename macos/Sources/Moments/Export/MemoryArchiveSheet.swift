@@ -44,7 +44,7 @@ struct MemoryArchiveSheet: View {
     }
 
     var body: some View {
-        PaperSheet(String(localized: "Export All Memories"), subtitle: String(localized: "Saves what you both wrote as one Markdown file, without photos.")) {
+        PaperSheet(String(localized: "Export All Memories"), subtitle: String(localized: "Saves what you both wrote as one text file, without photos.")) {
             if input == nil, errorText == nil {
                 ProgressView()
                     .controlSize(.small)
@@ -84,7 +84,7 @@ struct MemoryArchiveSheet: View {
                 PaperFormLabel(String(localized: "Include"))
                 VStack(alignment: .leading, spacing: 5) {
                     Toggle(String(localized: "Trip and day memories"), isOn: $options.includesChapterAndDayMemories)
-                    Toggle(String(localized: "Place notes"), isOn: $options.includesPlaceNotes)
+                    Toggle(String(localized: "Place descriptions"), isOn: $options.includesPlaceNotes)
                     Toggle(String(localized: "Comments on memories"), isOn: $options.includesComments)
                 }
                 .toggleStyle(.checkbox)
@@ -108,7 +108,7 @@ struct MemoryArchiveSheet: View {
 
     private var contents: String {
         let counts = input.map(MemoryArchive.counts) ?? MemoryArchive.counts(MemoryArchive.Input())
-        return String(localized: "Photo memories: \(counts.photoMemories) · Trip and day memories: \(counts.chapterAndDayMemories) · Place notes: \(counts.placeNotes) · Comments: \(counts.comments)")
+        return String(localized: "Photo memories: \(counts.photoMemories) · Trip and day memories: \(counts.chapterAndDayMemories) · Place descriptions: \(counts.placeNotes) · Comments: \(counts.comments)")
     }
 
     @ViewBuilder
@@ -173,7 +173,7 @@ struct MemoryArchiveSheet: View {
             title: String(localized: "Our memories"),
             subtitle: String(localized: "\(mine) and \(theirs) · exported on \(today)"),
             notInAChapter: String(localized: "Memories not in a chapter"),
-            placeNotes: String(localized: "Place notes")
+            placeNotes: String(localized: "Place descriptions")
         )
         let order = order
         let options = options

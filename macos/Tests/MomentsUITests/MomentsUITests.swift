@@ -298,7 +298,7 @@ final class MomentsUITests: XCTestCase {
         element(in: app, identifier: "memoryBook.format.markdown").click()
         let spec = element(in: app, identifier: "memoryBook.spec")
         XCTAssertTrue(spec.waitForExistence(timeout: launchTimeout))
-        let markdownSpec = NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", ".md file", ".md file")
+        let markdownSpec = NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "A text file", "A text file")
         expectation(for: markdownSpec, evaluatedWith: spec)
         waitForExpectations(timeout: launchTimeout)
         XCTAssertTrue(app.windows.firstMatch.frame.contains(sheet.frame), "The Markdown choice makes the sheet spill outside the small window")

@@ -514,12 +514,32 @@ final class MomentsUITests: XCTestCase {
         let name = app.textFields["library.scope.name"]
         XCTAssertTrue(name.waitForExistence(timeout: launchTimeout), "The unnamed group has no name field")
         XCTAssertEqual(libraryPhotoCount(app), 5, "The unnamed group is in five synthetic photos")
+        // Its face is picked before it has a name, and keeps it after.
+        let groupFace = element(in: app, identifier: "library.scope.face")
+        XCTAssertTrue(groupFace.waitForExistence(timeout: launchTimeout), "An unnamed group's face is not a control")
+        let groupCover: String = (groupFace.value as? String) ?? ""
+        groupFace.click()
+        let groupPick = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (identifier ENDSWITH %@)", "library.scope.face.pick.", "." + groupCover))
+            .firstMatch
+        XCTAssertTrue(groupPick.waitForExistence(timeout: launchTimeout), "Clicking the group's face did not offer its other faces")
+        let groupPickedID: String = String(groupPick.identifier.dropFirst("library.scope.face.pick.".count))
+        groupPick.click()
+        XCTAssertTrue(groupPick.waitForNonExistence(timeout: launchTimeout), "Picking a face did not close the picker")
+        let groupChanged = NSPredicate(format: "value == %@", groupPickedID)
+        XCTAssertEqual(XCTWaiter().wait(for: [expectation(for: groupChanged, evaluatedWith: groupFace)], timeout: launchTimeout), .completed, "The picked face does not stand for the group")
+        XCTAssertTrue(name.waitForExistence(timeout: launchTimeout))
         name.click()
         name.typeText("Robin\r")
         capture(app, named: "\(prefix)-03-named-evidence")
         element(in: app, identifier: "window.back").click()
         XCTAssertTrue(element(in: app, identifier: "library.person.Robin").waitForExistence(timeout: launchTimeout), "The named group did not join the row of faces")
         XCTAssertTrue(unnamed.waitForNonExistence(timeout: launchTimeout), "The group still asks for a name")
+        element(in: app, identifier: "library.person.Robin").click()
+        let keptFace = NSPredicate(format: "value == %@", groupPickedID)
+        XCTAssertEqual(XCTWaiter().wait(for: [expectation(for: keptFace, evaluatedWith: element(in: app, identifier: "library.scope.face"))], timeout: launchTimeout), .completed, "Naming the group lost the face picked for it")
+        element(in: app, identifier: "window.back").click()
+        XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout))
 
         // A name someone else has: the app asks before joining the two, and
         // then shows both people's photos as one person's.

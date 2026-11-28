@@ -62,7 +62,7 @@ struct PhotosImportStatusRows: View {
                             .foregroundStyle(.red)
                             .lineLimit(2)
                             .help(message)
-                        Button("Try again") { photos.retry() }
+                        Button("Try Again") { photos.retry() }
                             .buttonStyle(.borderless)
                             .accessibilityIdentifier("photosImport.retry")
                     default:

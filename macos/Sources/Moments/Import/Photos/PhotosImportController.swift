@@ -491,7 +491,7 @@ public struct PhotosImportStatusView: View {
                 }
             } else if case .failed(let message) = controller.state {
                 // Why counting or importing failed. A failed import also
-                // stays in the window's status bar, with Try again.
+                // stays in the window's status bar, with Try Again.
                 Text(message)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)

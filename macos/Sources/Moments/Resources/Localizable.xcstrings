@@ -21281,7 +21281,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "有 %lld 张照片已不在 Apple Photos 中"
+                  "value" : "有 %lld 张照片已不在「照片」App 里"
                 }
               }
             }
@@ -21333,10 +21333,32 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "已在 Apple Photos 中重新找到 %lld 张照片"
+                  "value" : "在「照片」App 里重新找到了 %lld 张照片"
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "Try Again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erneut versuchen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try Again"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再试一次"
           }
         }
       }

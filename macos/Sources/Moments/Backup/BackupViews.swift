@@ -8,12 +8,16 @@ struct BackupSettingsSection: View {
     var body: some View {
         Section {
             BackupSettingsRow()
+            MemoryArchiveSettingsRow()
         } header: {
             Text(String(localized: "Backup"))
         } footer: {
-            Text(String(localized: "Moments backs up the library each day it changes and keeps the last 14 backups. Original photos are not in the backup."))
-                .font(.caption)
-                .foregroundStyle(Paper.muted)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(String(localized: "Moments backs up the library each day it changes and keeps the last 14 backups. Original photos are not in the backup."))
+                Text(String(localized: "“Export All Memories” saves what you both wrote as one text file, without photos, that any text app can open."))
+            }
+            .font(.caption)
+            .foregroundStyle(Paper.muted)
         }
     }
 }

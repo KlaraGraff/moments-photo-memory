@@ -424,7 +424,7 @@ struct LibraryView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) { LibraryZoomControl(state: state) }
         }
-        .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, notes")))
+        .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, memories and comments")))
         .navigationTitle(String(localized: "Library"))
         .modifier(LibrarySelectionSubtitle(idle: String(localized: "\(cachedVisibleCount) photos")))
     }

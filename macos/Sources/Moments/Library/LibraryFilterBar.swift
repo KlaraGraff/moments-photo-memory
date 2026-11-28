@@ -612,7 +612,7 @@ struct CompactLibraryFilters: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background { LibraryFilterPublisher() }
-            .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, notes")))
+            .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, memories and comments")))
             .toolbar {
                 ToolbarItem(placement: .primaryAction) { LibraryFilterToolbarButton() }
             }

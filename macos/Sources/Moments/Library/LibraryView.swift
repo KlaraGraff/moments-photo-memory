@@ -151,6 +151,21 @@ struct LibraryView: View {
         )
     }
 
+    /// How long the search waits after a letter for the next one.
+    static let typingPause: Duration = .milliseconds(200)
+
+    /// The search text of the previous regroup asked for, finished or not:
+    /// each key pressed is then one letter away from it, however fast the
+    /// typing.
+    @MainActor private static var lastSeenQuery: String?
+
+    /// True for one letter typed or deleted: a pasted word, a cleared field
+    /// and every other change regroup at once.
+    @MainActor static func waitsForTyping(query: String, previous: String?) -> Bool {
+        guard !query.isEmpty, let previous, previous != query else { return false }
+        return abs(query.count - previous.count) <= 1
+    }
+
     /// The chips' choices, hashed the same way for the regroup key and the probe.
     private func combineFilters(into hasher: inout Hasher) {
         hasher.combine(query)
@@ -233,17 +248,25 @@ struct LibraryView: View {
             hasher.combine(trip.name)
             hasher.combine(trip.overrideName)
         }
-        for override in placeOverrides {
-            hasher.combine(override.id)
-            hasher.combine(override.mediaID)
-            hasher.combine(override.nameOverride)
-            hasher.combine(override.updatedAt)
+        // A photo's place correction and its memories change what the grid
+        // shows only through a place filter, the memory filter or a search;
+        // otherwise writing a memory regroups nothing.
+        let current: LibraryFilterCriteria = criteria
+        if readsPlaceOverrides(current) {
+            for override in placeOverrides {
+                hasher.combine(override.id)
+                hasher.combine(override.mediaID)
+                hasher.combine(override.nameOverride)
+                hasher.combine(override.updatedAt)
+            }
         }
-        for memory in memoryRecords {
-            hasher.combine(memory.id)
-            hasher.combine(memory.mediaID)
-            hasher.combine(memory.updatedAt)
-            hasher.combine(memory.revision)
+        if readsMemories(current) {
+            for memory in memoryRecords {
+                hasher.combine(memory.id)
+                hasher.combine(memory.mediaID)
+                hasher.combine(memory.updatedAt)
+                hasher.combine(memory.revision)
+            }
         }
         // Bursts regroup when someone changes a stack or new analysis arrives.
         hasher.combine(stacks.generation)
@@ -252,6 +275,14 @@ struct LibraryView: View {
             hasher.combine(record.rulesData)
         }
         return hasher.finalize()
+    }
+
+    private func readsPlaceOverrides(_ criteria: LibraryFilterCriteria) -> Bool {
+        criteria.placeID != nil || !criteria.searchText.isEmpty
+    }
+
+    private func readsMemories(_ criteria: LibraryFilterCriteria) -> Bool {
+        criteria.memoryFilter != .all || !criteria.searchText.isEmpty
     }
 
     #if DEBUG
@@ -287,6 +318,7 @@ struct LibraryView: View {
             records.combine(record.rulesData)
         }
         let readsPlaceNames: Bool = !query.isEmpty || !placeFilterID.isEmpty
+        let current: LibraryFilterCriteria = criteria
         var written = Hasher()
         written.combine(store.writtenTextRevision)
         written.combine(store.groupSourcesRevision)
@@ -296,8 +328,8 @@ struct LibraryView: View {
             ("store.placeRevision", readsPlaceNames ? store.placeRevision : -1),
             ("written text", query.isEmpty ? -1 : written.finalize()),
             ("trips", trips.finalize()),
-            ("place overrides", overrides.finalize()),
-            ("memories", memories.finalize()),
+            ("place overrides", readsPlaceOverrides(current) ? overrides.finalize() : -1),
+            ("memories", readsMemories(current) ? memories.finalize() : -1),
             ("stacks.generation", stacks.generation),
             ("stack records", records.finalize())
         ]
@@ -350,7 +382,16 @@ struct LibraryView: View {
             let parts: [(String, Int)] = groupingKeyParts
             let started: CFTimeInterval = CACurrentMediaTime()
             #endif
-            regroup()
+            // While someone types, a pass starts only once they pause: each
+            // letter cancels the wait of the one before.
+            let waits: Bool = Self.waitsForTyping(query: query, previous: Self.lastSeenQuery)
+            Self.lastSeenQuery = query
+            if waits {
+                try? await Task.sleep(for: Self.typingPause)
+                guard !Task.isCancelled else { return }
+            }
+            await regroup()
+            guard !Task.isCancelled else { return }
             restoreScrollAfterLeavingScope()
             #if DEBUG
             PageProbe.contentReady(token: probeToken)
@@ -582,62 +623,18 @@ struct LibraryView: View {
         state.scopeReturnScrollTarget = id
     }
 
-    private func regroup() {
+    private func regroup() async {
         // Taken before anything is read: these are the inputs this pass uses,
         // and a change during it must not be stored under a newer key.
         let key = groupingKey
         let baseKey: Int = groupingKey(includingPhotos: false)
         let photoFaceRevision: Int = store.photoFaceRevision
-        #if DEBUG
-        var stepStarted: CFTimeInterval = CACurrentMediaTime()
-        let step: (String) -> Void = { (name: String) -> Void in
-            PageProbe.tally("regroup step: " + name, seconds: CACurrentMediaTime() - stepStarted)
-            stepStarted = CACurrentMediaTime()
-        }
-        #endif
         if let cached = Self.recentRegroups.first(where: { (entry: (key: Int, result: LibraryRegroupResult)) -> Bool in entry.key == key }) {
             // Reused: it becomes the newest again, the one a save patches.
             Self.lastRegroup = cached
             // Nothing changed since the last finished regroup: show it at
-            // once, without the filter passes or the sections. What does not
-            // come from the cache is rebuilt exactly as the full path does.
-            let result = cached.result
-            cachedPersonIndex = result.personIndex
-            cachedItemByID = result.itemByID
-            cachedSections = result.sections
-            cachedUnfoldedSectionItems = result.unfoldedSectionItems
-            cachedStackCounts = result.stackCounts
-            cachedVisibleCount = result.visibleCount
-            state.gridSections = result.gridSections
-            state.viewerItemIDs = result.viewerItemIDs
-            hasGrouped = true
-            // The stack model is shared with the other pages, so it is handed
-            // the photos again; it does nothing when nothing changed.
-            stacks.update(
-                items: allItems,
-                decisions: stackRecords,
-                photosKey: stackPhotosKey,
-                photoCount: stackPhotoCount
-            )
-            cachedSectionItems = result.sectionItems
-            if result.sectionDayKeys != cachedSectionDayKeys {
-                cachedSectionDayKeys = result.sectionDayKeys
-            }
-            // Memories are not in the key, so they are matched again.
-            let memories: [String: [CollectionMemory]] = LibrarySectionMemories.make(
-                sections: result.sections,
-                dayKeysBySection: result.sectionDayKeys,
-                memories: collectionMemories
-            )
-            applySectionMemories(memories)
-            if selection.visibleItemIDs != result.publishedIDs { selection.visibleItemIDs = result.publishedIDs }
-            if selection.libraryFiltersActive != criteria.isFiltered { selection.libraryFiltersActive = criteria.isFiltered }
-            selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
-            if let focus = selection.focusedItemID,
-               !result.filteredIDs.contains(focus),
-               !selection.shouldRevealSelectionInLibrary {
-                selection.focusedItemID = selection.selectedItemIDs.first
-            }
+            // once, without the filter passes or the sections.
+            show(cached.result)
             #if DEBUG
             PageProbe.tally("regroup step: reused last regroup", seconds: 0)
             #endif
@@ -647,12 +644,206 @@ struct LibraryView: View {
            patchRegroup(cached.result, key: key, baseKey: baseKey, photoFaceRevision: photoFaceRevision) {
             return
         }
+        if await regroupOffMainThread(key: key, baseKey: baseKey, photoFaceRevision: photoFaceRevision) {
+            return
+        }
+        guard !Task.isCancelled else { return }
+        regroupOnMainThread(key: key, baseKey: baseKey, photoFaceRevision: photoFaceRevision)
+    }
+
+    /// Shows a finished regroup: the reused one, or one the background pass
+    /// just built. What does not come from the result is rebuilt exactly as
+    /// the full path does.
+    private func show(_ result: LibraryRegroupResult) {
+        cachedPersonIndex = result.personIndex
+        cachedItemByID = result.itemByID
+        cachedSections = result.sections
+        cachedUnfoldedSectionItems = result.unfoldedSectionItems
+        cachedStackCounts = result.stackCounts
+        cachedVisibleCount = result.visibleCount
+        state.gridSections = result.gridSections
+        state.viewerItemIDs = result.viewerItemIDs
+        hasGrouped = true
+        // The stack model is shared with the other pages, so it is handed
+        // the photos again; it does nothing when nothing changed.
+        stacks.update(
+            items: allItems,
+            decisions: stackRecords,
+            photosKey: stackPhotosKey,
+            photoCount: stackPhotoCount
+        )
+        cachedSectionItems = result.sectionItems
+        if result.sectionDayKeys != cachedSectionDayKeys {
+            cachedSectionDayKeys = result.sectionDayKeys
+        }
+        // Memories are not in the key, so they are matched again.
+        let memories: [String: [CollectionMemory]] = LibrarySectionMemories.make(
+            sections: result.sections,
+            dayKeysBySection: result.sectionDayKeys,
+            memories: collectionMemories
+        )
+        applySectionMemories(memories)
+        if selection.visibleItemIDs != result.publishedIDs { selection.visibleItemIDs = result.publishedIDs }
+        if selection.libraryFiltersActive != criteria.isFiltered { selection.libraryFiltersActive = criteria.isFiltered }
+        selection.selectedItemIDs.formIntersection(selection.visibleItemIDs ?? [])
+        if let focus = selection.focusedItemID,
+           !result.filteredIDs.contains(focus),
+           !selection.shouldRevealSelectionInLibrary {
+            selection.focusedItemID = selection.selectedItemIDs.first
+        }
+    }
+
+    /// The person index for the store's faces, worked out again only when
+    /// photos or faces moved.
+    @MainActor private static var personIndexMemo: (store: ObjectIdentifier, revision: Int, index: [String: Set<String>])?
+
+    private func currentPersonIndex() -> [String: Set<String>] {
+        let id = ObjectIdentifier(store)
+        if let memo = Self.personIndexMemo, memo.store == id, memo.revision == store.photoFaceRevision {
+            return memo.index
+        }
+        let index: [String: Set<String>] = UserGroupRuleEngine.makePersonIndex(faceObservations)
+        Self.personIndexMemo = (store: id, revision: store.photoFaceRevision, index: index)
+        return index
+    }
+
+    /// The full regroup with the filters and sections worked out on a
+    /// background thread from each photo's cached facts. The main thread only
+    /// reads the photos that changed, asks the search index, folds bursts and
+    /// shows the result. False when the filters ask for something only the
+    /// main-thread pass knows; true once the result is shown, or when this
+    /// pass was overtaken by a newer one.
+    private func regroupOffMainThread(key: Int, baseKey: Int, photoFaceRevision: Int) async -> Bool {
+        #if DEBUG
+        var stepStarted: CFTimeInterval = CACurrentMediaTime()
+        let step: (String) -> Void = { (name: String) -> Void in
+            PageProbe.tally("regroup step: " + name, seconds: CACurrentMediaTime() - stepStarted)
+            stepStarted = CACurrentMediaTime()
+        }
+        #endif
+        let currentCriteria: LibraryFilterCriteria = criteria
+        let personIndex: [String: Set<String>] = currentPersonIndex()
+        #if DEBUG
+        step("person index")
+        #endif
+        let searchMatches: Set<String>? = LibrarySearchIndex.matchingIDs(
+            query: currentCriteria.searchText,
+            store: store,
+            people: people,
+            personIndex: personIndex,
+            context: modelContext
+        )
+        if searchMatches == nil {
+            LibrarySearchIndex.warmUp(store: store, people: people, personIndex: personIndex, context: modelContext)
+        }
+        #if DEBUG
+        step("search index")
+        #endif
+        guard LibraryRegroupEngine.canRun(criteria: currentCriteria, searchMatches: searchMatches) else { return false }
+        // The stack model is shared with the other pages and lives on the
+        // main actor; its index is a plain value the background pass folds by.
+        let stackIndex = stacks.update(
+            items: allItems,
+            decisions: stackRecords,
+            photosKey: stackPhotosKey,
+            photoCount: stackPhotoCount
+        )
+        #if DEBUG
+        step("stacks update")
+        #endif
+        guard let facts = await LibraryPhotoFactsCache.shared.facts(
+            store: store,
+            memories: memoryRecords,
+            overrides: placeOverrides,
+            favoritesMatter: currentCriteria.favoritesOnly
+        ) else { return true }
+        #if DEBUG
+        step("photo facts")
+        #endif
+        var tripNames: [String: String] = [:]
+        tripNames.reserveCapacity(allTrips.count)
+        for trip in allTrips where tripNames[trip.id] == nil { tripNames[trip.id] = trip.effectiveName }
+        let input = LibraryRegroupEngine.Input(
+            items: facts.regular,
+            screenshots: facts.screenshots,
+            scopeIDs: selection.libraryScope?.itemIDs,
+            criteria: currentCriteria,
+            editingItemID: state.focusedMemoryItemID,
+            personIDsByMediaID: personIndex,
+            searchMatches: searchMatches,
+            places: LibraryPhotoFactsCache.shared.places,
+            tripNames: tripNames,
+            stackIndex: stackIndex,
+            calendar: .current
+        )
+        #if DEBUG
+        step("background input")
+        let backgroundStarted: CFTimeInterval = CACurrentMediaTime()
+        #endif
+        let output: LibraryRegroupEngine.Output = await Task.detached(priority: .userInitiated) {
+            LibraryRegroupEngine.run(input)
+        }.value
+        #if DEBUG
+        // Wall time of the background pass; the main thread was free meanwhile.
+        PageProbe.tally("regroup background pass", seconds: CACurrentMediaTime() - backgroundStarted)
+        stepStarted = CACurrentMediaTime()
+        #endif
+        // A newer regroup takes over; this one's photos may be gone.
+        guard !Task.isCancelled, groupingKey == key else { return true }
+
+        var itemByID: [String: MediaItem] = [:]
+        itemByID.reserveCapacity(output.visibleIDs.count)
+        for id in output.visibleIDs {
+            if let model = store.itemsByID[id] { itemByID[id] = model }
+        }
+        var sectionItemsByID: [String: [MediaItem]] = [:]
+        sectionItemsByID.reserveCapacity(output.sections.count)
+        for section in output.sections {
+            sectionItemsByID[section.id] = section.itemIDs.compactMap { itemByID[$0] }
+        }
+        let result = LibraryRegroupResult(
+            personIndex: personIndex,
+            itemByID: itemByID,
+            sections: output.sections,
+            unfoldedSectionItems: Dictionary(output.unfolded.map { ($0.id, $0.itemIDs) }, uniquingKeysWith: { first, _ in first }),
+            stackCounts: output.stackCounts,
+            visibleCount: output.visibleIDs.count,
+            gridSections: output.sections.map(\.itemIDs),
+            viewerItemIDs: output.unfolded.flatMap(\.itemIDs),
+            sectionItems: sectionItemsByID,
+            sectionDayKeys: output.sectionDayKeys,
+            publishedIDs: output.publishedIDs,
+            filteredIDs: output.filteredIDs,
+            unfolded: output.unfolded,
+            baseKey: baseKey,
+            photoFaceRevision: photoFaceRevision,
+            stackGeneration: stacks.generation
+        )
+        show(result)
+        Self.lastRegroup = (key: key, result: result)
+        #if DEBUG
+        step("show")
+        #endif
+        return true
+    }
+
+    /// The full regroup on the main thread, for filters the background pass
+    /// does not cover (possible screenshots, tags, a search the index could
+    /// not answer).
+    private func regroupOnMainThread(key: Int, baseKey: Int, photoFaceRevision: Int) {
+        #if DEBUG
+        var stepStarted: CFTimeInterval = CACurrentMediaTime()
+        let step: (String) -> Void = { (name: String) -> Void in
+            PageProbe.tally("regroup step: " + name, seconds: CACurrentMediaTime() - stepStarted)
+            stepStarted = CACurrentMediaTime()
+        }
+        #endif
         // `allItems` builds a new array each time it is read.
         let all = allItems
         #if DEBUG
         step("allItems")
         #endif
-        let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
+        let personIndex: [String: Set<String>] = currentPersonIndex()
         cachedPersonIndex = personIndex
         #if DEBUG
         step("person index")

@@ -114,6 +114,10 @@ final class LibraryStore {
     private(set) var regularItems: [MediaItem] = []
     private(set) var screenshotItems: [MediaItem] = []
     private(set) var itemsByID: [String: MediaItem] = [:]
+    /// The string ids of `regularItems` and `screenshotItems`, in the same
+    /// order, so a page can walk the photos without reading a model.
+    @ObservationIgnored private(set) var regularIDs: [String] = []
+    @ObservationIgnored private(set) var screenshotIDs: [String] = []
     /// Photos in Recently Deleted, most recently deleted first.
     private(set) var deletedItems: [MediaItem] = []
     /// Every face, by id.
@@ -250,6 +254,44 @@ final class LibraryStore {
         guard expected == photoFaceRevision &+ 1 else { return nil }
         return result
     }
+    /// Where the log of edited photos stands: a cache of photo fields keeps
+    /// one and later asks `photosEdited(since:)` what to read again.
+    struct PhotoEditMark: Equatable, Sendable {
+        let generation: Int
+        let position: Int
+    }
+
+    /// Every photo whose fields (`hash(of:)`) changed or that was removed,
+    /// oldest first, whatever the revisions did. A full fetch starts a new
+    /// generation; a long log drops its oldest half.
+    @ObservationIgnored private var photoEditLog: [String] = []
+    @ObservationIgnored private var photoEditLogStart = 0
+    @ObservationIgnored private var photoEditGeneration = 0
+    static let photoEditLogLimit = 120_000
+
+    var photoEditMark: PhotoEditMark {
+        PhotoEditMark(generation: photoEditGeneration, position: photoEditLogStart + photoEditLog.count)
+    }
+
+    /// The string ids of the photos edited or removed since `mark`. Nil when
+    /// that is no longer known (a full fetch, or the log dropped that part):
+    /// the caller reads every photo again.
+    func photosEdited(since mark: PhotoEditMark) -> Set<String>? {
+        guard mark.generation == photoEditGeneration, mark.position >= photoEditLogStart else { return nil }
+        let end: Int = photoEditLogStart + photoEditLog.count
+        guard mark.position <= end else { return nil }
+        return Set(photoEditLog[(mark.position - photoEditLogStart)...])
+    }
+
+    private func notePhotoEdited(_ id: String) {
+        photoEditLog.append(id)
+        if photoEditLog.count > Self.photoEditLogLimit {
+            let dropped: Int = photoEditLog.count / 2
+            photoEditLog.removeFirst(dropped)
+            photoEditLogStart += dropped
+        }
+    }
+
     /// How many batches were applied and how many full fetches ran; for tests
     /// and the page probe. A batch applied from its own changes counts here
     /// but not in `fullFetchCount`.
@@ -431,6 +473,10 @@ final class LibraryStore {
         sliceTask = nil
         sliceTouched = nil
         guard let context else { return }
+        // Every photo is read again, so caches of photo fields start over.
+        photoEditGeneration &+= 1
+        photoEditLog = []
+        photoEditLogStart = 0
 
         // A typed descriptor and a typed result per fetch: the CI compilers
         // time out on a long one-line `fetch(FetchDescriptor(…))`.
@@ -937,7 +983,10 @@ final class LibraryStore {
             stackLiveSum &+= stack
             stackLiveCount += 1
         }
-        if oldHash != hash { touched.changedPhotoIDs.insert(model.id) }
+        if oldHash != hash {
+            touched.changedPhotoIDs.insert(model.id)
+            notePhotoEdited(model.id)
+        }
 
         let existed = itemByPID[id] != nil
         if let oldKeys = itemKeys[id], existed {
@@ -959,6 +1008,8 @@ final class LibraryStore {
     }
 
     private func removePhoto(_ id: PersistentIdentifier, touched: inout Touched) {
+        // The recorded id: a removed model must not be read.
+        if let photoID = itemKeys[id]?.id { notePhotoEdited(photoID) }
         if let old = itemHash.removeValue(forKey: id) { itemSum &-= old }
         if let old = layoutHash.removeValue(forKey: id) { layoutSum &-= old }
         let wasLive: Bool = itemKeys[id]?.deletedAt == nil
@@ -1217,6 +1268,8 @@ final class LibraryStore {
         if !regularItems.elementsEqual(regular, by: { $0 === $1 }) { regularItems = regular }
         if !screenshotItems.elementsEqual(screenshots, by: { $0 === $1 }) { screenshotItems = screenshots }
         if !deletedItems.elementsEqual(goneItems, by: { $0 === $1 }) { deletedItems = goneItems }
+        regularIDs = live.filter { !$0.keys.isScreenshot }.map(\.keys.id)
+        screenshotIDs = live.filter { $0.keys.isScreenshot }.map(\.keys.id)
         if byID.count != itemsByID.count || byID.contains(where: { itemsByID[$0.key] !== $0.value }) {
             itemsByID = byID
         }

@@ -161,6 +161,8 @@ struct ContentView: View {
             .toolbarBackground(.visible, for: .windowToolbar)
         }
         .frame(minWidth: 900, minHeight: 600)
+        // Folders and photos dragged in from Finder are imported.
+        .modifier(ImportDropTarget())
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
             if libraryState.windowWidth != width { libraryState.windowWidth = width }
         }

@@ -91,9 +91,50 @@ enum ImportSources {
         }()
         source.lastImportedAt = now
         if source.bookmarkData == nil {
-            source.bookmarkData = try? folder.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+            source.bookmarkData = folderBookmark(folder)
         }
         return source
+    }
+
+    /// An imported folder that moved, at its new place: the same source, so
+    /// its photos stay together, with the new location and bookmark. `nil`
+    /// when there is no such folder source of `accountID`.
+    static func relocate(sourceID: String, to folder: URL, accountID: String = MomentsAccount.localID, now: Date = .now, context: ModelContext) -> ImportSource? {
+        let folderKind = ImportSource.Kind.folder.rawValue
+        guard let source = (try? context.fetch(FetchDescriptor<ImportSource>(predicate: #Predicate {
+            $0.id == sourceID && $0.kindRaw == folderKind && $0.ownerAccountID == accountID
+        })))?.first else { return nil }
+        source.locationKey = locationKey(for: folder)
+        source.name = folder.lastPathComponent
+        source.bookmarkData = folderBookmark(folder)
+        source.lastImportedAt = now
+        return source
+    }
+
+    /// A security-scoped bookmark where the system makes one, else a plain one.
+    static func folderBookmark(_ folder: URL) -> Data? {
+        (try? folder.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil))
+            ?? (try? folder.bookmarkData())
+    }
+
+    /// Imported folders with what says where they are (a bookmark, else the
+    /// path they were imported from), for checking which can still be found.
+    static func folderLocations(accountID: String = MomentsAccount.localID, context: ModelContext) -> [(id: String, name: String, bookmark: Data?, path: String)] {
+        let folderKind = ImportSource.Kind.folder.rawValue
+        let sources = (try? context.fetch(FetchDescriptor<ImportSource>(predicate: #Predicate {
+            $0.kindRaw == folderKind && $0.ownerAccountID == accountID
+        }))) ?? []
+        return sources.compactMap { source in
+            source.locationKey.map { (id: source.id, name: source.name, bookmark: source.bookmarkData, path: $0) }
+        }
+    }
+
+    /// Saves a fresh bookmark for a folder that was found with an out-of-date one.
+    static func refreshBookmark(sourceID: String, folder: URL, context: ModelContext) {
+        guard let source = (try? context.fetch(FetchDescriptor<ImportSource>(predicate: #Predicate { $0.id == sourceID })))?.first,
+              let fresh = folderBookmark(folder) else { return }
+        source.bookmarkData = fresh
+        source.locationKey = locationKey(for: folder)
     }
 
     /// The one Apple Photos source of `accountID`, made when first needed.

@@ -1343,6 +1343,11 @@ private struct LibraryPhotoMenu: ViewModifier {
                        : String(localized: "Adjust Date and Time…")) {
                     selection.adjustDateAndTime(for: item.id)
                 }
+                Button(selection.isSelected(item.id) && selection.selectedItemIDs.count > 1
+                       ? String(localized: "Set Location of \(selection.selectedItemIDs.count) Photos…")
+                       : String(localized: "Set Location…")) {
+                    selection.setLocation(for: item.id)
+                }
                 if let tripID = item.tripID {
                     Button(String(localized: "Show Trip")) { selection.showTrip(tripID) }
                 }

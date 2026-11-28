@@ -14,6 +14,7 @@ struct MapScreen: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(PhotoStackModel.self) private var stacks
     @Environment(LibraryStore.self) private var store
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // The map's photos and places come from the shared store, which fetches
     // them once for every page.
@@ -74,6 +75,17 @@ struct MapScreen: View {
     /// The visited-countries input, rebuilt with the snapshot, not in `body`.
     @State private var worldInput: FootprintsInput?
     @State private var itemsByID: [String: MediaItem] = [:]
+    /// Photos whose pin stands where a person put it, not the camera.
+    @State private var manualIDs: Set<String> = []
+    /// The hand-set coordinates, read again only when the store changed, not
+    /// when the zoom moves the pins to another level.
+    /// Keyed on both revisions: a save that changes only an override moves
+    /// `groupSourcesRevision`, not `revision`.
+    @State private var manualCoordinates: (revision: Int, overrides: Int, points: [String: GeoPoint])?
+    /// Moves when a save changed only hand-set coordinates (a partner's
+    /// sync, an Undo), which does not move `store.revision`, so the pins
+    /// are built again. Not every override save: most change no coordinate.
+    @State private var manualGeneration = 0
     @State private var world = MapWorldState()
     /// Created once per screen; it reads its cache file from disk.
     @State private var geocodeResolver: FootprintsGeocodeResolver?
@@ -95,12 +107,22 @@ struct MapScreen: View {
         // The store bumps `revision` when anything the pins are built from
         // changes: a photo's time or place, a place's name or its rename.
         hasher.combine(store.revision)
+        hasher.combine(manualGeneration)
         // The photos this map was opened for, and the Library filters.
         hasher.combine(selection.mapScopeGeneration)
         hasher.combine(selection.libraryFiltersActive)
         if selection.libraryFiltersActive { hasher.combine(selection.visibleGeneration) }
         hasher.combine(viewModel.level(for: latitudeDelta))
         return hasher.finalize()
+    }
+
+    /// After a save that may have changed only overrides: reads the
+    /// hand-set coordinates once and builds the pins again when they moved.
+    private func refreshManualCoordinates() {
+        guard let cached = manualCoordinates else { return }
+        let points = ManualLocationIndex.coordinates(in: modelContext)
+        manualCoordinates = (store.revision, store.groupSourcesRevision, points)
+        if points != cached.points { manualGeneration &+= 1 }
     }
 
     private var selectedCluster: PlaceCluster? {
@@ -144,13 +166,21 @@ struct MapScreen: View {
             PageProbe.shellReady(token: PageProbe.phaseToken)
         }
         #endif
+        .onChange(of: store.groupSourcesRevision) { refreshManualCoordinates() }
         .task(id: snapshotKey) {
             #if DEBUG
             let probeToken = PageProbe.phaseToken
             #endif
             let scopeGeneration: Int = selection.mapScopeGeneration
             let scopedIDs: Set<String>? = Self.shownIDs(scope: selection.mapScope?.itemIDs, filtered: selection.filteredItemIDs)
-            let stops = viewModel.photoStops(from: items, visibleItemIDs: scopedIDs)
+            let manual: [String: GeoPoint]
+            if let cached = manualCoordinates, cached.revision == store.revision, cached.overrides == store.groupSourcesRevision {
+                manual = cached.points
+            } else {
+                manual = ManualLocationIndex.coordinates(in: modelContext)
+                manualCoordinates = (store.revision, store.groupSourcesRevision, manual)
+            }
+            let stops = viewModel.photoStops(from: items, visibleItemIDs: scopedIDs, manualCoordinates: manual)
             let delta = latitudeDelta
             let model = viewModel
             let entries = NearestPlaceIndex(places: places)
@@ -164,12 +194,13 @@ struct MapScreen: View {
             }.value
             guard !Task.isCancelled else { return }
             itemsByID = store.itemsByID
+            manualIDs = Set(manual.keys)
             clusterNames = built.names
             cachedSnapshot = built.snapshot
             keepSelectedCluster(in: built.snapshot)
             // Also clears the world grid and rebuilds both pin layers.
             refreshPinCounts()
-            let input = FootprintsCalculator.input(from: items, visibleItemIDs: scopedIDs)
+            let input = FootprintsCalculator.input(from: items, visibleItemIDs: scopedIDs, manualCoordinates: manual)
             if worldInput?.signature != input.signature { worldInput = input }
             #if DEBUG
             let segmentCount: Int = isWorldView ? globeSegments.count : visibleSegments.count
@@ -249,6 +280,7 @@ struct MapScreen: View {
             .clipped()
             .overlay(alignment: .top) { topBar }
             .overlay(alignment: .bottom) { bottomStrip }
+            .overlay(alignment: .bottomLeading) { manualLegend }
             #if DEBUG
             .background {
                 if MapCameraTrace.isEnabled { MapCameraTraceProbe() }
@@ -390,6 +422,7 @@ struct MapScreen: View {
         let photoCount = mergedCounts[mergedKey(cluster.id)]
             ?? pinCounts[cluster.id]
             ?? cluster.stopIDs.count
+        let isManual = isPlacedByHand(cluster)
         return Button {
             pinClicked(cluster)
         } label: {
@@ -417,6 +450,15 @@ struct MapScreen: View {
                             .offset(x: 7, y: -7)
                     }
                 }
+                // A hollow pin: every photo here was placed by hand.
+                .overlay(alignment: .bottomLeading) {
+                    if isManual {
+                        ManualLocationPin(size: 13)
+                            .padding(3)
+                            .background(Color.white, in: Circle())
+                            .offset(x: -6, y: 6)
+                    }
+                }
                 MapPinPointer()
                     .fill(isSelected ? Paper.accent : Color.white)
                     .frame(width: 12, height: 6)
@@ -430,11 +472,41 @@ struct MapScreen: View {
         .contentShape(Rectangle())
         .help(clusterDisplayName(cluster))
         .accessibilityLabel(clusterDisplayName(cluster))
-        .accessibilityValue(Text(String(localized: "\(photoCount) photos")))
+        .accessibilityValue(isManual
+            ? Text(String(localized: "\(photoCount) photos")) + Text(verbatim: ", ") + Text(String(localized: "Set by hand"))
+            : Text(String(localized: "\(photoCount) photos")))
         .accessibilityIdentifier("map.marker.\(cluster.stopIDs.first ?? cluster.id)")
     }
 
     // MARK: Overlays
+
+    private func isPlacedByHand(_ cluster: PlaceCluster) -> Bool {
+        !manualIDs.isEmpty && !cluster.stopIDs.isEmpty && cluster.stopIDs.allSatisfy(manualIDs.contains)
+    }
+
+    /// Says what the hollow pin means, only while the map shows both kinds
+    /// and no place's photos are open along the bottom.
+    @ViewBuilder
+    private var manualLegend: some View {
+        let shown = isWorldView ? worldClusters : visibleClusters
+        if !manualIDs.isEmpty, selectedCluster == nil,
+           shown.contains(where: isPlacedByHand), shown.contains(where: { !isPlacedByHand($0) }) {
+            HStack(spacing: 6) {
+                ManualLocationPin(size: 13)
+                Text(String(localized: "Set by hand"))
+                    .font(.caption)
+                    .foregroundStyle(Paper.ink)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Paper.raised.opacity(0.94), in: Capsule())
+            .padding(.leading, 12)
+            .padding(.bottom, 34)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("map.legend.manual")
+        }
+    }
 
     /// The countries card and the map controls share one row, so they can
     /// never overlap: when the window is narrow the buttons drop their words

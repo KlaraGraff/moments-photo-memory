@@ -154,6 +154,9 @@ struct MomentsApp: App {
                 if ProcessInfo.processInfo.arguments.contains("-MomentsUITestBurst") {
                     try? DemoSeeder.addSyntheticBurst(context: container.mainContext)
                 }
+                if ProcessInfo.processInfo.arguments.contains("-MomentsUITestUnlocated") {
+                    try? DemoSeeder.addSyntheticUnlocatedPhoto(context: container.mainContext)
+                }
             }
             if isUITesting || testStoreURL != nil, let count = Self.uiTestStressCount {
                 // -MomentsUITestStressNoTrip: no chapter, so the Library lists them by month.

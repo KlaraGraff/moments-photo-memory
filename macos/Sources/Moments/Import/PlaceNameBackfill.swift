@@ -34,9 +34,14 @@ struct PlaceNameBackfill: Sendable {
             predicate: #Predicate { $0.kindRaw == cityKind && $0.name == "" && $0.latitude != nil && $0.longitude != nil },
             sortBy: [SortDescriptor(\.id)]
         ))
-        guard !pending.isEmpty else { return 0 }
         do {
-            let named = try await name(pending, context: context)
+            let named = pending.isEmpty ? 0 : try await name(pending, context: context)
+            // After the cities: an area Set Location made under a city that
+            // already had its name, which the city pass never reaches. Not
+            // when the city pass stopped early: the geocoder is not answering.
+            if named == pending.count {
+                try await nameManualAreas(context: context)
+            }
             await geocodeCache.persist()
             return named
         } catch {
@@ -124,6 +129,69 @@ struct PlaceNameBackfill: Sendable {
     private func save(_ context: ModelContext) throws {
         guard context.hasChanges else { return }
         try context.save()
+    }
+
+    /// Areas that Set Location made under a city that already has its name.
+    /// The city pass names a city's areas with the city, so it never reaches
+    /// these; each is looked up at its own coordinate instead. Only places
+    /// Set Location made, so nothing the import made changes.
+    private static func unnamedManualAreas(in context: ModelContext) throws -> [Place] {
+        let areaKind = PlaceKind.area.rawValue
+        let descriptor = FetchDescriptor<Place>(
+            predicate: #Predicate { $0.kindRaw == areaKind && $0.name == "" && $0.latitude != nil && $0.longitude != nil },
+            sortBy: [SortDescriptor(\.id)]
+        )
+        return try context.fetch(descriptor).filter { area in
+            guard area.id.hasPrefix(ManualLocationEditing.placeIDPrefix), let city = area.parent else { return false }
+            return !city.name.isEmpty
+        }
+    }
+
+    private func nameManualAreas(context: ModelContext) async throws {
+        let pending = try Self.unnamedManualAreas(in: context)
+        guard !pending.isEmpty else { return }
+        var failures = 0
+        do {
+            for area in pending {
+                try Task.checkCancellation()
+                guard let latitude = area.latitude, let longitude = area.longitude else { continue }
+                let coordinate = GeoPoint(latitude: latitude, longitude: longitude)
+                var result = await geocodeCache.result(for: coordinate)
+                if result == nil {
+                    await pace()
+                    try Task.checkCancellation()
+                    let geocoder = self.geocoder
+                    do {
+                        result = try await ImportGeocodeGate.firstResult(within: timeout) {
+                            try await geocoder.reverseGeocode(coordinate: coordinate)
+                        }
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        result = nil
+                    }
+                    guard let found = result else {
+                        failures += 1
+                        if failures >= maxConsecutiveFailures { break }
+                        continue
+                    }
+                    failures = 0
+                    await geocodeCache.insert(found, for: coordinate)
+                }
+                guard let result else { continue }
+                // As the import names an area: its area, else the placeholder.
+                area.name = result.area ?? String(localized: "Unknown area")
+            }
+        } catch {
+            try? save(context)
+            throw error
+        }
+        try save(context)
+    }
+
+    /// True while an area Set Location made still waits for its name.
+    static func hasUnnamedManualAreas(in container: ModelContainer) throws -> Bool {
+        try !unnamedManualAreas(in: ModelContext(container)).isEmpty
     }
 
     /// True while the store still holds cities without a name, so a run that
@@ -273,6 +341,7 @@ final class PlaceNameBackfillScheduler {
             // (it can name cities itself and must not change the answer).
             let cancelled = Task.isCancelled
             let remaining = !cancelled && ((try? PlaceNameBackfill.hasUnnamedCities(in: container)) ?? false)
+            let areasRemaining = !cancelled && ((try? PlaceNameBackfill.hasUnnamedManualAreas(in: container)) ?? false)
             // Then trips still named by date only get their places in the name.
             // The final pass waits too (the T1d fix): a trip renamed while only
             // some of its cities have names keeps that partial name forever,
@@ -281,7 +350,7 @@ final class PlaceNameBackfillScheduler {
                 _ = try? await TripNameBackfill(geocoder: backfill.geocoder, geocodeCache: backfill.geocodeCache)
                     .run(container: container, onlyFullyNamed: remaining)
             }
-            await self?.finished(current, named: named, retryNeeded: remaining)
+            await self?.finished(current, named: named, retryNeeded: remaining || areasRemaining)
         }
     }
 

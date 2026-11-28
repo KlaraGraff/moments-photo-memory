@@ -52,12 +52,7 @@ struct PhotoInfoPanel: View {
                     // shows every photo taken here.
                     VStack(alignment: .leading, spacing: 6) {
                         placeField
-                        if let latitude = item.latitude, let longitude = item.longitude {
-                            PhotoMiniMap(stops: [TripRouteStop(name: "", latitude: latitude, longitude: longitude)], width: 150, height: 72) {
-                                selection.showOnMap(item.id, title: item.namedPlace ?? String(localized: "Map"))
-                            }
-                            .accessibilityIdentifier("viewer.place.map")
-                        }
+                        locationLine
                         if let name = item.namedPlace {
                             Button(String(localized: "Photos taken here")) {
                                 PlaceClue.showPhotos(at: name, store: store, selection: selection)
@@ -178,6 +173,74 @@ struct PhotoInfoPanel: View {
                     .foregroundStyle(LibraryPalette.muted)
             }
         }
+    }
+
+    /// Where the photo stands: the small map and whether the camera or a
+    /// person put it there, with Change, Clear or Use Camera Location. A
+    /// photo with no location offers Set on Map.
+    @ViewBuilder
+    private var locationLine: some View {
+        let manual = item.manualLocation?.point
+        if let point = manual ?? item.cameraLocation {
+            PhotoMiniMap(stops: [TripRouteStop(name: "", latitude: point.latitude, longitude: point.longitude)], width: 150, height: 72) {
+                selection.showOnMap(item.id, title: item.namedPlace ?? String(localized: "Map"))
+            }
+            .accessibilityIdentifier("viewer.place.map")
+            HStack(spacing: 5) {
+                if manual != nil {
+                    ManualLocationPin(size: 11)
+                    Text(String(localized: "Set by hand"))
+                        .accessibilityIdentifier("viewer.location.manual")
+                } else {
+                    Text(String(localized: "Camera location"))
+                }
+                Menu {
+                    Button(String(localized: "Change Location…")) { selection.locationItemIDs = [item.id] }
+                    if hasOwnManualLocation {
+                        if item.cameraLocation != nil {
+                            Button(String(localized: "Use Camera Location")) { clearLocation() }
+                        } else {
+                            Button(String(localized: "Clear Location")) { clearLocation() }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.caption)
+                        .foregroundStyle(LibraryPalette.muted)
+                        .frame(width: 18, height: 14)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help(String(localized: "Change Location…"))
+                .accessibilityLabel(String(localized: "Change Location…"))
+                .accessibilityIdentifier("viewer.location.menu")
+            }
+            .font(.caption)
+            .foregroundStyle(LibraryPalette.muted)
+        } else {
+            HStack(spacing: 6) {
+                Text(String(localized: "No location"))
+                    .foregroundStyle(LibraryPalette.muted)
+                Button(String(localized: "Set on Map…")) { selection.locationItemIDs = [item.id] }
+                    .buttonStyle(.link)
+                    .accessibilityIdentifier("viewer.location.set")
+            }
+            .font(.caption)
+        }
+    }
+
+    /// Only this person's own hand-set location can be taken off here.
+    private var hasOwnManualLocation: Bool {
+        item.localPlaceOverride?.latitude != nil && item.localPlaceOverride?.longitude != nil
+    }
+
+    private func clearLocation() {
+        if let undo = ManualLocationEditing.clearLocation(on: [item], context: modelContext) {
+            selection.recordCorrection(undo, context: modelContext)
+        }
+        placeText = item.namedPlace ?? ""
     }
 
     private var correctedFrom: String? {

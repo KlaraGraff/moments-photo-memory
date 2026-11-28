@@ -242,19 +242,23 @@ struct FootprintsSnapshot: Equatable {
 }
 
 enum FootprintsCalculator {
-    static func input(from items: [MediaItem], visibleItemIDs: Set<String>?) -> FootprintsInput {
+    /// `manualCoordinates` are the hand-set locations, which win over the
+    /// camera's, so a photo placed by hand counts toward its country and city.
+    static func input(from items: [MediaItem], visibleItemIDs: Set<String>?, manualCoordinates: [String: GeoPoint] = [:]) -> FootprintsInput {
         let stops = items.compactMap { item -> PhotoStop? in
-            guard visibleItemIDs?.contains(item.id) ?? true,
-                  let latitude = item.latitude,
-                  let longitude = item.longitude,
-                  latitude.isFinite,
-                  longitude.isFinite else {
+            guard visibleItemIDs?.contains(item.id) ?? true else { return nil }
+            let coordinate: GeoPoint
+            if let manual = manualCoordinates[item.id] {
+                coordinate = manual
+            } else if let latitude = item.latitude, let longitude = item.longitude, latitude.isFinite, longitude.isFinite {
+                coordinate = GeoPoint(latitude: latitude, longitude: longitude)
+            } else {
                 return nil
             }
             return PhotoStop(
                 id: item.id,
                 date: item.effectiveCaptureDate ?? .distantPast,
-                coordinate: GeoPoint(latitude: latitude, longitude: longitude)
+                coordinate: coordinate
             )
         }
         .sorted {

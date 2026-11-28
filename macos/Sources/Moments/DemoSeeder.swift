@@ -175,6 +175,34 @@ public enum DemoSeeder {
     }
     #endif
 
+    #if DEBUG
+    /// UI tests: one photo the camera gave no location and no place, an
+    /// hour after the newest demo photo and in its chapter (so it shows
+    /// beside it), for Set Location.
+    public static func addSyntheticUnlocatedPhoto(context: ModelContext) throws {
+        let items = try context.fetch(FetchDescriptor<MediaItem>())
+        guard !items.contains(where: { $0.id == "demo-unlocated-1" }),
+              let newest = items.filter({ $0.captureDate != nil }).max(by: { $0.captureDate! < $1.captureDate! }),
+              let date = newest.captureDate?.addingTimeInterval(3_600) else { return }
+        let item = MediaItem(
+            id: "demo-unlocated-1",
+            captureDate: date,
+            latitude: nil,
+            longitude: nil,
+            kind: .photo,
+            width: 1_600,
+            height: 1_200,
+            source: .demo,
+            title: "Synthetic photo without a location",
+            tripID: newest.tripID,
+            trip: newest.trip
+        )
+        context.insert(item)
+        newest.trip?.items.append(item)
+        try context.save()
+    }
+    #endif
+
     public static func seedIfNeeded(context: ModelContext, bundle: Bundle = .main) throws {
         guard let url = bundle.url(forResource: "sample-data", withExtension: "json") else { return }
         try seedIfNeeded(context: context, data: Data(contentsOf: url))

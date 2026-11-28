@@ -107,6 +107,12 @@ final class ChapterJudgeTests: XCTestCase {
         XCTAssertFalse(verdict.alternatives.contains(verdict.kind))
         XCTAssertLessThanOrEqual(verdict.alternatives.count, 3)
         XCTAssertFalse(verdict.reasons.isEmpty)
+
+        // A label that only cleans up to the kind is no alternative either.
+        var book = ChapterJudgeBook()
+        let stored = ChapterVerdict(kind: .custom("Visit"), confidence: .medium, source: .model, alternatives: [.custom(" Visit "), .trip])
+        book.record(stored, for: "a", signature: "s", now: Date(timeIntervalSince1970: 0))
+        XCTAssertEqual(book.verdict(for: "a")?.alternatives, [.trip])
     }
 
     func testCombineTrustsTheModelButWeighsTheRules() {
@@ -188,6 +194,71 @@ final class ChapterJudgeTests: XCTestCase {
         book.forgetExample("t1")
         XCTAssertTrue(book.examples.isEmpty)
         XCTAssertEqual(book.verdict(for: "t1")?.kind, .custom("Visit"))
+    }
+
+    func testSureOrdinaryDaysAreRemovedOrAskedAndUndoKeepsLaterAnswers() {
+        let evidence = SyntheticSegments.library()[0].evidence
+        let now = evidence.end
+        var book = ChapterJudgeBook()
+        book.record(ChapterVerdict(kind: .daily, confidence: .high, source: .rules), for: "sure", signature: "s", now: now)
+        book.record(ChapterVerdict(kind: .daily, confidence: .medium, source: .rules), for: "unsure", signature: "s", now: now)
+        book.record(ChapterVerdict(kind: .trip, confidence: .high, source: .rules), for: "trip", signature: "s", now: now)
+        book.decide(.daily, for: "theirs", title: "Site", evidence: evidence, now: now)
+        // Only the judge's sure answer, never the person's own.
+        XCTAssertEqual(book.removals(among: ["sure", "unsure", "trip", "theirs", "gone"]), ["sure"])
+        var off = book
+        off.enabled = false
+        XCTAssertTrue(off.removals(among: ["sure"]).isEmpty)
+
+        // A trip someone touched, or one brought back, is asked about instead.
+        var asked = book
+        asked.askInstead(["sure", "theirs"])
+        XCTAssertTrue(asked.removals(among: ["sure"]).isEmpty)
+        XCTAssertTrue(asked.isQuestion("sure", now: now))
+        XCTAssertEqual(asked.verdict(for: "theirs"), book.verdict(for: "theirs"))
+
+        // Undo puts back one chapter's entry and keeps a later answer.
+        let before = book.entries(for: ["trip"])
+        book.decide(.daily, for: "trip", title: "Bay", evidence: evidence, now: now)
+        book.decide(.businessTrip, for: "unsure", title: "Inland", evidence: evidence, now: now)
+        book.askLevel = .less
+        book.restore(before)
+        XCTAssertEqual(book.verdict(for: "trip")?.source, .rules)
+        XCTAssertFalse(book.examples.contains { $0.id == "trip" })
+        XCTAssertEqual(book.verdict(for: "unsure"), .person(.businessTrip))
+        XCTAssertTrue(book.examples.contains { $0.id == "unsure" })
+        XCTAssertEqual(book.askLevel, .less)
+        // A chapter that had no entry has none again.
+        let none = book.entries(for: ["new"])
+        book.record(ChapterVerdict(kind: .trip, confidence: .high, source: .rules), for: "new", signature: "s", now: now)
+        book.restore(none)
+        XCTAssertNil(book.verdict(for: "new"))
+    }
+
+    func testAskingFirstOutlivesJudgingAgain() {
+        let now = friday
+        var book = ChapterJudgeBook()
+        let sure = ChapterVerdict(kind: .daily, confidence: .high, source: .rules)
+        book.record(sure, for: "x", signature: "old", now: now)
+        XCTAssertEqual(book.removals(among: ["x"]), ["x"])
+        book.askInstead(["x"])
+        // Judged again after the places or the model changed: still asked.
+        book.record(sure, for: "x", signature: "new", now: now.addingTimeInterval(60))
+        XCTAssertEqual(book.removals(among: ["x"]), [])
+        XCTAssertTrue(book.isQuestion("x", now: now.addingTimeInterval(60)))
+        // Stored and read back, the mark stays.
+        XCTAssertEqual(ChapterJudgeBook.decode(book.encoded()).removals(among: ["x"]), [])
+        // A question put off stays put off when the same answer comes again.
+        book.verdicts["x"]?.deferredAt = now
+        book.record(sure, for: "x", signature: "newer", now: now.addingTimeInterval(120))
+        XCTAssertFalse(book.isQuestion("x", now: now.addingTimeInterval(120)))
+        // A closed check stays closed.
+        let fairly = ChapterVerdict(kind: .trip, confidence: .medium, source: .rules)
+        book.record(fairly, for: "y", signature: "a", now: now)
+        XCTAssertTrue(book.showsCheck("y", now: now))
+        book.verdicts["y"]?.checkClosedAt = now
+        book.record(fairly, for: "y", signature: "b", now: now.addingTimeInterval(60))
+        XCTAssertFalse(book.showsCheck("y", now: now.addingTimeInterval(60)))
     }
 
     func testBookStorageRoundTripsAndToleratesGaps() {

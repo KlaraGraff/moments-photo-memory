@@ -14,6 +14,7 @@ struct SettingsView: View {
             AuthorNamesSection()
             if hasStore { KnownPlacesSettingsSection() }
             AISettingsSections()
+            if hasStore { ChapterJudgeSettingsSection() }
             if hasStore { BackupSettingsSection() }
         }
         .formStyle(.grouped)

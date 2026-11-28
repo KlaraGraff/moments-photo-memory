@@ -585,7 +585,7 @@ final class MomentsUITests: XCTestCase {
         element(in: app, identifier: "library.person.Robin").click()
         let keptFace = NSPredicate(format: "value == %@", groupPickedID)
         XCTAssertEqual(XCTWaiter().wait(for: [expectation(for: keptFace, evaluatedWith: element(in: app, identifier: "library.scope.face"))], timeout: launchTimeout), .completed, "Naming the group lost the face picked for it")
-        element(in: app, identifier: "library.scope.close").click()
+        element(in: app, identifier: "window.back").click()
         XCTAssertTrue(heading.waitForNonExistence(timeout: launchTimeout))
 
         // A name someone else has: the app asks before joining the two, and

@@ -75,27 +75,34 @@ public final class SaveGuard: @unchecked Sendable {
             journal.record(event)
             onEvent?(event)
             lock.lock()
+            // First drop what is gone, so a new context at a freed one's
+            // address is not taken for it.
+            let goneBefore = pruneLocked()
             revision += 1
             var entry = pending[key] ?? Pending(target: target, site: event.site ?? "code", isRetryable: retryable, error: "")
             entry.target = target
             entry.isRetryable = entry.isRetryable || retryable
             entry.error = event.errorText ?? "error"
             pending[key] = entry
-            let problem = currentProblemLocked()
+            let (problem, dropped) = currentProblemLocked()
             lock.unlock()
+            logDropped(goneBefore + dropped)
             publish(problem)
             return false
         }
         lock.lock()
+        let goneBefore = pruneLocked()
         let wasPending = pending.removeValue(forKey: key) != nil
-        let problem = currentProblemLocked()
+        let (problem, dropped) = currentProblemLocked()
         lock.unlock()
+        logDropped(goneBefore + dropped)
         if wasPending {
             let event = DiagnosticEvent(.saving, "save-recovered", site: site)
             journal.record(event)
             onEvent?(event)
-            publish(problem)
         }
+        // Also when another context had gone meanwhile: the window hears it.
+        publish(problem)
         return true
     }
 
@@ -103,12 +110,18 @@ public final class SaveGuard: @unchecked Sendable {
     /// save that does not go through the guard): it has nothing unsaved now.
     public func markSaved(_ target: some SaveTarget) {
         lock.lock()
-        let wasPending = pending.removeValue(forKey: ObjectIdentifier(target)) != nil
+        let goneBefore = pruneLocked()
+        let entry = pending.removeValue(forKey: ObjectIdentifier(target))
+        let (problem, dropped) = currentProblemLocked()
         lock.unlock()
-        guard wasPending else { return }
-        let event = DiagnosticEvent(.saving, "save-recovered", site: "autosave")
-        journal.record(event)
-        onEvent?(event)
+        logDropped(goneBefore + dropped)
+        if let entry {
+            // The site of the save that failed: this is often Try Again or
+            // that same save, whose context announces it saved.
+            let event = DiagnosticEvent(.saving, "save-recovered", site: entry.site)
+            journal.record(event)
+            onEvent?(event)
+        }
         publish(problem)
     }
 
@@ -135,9 +148,10 @@ public final class SaveGuard: @unchecked Sendable {
     /// context that held unsaved changes has gone since.
     public var problem: SaveProblem? {
         lock.lock()
-        let problem = currentProblemLocked()
+        let (problem, dropped) = currentProblemLocked()
         let changed = problem != lastProblem
         lock.unlock()
+        logDropped(dropped)
         if changed { publish(problem) }
         return problem
     }
@@ -145,18 +159,29 @@ public final class SaveGuard: @unchecked Sendable {
     /// Whether anything is still unsaved, for a last try before quitting.
     public var hasUnsavedChanges: Bool { problem != nil }
 
-    private func currentProblemLocked() -> SaveProblem? {
-        let kept = pending.filter { $0.value.target != nil }
-        if kept.count < pending.count {
-            // Its context went away with the changes still in it.
-            let event = DiagnosticEvent(.saving, "save-dropped", count: pending.count - kept.count)
-            journal.record(event)
-            onEvent?(event)
-            pending = kept
-        }
-        guard let any = pending.values.first else { return nil }
+    /// The state now, and how many contexts went away with unsaved changes
+    /// since the last look (logged by the caller, after unlocking).
+    private func currentProblemLocked() -> (SaveProblem?, dropped: Int) {
+        let dropped = pruneLocked()
+        guard let any = pending.values.first else { return (nil, dropped) }
         let errorText = lastErrorTextLocked() ?? any.error
-        return SaveProblem(unsavedTargets: pending.count, errorText: errorText, revision: revision)
+        return (SaveProblem(unsavedTargets: pending.count, errorText: errorText, revision: revision), dropped)
+    }
+
+    /// Forgets contexts that went away; returns how many.
+    private func pruneLocked() -> Int {
+        let kept = pending.filter { $0.value.target != nil }
+        let dropped = pending.count - kept.count
+        pending = kept
+        return dropped
+    }
+
+    private func logDropped(_ dropped: Int) {
+        guard dropped > 0 else { return }
+        // Its context went away with the changes still in it.
+        let event = DiagnosticEvent(.saving, "save-dropped", count: dropped)
+        journal.record(event)
+        onEvent?(event)
     }
 
     private func lastErrorTextLocked() -> String? {

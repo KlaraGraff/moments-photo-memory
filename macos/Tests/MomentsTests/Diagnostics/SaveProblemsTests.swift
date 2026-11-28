@@ -149,6 +149,26 @@ final class SaveProblemsTests: XCTestCase {
         XCTAssertFalse(text.contains(memory.id), "only the first characters of an ID")
     }
 
+    func testARealFailedSaveReachesTheDiagnosticsFileAsACodeOnly() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let item = MediaItem(id: "diagnostics-real-failure", title: marker)
+        context.insert(item)
+        context.insert(Memory(text: marker, mediaItem: item))
+        let failure = failure
+        SaveProblems.guard.injectFailure = { _ in failure }
+        XCTAssertFalse(context.saveOrReport())
+
+        // The app's own journal, as Export Diagnostics reads it.
+        let text = DiagnosticsExport.report(context: context).text
+
+        XCTAssertTrue(text.contains("save-failed site=SaveProblemsTests.swift:"))
+        XCTAssertTrue(text.contains("NSCocoaErrorDomain/134030"))
+        XCTAssertFalse(text.contains("ZZSECRET"))
+        XCTAssertFalse(text.contains("湖边"))
+        XCTAssertFalse(text.contains("/Volumes"))
+    }
+
     func testTheLoggerUsesTheAppsOwnIdentifier() {
         XCTAssertEqual(MomentsLog.subsystem, "com.momentsphotomemory.Moments")
     }

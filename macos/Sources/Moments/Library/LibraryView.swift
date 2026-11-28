@@ -1515,7 +1515,8 @@ struct MemoryEditor: View {
         // the same photo (grid and viewer), which saves it itself.
         guard wasEdited else { return }
         let text = state.draft(for: item)
-        persist(text)
+        // No "Saved" mark (or AI step) when the save failed: the strip says so.
+        guard persist(text) else { return }
         guard let before = textAtFocus else { return }
         textAtFocus = nil
         guard before.trimmingCharacters(in: .whitespacesAndNewlines) != text.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
@@ -1532,10 +1533,12 @@ struct MemoryEditor: View {
         }
     }
 
-    private func persist(_ newText: String) {
+    /// False only when saving failed; the words then stay in the field.
+    @discardableResult
+    private func persist(_ newText: String) -> Bool {
         let memory = storedMemory
         let stored = memory.map(LibraryMemorySnapshot.init(memory:))
-        if let stored, !stored.isAuthoredByCurrentUser { return }
+        if let stored, !stored.isAuthoredByCurrentUser { return true }
         let decision = LibraryMemoryPersistence.decision(
             draft: newText,
             wasEdited: wasEdited,
@@ -1547,9 +1550,9 @@ struct MemoryEditor: View {
         switch decision {
         case .noChange:
             state.clearDraft(for: item)
-            return
+            return true
         case .conflict:
-            guard let memory, stored?.isAuthoredByCurrentUser == true else { return }
+            guard let memory, stored?.isAuthoredByCurrentUser == true else { return true }
             // Keep the version that arrived while this editor was open. The
             // current user's draft becomes the live text, while the losing
             // text remains available through the revision history.
@@ -1566,10 +1569,10 @@ struct MemoryEditor: View {
             memory.revision += 1
             savedMemory = memory
         case .delete:
-            guard let memory else { return }
+            guard let memory else { return true }
             modelContext.delete(memory)
         case .update:
-            guard let memory else { return }
+            guard let memory else { return true }
             if baseline != nil, LibraryMemoryPersistence.keepsPreviousText(previous: memory.text, new: newText, alreadyKept: keptPreviousText) {
                 modelContext.insert(MemoryRevision(
                     text: memory.text,
@@ -1607,10 +1610,12 @@ struct MemoryEditor: View {
             savedMemory = newMemory
         }
 
-        // On failure the draft stays in LibraryViewState, so nothing typed is lost.
-        if modelContext.saveOrReport() {
-            baseline = savedMemory.map(LibraryMemorySnapshot.init(memory:))
-            state.clearDraft(for: item)
-        }
+        // The change is in the context either way, so it is the new baseline
+        // (a later edit is not mistaken for someone else's). On failure the
+        // draft stays in LibraryViewState, so nothing typed is lost.
+        baseline = savedMemory.map(LibraryMemorySnapshot.init(memory:))
+        guard modelContext.saveOrReport() else { return false }
+        state.clearDraft(for: item)
+        return true
     }
 }

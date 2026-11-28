@@ -129,10 +129,27 @@ final class SaveGuardTests: XCTestCase {
         saving.markSaved(store)
         XCTAssertNil(saving.problem)
         XCTAssertNil(recorder.all.last ?? nil)
-        XCTAssertEqual(saving.journal.recent.last?.line, "saving save-recovered site=autosave")
+        // Logged at the save that failed.
+        XCTAssertEqual(saving.journal.recent.last?.line, "saving save-recovered site=a.swift:1")
         // Marking a store with nothing pending says nothing.
         saving.markSaved(store)
         XCTAssertEqual(recorder.all.count, 2)
+    }
+
+    func testAnotherStoresSaveTellsTheWindowWhenAFailedStoreIsGone() {
+        let saving = SaveGuard(journal: DiagnosticsJournal())
+        let recorder = ProblemRecorder()
+        saving.onChange = { recorder.append($0) }
+        var gone: FakeStore? = FakeStore()
+        saving.save(gone!, site: "a.swift:1", retryable: true)
+        gone = nil
+        let other = FakeStore()
+        other.failing = false
+        XCTAssertTrue(saving.save(other, site: "b.swift:2", retryable: true))
+        // Nobody read `problem` in between: the save itself said so.
+        XCTAssertEqual(recorder.all.count, 2)
+        XCTAssertNil(recorder.all.last ?? nil)
+        XCTAssertEqual(saving.journal.recent.last?.line, "saving save-dropped count=1")
     }
 
     func testTryingAgainThatStillFailsKeepsTheProblem() {

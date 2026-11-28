@@ -45,6 +45,7 @@ struct TripsScreen: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.undoManager) private var undoManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(SharingController.self) private var sharing: SharingController?
     /// The card to scroll back to when leaving a trip.
     @State private var returnTripID: String?
     /// Rebuilt only when the inputs change, not on every selection change or render.
@@ -65,6 +66,10 @@ struct TripsScreen: View {
     @State private var confirmingPlaces: [FoundPlace] = []
     @State private var placeBook = KnownPlaceStore.book()
     @State private var isConfirmingPlaces = false
+    /// The chapter judge: what each trip was, and the trips it asks about.
+    @State private var judge = ChapterJudgeRunner()
+    @State private var judgeBook = ChapterJudgeStore.book()
+    @State private var asking: [ChapterQuestion] = []
     /// Chapters that are not trips, built like trips, by "chapter.<id>".
     @State private var chapterDocs: [String: TimelineTrip] = [:]
     /// Moves each time `inputKey` changes.
@@ -265,7 +270,7 @@ struct TripsScreen: View {
     private var typesPresent: [ChapterType] {
         let present = Set(allChapters.filter { !$0.isUnsorted }.map { chapterType(of: $0) })
         let custom = present.filter { if case .custom = $0 { return true } else { return false } }.sorted { $0.label < $1.label }
-        return ChapterType.presets.filter(present.contains) + custom
+        return ChapterType.builtIn.filter(present.contains) + custom
     }
 
     private func chapterType(of chapter: TimelineTrip) -> ChapterType {
@@ -322,17 +327,27 @@ struct TripsScreen: View {
                     onNew: { isCreatingTrip = true }
                 )
                 .safeAreaInset(edge: .top, spacing: 0) {
-                    if let place = newPlace {
-                        NewPlaceBanner(
-                            place: place,
-                            onWork: { answer(place, role: .work) },
-                            onTrip: { answerTrip(place) },
-                            onLater: { answer(place, role: nil) }
-                        )
-                        .padding(.horizontal, 24)
-                        .padding(.top, 12)
-                        .transition(.opacity)
+                    VStack(spacing: 8) {
+                        if let place = newPlace {
+                            NewPlaceBanner(
+                                place: place,
+                                onWork: { answer(place, role: .work) },
+                                onTrip: { answerTrip(place) },
+                                onLater: { answer(place, role: nil) }
+                            )
+                        } else if judge.isRunning {
+                            ChapterJudgeProgressBanner(done: judge.done, total: judge.total)
+                        } else if !questionTrips.isEmpty {
+                            ChapterQuestionBanner(
+                                count: questionTrips.count,
+                                onLook: { asking = questionTrips.map(question(for:)) },
+                                onLater: deferQuestions
+                            )
+                        }
                     }
+                    .padding(.horizontal, 24)
+                    .padding(.top, newPlace != nil || judge.isRunning || !questionTrips.isEmpty ? 12 : 0)
+                    .transition(.opacity)
                 }
                 .transition(.opacity)
             }
@@ -347,12 +362,18 @@ struct TripsScreen: View {
         .animation(Motion.animation(Motion.settle, reduceMotion: reduceMotion), value: notice?.id)
         // ⌘Z already put things back; the note and its offer no longer apply.
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { _ in
+            judgeBook = ChapterJudgeStore.book()
             notice = nil
         }
         // However the chapter closed (the window's back button too), the
         // shelf comes back at its card.
         .onChange(of: selection.openTripID) { (old: String?, new: String?) in
             if new == nil, let old { returnTripID = old }
+            if new == nil { settleOrdinaryDays() }
+        }
+        // Ordinary days left while another change's Undo was up.
+        .onChange(of: notice == nil) { (_: Bool, cleared: Bool) in
+            if cleared { settleOrdinaryDays() }
         }
         #if DEBUG
         .onAppear {
@@ -385,10 +406,21 @@ struct TripsScreen: View {
             )
             .interactiveDismissDisabled()
         }
-        .task(id: store.photoPlaceRevision) { await findPlaces() }
+        .task(id: store.photoPlaceRevision) {
+            await findPlaces()
+            await judgeChapters()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .libraryDecisionChanged)) { note in
-            guard note.object as? String == KnownPlaceStore.key else { return }
-            placeBook = KnownPlaceStore.book()
+            switch note.object as? String {
+            case KnownPlaceStore.key: placeBook = KnownPlaceStore.book()
+            case ChapterJudgeStore.key: judgeBook = ChapterJudgeStore.book()
+            default: break
+            }
+        }
+        .sheet(isPresented: Binding(get: { !asking.isEmpty }, set: { if !$0 { asking = [] } })) {
+            ChapterAskSheet(questions: asking, onAnswer: { setKind($0.id, $1) }, onLater: { question in
+                judgeBook = ChapterJudgeStore.change { $0.deferQuestion(for: question.id, now: .now) }
+            })
         }
         .sheet(isPresented: $isCreatingTrip) {
             ChapterNewSheet(
@@ -710,7 +742,11 @@ struct TripsScreen: View {
                 if case let .group(group) = target, !UserGroupRuleEngine.canDelete(group) { return }
                 let name = target.name
                 closeTrip()
-                edit(String(localized: "Deleted “\(name)”")) { session in
+                // Brought back with Undo, the judge asks about it rather
+                // than taking it away again.
+                var deleted: ChapterJudgeUndo?
+                if case let .trip(trip) = target { deleted = .ask([trip.id]) }
+                edit(String(localized: "Deleted “\(name)”"), judgeUndo: deleted) { session in
                     switch target {
                     case let .trip(trip): TripEdits.delete(trip, session: session)
                     case let .group(group): TripEdits.delete(group, session: session)
@@ -741,7 +777,10 @@ struct TripsScreen: View {
                 choices[tripID] = itemID
                 coverStore = TripCoverChoice.encode(choices)
                 TripAssignmentLocks.store.set(coverStore, forKey: TripCoverChoice.defaultsKey)
-            }
+            },
+            judged: judgeState(for:),
+            setKind: { trip, kind in _ = setKind(trip.id, kind) },
+            confirmKind: confirmKind
         )
     }
 
@@ -758,11 +797,13 @@ struct TripsScreen: View {
         }
     }
 
-    private func edit(_ message: String, _ change: (TripEdits.Session) -> Void) {
+    private func edit(_ message: String, judgeUndo: ChapterJudgeUndo? = nil, _ change: (TripEdits.Session) -> Void) {
         let session = TripEdits.Session(context: modelContext)
         change(session)
         guard !session.undo.isEmpty else { return }
-        post(TripNotice(message: message, undo: session.undo))
+        var notice = TripNotice(message: message, undo: session.undo)
+        notice.judgeUndo = judgeUndo
+        post(notice)
     }
 
     private func changeDates(_ target: ChapterTarget, start: Date, end: Date) {
@@ -838,6 +879,7 @@ struct TripsScreen: View {
         undoManager?.removeAllActions(withTarget: selection)
         TripEdits.undo(notice.undo, context: modelContext)
         if let places = notice.placesBefore { KnownPlaceStore.save(places) }
+        if let judged = notice.judgeUndo { judgeBook = judged.apply() }
         self.notice = nil
     }
 
@@ -847,14 +889,143 @@ struct TripsScreen: View {
         let context = modelContext
         let undo = notice.undo
         let places = notice.placesBefore
+        let judged = notice.judgeUndo
         undoManager?.registerUndo(withTarget: selection) { _ in
             MainActor.assumeIsolated {
                 TripEdits.undo(undo, context: context)
                 if let places { KnownPlaceStore.save(places) }
+                if let judged { judged.apply() }
             }
         }
         undoManager?.setActionName(notice.message)
         self.notice = notice
+    }
+
+    // MARK: Chapter kinds
+
+    /// Trips the judge is not sure about and has not put off, newest first.
+    private var questionTrips: [Trip] {
+        let now = Date.now
+        return trips
+            .filter { judgeBook.isQuestion($0.id, now: now) && !$0.items.isEmpty }
+            .sorted { ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast) }
+    }
+
+    private func question(for trip: Trip) -> ChapterQuestion {
+        let items = trip.orderedItems
+        let stills = items.filter { $0.kind != .video }
+        let step = max(1, stills.count / 4)
+        let photos = stride(from: 0, to: stills.count, by: step).prefix(4).map { stills[$0] }
+        let verdict = judgeBook.verdict(for: trip.id) ?? ChapterVerdict(kind: .trip, confidence: .low, source: .rules)
+        var options = [verdict.kind]
+        for kind in verdict.alternatives + judgeBook.candidates where !options.contains(kind) {
+            options.append(kind)
+        }
+        return ChapterQuestion(
+            id: trip.id,
+            place: ChapterEvidenceBuilder.placeName(of: items),
+            photos: photos,
+            facts: ChapterJudgeText.facts(start: trip.startDate, end: trip.endDate, verdict: verdict),
+            verdict: verdict,
+            options: options
+        )
+    }
+
+    /// "Later" on the banner: the questions wait a week.
+    private func deferQuestions() {
+        let ids = questionTrips.map(\.id)
+        judgeBook = ChapterJudgeStore.change { book in
+            for id in ids { book.deferQuestion(for: id, now: .now) }
+        }
+    }
+
+    private func judgeState(for tripID: String) -> ChapterJudgeState? {
+        guard let stored = judgeBook.verdicts[tripID], let kind = judgeBook.shownKind(for: tripID), kind != .daily else { return nil }
+        let others = judgeBook.candidates.filter { $0 != kind }
+        return ChapterJudgeState(
+            kind: kind,
+            verdict: stored.verdict,
+            action: judgeBook.action(for: tripID),
+            showsCheck: judgeBook.showsCheck(tripID, now: .now),
+            choices: Array(others.prefix(4)) + [.daily]
+        )
+    }
+
+    /// Judges the trips that need it, then settles the ones it is sure were
+    /// ordinary days.
+    private func judgeChapters() async {
+        guard !items.isEmpty, !ProcessInfo.processInfo.arguments.contains("-MomentsUITesting") else { return }
+        await judge.run(trips: trips, places: KnownPlaceStore.book(), found: foundPlaces)
+        guard !Task.isCancelled else { return }
+        settleOrdinaryDays()
+    }
+
+    /// Trips the judge is sure were ordinary days, from any pass: removed
+    /// with one Undo when nobody touched them, asked about when someone did.
+    /// One that is open, or waits behind another change's Undo, is left for
+    /// the next look.
+    private func settleOrdinaryDays() {
+        let candidates = ChapterJudgeStore.book().removals(among: trips.map(\.id))
+        guard !candidates.isEmpty else {
+            judgeBook = ChapterJudgeStore.book()
+            return
+        }
+        let remembered = TripRegrouping.rememberedTripIDs(context: modelContext)
+        let covered = Set(TripCoverChoice.decode(coverStore).keys)
+        let locked = TripAssignmentLocks.lockedIDs()
+        var remove: [Trip] = []
+        var ask: [String] = []
+        let byID = tripByID
+        for id in candidates {
+            guard let trip = byID[id] else { continue }
+            let touched = TripRegrouping.isTouched(trip, remembered: remembered, covered: covered, locked: locked)
+                || trip.confirmedAt != nil || sharing?.isShared(tripID: id) == true
+            if touched {
+                ask.append(id)
+            } else if selection.openTripID != id && notice == nil {
+                remove.append(trip)
+            }
+        }
+        if !ask.isEmpty { ChapterJudgeStore.change { $0.askInstead(ask) } }
+        judgeBook = ChapterJudgeStore.book()
+        guard !remove.isEmpty else { return }
+        let session = TripEdits.Session(context: modelContext)
+        // The judge's own change, not a hand correction.
+        session.pauseCorrectionLog()
+        for trip in remove { TripEdits.delete(trip, session: session) }
+        var notice = TripNotice(message: String(localized: "\(remove.count) stretches were daily life, not chapters"), undo: session.undo)
+        notice.judgeUndo = .ask(remove.map(\.id))
+        post(notice)
+    }
+
+    /// The person's answer: the trip is that kind from now on, and days
+    /// like it are judged by it. Ordinary days remove the trip, with Undo.
+    /// False only when a typed kind could not be kept; a trip that is gone
+    /// meanwhile needs no answer.
+    @discardableResult
+    private func setKind(_ tripID: String, _ kind: ChapterKind) -> Bool {
+        guard let trip = tripByID[tripID], !trip.isDeleted,
+              let evidence = ChapterJudgeEvidence.evidence(of: trip, places: placeBook, found: foundPlaces) else { return true }
+        let before = ChapterJudgeStore.book().entries(for: [tripID])
+        var kept = false
+        judgeBook = ChapterJudgeStore.change { kept = $0.decide(kind, for: trip.id, title: trip.effectiveName, evidence: evidence, now: .now) }
+        guard kept else { return false }
+        if kind == .daily {
+            let name = trip.effectiveName
+            if selection.openTripID == trip.id { closeTrip() }
+            let session = TripEdits.Session(context: modelContext)
+            TripEdits.delete(trip, session: session)
+            var notice = TripNotice(message: String(localized: "“\(name)” is daily life now."), undo: session.undo)
+            notice.judgeUndo = .restore(before)
+            post(notice)
+        }
+        return true
+    }
+
+    /// "Right" on the check: the judge's kind is the person's too.
+    private func confirmKind(_ trip: Trip) {
+        guard let kind = judgeBook.shownKind(for: trip.id) else { return }
+        setKind(trip.id, kind)
     }
 
     // MARK: Places
@@ -1028,6 +1199,22 @@ struct TripActions {
     /// Opens "This is not a trip" for the trip.
     var notTrip: (Trip) -> Void
     var setCover: (String, String) -> Void
+    /// What the chapter judge says about a trip, while it shows a kind.
+    var judged: (String) -> ChapterJudgeState?
+    /// The person picked the trip's kind.
+    var setKind: (Trip, ChapterKind) -> Void
+    /// The person said the judge's kind is right.
+    var confirmKind: (Trip) -> Void
+}
+
+/// A trip's kind as the chapter judge left it, for its page.
+struct ChapterJudgeState {
+    let kind: ChapterKind
+    let verdict: ChapterVerdict
+    let action: JudgeAction?
+    let showsCheck: Bool
+    /// The other kinds to change to, ordinary days last.
+    let choices: [ChapterKind]
 }
 
 /// The stored chapter behind a card or page: a trip, or another kind.
@@ -1037,14 +1224,16 @@ enum ChapterTarget {
 
     var type: ChapterType {
         switch self {
-        case .trip: .trip
+        // A trip shows what the chapter judge called it, once it is sure
+        // enough or the person said so.
+        case let .trip(trip): ChapterJudgeStore.shownType(for: trip.id) ?? .trip
         case let .group(group): group.chapterType
         }
     }
 
     var symbol: String {
         switch self {
-        case .trip: ChapterType.trip.defaultSymbol
+        case .trip: type.defaultSymbol
         case let .group(group): group.chapterSymbol
         }
     }
@@ -1090,6 +1279,29 @@ struct TripNotice: Identifiable {
     var offer: Offer?
     /// The places as they were, when the change also named a place.
     var placesBefore: KnownPlaceBook?
+    /// What Undo changes in the chapter judge's book, when the judge or an
+    /// answer to it removed the chapters.
+    var judgeUndo: ChapterJudgeUndo?
+}
+
+/// Undo for the chapter judge: only the chapters the change was about, so
+/// later answers about other chapters stay.
+enum ChapterJudgeUndo {
+    /// Chapters the judge removed come back as questions.
+    case ask([String])
+    /// The person's answer is taken back.
+    case restore(ChapterJudgeBook.Entries)
+
+    @MainActor
+    @discardableResult
+    func apply() -> ChapterJudgeBook {
+        ChapterJudgeStore.change { book in
+            switch self {
+            case let .ask(ids): book.askInstead(ids)
+            case let .restore(entries): book.restore(entries)
+            }
+        }
+    }
 }
 
 /// A trip someone said is not a trip, with what the sheet shows.
@@ -1415,10 +1627,11 @@ private struct TripCoverCard: View {
     /// Trips and events show where; a celebration its date; other stretches
     /// of time how the photos spread over the days.
     private var hasSideView: Bool {
+        if target?.trip != nil { return !stops.isEmpty }
         switch type {
-        case .trip, .event: !stops.isEmpty
-        case .celebration: trip.startDate != nil
-        case .period, .custom: trip.itemCount > 0
+        case .trip, .businessTrip, .homeVisit, .event: return !stops.isEmpty
+        case .celebration: return trip.startDate != nil
+        case .period, .custom: return trip.itemCount > 0
         }
     }
 
@@ -1505,13 +1718,17 @@ private struct TripCoverCard: View {
 
     @ViewBuilder
     private var sideView: some View {
-        switch type {
-        case .trip, .event:
+        if target?.trip != nil {
             TripRouteMap(stops: stops)
-        case .celebration:
-            ChapterAnniversary(date: trip.startDate ?? .now)
-        case .period, .custom:
-            ChapterDensityStrip(trip: trip)
+        } else {
+            switch type {
+            case .trip, .businessTrip, .homeVisit, .event:
+                TripRouteMap(stops: stops)
+            case .celebration:
+                ChapterAnniversary(date: trip.startDate ?? .now)
+            case .period, .custom:
+                ChapterDensityStrip(trip: trip)
+            }
         }
     }
 
@@ -1757,12 +1974,29 @@ private struct TripDetailView: View {
                             heading
                         }
                     }
-                    Text(TripText.summary(trip))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(Paper.muted)
-                        #if DEBUG
-                        .onAppear { PageProbe.contentReady(token: PageProbe.phaseToken) }
-                        #endif
+                    HStack(spacing: 8) {
+                        Text(TripText.summary(trip))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(Paper.muted)
+                            #if DEBUG
+                            .onAppear { PageProbe.contentReady(token: PageProbe.phaseToken) }
+                            #endif
+                        if let model, let judged = actions.judged(model.id) {
+                            ChapterKindTag(kind: judged.kind, verdict: judged.verdict, action: judged.action, choices: judged.choices) {
+                                actions.setKind(model, $0)
+                            }
+                        }
+                    }
+                    if let model, let judged = actions.judged(model.id), judged.showsCheck {
+                        ChapterCheckBar(
+                            kind: judged.kind,
+                            verdict: judged.verdict,
+                            choices: judged.choices,
+                            onRight: { actions.confirmKind(model) },
+                            onChange: { actions.setKind(model, $0) }
+                        )
+                        .frame(maxWidth: 640, alignment: .leading)
+                    }
                     if !trip.cityNames.isEmpty {
                         Text(trip.cityNames.joined(separator: " → "))
                             .font(.callout)

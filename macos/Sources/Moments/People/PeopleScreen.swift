@@ -471,12 +471,16 @@ enum PeopleStoreActions {
     /// Local person IDs the user chose to keep apart from a same-named person.
     /// Only opaque IDs are stored here, never names, faces or embeddings.
     static let keepSeparateKey = "moments.people.keepSeparate"
-    /// Person ID → face ID of the key photo the user picked. Opaque IDs only.
+    /// Person ID (or `groupKey` of an unnamed group) → face ID of the key
+    /// photo the user picked. Opaque IDs only.
     static let keyFacesKey = "moments.people.keyFaces"
     /// Pair keys of the "same person?" questions, in asking order. Opaque IDs only.
     static let questionsKey = "moments.people.questions"
     /// Pair keys the user answered "no". A "no" is never asked again.
     static let declinedPairsKey = "moments.people.declinedPairs"
+
+    /// Where an unnamed group's key face is kept until it gets a name.
+    static func groupKey(_ clusterID: String) -> String { "cluster." + clusterID }
 
     static func keyFaceID(for personID: String, defaults: any DecisionStore = LibraryDecisions.shared) -> String? {
         (defaults.dictionary(forKey: keyFacesKey) as? [String: String])?[personID]

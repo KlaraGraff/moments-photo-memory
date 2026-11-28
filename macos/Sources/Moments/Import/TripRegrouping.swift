@@ -37,6 +37,25 @@ enum TripRegrouping {
         return outcome
     }
 
+    /// A person did something with the trip: named, confirmed, merged or
+    /// split it, wrote about it, chose its cover or placed a photo in it.
+    /// Imports and the chapter judge never change such a trip.
+    static func isTouched(_ trip: Trip, remembered: Set<String>, covered: Set<String>, locked: Set<String>) -> Bool {
+        // Every hand edit sets `updatedBy`; imports never do.
+        trip.overrideName != nil || !trip.isSuggestion || trip.updatedBy != nil
+            || trip.mergeOverrideID != nil || trip.splitOverrideDayKeys != nil
+            || remembered.contains(trip.id) || covered.contains(trip.id)
+            || trip.items.contains { locked.contains($0.id) }
+    }
+
+    /// The trips with a memory written about them.
+    @MainActor
+    static func rememberedTripIDs(context: ModelContext) -> Set<String> {
+        let tripScope = NoteMemoryScope.trip.rawValue
+        let memories = (try? context.fetch(FetchDescriptor<CollectionMemory>(predicate: #Predicate { $0.scopeRaw == tripScope }))) ?? []
+        return Set(memories.map(\.scopeKey))
+    }
+
     static func regroup(
         context: ModelContext,
         locked: Set<String>,
@@ -50,13 +69,7 @@ enum TripRegrouping {
         let remembered = Set(try context.fetch(FetchDescriptor<CollectionMemory>(
             predicate: #Predicate { $0.scopeRaw == tripScope }
         )).map(\.scopeKey))
-        // Every hand edit sets `updatedBy`; imports never do.
-        let kept = Set(trips.filter { trip in
-            trip.overrideName != nil || !trip.isSuggestion || trip.updatedBy != nil
-                || trip.mergeOverrideID != nil || trip.splitOverrideDayKeys != nil
-                || remembered.contains(trip.id) || covered.contains(trip.id)
-                || trip.items.contains { locked.contains($0.id) }
-        }.map(\.id))
+        let kept = Set(trips.filter { isTouched($0, remembered: remembered, covered: covered, locked: locked) }.map(\.id))
 
         let tripIDs = Set(trips.map(\.id))
         let undated = ImportCaptureDateSource.fileDateFallback.rawValue

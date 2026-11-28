@@ -8,6 +8,10 @@ import SwiftData
 /// also be in a trip or another chapter.
 enum ChapterType: Hashable, Identifiable {
     case trip
+    /// Time away for work; set by the chapter judge.
+    case businessTrip
+    /// Time back home with family; set by the chapter judge.
+    case homeVisit
     case event
     case celebration
     case period
@@ -15,12 +19,24 @@ enum ChapterType: Hashable, Identifiable {
     case custom(String)
 
     static let presets: [ChapterType] = [.trip, .event, .celebration, .period]
+    /// Every built-in kind, in the order they are listed.
+    static let builtIn: [ChapterType] = [.trip, .businessTrip, .homeVisit, .event, .celebration, .period]
+
+    /// Kinds that are time away, drawn with their route.
+    var isAway: Bool {
+        switch self {
+        case .trip, .businessTrip, .homeVisit: true
+        default: false
+        }
+    }
 
     var id: String { raw }
 
     var raw: String {
         switch self {
         case .trip: "trip"
+        case .businessTrip: "businessTrip"
+        case .homeVisit: "homeVisit"
         case .event: "event"
         case .celebration: "celebration"
         case .period: "period"
@@ -31,6 +47,8 @@ enum ChapterType: Hashable, Identifiable {
     init(raw: String) {
         switch raw {
         case "trip": self = .trip
+        case "businessTrip": self = .businessTrip
+        case "homeVisit": self = .homeVisit
         case "event": self = .event
         case "celebration": self = .celebration
         case "period": self = .period
@@ -43,6 +61,8 @@ enum ChapterType: Hashable, Identifiable {
     var label: String {
         switch self {
         case .trip: String(localized: "Trip")
+        case .businessTrip: String(localized: "Business trip")
+        case .homeVisit: String(localized: "Home visit")
         case .event: String(localized: "Event")
         case .celebration: String(localized: "Celebration")
         case .period: String(localized: "A stretch of time")
@@ -54,6 +74,8 @@ enum ChapterType: Hashable, Identifiable {
     var filterLabel: String {
         switch self {
         case .trip: String(localized: "Trips")
+        case .businessTrip: String(localized: "Business trips")
+        case .homeVisit: String(localized: "Home visits")
         case .event: String(localized: "Events")
         case .celebration: String(localized: "Celebrations")
         case .period: String(localized: "Stretches of time")
@@ -64,6 +86,8 @@ enum ChapterType: Hashable, Identifiable {
     var defaultSymbol: String {
         switch self {
         case .trip: "airplane.departure"
+        case .businessTrip: "briefcase"
+        case .homeVisit: "house"
         case .event: "music.mic"
         case .celebration: "gift"
         case .period: "sun.horizon"

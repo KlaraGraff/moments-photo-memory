@@ -223,6 +223,10 @@ struct LibraryView: View {
                 hasher.combine(person.name)
                 hasher.combine(person.hidden)
             }
+            // And what was written anywhere: comments, notes, day, trip and
+            // place memories, which change without touching a photo.
+            hasher.combine(store.writtenTextRevision)
+            hasher.combine(store.groupSourcesRevision)
         }
         for trip in allTrips {
             hasher.combine(trip.id)
@@ -283,10 +287,14 @@ struct LibraryView: View {
             records.combine(record.rulesData)
         }
         let readsPlaceNames: Bool = !query.isEmpty || !placeFilterID.isEmpty
+        var written = Hasher()
+        written.combine(store.writtenTextRevision)
+        written.combine(store.groupSourcesRevision)
         return [
             ("filters", filters.finalize()),
             ("store.photoFaceRevision", store.photoFaceRevision),
             ("store.placeRevision", readsPlaceNames ? store.placeRevision : -1),
+            ("written text", query.isEmpty ? -1 : written.finalize()),
             ("trips", trips.finalize()),
             ("place overrides", overrides.finalize()),
             ("memories", memories.finalize()),
@@ -416,7 +424,7 @@ struct LibraryView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) { LibraryZoomControl(state: state) }
         }
-        .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, notes")))
+        .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, memories and comments")))
         .navigationTitle(String(localized: "Library"))
         .modifier(LibrarySelectionSubtitle(idle: String(localized: "\(cachedVisibleCount) photos")))
     }
@@ -657,8 +665,23 @@ struct LibraryView: View {
         #if DEBUG
         step("scope")
         #endif
-        // A search also finds photos by who is in them.
-        let searchExtras: [String: [String]] = LibraryFilterKeys.personSearchExtras(query: query, people: people, personIndex: personIndex)
+        // A search finds photos by everything written about them and by
+        // who is in them, from an index kept up to date a few photos at a
+        // time, not read again per keystroke. With nothing typed, the index
+        // is read in slices so it is ready for the first word.
+        let searchMatches: Set<String>? = LibrarySearchIndex.matchingIDs(
+            query: criteria.searchText,
+            store: store,
+            people: people,
+            personIndex: personIndex,
+            context: modelContext
+        )
+        if searchMatches == nil {
+            LibrarySearchIndex.warmUp(store: store, people: people, personIndex: personIndex, context: modelContext)
+        }
+        #if DEBUG
+        step("search index")
+        #endif
         // One call for all three results, so each photo is tested once.
         let passes = LibraryFilterEngine.regroupPasses(
             scopedItems: scopedItems,
@@ -667,7 +690,7 @@ struct LibraryView: View {
             criteria: criteria,
             editingItemID: state.focusedMemoryItemID,
             personIDsByMediaID: personIndex,
-            searchExtras: searchExtras
+            searchMatches: searchMatches
         )
         #if DEBUG
         step("filter passes")

@@ -18403,24 +18403,24 @@
         }
       }
     },
-    "Search people, places, trips, years, notes" : {
+    "Search people, places, trips, years, memories and comments" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Personen, Orte, Reisen, Jahre, Notizen suchen"
+            "value" : "Personen, Orte, Reisen, Jahre, Erinnerungen und Kommentare suchen"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Search people, places, trips, years, notes"
+            "value" : "Search people, places, trips, years, memories and comments"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "搜索人物、地点、旅程、年份、文字"
+            "value" : "搜索人物、地点、旅行、年份、回忆和评论"
           }
         }
       }

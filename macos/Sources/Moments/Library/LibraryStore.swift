@@ -15,6 +15,16 @@ struct SavedChanges: Sendable {
     /// True when the save touched something the sidebar's group counts read,
     /// even if the `trackedEntityNames` filter then drops that identifier.
     var touchesGroupSources = false
+    /// True when the save touched something people wrote that search reads
+    /// (memories, comments, notes, trip and person names).
+    var touchesWrittenText = false
+    /// Which of `searchSourceEntityNames` the save touched, so the search
+    /// index reads again only those kinds of record.
+    var touchedSearchSources: Set<String> = []
+    /// The rows of `searchSourceEntityNames` the save inserted or updated,
+    /// and the ones it deleted, so the search reads only those rows again.
+    var searchSourceSaved: [PersistentIdentifier] = []
+    var searchSourceDeleted: [PersistentIdentifier] = []
 
     var isEmpty: Bool { inserted.isEmpty && updated.isEmpty && deleted.isEmpty }
     var identifierCount: Int { inserted.count + updated.count + deleted.count }
@@ -27,6 +37,10 @@ struct SavedChanges: Sendable {
         deleted += other.deleted
         isKnown = isKnown && other.isKnown
         touchesGroupSources = touchesGroupSources || other.touchesGroupSources
+        touchesWrittenText = touchesWrittenText || other.touchesWrittenText
+        touchedSearchSources.formUnion(other.touchedSearchSources)
+        searchSourceSaved += other.searchSourceSaved
+        searchSourceDeleted += other.searchSourceDeleted
     }
 }
 
@@ -55,6 +69,30 @@ private let groupSourceEntityNames: Set<String> = [
     String(describing: Tag.self),
     String(describing: PlaceOverride.self)
 ]
+
+/// What people wrote that the Library's search finds photos by, besides the
+/// photos' own fields: memories and the comments under them, a note's
+/// original words, day and trip memories, place notes, and the names of
+/// trips and people. A save of any of these moves `writtenTextRevision`.
+private let writtenTextEntityNames: Set<String> = [
+    String(describing: Memory.self),
+    String(describing: Comment.self),
+    String(describing: PhotoNote.self),
+    String(describing: CollectionMemory.self),
+    String(describing: PlaceNote.self),
+    String(describing: Trip.self),
+    String(describing: Person.self)
+]
+
+/// Every kind of record the Library's search index reads besides the photos
+/// and places: what people wrote, tags, and chapters with their members.
+/// A save moves the revision of each it touched.
+let searchSourceEntityNames: Set<String> = writtenTextEntityNames.union([
+    String(describing: MediaTag.self),
+    String(describing: Tag.self),
+    String(describing: UserGroup.self),
+    String(describing: UserGroupItem.self)
+])
 
 /// The library's photos, faces and places, fetched once for every page
 /// instead of once per page. Pages read these lists and use `revision` in
@@ -103,6 +141,24 @@ final class LibraryStore {
     /// place overrides, or could not say what it touched. The sidebar's group
     /// counts follow it instead of querying those five entities themselves.
     private(set) var groupSourcesRevision = 0
+    /// Moves when a save touched something people wrote (see
+    /// `writtenTextEntityNames`), or could not say what it touched. The
+    /// search index follows it, so a new day memory or comment is found
+    /// without re-reading anything while nothing was written.
+    private(set) var writtenTextRevision = 0
+    /// One revision per entity in `searchSourceEntityNames`, moved by a save
+    /// that touched it. Read through `searchSourceRevision(of:)`.
+    @ObservationIgnored private var searchSourceRevisions: [String: Int] = [:]
+    /// Moves when a save could not say what it touched; then every search
+    /// source counts as changed.
+    @ObservationIgnored private var unknownSaveRevision = 0
+    /// The rows of search sources each recent save changed, newest last,
+    /// numbered by `searchSourceSerial`. Read through `searchSourceChanges`.
+    @ObservationIgnored private var searchSourceLog: [(serial: Int, saved: Set<PersistentIdentifier>, deleted: Set<PersistentIdentifier>)] = []
+    @ObservationIgnored private var searchSourceSerial = 0
+    /// How many saves the log keeps, and how many rows at most.
+    static let searchSourceLogLength = 64
+    static let searchSourceLogMaximumIDs = 4_000
     /// Moves when someone picks the face that stands for a person. That
     /// choice is a library decision, not a save, so nothing else moves.
     private(set) var keyFaceRevision = 0
@@ -116,6 +172,63 @@ final class LibraryStore {
     /// How many bumps the log keeps, and how many photo ids at most.
     static let photoChangeLogLength = 16
     static let photoChangeLogMaximumIDs = 2_000
+
+    /// Where saves of one kind of record stand (an entity in
+    /// `searchSourceEntityNames`, by its type's name). Moves when a save
+    /// touched that entity or could not say what it touched.
+    func searchSourceRevision(of entityName: String) -> Int {
+        var hasher = Hasher()
+        hasher.combine(searchSourceRevisions[entityName] ?? 0)
+        hasher.combine(unknownSaveRevision)
+        return hasher.finalize()
+    }
+
+    /// Where the saves of search sources stand, to ask later what changed.
+    struct SearchSourceMark: Equatable {
+        fileprivate let serial: Int
+        fileprivate let unknown: Int
+    }
+
+    var searchSourceMark: SearchSourceMark {
+        SearchSourceMark(serial: searchSourceSerial, unknown: unknownSaveRevision)
+    }
+
+    /// The rows of the entities named in `entityNames` saved and deleted
+    /// since `mark`; a deleted row is in `deleted` only. Nil when that is not
+    /// known: a save that could not say what it touched, or more saves than
+    /// the log keeps. Then every row has to be read again.
+    func searchSourceChanges(
+        of entityNames: Set<String>,
+        since mark: SearchSourceMark
+    ) -> (saved: Set<PersistentIdentifier>, deleted: Set<PersistentIdentifier>)? {
+        guard mark.unknown == unknownSaveRevision, mark.serial <= searchSourceSerial else { return nil }
+        if mark.serial == searchSourceSerial { return ([], []) }
+        guard let first = searchSourceLog.first, first.serial <= mark.serial + 1 else { return nil }
+        var saved = Set<PersistentIdentifier>()
+        var deleted = Set<PersistentIdentifier>()
+        for entry in searchSourceLog where entry.serial > mark.serial {
+            for id in entry.saved where entityNames.contains(id.entityName) { saved.insert(id) }
+            for id in entry.deleted where entityNames.contains(id.entityName) { deleted.insert(id) }
+        }
+        saved.subtract(deleted)
+        return (saved, deleted)
+    }
+
+    /// Notes one save's search-source rows in the log.
+    private func logSearchSources(_ changes: SavedChanges) {
+        searchSourceSerial &+= 1
+        searchSourceLog.append((searchSourceSerial, Set(changes.searchSourceSaved), Set(changes.searchSourceDeleted)))
+        var total: Int = searchSourceLog.reduce(0) { $0 + $1.saved.count + $1.deleted.count }
+        while searchSourceLog.count > Self.searchSourceLogLength
+            || (searchSourceLog.count > 1 && total > Self.searchSourceLogMaximumIDs) {
+            let dropped = searchSourceLog.removeFirst()
+            total -= dropped.saved.count + dropped.deleted.count
+        }
+        if total > Self.searchSourceLogMaximumIDs {
+            // One save too big to list: ask for everything again.
+            searchSourceLog.removeAll()
+        }
+    }
 
     /// The string ids of the photos that changed between `photoFaceRevision`
     /// `from` and the current one, when every bump in between only changed
@@ -268,6 +381,18 @@ final class LibraryStore {
                 groupSourcesRevision &+= 1
             }
         }
+        if changes.touchesWrittenText || !changes.isKnown {
+            if savedContext == nil || savedContext?.container === container {
+                writtenTextRevision &+= 1
+            }
+        }
+        if !changes.touchedSearchSources.isEmpty || !changes.isKnown {
+            if savedContext == nil || savedContext?.container === container {
+                if !changes.isKnown { unknownSaveRevision &+= 1 }
+                for name in changes.touchedSearchSources { searchSourceRevisions[name, default: 0] &+= 1 }
+                if changes.isKnown { logSearchSources(changes) }
+            }
+        }
         // Autosave fires often with nothing this store lists.
         if changes.isKnown && changes.isEmpty { return }
         guard let savedContext else {
@@ -393,6 +518,14 @@ final class LibraryStore {
             // is not listed by the store, yet the sidebar counts it.
             if ids.contains(where: { groupSourceEntityNames.contains($0.entityName) }) {
                 changes.touchesGroupSources = true
+            }
+            if ids.contains(where: { writtenTextEntityNames.contains($0.entityName) }) {
+                changes.touchesWrittenText = true
+            }
+            for id in ids where searchSourceEntityNames.contains(id.entityName) {
+                changes.touchedSearchSources.insert(id.entityName)
+                if name.contains("delete") { changes.searchSourceDeleted.append(id) }
+                else { changes.searchSourceSaved.append(id) }
             }
             let tracked = ids.filter { trackedEntityNames.contains($0.entityName) }
             if name.contains("insert") { changes.inserted += tracked; changes.isKnown = true }

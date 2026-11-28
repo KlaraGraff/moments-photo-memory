@@ -50,7 +50,8 @@ final class MomentsSaveProblemUITests: XCTestCase {
         let memory = element(in: app, identifier: "library.memory.\(photoID)")
         XCTAssertTrue(memory.waitForExistence(timeout: launchTimeout))
         memory.click()
-        memory.typeText("Synthetic unsaved memory\r")
+        // No Return: Return would save again (see the next test).
+        memory.typeText("Synthetic unsaved memory")
 
         let strip = element(in: app, identifier: "save.problem")
         XCTAssertTrue(strip.waitForExistence(timeout: launchTimeout), "A failed save showed nothing")
@@ -60,6 +61,27 @@ final class MomentsSaveProblemUITests: XCTestCase {
         element(in: app, identifier: "save.problem.retry").click()
         XCTAssertTrue(waitForDisappearance(strip), "Try Again did not save")
         XCTAssertTrue((memory.value as? String ?? "").contains("Synthetic unsaved memory"), "The memory went after saving")
+    }
+
+    func testAMemoryWhoseSaveFailedWhileTypingIsSavedOnReturn() {
+        let app = launch(extraArguments: ["-MomentsUITestFailSaveIn", "LibraryView.swift"])
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+            .firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout), "The Library has no photo")
+        let photoID = String(photo.identifier.dropFirst("library.photo.".count))
+        let memory = element(in: app, identifier: "library.memory.\(photoID)")
+        XCTAssertTrue(memory.waitForExistence(timeout: launchTimeout))
+        memory.click()
+        // No Return yet: the save made while typing fails.
+        memory.typeText("Synthetic memory saved later")
+        let strip = element(in: app, identifier: "save.problem")
+        XCTAssertTrue(strip.waitForExistence(timeout: launchTimeout), "A failed save while typing showed nothing")
+
+        // Return ends typing and saves the words that were kept.
+        memory.typeText("\r")
+        XCTAssertTrue(waitForDisappearance(strip), "Return did not save the kept words")
+        XCTAssertTrue((memory.value as? String ?? "").contains("Synthetic memory saved later"), "The memory went after saving")
     }
 
     func testTheStripCanBeClosed() {

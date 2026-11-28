@@ -1549,6 +1549,9 @@ struct MemoryEditor: View {
         var savedMemory: Memory?
         switch decision {
         case .noChange:
+            // The words may be in the context from a save that failed while
+            // typing: write them now, or keep the draft and say so.
+            if modelContext.hasChanges, !modelContext.saveOrReport() { return false }
             state.clearDraft(for: item)
             return true
         case .conflict:

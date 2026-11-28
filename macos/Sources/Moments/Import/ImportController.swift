@@ -100,42 +100,55 @@ final class ImportController {
 
 struct ImportStatusView: View {
     @Environment(ImportController.self) private var controller
+    @Environment(PhotosImportController.self) private var photos
+
+    private var showsFolderImport: Bool {
+        controller.isRunning || controller.state == .cancelled || controller.state.isFailure
+    }
 
     var body: some View {
-        if controller.isRunning || controller.state == .cancelled || controller.state.isFailure {
-            HStack(spacing: 10) {
-                if let fraction = controller.progress.fraction {
-                    ProgressView(value: fraction)
-                        .frame(width: 120)
-                        .accessibilityIdentifier("import.progress.indicator")
-                } else {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityIdentifier("import.progress.indicator")
-                }
-                Text(controller.progress.message)
-                    .lineLimit(1)
-                Text("\(controller.progress.completed)/\(controller.progress.total)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(Paper.muted)
-                if controller.isRunning {
-                    Button("Cancel") { controller.cancel() }
-                        .buttonStyle(.borderless)
-                        .accessibilityIdentifier("import.cancel")
-                } else if controller.state == .cancelled {
-                    Button("Resume") { controller.resume() }
-                        .buttonStyle(.borderless)
-                        .accessibilityIdentifier("import.resume")
-                } else if case .failed(let message) = controller.state {
-                    Text(message)
-                        .foregroundStyle(.red)
-                        .lineLimit(1)
-                }
+        if showsFolderImport || PhotosImportStatusRows.hasContent(photos) {
+            VStack(alignment: .leading, spacing: 4) {
+                if showsFolderImport { folderImportRow }
+                PhotosImportStatusRows()
             }
-            .font(.caption)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("import.progress")
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private var folderImportRow: some View {
+        HStack(spacing: 10) {
+            if let fraction = controller.progress.fraction {
+                ProgressView(value: fraction)
+                    .frame(width: 120)
+                    .accessibilityIdentifier("import.progress.indicator")
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityIdentifier("import.progress.indicator")
+            }
+            Text(controller.progress.message)
+                .lineLimit(1)
+            Text("\(controller.progress.completed)/\(controller.progress.total)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(Paper.muted)
+            if controller.isRunning {
+                Button("Cancel") { controller.cancel() }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("import.cancel")
+            } else if controller.state == .cancelled {
+                Button("Resume") { controller.resume() }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("import.resume")
+            } else if case .failed(let message) = controller.state {
+                Text(message)
+                    .foregroundStyle(.red)
+                    .lineLimit(1)
+            }
+        }
+        .font(.caption)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("import.progress")
     }
 }
 

@@ -79,7 +79,9 @@ struct MapScreen: View {
     @State private var manualIDs: Set<String> = []
     /// The hand-set coordinates, read again only when the store changed, not
     /// when the zoom moves the pins to another level.
-    @State private var manualCoordinates: (revision: Int, points: [String: GeoPoint])?
+    /// Keyed on both revisions: a save that changes only an override moves
+    /// `groupSourcesRevision`, not `revision`.
+    @State private var manualCoordinates: (revision: Int, overrides: Int, points: [String: GeoPoint])?
     @State private var world = MapWorldState()
     /// Created once per screen; it reads its cache file from disk.
     @State private var geocodeResolver: FootprintsGeocodeResolver?
@@ -157,11 +159,11 @@ struct MapScreen: View {
             let scopeGeneration: Int = selection.mapScopeGeneration
             let scopedIDs: Set<String>? = Self.shownIDs(scope: selection.mapScope?.itemIDs, filtered: selection.filteredItemIDs)
             let manual: [String: GeoPoint]
-            if let cached = manualCoordinates, cached.revision == store.revision {
+            if let cached = manualCoordinates, cached.revision == store.revision, cached.overrides == store.groupSourcesRevision {
                 manual = cached.points
             } else {
                 manual = ManualLocationIndex.coordinates(in: modelContext)
-                manualCoordinates = (store.revision, manual)
+                manualCoordinates = (store.revision, store.groupSourcesRevision, manual)
             }
             let stops = viewModel.photoStops(from: items, visibleItemIDs: scopedIDs, manualCoordinates: manual)
             let delta = latitudeDelta

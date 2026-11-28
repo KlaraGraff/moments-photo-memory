@@ -385,7 +385,9 @@ struct ManualLocationSheet: View {
         loadItems()
         searchFocused = true
         // A photo already placed by hand opens at its place.
-        if let existing = items.lazy.compactMap({ $0.manualLocation?.point }).first {
+        // One fetch of the hand-set coordinates, not every photo's overrides.
+        let manual = items.isEmpty ? [:] : ManualLocationIndex.coordinates(in: modelContext)
+        if let existing = items.lazy.compactMap({ manual[$0.id] }).first {
             pin = Pin(point: existing, label: items.first?.namedPlace, source: .map)
             camera = .region(Self.region(around: existing))
         } else if items.count == 1, let point = items.first?.cameraLocation {

@@ -143,7 +143,7 @@ enum ManualLocationEditing {
         let message = items.count == 1
             ? String(localized: "Location set")
             : String(localized: "Location set for \(items.count) photos")
-        return undo(message: message, before: before, created: created, removed: removed)
+        return undo(message: message, before: before, created: created, removed: removed, named: finder.named)
     }
 
     /// Takes this person's hand-set location off the photos. A name they
@@ -206,6 +206,8 @@ enum ManualLocationEditing {
     private struct PlaceFinder {
         let context: ModelContext
         private var places: [Place]
+        /// Spots made earlier that this edit gave the searched name.
+        private(set) var named: [String] = []
 
         init(context: ModelContext) {
             self.context = context
@@ -264,7 +266,17 @@ enum ManualLocationEditing {
             let spot: Place
             switch placement {
             case .spot(let id):
-                if let found = byID[id] { return found }
+                if let found = byID[id] {
+                    // A spot made here for a dropped pin, still unnamed,
+                    // takes the searched name; a place the import made
+                    // keeps its own.
+                    if !name.isEmpty, found.id.hasPrefix(ManualLocationEditing.placeIDPrefix),
+                       found.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        found.name = name
+                        named.append(found.id)
+                    }
+                    return found
+                }
                 spot = newPlace(.spot, parent: nil)
             case .newSpot(let areaID):
                 spot = newPlace(.spot, parent: byID[areaID])
@@ -370,8 +382,18 @@ enum ManualLocationEditing {
         )
     }
 
-    private static func undo(message: String, before: [ItemState], created: [String], removed: [PlaceState]) -> CorrectionUndo {
+    private static func undo(
+        message: String,
+        before: [ItemState],
+        created: [String],
+        removed: [PlaceState],
+        named: [String] = []
+    ) -> CorrectionUndo {
         CorrectionUndo(message: message, actionName: String(localized: "Set Location")) { context in
+            // A spot this edit named was unnamed before.
+            for id in named {
+                fetchPlace(id, context: context)?.name = ""
+            }
             // Places the edit removed come back first, parents before
             // children, with their ids, so the photos can rejoin them.
             var restored: [String: Place] = [:]

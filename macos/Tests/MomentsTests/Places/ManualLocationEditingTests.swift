@@ -227,6 +227,47 @@ final class ManualLocationEditingTests: XCTestCase {
         XCTAssertEqual(item.namedPlace, "Synthetic Market", "The first searched name stayed after a move")
     }
 
+    func testASearchNamesAnUnnamedSpotMadeForAPinAndUndoTakesItBack() throws {
+        let context = try makeContext()
+        let item = MediaItem(id: "a", captureDate: base)
+        context.insert(item)
+        try context.save()
+        // A pin dropped by hand: a spot with no name.
+        ManualLocationEditing.setLocation(GeoPoint(latitude: 0.3, longitude: 0.3), name: nil, on: [item], context: context, now: base)
+        let spot = try XCTUnwrap(item.place)
+        XCTAssertEqual(spot.name, "")
+
+        // A search a few hundred metres away joins that spot and names it.
+        let undo = ManualLocationEditing.setLocation(GeoPoint(latitude: 0.302, longitude: 0.3), name: "Synthetic Harbour", on: [item], context: context, now: base)
+        XCTAssertEqual(item.place?.id, spot.id)
+        XCTAssertEqual(item.namedPlace, "Synthetic Harbour")
+
+        undo?.perform(in: context)
+        XCTAssertEqual(spot.name, "", "Undo left the searched name on the spot")
+        XCTAssertEqual(item.manualLocation?.point, GeoPoint(latitude: 0.3, longitude: 0.3))
+    }
+
+    func testClearingKeepsAMapLink() throws {
+        let context = try makeContext()
+        let item = MediaItem(id: "a", captureDate: base)
+        context.insert(item)
+        context.insert(PlaceOverride(mediaID: "a", mapLinkOverride: "https://example.com/synthetic", updatedAt: base, mediaItem: item))
+        try context.save()
+        ManualLocationEditing.setLocation(GeoPoint(latitude: 0.3, longitude: 0.3), name: nil, on: [item], context: context, now: base)
+
+        ManualLocationEditing.clearLocation(on: [item], context: context, now: base)
+        XCTAssertNil(item.manualLocation)
+        XCTAssertEqual(item.placeOverrideMapLink, "https://example.com/synthetic", "Clear Location removed the photo's map link")
+    }
+
+    func testFetchingManyIDsReadsThemAll() throws {
+        let context = try makeContext()
+        for index in 0..<900 { context.insert(MediaItem(id: "p\(index)", captureDate: base)) }
+        try context.save()
+        let ids = (0..<900).map { "p\($0)" }
+        XCTAssertEqual(ManualLocationEditing.items(withIDs: ids, context: context).count, 900)
+    }
+
     func testClearingKeepsANameTypedByHand() throws {
         let context = try makeContext()
         let item = MediaItem(id: "a", captureDate: base)

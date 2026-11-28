@@ -37,8 +37,11 @@ struct PlaceNameBackfill: Sendable {
         do {
             let named = pending.isEmpty ? 0 : try await name(pending, context: context)
             // After the cities: an area Set Location made under a city that
-            // already had its name, which the city pass never reaches.
-            try await nameManualAreas(context: context)
+            // already had its name, which the city pass never reaches. Not
+            // when the city pass stopped early: the geocoder is not answering.
+            if named == pending.count {
+                try await nameManualAreas(context: context)
+            }
             await geocodeCache.persist()
             return named
         } catch {

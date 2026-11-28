@@ -52,9 +52,11 @@ struct MapKitPlaceSearch: PlaceSearching {
 
 #if DEBUG
 /// UI tests: two made-up places near 0,0 for any words, none for
-/// "nothing", and a failure for "offline".
+/// "nothing", and a failure for "offline". About 3 km from the demo photos:
+/// past the spot radius, so the photo gets a pin of its own, but in the same
+/// city, so the map's Fit frames it with them.
 struct SyntheticPlaceSearch: PlaceSearching {
-    static let harbour = GeoPoint(latitude: 0.3, longitude: 0.3)
+    static let harbour = GeoPoint(latitude: 0.03, longitude: 0.03)
 
     func search(_ query: String) async throws -> [PlaceSearchResult] {
         try await Task.sleep(for: .milliseconds(150))
@@ -63,7 +65,7 @@ struct SyntheticPlaceSearch: PlaceSearching {
         if words == "nothing" { return [] }
         return [
             PlaceSearchResult(id: "0", name: "Synthetic Harbour", detail: "Synthetic Bay", point: Self.harbour),
-            PlaceSearchResult(id: "1", name: "Synthetic Market", detail: "Synthetic Bay", point: GeoPoint(latitude: 0.31, longitude: 0.29)),
+            PlaceSearchResult(id: "1", name: "Synthetic Market", detail: "Synthetic Bay", point: GeoPoint(latitude: 0.031, longitude: 0.029)),
         ]
     }
 }

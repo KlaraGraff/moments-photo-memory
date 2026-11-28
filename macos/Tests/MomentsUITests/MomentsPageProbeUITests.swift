@@ -54,7 +54,11 @@ final class MomentsPageProbeUITests: XCTestCase {
             "Map", "Chapters", "Library",
             "viewer open", "viewer close", "Chapters again",
             "chapter with most photos", "back to chapters",
-            "Library again"
+            "Library again",
+            "person photos", "back from person photos",
+            "Library search", "Library search cleared",
+            "Library search typing", "Library search typing cleared",
+            "write a memory"
         ].filter { !skipped.contains($0) }
         for phase in phases {
             XCTAssertTrue(text.contains("page report (\(phase)):"), "Missing \(phase) report")
@@ -76,7 +80,13 @@ final class MomentsPageProbeUITests: XCTestCase {
         let pageOfPhase = [
             "Map": "map", "Chapters": "chapters",
             "Library": "library", "Chapters again": "chapters", "chapter with most photos": "chapter",
-            "back to chapters": "chapters", "Library again": "library"
+            "back to chapters": "chapters", "Library again": "library",
+            // One person's photos, the searches and a written memory all
+            // happen on the Library already on screen: no new shell.
+            "person photos": "library", "back from person photos": "library",
+            "Library search": "library", "Library search cleared": "library",
+            "Library search typing": "library", "Library search typing cleared": "library",
+            "write a memory": "library"
         ]
         var pageOnScreen = "library"
         var shellPhases: [String] = []

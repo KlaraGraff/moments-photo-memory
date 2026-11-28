@@ -165,12 +165,13 @@ public struct ChapterJudgeBook: Codable, Equatable, Sendable {
         if asksFirst, kind == .daily { verdict.confidence = min(verdict.confidence, .low) }
         var stored = StoredVerdict(verdict: verdict, signature: signature, judgedAt: now)
         stored.asksFirst = asksFirst
-        // The same answer again: "Later", the closed check and the check's
-        // age still hold, so nothing the person put away comes back.
+        // The same answer again: "Later" and the closed check still hold,
+        // and the check keeps its age while it is the same check.
         if let earlier, earlier.verdict.source != .person, earlier.verdict.kind == kind {
             stored.deferredAt = earlier.deferredAt
             stored.checkClosedAt = earlier.checkClosedAt
-            stored.judgedAt = earlier.judgedAt
+            let sameAction = ConfidencePolicy.action(for: earlier.verdict, level: askLevel) == ConfidencePolicy.action(for: verdict, level: askLevel)
+            if sameAction { stored.judgedAt = earlier.judgedAt }
         }
         verdicts[id] = stored
     }

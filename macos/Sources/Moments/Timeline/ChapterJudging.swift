@@ -325,7 +325,9 @@ final class ChapterJudgeRunner {
     /// person's places it measures from, and the model. When these change,
     /// its answers are redone. Places count by id and role, never by where
     /// they are, so a guessed centre that drifts a little redoes nothing,
-    /// and the key is hashed, so the book holds no trace of a place.
+    /// and the key is hashed, so the book holds no trace of a place. A named
+    /// place moved on the map keeps its id: its chapters are redone when
+    /// their photos change, not at once.
     static func contextKey(bases: [EvidenceBase], places: KnownPlaceBook, engine: ChapterJudgeEngine) -> String {
         let measured: Set<PlaceRole> = [.home, .work, .homeTown]
         let named = places.places

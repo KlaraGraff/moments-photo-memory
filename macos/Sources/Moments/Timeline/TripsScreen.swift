@@ -742,7 +742,11 @@ struct TripsScreen: View {
                 if case let .group(group) = target, !UserGroupRuleEngine.canDelete(group) { return }
                 let name = target.name
                 closeTrip()
-                edit(String(localized: "Deleted “\(name)”")) { session in
+                // Brought back with Undo, the judge asks about it rather
+                // than taking it away again.
+                var deleted: ChapterJudgeUndo?
+                if case let .trip(trip) = target { deleted = .ask([trip.id]) }
+                edit(String(localized: "Deleted “\(name)”"), judgeUndo: deleted) { session in
                     switch target {
                     case let .trip(trip): TripEdits.delete(trip, session: session)
                     case let .group(group): TripEdits.delete(group, session: session)
@@ -793,11 +797,13 @@ struct TripsScreen: View {
         }
     }
 
-    private func edit(_ message: String, _ change: (TripEdits.Session) -> Void) {
+    private func edit(_ message: String, judgeUndo: ChapterJudgeUndo? = nil, _ change: (TripEdits.Session) -> Void) {
         let session = TripEdits.Session(context: modelContext)
         change(session)
         guard !session.undo.isEmpty else { return }
-        post(TripNotice(message: message, undo: session.undo))
+        var notice = TripNotice(message: message, undo: session.undo)
+        notice.judgeUndo = judgeUndo
+        post(notice)
     }
 
     private func changeDates(_ target: ChapterTarget, start: Date, end: Date) {

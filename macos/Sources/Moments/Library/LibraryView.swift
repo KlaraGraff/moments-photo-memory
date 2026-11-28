@@ -749,6 +749,7 @@ struct LibraryView: View {
         let currentCriteria: LibraryFilterCriteria = criteria
         guard LibraryRegroupEngine.canRun(criteria: currentCriteria, searchMatches: searchMatches) else { return false }
         let gridAtStart: Int = Self.gridGeneration
+        let editMarkAtStart: LibraryStore.PhotoEditMark = store.photoEditMark
         let scopeIDs: Set<String>? = selection.libraryScope?.itemIDs
         let editingItemID: String? = state.focusedMemoryItemID
         // The stack model is shared with the other pages and lives on the
@@ -807,15 +808,24 @@ struct LibraryView: View {
         stepStarted = CACurrentMediaTime()
         #endif
         guard let output = finished else { return true }
-        // Overtaken: shown only when just the photos moved since it started
-        // and no newer pass was shown, so the grid keeps up during an import.
-        // Its photos are looked up live below, so removed ones drop out.
+        // Overtaken: shown only when just the photos moved since it started,
+        // none of them was removed, and no newer pass was shown, so the grid
+        // keeps up while an import adds photos.
         let isCurrent: Bool = !Task.isCancelled && groupingKey == key
         if !isCurrent {
             #if DEBUG
             PageProbe.tally("regroup step: overtaken pass", seconds: 0)
             #endif
             guard groupingKey(includingPhotos: false) == baseKey, Self.gridGeneration == gridAtStart else { return true }
+            // A photo it shows that was removed meanwhile would still be
+            // named in the grid and the viewer's list; the newer pass shows
+            // that change. A photo added meanwhile is not in it, so is fine.
+            guard let edited = store.photosEdited(since: editMarkAtStart) else { return true }
+            let namesRemovedPhoto: Bool = edited.contains { (id: String) -> Bool in
+                store.liveItem(id: id) == nil
+                    && (output.filteredIDs.contains(id) || output.publishedIDs.contains(id) || output.visibleIDs.last == id)
+            }
+            guard !namesRemovedPhoto else { return true }
         }
 
         var itemByID: [String: MediaItem] = [:]
@@ -877,17 +887,21 @@ struct LibraryView: View {
             stepStarted = CACurrentMediaTime()
         }
         #endif
-        // `allItems` builds a new array each time it is read.
-        let all = allItems
+        // `allItems` builds a new array each time it is read. Photos a batch
+        // removed are left out until its last slice rebuilds the lists.
+        let all = allItems.filter { !store.isRemovedPendingRebuild($0.id) }
         #if DEBUG
         step("allItems")
         #endif
         cachedPersonIndex = personIndex
         // A scope from another screen narrows the grid only; the published
         // ids below stay on the regular filters so the maps do not shrink.
+        // Between the slices of a large batch the lists still hold photos
+        // it removed; those must not be read.
+        let liveItems: [MediaItem] = items.filter { !store.isRemovedPendingRebuild($0.id) }
         let scopedItems = selection.libraryScope.map { scope in
-            items.filter { scope.itemIDs.contains($0.id) }
-        } ?? items
+            liveItems.filter { scope.itemIDs.contains($0.id) }
+        } ?? liveItems
         #if DEBUG
         step("scope")
         #endif

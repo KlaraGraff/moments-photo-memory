@@ -22,7 +22,8 @@ final class LibraryPhotoFactsCache {
     private var placeRevision: Int?
     private var timeZoneID: String?
     private(set) var places: [String: LibraryPlaceFacts] = [:]
-    private let monthFormatter: DateFormatter = LibraryRegroupEngine.makeMonthFormatter()
+    /// Made again on a reset, so a new time zone is the one it writes in.
+    private var monthFormatter: DateFormatter = LibraryRegroupEngine.makeMonthFormatter()
 
     /// How many photos were read from SwiftData since the cache was made;
     /// for tests and the page probe.
@@ -42,13 +43,15 @@ final class LibraryPhotoFactsCache {
         placeRevision = nil
         timeZoneID = nil
         places = [:]
+        monthFormatter = LibraryRegroupEngine.makeMonthFormatter()
     }
 
     /// The facts of the store's photos and screenshots, in the store's
     /// order. Photos it has to read are read a slice at a time with a yield
     /// in between, so a first visit to a large library never holds the main
     /// thread for long. Each model is looked up in the store when it is read,
-    /// so a photo removed during a yield is skipped, never read. Nil when the
+    /// and a photo a batch removed during a yield is skipped, never read,
+    /// even before the store's lists drop it. Nil when the
     /// task was cancelled before it finished; what it read stays.
     func facts(
         store: LibraryStore,
@@ -135,11 +138,12 @@ final class LibraryPhotoFactsCache {
         result.reserveCapacity(ids.count)
         var readInSlice = 0
         for photoID in ids {
+            if store.isRemovedPendingRebuild(photoID) { continue }
             if let known = byID[photoID] {
                 result.append(known)
                 continue
             }
-            guard let item = store.itemsByID[photoID] else { continue }
+            guard let item = store.liveItem(id: photoID) else { continue }
             let facts = LibraryPhotoFacts(item: item, monthFormatter: monthFormatter)
             byID[photoID] = facts
             result.append(facts)

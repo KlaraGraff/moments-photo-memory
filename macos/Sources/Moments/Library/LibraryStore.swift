@@ -269,6 +269,22 @@ final class LibraryStore {
     @ObservationIgnored private var photoEditGeneration = 0
     static let photoEditLogLimit = 120_000
 
+    /// Photos removed in a batch whose lists are not rebuilt yet: a large
+    /// batch removes its photos in its first slice and rebuilds the lists in
+    /// its last, and `itemsByID` still holds the removed models in between.
+    @ObservationIgnored private var removedSinceRebuild: Set<String> = []
+
+    /// The live photo with this id, never one a batch has removed even
+    /// while `itemsByID` still holds it; safe to read.
+    func liveItem(id: String) -> MediaItem? {
+        removedSinceRebuild.contains(id) ? nil : itemsByID[id]
+    }
+
+    /// True for a photo that a batch removed and the lists still name.
+    func isRemovedPendingRebuild(_ id: String) -> Bool {
+        removedSinceRebuild.contains(id)
+    }
+
     var photoEditMark: PhotoEditMark {
         PhotoEditMark(generation: photoEditGeneration, position: photoEditLogStart + photoEditLog.count)
     }
@@ -1009,7 +1025,10 @@ final class LibraryStore {
 
     private func removePhoto(_ id: PersistentIdentifier, touched: inout Touched) {
         // The recorded id: a removed model must not be read.
-        if let photoID = itemKeys[id]?.id { notePhotoEdited(photoID) }
+        if let photoID = itemKeys[id]?.id {
+            notePhotoEdited(photoID)
+            removedSinceRebuild.insert(photoID)
+        }
         if let old = itemHash.removeValue(forKey: id) { itemSum &-= old }
         if let old = layoutHash.removeValue(forKey: id) { layoutSum &-= old }
         let wasLive: Bool = itemKeys[id]?.deletedAt == nil
@@ -1234,6 +1253,7 @@ final class LibraryStore {
     }
 
     private func rebuildPhotos() {
+        removedSinceRebuild = []
         var live: [(keys: PhotoKeys, item: MediaItem)] = []
         var gone: [(keys: PhotoKeys, item: MediaItem)] = []
         live.reserveCapacity(itemByPID.count)

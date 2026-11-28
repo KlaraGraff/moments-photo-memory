@@ -151,7 +151,10 @@ final class LibraryRegroupEngineTests: XCTestCase {
         let oldFolded = LibraryFilterEngine.folding(oldSections, with: fixture.stackIndex)
 
         let input: LibraryRegroupEngine.Input = engineInput(fixture, scope: scope, criteria: criteria, editingItemID: editingItemID, searchMatches: searchMatches)
-        let output = LibraryRegroupEngine.run(input)
+        guard let output = LibraryRegroupEngine.run(input) else {
+            XCTFail("a pass nobody cancelled returned nothing", file: file, line: line)
+            return
+        }
 
         XCTAssertEqual(output.filteredIDs, Set(passes.filtered.map(\.id)), "filtered differs", file: file, line: line)
         XCTAssertEqual(output.visibleIDs, passes.visible.map(\.id), "visible differs", file: file, line: line)
@@ -166,7 +169,7 @@ final class LibraryRegroupEngineTests: XCTestCase {
     func testNoFilter() throws {
         let fixture = try makeFixture(context: try makeContext())
         assertSameAsMainThread(fixture, criteria: .default)
-        let output = LibraryRegroupEngine.run(engineInput(fixture, criteria: .default))
+        let output = try XCTUnwrap(LibraryRegroupEngine.run(engineInput(fixture, criteria: .default)))
         XCTAssertTrue(output.sections.contains { $0.id == "trip:trip-1" })
         XCTAssertTrue(output.sections.contains { $0.id == "month:unknown" })
         XCTAssertEqual(output.stackCounts["photo-21"], 3)
@@ -193,7 +196,7 @@ final class LibraryRegroupEngineTests: XCTestCase {
         assertSameAsMainThread(fixture, criteria: hasMemory)
         // "photo-3" has no memory, so only editing it keeps it.
         assertSameAsMainThread(fixture, criteria: hasMemory, editingItemID: "photo-3")
-        let output = LibraryRegroupEngine.run(engineInput(fixture, criteria: hasMemory, editingItemID: "photo-3"))
+        let output = try XCTUnwrap(LibraryRegroupEngine.run(engineInput(fixture, criteria: hasMemory, editingItemID: "photo-3")))
         XCTAssertEqual(output.visibleIDs.last, "photo-3")
 
         var noMemory = LibraryFilterCriteria()
@@ -237,6 +240,14 @@ final class LibraryRegroupEngineTests: XCTestCase {
         XCTAssertFalse(LibraryRegroupEngine.canRun(criteria: LibraryFilterCriteria(searchText: "x"), searchMatches: nil))
         XCTAssertTrue(LibraryRegroupEngine.canRun(criteria: LibraryFilterCriteria(searchText: "x"), searchMatches: []))
         XCTAssertFalse(LibraryRegroupEngine.canRun(criteria: LibraryFilterCriteria(tagID: "tag"), searchMatches: nil))
+    }
+
+    func testACancelledPassReturnsNothing() throws {
+        let fixture = try makeFixture(context: try makeContext())
+        let cancellation = LibraryRegroupEngine.Cancellation()
+        XCTAssertNotNil(LibraryRegroupEngine.run(engineInput(fixture, criteria: .default), cancellation: cancellation))
+        cancellation.cancel()
+        XCTAssertNil(LibraryRegroupEngine.run(engineInput(fixture, criteria: .default), cancellation: cancellation))
     }
 
     // MARK: Search waits for a pause in typing
@@ -353,6 +364,42 @@ final class LibraryRegroupEngineTests: XCTestCase {
         XCTAssertNil(after["photo-10"])
         XCTAssertEqual(after.count, fixture.all.count - 1)
         XCTAssertEqual(cache.readCount, reads)
+    }
+
+    /// A batch too big for one apply removes its photos in its first slice
+    /// and rebuilds the lists only after its last; in between the store
+    /// still names the removed photo, and the cache must skip it unread.
+    func testAPhotoRemovedInASlicedBatchIsNeverRead() async throws {
+        let context = try makeContext()
+        let fixture = try makeFixture(context: context)
+        let store = startStore(context)
+        let cache = LibraryPhotoFactsCache()
+        _ = try await facts(cache, store, context)
+
+        let removedID: String = fixture.regular[3].id
+        context.delete(fixture.regular[3])
+        for index in 0...(LibraryStore.maximumBatchSize + 1) {
+            context.insert(MediaItem(id: "extra-\(index)", captureDate: base.addingTimeInterval(Double(index))))
+        }
+        try context.save()
+        let deadline: Date = Date().addingTimeInterval(5)
+        while Date() < deadline, !store.isRemovedPendingRebuild(removedID) {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        XCTAssertTrue(store.isRemovedPendingRebuild(removedID), "the batch was not applied in slices")
+        XCTAssertTrue(store.regularIDs.contains(removedID), "the lists are rebuilt only after the last slice")
+        XCTAssertNil(store.liveItem(id: removedID))
+
+        let memories: [Memory] = try context.fetch(FetchDescriptor<Memory>())
+        let overrides: [PlaceOverride] = try context.fetch(FetchDescriptor<PlaceOverride>())
+        let midBatch = try XCTUnwrap(await cache.facts(store: store, memories: memories, overrides: overrides, favoritesMatter: false))
+        XCTAssertFalse(midBatch.regular.contains { $0.id == removedID })
+
+        let settled: Date = Date().addingTimeInterval(10)
+        while Date() < settled, store.isRemovedPendingRebuild(removedID) {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(store.regularIDs.contains(removedID))
     }
 
     func testCachedFactsGiveTheSameGridAsFreshOnes() async throws {

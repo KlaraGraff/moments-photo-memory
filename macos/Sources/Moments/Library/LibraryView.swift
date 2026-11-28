@@ -380,7 +380,6 @@ struct LibraryView: View {
             #if DEBUG
             let probeToken = PageProbe.phaseToken
             let parts: [(String, Int)] = groupingKeyParts
-            let started: CFTimeInterval = CACurrentMediaTime()
             #endif
             // While someone types, a pass starts only once they pause: each
             // letter cancels the wait of the one before.
@@ -390,6 +389,10 @@ struct LibraryView: View {
                 try? await Task.sleep(for: Self.typingPause)
                 guard !Task.isCancelled else { return }
             }
+            #if DEBUG
+            // After the pause, so the tally is the regroup's own time.
+            let started: CFTimeInterval = CACurrentMediaTime()
+            #endif
             await regroup()
             guard !Task.isCancelled else { return }
             restoreScrollAfterLeavingScope()
@@ -644,11 +647,26 @@ struct LibraryView: View {
            patchRegroup(cached.result, key: key, baseKey: baseKey, photoFaceRevision: photoFaceRevision) {
             return
         }
-        if await regroupOffMainThread(key: key, baseKey: baseKey, photoFaceRevision: photoFaceRevision) {
+        // A search finds photos by everything written about them and by
+        // who is in them, from an index kept up to date a few photos at a
+        // time, not read again per keystroke. With nothing typed, the index
+        // is read in slices so it is ready for the first word.
+        let personIndex: [String: Set<String>] = currentPersonIndex()
+        let searchMatches: Set<String>? = LibrarySearchIndex.matchingIDs(
+            query: criteria.searchText,
+            store: store,
+            people: people,
+            personIndex: personIndex,
+            context: modelContext
+        )
+        if searchMatches == nil {
+            LibrarySearchIndex.warmUp(store: store, people: people, personIndex: personIndex, context: modelContext)
+        }
+        if await regroupOffMainThread(key: key, baseKey: baseKey, photoFaceRevision: photoFaceRevision, personIndex: personIndex, searchMatches: searchMatches) {
             return
         }
         guard !Task.isCancelled else { return }
-        regroupOnMainThread(key: key, baseKey: baseKey, photoFaceRevision: photoFaceRevision)
+        regroupOnMainThread(key: key, baseKey: baseKey, photoFaceRevision: photoFaceRevision, personIndex: personIndex, searchMatches: searchMatches)
     }
 
     /// Shows a finished regroup: the reused one, or one the background pass
@@ -664,6 +682,7 @@ struct LibraryView: View {
         state.gridSections = result.gridSections
         state.viewerItemIDs = result.viewerItemIDs
         hasGrouped = true
+        Self.gridGeneration &+= 1
         // The stack model is shared with the other pages, so it is handed
         // the photos again; it does nothing when nothing changed.
         stacks.update(
@@ -713,7 +732,13 @@ struct LibraryView: View {
     /// shows the result. False when the filters ask for something only the
     /// main-thread pass knows; true once the result is shown, or when this
     /// pass was overtaken by a newer one.
-    private func regroupOffMainThread(key: Int, baseKey: Int, photoFaceRevision: Int) async -> Bool {
+    private func regroupOffMainThread(
+        key: Int,
+        baseKey: Int,
+        photoFaceRevision: Int,
+        personIndex: [String: Set<String>],
+        searchMatches: Set<String>?
+    ) async -> Bool {
         #if DEBUG
         var stepStarted: CFTimeInterval = CACurrentMediaTime()
         let step: (String) -> Void = { (name: String) -> Void in
@@ -722,24 +747,10 @@ struct LibraryView: View {
         }
         #endif
         let currentCriteria: LibraryFilterCriteria = criteria
-        let personIndex: [String: Set<String>] = currentPersonIndex()
-        #if DEBUG
-        step("person index")
-        #endif
-        let searchMatches: Set<String>? = LibrarySearchIndex.matchingIDs(
-            query: currentCriteria.searchText,
-            store: store,
-            people: people,
-            personIndex: personIndex,
-            context: modelContext
-        )
-        if searchMatches == nil {
-            LibrarySearchIndex.warmUp(store: store, people: people, personIndex: personIndex, context: modelContext)
-        }
-        #if DEBUG
-        step("search index")
-        #endif
         guard LibraryRegroupEngine.canRun(criteria: currentCriteria, searchMatches: searchMatches) else { return false }
+        let gridAtStart: Int = Self.gridGeneration
+        let scopeIDs: Set<String>? = selection.libraryScope?.itemIDs
+        let editingItemID: String? = state.focusedMemoryItemID
         // The stack model is shared with the other pages and lives on the
         // main actor; its index is a plain value the background pass folds by.
         let stackIndex = stacks.update(
@@ -766,9 +777,9 @@ struct LibraryView: View {
         let input = LibraryRegroupEngine.Input(
             items: facts.regular,
             screenshots: facts.screenshots,
-            scopeIDs: selection.libraryScope?.itemIDs,
+            scopeIDs: scopeIDs,
             criteria: currentCriteria,
-            editingItemID: state.focusedMemoryItemID,
+            editingItemID: editingItemID,
             personIDsByMediaID: personIndex,
             searchMatches: searchMatches,
             places: LibraryPhotoFactsCache.shared.places,
@@ -780,21 +791,37 @@ struct LibraryView: View {
         step("background input")
         let backgroundStarted: CFTimeInterval = CACurrentMediaTime()
         #endif
-        let output: LibraryRegroupEngine.Output = await Task.detached(priority: .userInitiated) {
-            LibraryRegroupEngine.run(input)
+        // A pass still running for other filters is stopped: nobody will see
+        // it. One for the same filters runs on, so a library that keeps
+        // changing (an import) still gets each finished pass shown.
+        let cancellation = LibraryRegroupEngine.Cancellation()
+        if let running = Self.runningPass, running.baseKey != baseKey { running.cancellation.cancel() }
+        Self.runningPass = (baseKey: baseKey, cancellation: cancellation)
+        let finished: LibraryRegroupEngine.Output? = await Task.detached(priority: .userInitiated) {
+            LibraryRegroupEngine.run(input, cancellation: cancellation)
         }.value
+        if Self.runningPass?.cancellation === cancellation { Self.runningPass = nil }
         #if DEBUG
         // Wall time of the background pass; the main thread was free meanwhile.
         PageProbe.tally("regroup background pass", seconds: CACurrentMediaTime() - backgroundStarted)
         stepStarted = CACurrentMediaTime()
         #endif
-        // A newer regroup takes over; this one's photos may be gone.
-        guard !Task.isCancelled, groupingKey == key else { return true }
+        guard let output = finished else { return true }
+        // Overtaken: shown only when just the photos moved since it started
+        // and no newer pass was shown, so the grid keeps up during an import.
+        // Its photos are looked up live below, so removed ones drop out.
+        let isCurrent: Bool = !Task.isCancelled && groupingKey == key
+        if !isCurrent {
+            #if DEBUG
+            PageProbe.tally("regroup step: overtaken pass", seconds: 0)
+            #endif
+            guard groupingKey(includingPhotos: false) == baseKey, Self.gridGeneration == gridAtStart else { return true }
+        }
 
         var itemByID: [String: MediaItem] = [:]
         itemByID.reserveCapacity(output.visibleIDs.count)
         for id in output.visibleIDs {
-            if let model = store.itemsByID[id] { itemByID[id] = model }
+            if let model = store.liveItem(id: id) { itemByID[id] = model }
         }
         var sectionItemsByID: [String: [MediaItem]] = [:]
         sectionItemsByID.reserveCapacity(output.sections.count)
@@ -827,10 +854,22 @@ struct LibraryView: View {
         return true
     }
 
+    /// Counts each time the grid was set, by any path, so an overtaken pass
+    /// is shown only when nothing was shown since it started.
+    @MainActor private static var gridGeneration = 0
+    /// The background pass in flight and the filters it was started for.
+    @MainActor private static var runningPass: (baseKey: Int, cancellation: LibraryRegroupEngine.Cancellation)?
+
     /// The full regroup on the main thread, for filters the background pass
     /// does not cover (possible screenshots, tags, a search the index could
     /// not answer).
-    private func regroupOnMainThread(key: Int, baseKey: Int, photoFaceRevision: Int) {
+    private func regroupOnMainThread(
+        key: Int,
+        baseKey: Int,
+        photoFaceRevision: Int,
+        personIndex: [String: Set<String>],
+        searchMatches: Set<String>?
+    ) {
         #if DEBUG
         var stepStarted: CFTimeInterval = CACurrentMediaTime()
         let step: (String) -> Void = { (name: String) -> Void in
@@ -843,11 +882,7 @@ struct LibraryView: View {
         #if DEBUG
         step("allItems")
         #endif
-        let personIndex: [String: Set<String>] = currentPersonIndex()
         cachedPersonIndex = personIndex
-        #if DEBUG
-        step("person index")
-        #endif
         // A scope from another screen narrows the grid only; the published
         // ids below stay on the regular filters so the maps do not shrink.
         let scopedItems = selection.libraryScope.map { scope in
@@ -855,23 +890,6 @@ struct LibraryView: View {
         } ?? items
         #if DEBUG
         step("scope")
-        #endif
-        // A search finds photos by everything written about them and by
-        // who is in them, from an index kept up to date a few photos at a
-        // time, not read again per keystroke. With nothing typed, the index
-        // is read in slices so it is ready for the first word.
-        let searchMatches: Set<String>? = LibrarySearchIndex.matchingIDs(
-            query: criteria.searchText,
-            store: store,
-            people: people,
-            personIndex: personIndex,
-            context: modelContext
-        )
-        if searchMatches == nil {
-            LibrarySearchIndex.warmUp(store: store, people: people, personIndex: personIndex, context: modelContext)
-        }
-        #if DEBUG
-        step("search index")
         #endif
         // One call for all three results, so each photo is tested once.
         let passes = LibraryFilterEngine.regroupPasses(
@@ -917,6 +935,7 @@ struct LibraryView: View {
         state.gridSections = cachedSections.map(\.itemIDs)
         state.viewerItemIDs = unfolded.flatMap(\.itemIDs)
         hasGrouped = true
+        Self.gridGeneration &+= 1
         #if DEBUG
         step("publish sections")
         #endif
@@ -1063,6 +1082,7 @@ struct LibraryView: View {
         state.gridSections = gridSections
         state.viewerItemIDs = viewerItemIDs
         hasGrouped = true
+        Self.gridGeneration &+= 1
         var sectionItemsByID: [String: [MediaItem]] = old.sectionItems
         var sectionDayKeys: [String: Set<String>] = old.sectionDayKeys
         for id in patch.affectedIDs {

@@ -149,7 +149,30 @@ enum LibraryRegroupEngine {
             && (criteria.searchText.isEmpty || searchMatches != nil)
     }
 
-    static func run(_ input: Input) -> Output {
+    /// Set from the main thread when a newer pass with other filters starts,
+    /// so this one stops early instead of finishing work nobody will see.
+    final class Cancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+
+        func cancel() {
+            lock.lock()
+            cancelled = true
+            lock.unlock()
+        }
+
+        var isCancelled: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return cancelled
+        }
+    }
+
+    /// Photos tested between two looks at `cancellation`.
+    private static let cancellationStride = 4_096
+
+    /// Nil when `cancellation` was set before the pass finished.
+    static func run(_ input: Input, cancellation: Cancellation? = nil) -> Output? {
         let criteria: LibraryFilterCriteria = input.criteria
         let scoped: [LibraryPhotoFacts]
         if let scopeIDs = input.scopeIDs {
@@ -157,7 +180,11 @@ enum LibraryRegroupEngine {
         } else {
             scoped = input.items
         }
-        let filtered: [LibraryPhotoFacts] = scoped.filter { matches($0, criteria: criteria, hidesScreenshots: true, input: input) }
+        var filtered: [LibraryPhotoFacts] = []
+        for (index, facts) in scoped.enumerated() {
+            if index % cancellationStride == 0, cancellation?.isCancelled == true { return nil }
+            if matches(facts, criteria: criteria, hidesScreenshots: true, input: input) { filtered.append(facts) }
+        }
 
         // Keeping a photo that the memory filter drops: only while someone
         // edits that photo's memory, and only when it passes without that
@@ -186,6 +213,7 @@ enum LibraryRegroupEngine {
             publishedIDs = Set(all.lazy.filter { matches($0, criteria: published, hidesScreenshots: true, input: input) }.map(\.id))
         }
 
+        if cancellation?.isCancelled == true { return nil }
         let unfolded: [LibrarySection] = storySections(visible, tripNames: input.tripNames)
         let folded = LibraryFilterEngine.folding(unfolded, with: input.stackIndex)
 

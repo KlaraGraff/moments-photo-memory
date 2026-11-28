@@ -82,6 +82,10 @@ struct MapScreen: View {
     /// Keyed on both revisions: a save that changes only an override moves
     /// `groupSourcesRevision`, not `revision`.
     @State private var manualCoordinates: (revision: Int, overrides: Int, points: [String: GeoPoint])?
+    /// Moves when a save changed only hand-set coordinates (a partner's
+    /// sync, an Undo), which does not move `store.revision`, so the pins
+    /// are built again. Not every override save: most change no coordinate.
+    @State private var manualGeneration = 0
     @State private var world = MapWorldState()
     /// Created once per screen; it reads its cache file from disk.
     @State private var geocodeResolver: FootprintsGeocodeResolver?
@@ -103,12 +107,22 @@ struct MapScreen: View {
         // The store bumps `revision` when anything the pins are built from
         // changes: a photo's time or place, a place's name or its rename.
         hasher.combine(store.revision)
+        hasher.combine(manualGeneration)
         // The photos this map was opened for, and the Library filters.
         hasher.combine(selection.mapScopeGeneration)
         hasher.combine(selection.libraryFiltersActive)
         if selection.libraryFiltersActive { hasher.combine(selection.visibleGeneration) }
         hasher.combine(viewModel.level(for: latitudeDelta))
         return hasher.finalize()
+    }
+
+    /// After a save that may have changed only overrides: reads the
+    /// hand-set coordinates once and builds the pins again when they moved.
+    private func refreshManualCoordinates() {
+        guard let cached = manualCoordinates else { return }
+        let points = ManualLocationIndex.coordinates(in: modelContext)
+        manualCoordinates = (store.revision, store.groupSourcesRevision, points)
+        if points != cached.points { manualGeneration &+= 1 }
     }
 
     private var selectedCluster: PlaceCluster? {
@@ -152,6 +166,7 @@ struct MapScreen: View {
             PageProbe.shellReady(token: PageProbe.phaseToken)
         }
         #endif
+        .onChange(of: store.groupSourcesRevision) { refreshManualCoordinates() }
         .task(id: snapshotKey) {
             #if DEBUG
             let probeToken = PageProbe.phaseToken

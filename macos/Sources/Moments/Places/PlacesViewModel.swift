@@ -150,10 +150,21 @@ struct PlacesViewModel {
         }
         let latitudes = points.map(\.latitude)
         let longitudes = points.map(\.longitude)
-        let latitudeSpan = boundedSpan((latitudes.max() ?? centre.latitude) - (latitudes.min() ?? centre.latitude))
-        let longitudeSpan = boundedSpan((longitudes.max() ?? centre.longitude) - (longitudes.min() ?? centre.longitude))
+        let south = latitudes.min() ?? centre.latitude
+        let north = latitudes.max() ?? centre.latitude
+        let west = longitudes.min() ?? centre.longitude
+        let east = longitudes.max() ?? centre.longitude
+        let latitudeSpan = boundedSpan(north - south)
+        let longitudeSpan = boundedSpan(east - west)
+        // The middle of the photos' extent, so every photo is in the region
+        // the span was sized for. The average leans to where most photos
+        // are and cut a lone photo off at the edge. A group across the date
+        // line keeps the average, as before.
+        let middle = east - west > 180
+            ? centre
+            : GeoPoint(latitude: (south + north) / 2, longitude: (west + east) / 2)
         return MKCoordinateRegion(
-            center: centre.coordinate,
+            center: middle.coordinate,
             span: MKCoordinateSpan(latitudeDelta: latitudeSpan, longitudeDelta: longitudeSpan)
         )
     }

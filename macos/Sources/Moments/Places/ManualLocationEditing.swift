@@ -206,8 +206,9 @@ enum ManualLocationEditing {
     private struct PlaceFinder {
         let context: ModelContext
         private var places: [Place]
-        /// Spots made earlier that this edit gave the searched name.
-        private(set) var named: [String] = []
+        /// Spots made earlier that this edit gave the searched name, with
+        /// that name.
+        private(set) var named: [(id: String, name: String)] = []
 
         init(context: ModelContext) {
             self.context = context
@@ -273,7 +274,9 @@ enum ManualLocationEditing {
                     if !name.isEmpty, found.id.hasPrefix(ManualLocationEditing.placeIDPrefix),
                        found.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         found.name = name
-                        named.append(found.id)
+                        found.updatedAt = .now
+                        found.updatedBy = MomentsAccount.localID
+                        named.append((found.id, name))
                     }
                     return found
                 }
@@ -387,12 +390,16 @@ enum ManualLocationEditing {
         before: [ItemState],
         created: [String],
         removed: [PlaceState],
-        named: [String] = []
+        named: [(id: String, name: String)] = []
     ) -> CorrectionUndo {
         CorrectionUndo(message: message, actionName: String(localized: "Set Location")) { context in
-            // A spot this edit named was unnamed before.
-            for id in named {
-                fetchPlace(id, context: context)?.name = ""
+            // A spot this edit named was unnamed before, unless someone
+            // named it otherwise since.
+            for entry in named {
+                guard let place = fetchPlace(entry.id, context: context), place.name == entry.name else { continue }
+                place.name = ""
+                place.updatedAt = .now
+                place.updatedBy = MomentsAccount.localID
             }
             // Places the edit removed come back first, parents before
             // children, with their ids, so the photos can rejoin them.

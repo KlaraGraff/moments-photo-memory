@@ -1,4 +1,5 @@
 import Foundation
+import MapKit
 import MomentsCore
 import SwiftData
 import XCTest
@@ -332,6 +333,21 @@ final class ManualLocationEditingTests: XCTestCase {
         XCTAssertEqual(named?.name, "Synthetic Area")
         let cityName = try fresh.fetch(FetchDescriptor<Place>(predicate: #Predicate { $0.id == "city" })).first?.name
         XCTAssertEqual(cityName, "Synthetic City", "The backfill renamed a city that had its name")
+    }
+
+    func testFitShowsALonePhotoAwayFromTheRest() {
+        // Many photos together near 0,0 and one about 4 km off, as a photo
+        // placed by hand often is: Fit must show that one too.
+        var stops = (0..<25).map { index in
+            PhotoStop(id: "p\(index)", date: base, coordinate: GeoPoint(latitude: Double(index % 5) * 0.002, longitude: Double(index / 5) * 0.002))
+        }
+        stops.append(PhotoStop(id: "lone", date: base, coordinate: GeoPoint(latitude: 0.03, longitude: 0.03)))
+        let region = PlacesViewModel().initialRegion(for: stops)
+        for stop in stops {
+            guard let point = stop.coordinate else { continue }
+            XCTAssertLessThan(abs(point.latitude - region.center.latitude), region.span.latitudeDelta / 2, "\(stop.id) is outside the region")
+            XCTAssertLessThan(abs(point.longitude - region.center.longitude), region.span.longitudeDelta / 2, "\(stop.id) is outside the region")
+        }
     }
 
     func testIntervalText() {

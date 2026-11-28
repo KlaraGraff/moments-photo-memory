@@ -84,6 +84,7 @@ final class MomentsLocationUITests: XCTestCase {
         openMapAtPhotos(app)
         let marker = element(app, "map.marker.demo-unlocated-1")
         XCTAssertTrue(marker.waitForExistence(timeout: timeout), "The photo is not on the map")
+        XCTAssertTrue(marker.isHittable, "The photo's pin is outside the map")
         let value = marker.value as? String ?? ""
         XCTAssertTrue(value.contains("Set by hand"), "The pin is not marked as set by hand (\(value))")
         capture(app, "\(prefix)-04-map-evidence")

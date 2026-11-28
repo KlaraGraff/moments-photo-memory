@@ -284,6 +284,23 @@ final class LibraryCluesTests: XCTestCase {
         XCTAssertEqual(chapter.first?.cover?.id, "anna-picked", "A chapter's faces show the picked face")
     }
 
+    /// A group nobody has named yet keeps the face picked for it, too.
+    func testThePickedKeyFaceStandsForAnUnnamedGroup() throws {
+        let suiteName: String = "LibraryCluesTests.groupKeyFace.\(UUID().uuidString)"
+        let decisions: UserDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { decisions.removePersistentDomain(forName: suiteName) }
+        let all: [FaceObservation] = faces("group", count: 5, clusterID: "cluster-big")
+        all[0].quality = 0.95
+        let itemsByID: [String: MediaItem] = items(for: all)
+
+        let before: [PeopleStripEntry] = PeopleStrip.entries(faces: all, people: [], itemsByID: itemsByID, decisions: decisions)
+        XCTAssertEqual(before.first?.cover?.id, "group-face-1", "With no choice the sharpest face stands for the group")
+
+        PeopleStoreActions.setKeyFace("group-face-4", for: PeopleStoreActions.groupKey("cluster-big"), defaults: decisions)
+        let after: [PeopleStripEntry] = PeopleStrip.entries(faces: all, people: [], itemsByID: itemsByID, decisions: decisions)
+        XCTAssertEqual(after.first?.cover?.id, "group-face-4", "The row of faces shows the face picked for the group")
+    }
+
     /// A person shows the same face on every chapter as in the row of faces,
     /// even on a chapter without that photo, so nobody looks like a stranger.
     func testAPersonShowsTheSameFaceOnEveryChapter() {

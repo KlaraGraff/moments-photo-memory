@@ -85,7 +85,7 @@ enum PeopleStrip {
                 personID: nil,
                 clusterID: clusterID,
                 name: nil,
-                cover: PeopleFacePicker.cover(group),
+                cover: PeopleFacePicker.cover(group, keyFaceID: PeopleStoreActions.keyFaceID(for: PeopleStoreActions.groupKey(clusterID), defaults: decisions)),
                 mediaIDs: mediaIDs
             ))
         }
@@ -613,12 +613,18 @@ struct LibraryScopeHeading: View {
         }
     }
 
-    /// A named person's face is a button: it opens their faces, and the one
-    /// clicked stands for them from then on. An unnamed group has no choice
-    /// to keep yet.
+    /// Whose key face the heading shows and changes: the person's, or the
+    /// unnamed group's until it gets a name.
+    private var keyOwner: String? {
+        if let personID = scope.personID { return personID }
+        return scope.clusterID.map(PeopleStoreActions.groupKey)
+    }
+
+    /// The face is a button: it opens the person's or the group's faces, and
+    /// the one clicked stands for them from then on.
     @ViewBuilder
     private var headingFace: some View {
-        if let personID = scope.personID {
+        if let owner = keyOwner {
             Button { isPickingKeyFace = true } label: {
                 PersonFace(face: cover, size: 40).contentShape(Circle())
             }
@@ -629,7 +635,7 @@ struct LibraryScopeHeading: View {
             .accessibilityIdentifier("library.scope.face")
             .popover(isPresented: $isPickingKeyFace, arrowEdge: .bottom) {
                 KeyFacePicker(faces: faces, current: cover?.id) { (face: FaceObservation) in
-                    store.setKeyFace(face.id, for: personID)
+                    store.setKeyFace(face.id, for: owner)
                     isPickingKeyFace = false
                 }
             }
@@ -640,10 +646,10 @@ struct LibraryScopeHeading: View {
 
     private var cover: FaceObservation? {
         let group: [FaceObservation] = faces
-        if let personID = scope.personID {
+        if let owner = keyOwner {
             // Read so a new key face redraws the heading.
             _ = store.keyFaceRevision
-            return PeopleFacePicker.cover(group, keyFaceID: PeopleStoreActions.keyFaceID(for: personID))
+            return PeopleFacePicker.cover(group, keyFaceID: PeopleStoreActions.keyFaceID(for: owner))
         }
         return PeopleFacePicker.cover(group)
     }
@@ -727,6 +733,17 @@ struct LibraryScopeHeading: View {
             context: modelContext
         )
         try? modelContext.save()
+        // The face picked while the group had no name stays its face, unless
+        // it joined someone who already has one.
+        if let shownID {
+            let groupKey: String = PeopleStoreActions.groupKey(clusterID)
+            if let picked = PeopleStoreActions.keyFaceID(for: groupKey) {
+                if PeopleStoreActions.keyFaceID(for: shownID) == nil {
+                    store.setKeyFace(picked, for: shownID)
+                }
+                PeopleStoreActions.setKeyFace(nil, for: groupKey)
+            }
+        }
         if let target, let shownID {
             // Joined someone: their photos and these, together.
             PersonClue.showPhotos(ofPerson: shownID, name: target.name ?? value, store: store, selection: selection, replacing: true)

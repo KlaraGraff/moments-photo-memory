@@ -1176,19 +1176,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ein älterer Speicher enthält Nicht-Demodaten. Er wurde unverändert gelassen; sichere ihn vor der Migration."
+            "value" : "Deine früheren Erinnerungen sind sicher und wurden nicht verändert."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "A legacy store contains non-demo data. It was left untouched; back it up before migrating."
+            "value" : "Your earlier memories are safe and were not changed."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "旧存储包含非演示数据，已保持不变；迁移前请先备份。"
+            "value" : "你之前的回忆都在，没有改动。"
           }
         }
       }
@@ -1518,7 +1518,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "所有旅程"
+            "value" : "所有旅行"
           }
         }
       }
@@ -2518,19 +2518,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mediendateien gefunden"
+            "value" : "Fotos und Videos gefunden"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Found media files"
+            "value" : "Found photos and videos"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已找到媒体文件"
+            "value" : "找到了照片和视频"
           }
         }
       }
@@ -3156,19 +3156,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kartenteile nicht verfügbar"
+            "value" : "Die Karte lässt sich gerade nicht laden"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Map tiles unavailable"
+            "value" : "The map can't load right now"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "地图图块不可用"
+            "value" : "地图暂时加载不出来"
           }
         }
       }
@@ -3288,19 +3288,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Der lokale Moments-Speicher konnte nicht geöffnet werden. Deine vorhandenen Daten wurden nicht verändert."
+            "value" : "Es wurde nichts geändert oder gelöscht. Beende Moments und öffne es erneut."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moments could not open its local store. Your existing data was left untouched."
+            "value" : "Nothing was changed or deleted. Quit and open Moments again."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moments 无法打开本地存储，现有数据未被修改。"
+            "value" : "什么都没改，也没删。退出后重新打开 Moments 试试。"
           }
         }
       }
@@ -3310,19 +3310,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moments konnte die Medienmetadaten nicht lesen."
+            "value" : "Moments konnte Datum und Ort dieses Fotos nicht lesen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moments could not read media metadata."
+            "value" : "Moments couldn't read this photo's date and place."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moments 无法读取媒体元数据。"
+            "value" : "没能读出这张照片的日期和地点。"
           }
         }
       }
@@ -3332,19 +3332,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moments-Speicher nicht verfügbar"
+            "value" : "Moments kann deine Erinnerungen nicht öffnen"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moments store unavailable"
+            "value" : "Moments can't open your memories"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moments 存储不可用"
+            "value" : "Moments 打不开你的回忆"
           }
         }
       }
@@ -3772,19 +3772,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Offline: nur zwischengespeicherte Länder"
+            "value" : "Offline: nur Länder"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Offline: cached countries only"
+            "value" : "Offline: showing countries only"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "离线：仅显示已缓存的国家"
+            "value" : "没联网，只显示国家"
           }
         }
       }
@@ -3850,7 +3850,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在整理旅程和地点"
+            "value" : "正在整理旅行和地点"
           }
         }
       }
@@ -4146,19 +4146,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Metadaten werden gelesen"
+            "value" : "Datum und Orte werden gelesen"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reading metadata"
+            "value" : "Reading dates and places"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在读取元数据"
+            "value" : "正在读取日期和地点"
           }
         }
       }
@@ -4774,7 +4774,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "旅程"
+            "value" : "旅行"
           }
         }
       }
@@ -4796,7 +4796,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "旅程名称"
+            "value" : "旅行名称"
           }
         }
       }
@@ -5114,19 +5114,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nicht unterstützter Medientyp."
+            "value" : "Das ist kein Foto oder Video, das Moments öffnen kann."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Unsupported media type."
+            "value" : "This isn't a photo or video Moments can open."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "不支持的媒体类型。"
+            "value" : "这不是 Moments 能打开的照片或视频。"
           }
         }
       }
@@ -12423,19 +12423,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Objekte in Apple Fotos gefunden"
+            "value" : "Fotos und Videos in Apple Fotos gefunden"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Found Apple Photos assets"
+            "value" : "Found photos and videos in Apple Photos"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已找到 Apple Photos 中的项目"
+            "value" : "在「照片」App 里找到了照片和视频"
           }
         }
       }
@@ -12467,19 +12467,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Metadaten aus Apple Fotos werden gelesen"
+            "value" : "Datum und Orte aus Apple Fotos werden gelesen"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reading Apple Photos metadata"
+            "value" : "Reading dates and places from Apple Photos"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在读取 Apple Photos 元数据"
+            "value" : "正在从「照片」App 读取日期和地点"
           }
         }
       }
@@ -15092,19 +15092,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Offline: nur gespeicherte Städte"
+            "value" : "Offline: nur Städte"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Offline: cached cities only"
+            "value" : "Offline: showing cities only"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "离线：仅显示已缓存的城市"
+            "value" : "没联网，只显示城市"
           }
         }
       }
@@ -16190,7 +16190,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "备份里有回忆、旅程、地点、人物和你做过的选择，没有原图。恢复前，现在的资料库也会先另存一份。"
+            "value" : "备份里有回忆、旅行、地点、人物和你做过的选择，没有原图。恢复前，现在的资料库也会先另存一份。"
           }
         }
       }
@@ -16792,7 +16792,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "添加旅程…"
+            "value" : "添加旅行…"
           }
         }
       }
@@ -16814,7 +16814,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选好要共享的旅程，再邀请对方。对方加入后能看到这些旅程的照片和回忆，也能接着写。没选的旅程只留在这台 Mac 上。原图不会上传，只同步一份缩小的预览。"
+            "value" : "选好要共享的旅行，再邀请对方。对方加入后能看到这些旅行的照片和回忆，也能接着写。没选的旅行只留在这台 Mac 上。原图不会上传，只同步一份缩小的预览。"
           }
         }
       }
@@ -17078,7 +17078,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "共享的旅程"
+            "value" : "共享的旅行"
           }
         }
       }
@@ -17088,13 +17088,13 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Teilen ist in dieser Kopie nicht verfügbar"
+            "value" : "Teilen ist in dieser Version nicht verfügbar"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sharing isn't available in this copy"
+            "value" : "Sharing isn't available in this version"
           }
         },
         "zh-Hans" : {
@@ -17298,7 +17298,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "共享的旅程会从这台 Mac 上消失。你写的回忆已经同步给对方，对方那边会保留。要再加入，需要对方重新邀请。"
+            "value" : "共享的旅行会从这台 Mac 上消失。你写的回忆已经同步给对方，对方那边会保留。要再加入，需要对方重新邀请。"
           }
         }
       }
@@ -17308,19 +17308,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Diese Kopie von Moments ist nicht für iCloud signiert. Installiere die signierte Version, um mit deinem Partner zu teilen."
+            "value" : "Zum Teilen brauchst du Moments aus dem offiziellen Download."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This copy of Moments is not signed for iCloud. Install the signed version to share with your partner."
+            "value" : "Sharing needs the version of Moments from the official download."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这份 Moments 没有为 iCloud 签名。装上签名版就能和对方共享。"
+            "value" : "共享要用正式下载的 Moments。"
           }
         }
       }
@@ -17342,7 +17342,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "要共享的旅程"
+            "value" : "要共享的旅行"
           }
         }
       }
@@ -17364,7 +17364,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "收到的旅程"
+            "value" : "收到的旅行"
           }
         }
       }
@@ -17474,7 +17474,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "以后在旅程页上也能随时加。"
+            "value" : "以后在旅行页上也能随时加。"
           }
         }
       }
@@ -17518,7 +17518,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "对方会从共享里移出，所有共享的旅程在对方那边都会消失。对方写过的回忆会留在这台 Mac 上，你的照片和回忆不会被删。要再一起记录，需要重新邀请。"
+            "value" : "对方会从共享里移出，所有共享的旅行在对方那边都会消失。对方写过的回忆会留在这台 Mac 上，你的照片和回忆不会被删。要再一起记录，需要重新邀请。"
           }
         }
       }
@@ -17562,7 +17562,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "对方那边会看不到这段旅程的照片和回忆。对方写在这里的回忆会留在这台 Mac 上，你的东西都不会被删。以后可以再共享。"
+            "value" : "对方那边会看不到这次旅行的照片和回忆。对方写在这里的回忆会留在这台 Mac 上，你的东西都不会被删。以后可以再共享。"
           }
         }
       }
@@ -17606,7 +17606,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已选 %lld 段"
+            "value" : "已选 %lld 次旅行"
           }
         }
       }
@@ -17628,7 +17628,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ 和你共享了 %lld 段旅程"
+            "value" : "%@ 和你共享了 %lld 次旅行"
           }
         }
       }
@@ -17782,7 +17782,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "和对方共享这段旅程"
+            "value" : "和对方共享这次旅行"
           }
         }
       }
@@ -18486,7 +18486,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "导入照片，在照片下面写一句，以后按旅程回看。"
+            "value" : "导入照片，在照片下面写一句，以后按旅行回看。"
           }
         }
       }
@@ -19462,7 +19462,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "导入带位置的照片后，片刻会找出你常待的地方，请你确认一次。也可以现在自己添加。"
+            "value" : "导入带位置的照片后，Moments 会找出你常待的地方，请你确认一次。也可以现在自己添加。"
           }
         }
       }
@@ -19528,7 +19528,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "片刻用这些地方分辨日常和旅行。只保存在这台 Mac 上。"
+            "value" : "Moments 用这些地方分辨日常和旅行。只存在这台 Mac 上。"
           }
         }
       }
@@ -19572,7 +19572,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "片刻找到的，请你确认"
+            "value" : "从你的照片里找到的"
           }
         }
       }
@@ -20802,19 +20802,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Der gestreifte Rand ist Beschnitt und wird nach dem Druck abgeschnitten."
+            "value" : "Der gestreifte Rand wird nach dem Druck abgeschnitten."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The striped edge is bleed and is trimmed off after printing."
+            "value" : "The striped edge is cut off after printing."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "斜纹部分是出血，印好后裁掉。"
+            "value" : "斜纹那一圈印好后会裁掉。"
           }
         }
       }
@@ -20918,7 +20918,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Full Bleed"
+            "value" : "Edge to edge"
           }
         },
         "zh-Hans" : {
@@ -21088,19 +21088,19 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld × %lld mm · 3 mm Beschnitt · 300 dpi · CMYK · 2-seitiges PDF"
+            "value" : "%lld × %lld mm · Vorder- und Rückseite · druckfertig"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld × %lld mm · 3 mm bleed · 300 dpi · CMYK · 2-page PDF"
+            "value" : "%lld × %lld mm · front and back · ready for a print shop"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld × %lld mm · 每边出血 3 mm · 300 dpi · CMYK · 正反 2 页 PDF"
+            "value" : "%lld × %lld mm · 正反两面 · 可以直接拿去印"
           }
         }
       }

@@ -248,6 +248,22 @@ final class ManualLocationEditingTests: XCTestCase {
         XCTAssertEqual(item.manualLocation?.point, GeoPoint(latitude: 0.3, longitude: 0.3))
     }
 
+    func testUndoKeepsANameChangedAfterTheSearch() throws {
+        let context = try makeContext()
+        let item = MediaItem(id: "a", captureDate: base)
+        context.insert(item)
+        try context.save()
+        ManualLocationEditing.setLocation(GeoPoint(latitude: 0.3, longitude: 0.3), name: nil, on: [item], context: context, now: base)
+        let spot = try XCTUnwrap(item.place)
+        let undo = ManualLocationEditing.setLocation(GeoPoint(latitude: 0.302, longitude: 0.3), name: "Synthetic Harbour", on: [item], context: context, now: base)
+        XCTAssertEqual(spot.updatedBy, MomentsAccount.localID, "Naming the spot did not record who named it")
+
+        // Someone renames the spot before Undo; Undo leaves their name.
+        spot.name = "Synthetic Pier"
+        undo?.perform(in: context)
+        XCTAssertEqual(spot.name, "Synthetic Pier", "Undo took away a name given after the search")
+    }
+
     func testClearingKeepsAMapLink() throws {
         let context = try makeContext()
         let item = MediaItem(id: "a", captureDate: base)

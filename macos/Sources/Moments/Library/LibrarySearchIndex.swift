@@ -171,6 +171,7 @@ enum LibrarySearchIndex {
     private static let chapterEntities: [String] = [String(describing: UserGroup.self), String(describing: UserGroupItem.self)]
     private static let placeOverrideEntity: String = String(describing: PlaceOverride.self)
 
+    @MainActor
     private final class State {
         let storeID: ObjectIdentifier
         let calendarKey: Int

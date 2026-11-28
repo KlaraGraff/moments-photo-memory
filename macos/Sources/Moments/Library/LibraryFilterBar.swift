@@ -437,25 +437,6 @@ enum LibraryFilterKeys {
             searchText: query
         )
     }
-
-    /// The names of the people in each photo, so a search finds photos by
-    /// who is in them. Empty while nothing is typed.
-    @MainActor
-    static func personSearchExtras(query: String, people: [Person], personIndex: [String: Set<String>]) -> [String: [String]] {
-        var extras: [String: [String]] = [:]
-        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return extras }
-        var names: [String: String] = [:]
-        for person in people where !person.hidden {
-            let name: String = person.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !name.isEmpty { names[person.id] = name }
-        }
-        guard !names.isEmpty else { return extras }
-        for (mediaID, personIDs) in personIndex {
-            let found: [String] = personIDs.compactMap { (id: String) -> String? in names[id] }
-            if !found.isEmpty { extras[mediaID] = found }
-        }
-        return extras
-    }
 }
 
 /// Publishes the ids that pass the Library filters into `SelectionModel`
@@ -465,6 +446,7 @@ enum LibraryFilterKeys {
 struct LibraryFilterPublisher: View {
     @Environment(SelectionModel.self) private var selection
     @Environment(LibraryStore.self) private var store
+    @Environment(\.modelContext) private var modelContext
 
     /// The view is dropped when the page is left, so keep the last result across visits.
     @MainActor private static var lastPublished: (key: Int, visible: Set<String>?)?
@@ -518,6 +500,9 @@ struct LibraryFilterPublisher: View {
                 hasher.combine(person.name)
                 hasher.combine(person.hidden)
             }
+            // And everything written: comments, notes, day, trip and place memories.
+            hasher.combine(store.writtenTextRevision)
+            hasher.combine(store.groupSourcesRevision)
         }
         if readsText {
             for item in items {
@@ -551,8 +536,14 @@ struct LibraryFilterPublisher: View {
                 let visible: Set<String>?
                 if criteria.isFiltered {
                     let personIndex = UserGroupRuleEngine.makePersonIndex(faceObservations)
-                    let extras: [String: [String]] = LibraryFilterKeys.personSearchExtras(query: query, people: people, personIndex: personIndex)
-                    let passed: [MediaItem] = LibraryFilterEngine.publishedItems(items, by: criteria, personIDsByMediaID: personIndex, searchExtras: extras)
+                    let searchMatches: Set<String>? = LibrarySearchIndex.matchingIDs(
+                        query: criteria.searchText,
+                        store: store,
+                        people: people,
+                        personIndex: personIndex,
+                        context: modelContext
+                    )
+                    let passed: [MediaItem] = LibraryFilterEngine.publishedItems(items, by: criteria, personIDsByMediaID: personIndex, searchMatches: searchMatches)
                     visible = Set(passed.map(\.id))
                 } else {
                     visible = nil
@@ -621,7 +612,7 @@ struct CompactLibraryFilters: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background { LibraryFilterPublisher() }
-            .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, notes")))
+            .searchable(text: $query, placement: .toolbar, prompt: Text(String(localized: "Search people, places, trips, years, memories and comments")))
             .toolbar {
                 ToolbarItem(placement: .primaryAction) { LibraryFilterToolbarButton() }
             }

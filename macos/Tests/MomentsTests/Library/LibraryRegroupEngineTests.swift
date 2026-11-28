@@ -86,7 +86,7 @@ final class LibraryRegroupEngineTests: XCTestCase {
         }
         try context.save()
 
-        let stack = PhotoStack(id: "stack-1", memberIDs: ["photo-20", "photo-21", "photo-22"], coverID: "photo-21", isCoverChosen: false)
+        let stack = PhotoStack(id: "stack-1", memberIDs: ["photo-24", "photo-25", "photo-26"], coverID: "photo-25", isCoverChosen: false)
         return Fixture(
             all: all,
             regular: regular,
@@ -172,7 +172,7 @@ final class LibraryRegroupEngineTests: XCTestCase {
         let output = try XCTUnwrap(LibraryRegroupEngine.run(engineInput(fixture, criteria: .default)))
         XCTAssertTrue(output.sections.contains { $0.id == "trip:trip-1" })
         XCTAssertTrue(output.sections.contains { $0.id == "month:unknown" })
-        XCTAssertEqual(output.stackCounts["photo-21"], 3)
+        XCTAssertEqual(output.stackCounts["photo-25"], 3)
     }
 
     func testFavoritesVideosAndScreenshots() throws {

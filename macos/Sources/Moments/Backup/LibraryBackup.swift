@@ -120,7 +120,6 @@ struct BackupRestoreNotice: Codable, Equatable {
 /// Makes, lists, prunes and restores library backups. Every function takes
 /// its location, defaults and clock, so tests run on temporary folders only.
 enum LibraryBackup {
-    static let logger = Logger(subsystem: "org.example.Moments", category: "Backup")
     static let decisionsFileName = "decisions.plist"
     static let correctionLogFileName = "trip-corrections.jsonl"
     /// The schema from which covers, hand-placed photos and People answers
@@ -234,7 +233,7 @@ enum LibraryBackup {
         do {
             return try makeBackup(.beforeUpgrade, location: location, defaults: defaults, now: now, schemaVersion: lastOpenedSchema(location) ?? schemaVersion)
         } catch {
-            logger.error("Backup before upgrade failed: \(error.localizedDescription, privacy: .public)")
+            MomentsLog.error(.backup, "upgrade-backup-failed", error: error)
             return nil
         }
     }
@@ -281,7 +280,7 @@ enum LibraryBackup {
             do {
                 try FileManager.default.removeItem(at: location.backupsFolder.appending(path: name, directoryHint: .isDirectory))
             } catch {
-                logger.error("Could not remove an old backup: \(error.localizedDescription, privacy: .public)")
+                MomentsLog.error(.backup, "prune-failed", error: error)
             }
         }
     }
@@ -388,7 +387,7 @@ enum LibraryBackup {
             }
             notice = BackupRestoreNotice(restoredBackupDate: manifest.createdAt, failure: nil)
         } catch {
-            logger.error("Restore failed: \(error.localizedDescription, privacy: .public)")
+            MomentsLog.error(.backup, "restore-failed", error: error)
             notice = BackupRestoreNotice(restoredBackupDate: readManifest(in: backupFolder)?.createdAt, failure: error.localizedDescription)
         }
         BackupRestoreNotice.record(notice, in: defaults)
@@ -471,7 +470,7 @@ enum LibraryBackup {
                     if fileManager.fileExists(atPath: target.path) { try? fileManager.removeItem(at: target) }
                     try? fileManager.moveItem(at: aside.appending(path: item), to: target)
                 }
-                logger.error("Moved the library back after an interrupted restore")
+                MomentsLog.notice(.backup, "restore-rolled-back")
             }
             if (try? fileManager.contentsOfDirectory(atPath: aside.path))?.isEmpty == true || fileManager.fileExists(atPath: location.storeURL.path) {
                 try? fileManager.removeItem(at: aside)

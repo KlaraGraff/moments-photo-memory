@@ -360,7 +360,7 @@ final class PhotoStackModel {
         } else if let record {
             context.delete(record)
         }
-        try? context.save()
+        context.saveOrReport()
         decisionsChanged(context: context)
     }
 
@@ -374,7 +374,7 @@ final class PhotoStackModel {
             group.rulesData = data
             context.insert(group)
         }
-        try? context.save()
+        context.saveOrReport()
         decisionsChanged(context: context)
     }
 

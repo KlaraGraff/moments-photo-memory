@@ -164,7 +164,7 @@ enum ImportSources {
             _ = photosSource(accountID: accountID, context: context)
             changed = true
         }
-        if changed { try? context.save() }
+        if changed { context.saveOrReport() }
     }
 
     /// The folders not inside another one of the set.
@@ -245,7 +245,7 @@ enum ImportSources {
         }
         context.delete(source)
         let moved = RecentlyDeleted.moveToTrash(leaving, accountID: accountID, now: now, context: context)
-        try? context.save()
+        context.saveOrReport()
         return moved.count
     }
 }

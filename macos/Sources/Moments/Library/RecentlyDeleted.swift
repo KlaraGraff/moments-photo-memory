@@ -28,7 +28,7 @@ enum RecentlyDeleted {
             item.updatedAt = now
             item.updatedBy = accountID
         }
-        if !moving.isEmpty { try? context.save() }
+        if !moving.isEmpty { context.saveOrReport() }
         return moving.map(\.id)
     }
 
@@ -43,7 +43,7 @@ enum RecentlyDeleted {
             item.updatedAt = now
             item.updatedBy = accountID
         }
-        if !back.isEmpty { try? context.save() }
+        if !back.isEmpty { context.saveOrReport() }
         return back.map(\.id)
     }
 
@@ -119,7 +119,7 @@ enum RecentlyDeleted {
             // Memories and their revisions go with the photo (cascade).
             context.delete(item)
         }
-        try? context.save()
+        context.saveOrReport()
         ThumbnailCache.shared.removeFiles(for: idSet)
         return items.count
     }

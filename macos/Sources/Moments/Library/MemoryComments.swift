@@ -286,12 +286,12 @@ private struct CommentRow: View {
         let saved = CommentSnapshot(comment)
         let context = modelContext
         context.delete(comment)
-        try? context.save()
+        context.saveOrReport()
         guard let undoManager = NSApp.mainWindow?.undoManager else { return }
         undoManager.registerUndo(withTarget: CommentDrafts.shared) { _ in
             MainActor.assumeIsolated {
                 context.insert(saved.restored())
-                try? context.save()
+                context.saveOrReport()
             }
         }
         undoManager.setActionName(String(localized: "Delete Comment"))
@@ -370,7 +370,7 @@ private struct CommentComposer: View {
         defer { done() }
         guard !value.isEmpty else { return }
         modelContext.insert(Comment(memoryID: memoryID, parentCommentID: parentID, text: value))
-        try? modelContext.save()
+        modelContext.saveOrReport()
     }
 
     private func cancel() {

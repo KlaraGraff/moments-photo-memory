@@ -217,7 +217,7 @@ enum TripEdits {
             trip.updatedBy = MomentsAccount.localID
         }
 
-        func save() { try? context.save() }
+        func save() { context.saveOrReport() }
 
         // MARK: Correction log
 
@@ -355,7 +355,7 @@ enum TripEdits {
 
         // Trips the change created go last, once their photos have left and
         // that is saved, so deleting them cannot take the photos' trip along.
-        try? context.save()
+        context.saveOrReport()
         for (id, state) in undo.trips where state == nil {
             if let trip = tripByID[id] { context.delete(trip) }
         }
@@ -363,7 +363,7 @@ enum TripEdits {
             let kept = TripAssignmentLocks.lockedIDs(defaults: defaults).subtracting(undo.newLocks)
             defaults.set(Array(kept).sorted(), forKey: TripAssignmentLocks.defaultsKey)
         }
-        try? context.save()
+        context.saveOrReport()
         if let reverses = undo.correctionEntryIDs.last {
             let afterTrips: [TripCorrectionSnapshot] = tripIDs.compactMap { log.snapshot(tripID: $0) }
             let afterChapters: [TripCorrectionSnapshot] = chapterIDs.compactMap { log.snapshot(chapterID: $0) }

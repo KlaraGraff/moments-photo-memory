@@ -121,7 +121,7 @@ struct TripMemoryLines: View {
                 Button(String(localized: "Delete"), role: .destructive) {
                     if editingID == memory.id { editingID = nil }
                     modelContext.delete(memory)
-                    try? modelContext.save()
+                    modelContext.saveOrReport()
                 }
             }
         }
@@ -139,7 +139,7 @@ struct TripMemoryLines: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         modelContext.insert(CollectionMemory(scope: scope, scopeKey: key, text: text))
-        try? modelContext.save()
+        modelContext.saveOrReport()
         draft = ""
         if focus == .new { focus = nil }
         savedCount += 1
@@ -156,7 +156,7 @@ struct TripMemoryLines: View {
         memory.updatedAt = .now
         // Rewritten by the person: theirs now, no longer something AI's Undo takes back.
         memory.sourceNoteID = nil
-        try? modelContext.save()
+        modelContext.saveOrReport()
         savedCount += 1
     }
 }

@@ -586,7 +586,7 @@ enum PeopleStoreActions {
             }
         }
         removeFromStoredQuestions(pairKey, defaults: defaults)
-        if context.hasChanges { try? context.save() }
+        if context.hasChanges { context.saveOrReport() }
     }
 
     /// "No". The key joins declinedPairs and leaves the stored questions.
@@ -715,7 +715,7 @@ enum PeopleStoreActions {
             face.assignmentSource = "user"
             face.updatedAt = .now
         }
-        try? context.save()
+        context.saveOrReport()
         return person
     }
 
@@ -749,7 +749,7 @@ enum PeopleStoreActions {
         if let person = people.first(where: { (person: Person) -> Bool in person.id == personID }) {
             context.delete(person)
         }
-        if context.hasChanges { try? context.save() }
+        if context.hasChanges { context.saveOrReport() }
         return released
     }
 

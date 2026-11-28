@@ -30,7 +30,7 @@ final class CorrectionUndo: Identifiable {
         self.restore = nil
         if undoManager?.isUndoing != true { undoManager?.removeAllActions(withTarget: self) }
         restore(context)
-        try? context.save()
+        context.saveOrReport()
     }
 }
 

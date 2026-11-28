@@ -440,7 +440,7 @@ struct PhotoInfoPanel: View {
     }
 
     private func save() {
-        try? modelContext.save()
+        modelContext.saveOrReport()
     }
 }
 

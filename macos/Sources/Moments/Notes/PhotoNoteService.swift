@@ -127,7 +127,7 @@ final class PhotoNoteService {
         note.suggestions = suggestions
         note.status = .done
         note.updatedAt = .now
-        try? context.save()
+        context.saveOrReport()
         // An older note's fix may show again now.
         loadPlaceFixes(context: context)
     }
@@ -174,7 +174,7 @@ final class PhotoNoteService {
         defer { running[noteID] = nil }
         note.status = .organizing
         note.failureReason = nil
-        try? context.save()
+        context.saveOrReport()
 
         let request = NoteApplier.context(for: note, item: item)
         for organizer in organizers {
@@ -197,7 +197,7 @@ final class PhotoNoteService {
                         placeFixes[change.mediaID] = PlaceFix(noteID: noteID, writtenName: name)
                     }
                 }
-                try? context.save()
+                context.saveOrReport()
                 return
             } catch NoteOrganizerError.unavailable {
                 continue
@@ -208,13 +208,13 @@ final class PhotoNoteService {
                 note.status = .failed
                 note.failureReason = error.localizedDescription
                 note.updatedAt = .now
-                try? context.save()
+                context.saveOrReport()
                 return
             }
         }
         // No model could run: nothing will retry it and the words are
         // already the memory, so the note is not kept as a dead copy.
         context.delete(note)
-        try? context.save()
+        context.saveOrReport()
     }
 }

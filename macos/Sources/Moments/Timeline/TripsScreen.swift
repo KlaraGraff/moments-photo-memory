@@ -729,7 +729,7 @@ struct TripsScreen: View {
                     let before = [log.chapter(group)]
                     group.name = value
                     group.updatedAt = .now
-                    try? modelContext.save()
+                    modelContext.saveOrReport()
                     TripCorrectionRecorder.record(.rename, before: before, after: [log.chapter(group)])
                 }
             },

@@ -179,6 +179,9 @@ struct ContentView: View {
             DeletionUndoBar()
         }
         .animation(reduceMotion ? nil : Motion.snap, value: shared.lastDeletion == nil)
+        // "Couldn't save your latest changes", under everything, the viewer
+        // included: below the pages, not over them, so it always takes clicks.
+        .safeAreaInset(edge: .bottom, spacing: 0) { SaveProblemStrip() }
         .modifier(PhotoDeletionConfirmation())
         .sheet(isPresented: Binding(
             get: { shared.dateAdjustmentItemIDs != nil },

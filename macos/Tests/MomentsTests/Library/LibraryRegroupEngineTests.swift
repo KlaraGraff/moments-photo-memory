@@ -392,7 +392,8 @@ final class LibraryRegroupEngineTests: XCTestCase {
 
         let memories: [Memory] = try context.fetch(FetchDescriptor<Memory>())
         let overrides: [Moments.PlaceOverride] = try context.fetch(FetchDescriptor<Moments.PlaceOverride>())
-        let midBatch = try XCTUnwrap(await cache.facts(store: store, memories: memories, overrides: overrides, favoritesMatter: false))
+        let midBatchResult = await cache.facts(store: store, memories: memories, overrides: overrides, favoritesMatter: false)
+        let midBatch = try XCTUnwrap(midBatchResult)
         XCTAssertFalse(midBatch.regular.contains { $0.id == removedID })
 
         let settled: Date = Date().addingTimeInterval(10)
@@ -414,8 +415,10 @@ final class LibraryRegroupEngineTests: XCTestCase {
 
         let memories: [Memory] = try context.fetch(FetchDescriptor<Memory>())
         let overrides: [Moments.PlaceOverride] = try context.fetch(FetchDescriptor<Moments.PlaceOverride>())
-        let cached = try XCTUnwrap(await cache.facts(store: store, memories: memories, overrides: overrides, favoritesMatter: false))
-        let fresh = try XCTUnwrap(await LibraryPhotoFactsCache().facts(store: store, memories: memories, overrides: overrides, favoritesMatter: false))
+        let cachedResult = await cache.facts(store: store, memories: memories, overrides: overrides, favoritesMatter: false)
+        let freshResult = await LibraryPhotoFactsCache().facts(store: store, memories: memories, overrides: overrides, favoritesMatter: false)
+        let cached = try XCTUnwrap(cachedResult)
+        let fresh = try XCTUnwrap(freshResult)
         XCTAssertEqual(cached.regular, fresh.regular)
         XCTAssertEqual(cached.screenshots, fresh.screenshots)
         var places: [String: LibraryPlaceFacts] = [:]

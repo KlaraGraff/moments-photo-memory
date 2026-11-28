@@ -99,6 +99,19 @@ public final class SaveGuard: @unchecked Sendable {
         return true
     }
 
+    /// `target` was saved some other way (the context's own autosave, or a
+    /// save that does not go through the guard): it has nothing unsaved now.
+    public func markSaved(_ target: some SaveTarget) {
+        lock.lock()
+        let wasPending = pending.removeValue(forKey: ObjectIdentifier(target)) != nil
+        lock.unlock()
+        guard wasPending else { return }
+        let event = DiagnosticEvent(.saving, "save-recovered", site: "autosave")
+        journal.record(event)
+        onEvent?(event)
+        publish(problem)
+    }
+
     /// Tries every failed main-thread save again. True when nothing is left
     /// unsaved.
     @discardableResult
@@ -112,22 +125,35 @@ public final class SaveGuard: @unchecked Sendable {
         for (target, site) in retry {
             save(target, site: site, retryable: true)
         }
+        let problem = problem
+        publish(problem)
         return problem == nil
     }
 
     /// The current state: nil once every failed save has been saved again
-    /// (or its context is gone).
+    /// (or its context is gone). Reading it also tells `onChange` when a
+    /// context that held unsaved changes has gone since.
     public var problem: SaveProblem? {
         lock.lock()
-        defer { lock.unlock() }
-        return currentProblemLocked()
+        let problem = currentProblemLocked()
+        let changed = problem != lastProblem
+        lock.unlock()
+        if changed { publish(problem) }
+        return problem
     }
 
     /// Whether anything is still unsaved, for a last try before quitting.
     public var hasUnsavedChanges: Bool { problem != nil }
 
     private func currentProblemLocked() -> SaveProblem? {
-        pending = pending.filter { $0.value.target != nil }
+        let kept = pending.filter { $0.value.target != nil }
+        if kept.count < pending.count {
+            // Its context went away with the changes still in it.
+            let event = DiagnosticEvent(.saving, "save-dropped", count: pending.count - kept.count)
+            journal.record(event)
+            onEvent?(event)
+            pending = kept
+        }
         guard let any = pending.values.first else { return nil }
         let errorText = lastErrorTextLocked() ?? any.error
         return SaveProblem(unsavedTargets: pending.count, errorText: errorText, revision: revision)

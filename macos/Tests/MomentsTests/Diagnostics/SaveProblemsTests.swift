@@ -77,8 +77,48 @@ final class SaveProblemsTests: XCTestCase {
         XCTAssertFalse(context.hasChanges)
     }
 
+    func testAnotherSaveOfTheSameContextHidesTheNotice() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let failure = failure
+        SaveProblems.guard.injectFailure = { _ in failure }
+        context.insert(MediaItem(id: "save-problem-autosave", title: "Synthetic"))
+        XCTAssertFalse(context.saveOrReport())
+        XCTAssertNotNil(SaveProblems.shared.visibleProblem)
+
+        // Like autosave: saved without the guard, so nothing is unsaved now.
+        SaveProblems.guard.injectFailure = nil
+        try context.save()
+        SaveProblems.shared.refresh()
+        XCTAssertNil(SaveProblems.shared.visibleProblem)
+    }
+
     func testQuittingWithEverythingSavedDoesNotAsk() {
-        XCTAssertEqual(SaveProblems.shared.confirmQuit(), .terminateNow)
+        var asked = false
+        XCTAssertEqual(SaveProblems.shared.confirmQuit(quitAnyway: { asked = true; return true }), .terminateNow)
+        XCTAssertFalse(asked)
+    }
+
+    func testQuittingWithUnsavedChangesTriesOnceMoreThenAsks() throws {
+        let container = try MomentsPersistence.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let failure = failure
+        SaveProblems.guard.injectFailure = { _ in failure }
+        context.insert(MediaItem(id: "save-problem-quit", title: "Synthetic"))
+        XCTAssertFalse(context.saveOrReport())
+
+        var asked = 0
+        // "Don't Quit": stays open, the changes still there.
+        XCTAssertEqual(SaveProblems.shared.confirmQuit(quitAnyway: { asked += 1; return false }), .terminateCancel)
+        XCTAssertEqual(asked, 1)
+        XCTAssertTrue(context.hasChanges)
+        // "Quit Anyway".
+        XCTAssertEqual(SaveProblems.shared.confirmQuit(quitAnyway: { asked += 1; return true }), .terminateNow)
+        // Saving works again: the last try writes it and nobody is asked.
+        SaveProblems.guard.injectFailure = nil
+        XCTAssertEqual(SaveProblems.shared.confirmQuit(quitAnyway: { asked += 1; return false }), .terminateNow)
+        XCTAssertEqual(asked, 2)
+        XCTAssertFalse(context.hasChanges)
     }
 
     func testTheDiagnosticsFileHasNoMemoriesNamesOrPaths() throws {
@@ -90,6 +130,7 @@ final class SaveProblemsTests: XCTestCase {
         context.insert(memory)
         context.insert(Comment(memoryID: memory.id, text: marker))
         context.insert(Person(name: marker))
+        context.insert(Place(name: marker, latitude: 0.0012, longitude: 0.0034))
         try context.save()
         let journal = DiagnosticsJournal()
         journal.record(DiagnosticEvent(.saving, "save-failed", site: "MemoryComments.swift:373", error: failure, id: memory.id))
@@ -99,10 +140,12 @@ final class SaveProblemsTests: XCTestCase {
         XCTAssertTrue(text.contains("photos: 1"))
         XCTAssertTrue(text.contains("memories: 1"))
         XCTAssertTrue(text.contains("comments: 1"))
+        XCTAssertTrue(text.contains("places: 1"))
         XCTAssertTrue(text.contains("NSCocoaErrorDomain/134030"))
         XCTAssertFalse(text.contains("ZZSECRET"))
         XCTAssertFalse(text.contains("湖边"))
         XCTAssertFalse(text.contains("/Volumes"))
+        XCTAssertFalse(text.contains("0.0012"), "no coordinates")
         XCTAssertFalse(text.contains(memory.id), "only the first characters of an ID")
     }
 

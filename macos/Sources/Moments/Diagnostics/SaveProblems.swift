@@ -15,7 +15,12 @@ extension ModelContext {
     /// it saved. Use it wherever a save used to be `try? context.save()`.
     @discardableResult
     func saveOrReport(file: StaticString = #fileID, line: UInt = #line) -> Bool {
-        SaveProblems.guard.save(self, site: DiagnosticSanitizer.site(file: "\(file)", line: line))
+        #if DEBUG
+        // A UI test that makes a save fail checks what stays on screen, so
+        // autosave must not quietly write it first.
+        if SaveProblems.failsSavesForUITest { autosaveEnabled = false }
+        #endif
+        return SaveProblems.guard.save(self, site: DiagnosticSanitizer.site(file: "\(file)", line: line))
     }
 }
 
@@ -40,20 +45,33 @@ final class SaveProblems {
                 DispatchQueue.main.async { MainActor.assumeIsolated { SaveProblems.shared.refresh() } }
             }
         }
+        // Autosave, or a save that throws to its caller, may write a context
+        // that failed before: then nothing is unsaved any more.
+        _ = NotificationCenter.default.addObserver(forName: ModelContext.didSave, object: nil, queue: nil) { note in
+            if let context = note.object as? ModelContext { saving.markSaved(context) }
+        }
         #if DEBUG
         // -MomentsUITestFailSaveIn <File.swift>: the first save made in that
         // file fails, to show the notice in a UI test without a broken store.
-        let arguments = ProcessInfo.processInfo.arguments
-        if let index = arguments.firstIndex(of: "-MomentsUITestFailSaveIn"), index + 1 < arguments.count {
-            let file = arguments[index + 1] + ":"
+        if let file = uiTestFailingFile {
             let remaining = FailureCounter(1)
             saving.injectFailure = { site in
-                site.hasPrefix(file) && remaining.take() ? NSError(domain: "MomentsUITestFailSave", code: 1) : nil
+                site.hasPrefix(file + ":") && remaining.take() ? NSError(domain: "MomentsUITestFailSave", code: 1) : nil
             }
         }
         #endif
         return saving
     }()
+
+    #if DEBUG
+    nonisolated static let uiTestFailingFile: String? = {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-MomentsUITestFailSaveIn"), index + 1 < arguments.count else { return nil }
+        return arguments[index + 1]
+    }()
+
+    nonisolated static var failsSavesForUITest: Bool { uiTestFailingFile != nil }
+    #endif
 
     /// What could not be saved; nil while everything is saved.
     private(set) var problem: SaveProblem?
@@ -81,16 +99,23 @@ final class SaveProblems {
     }
 
     /// Before quitting: one more try, and if changes are still unsaved, ask
-    /// whether to quit anyway, as they would be lost.
-    func confirmQuit() -> NSApplication.TerminateReply {
+    /// whether to quit anyway, as they would be lost. Tests pass their own
+    /// `quitAnyway` in place of the alert.
+    func confirmQuit(quitAnyway: (() -> Bool)? = nil) -> NSApplication.TerminateReply {
         guard Self.guard.hasUnsavedChanges, !Self.guard.retryFailed() else { return .terminateNow }
+        refresh()
+        let quit = quitAnyway?() ?? Self.askToQuitAnyway()
+        return quit ? .terminateNow : .terminateCancel
+    }
+
+    static func askToQuitAnyway() -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = String(localized: "Some changes aren't saved")
         alert.informativeText = String(localized: "Moments couldn't save your latest changes. If you quit now, they will be lost.")
         alert.addButton(withTitle: String(localized: "Don't Quit"))
         alert.addButton(withTitle: String(localized: "Quit Anyway"))
-        return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
+        return alert.runModal() == .alertSecondButtonReturn
     }
 }
 

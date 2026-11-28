@@ -54,9 +54,7 @@ final class PhotoNoteService {
         guard !organizers.isEmpty else { return nil }
         let note = PhotoNote(mediaID: item.id, text: trimmed)
         context.insert(note)
-        do {
-            try context.save()
-        } catch {
+        guard context.saveOrReport() else {
             context.delete(note)
             return nil
         }
@@ -156,9 +154,7 @@ final class PhotoNoteService {
                 guard let item = byID[note.mediaID] else { continue }
                 if NoteApplier.writeOwnWords(note.text, on: item, context: context, now: now) != nil { written += 1 }
             }
-            do {
-                try context.save()
-            } catch {
+            guard context.saveOrReport() else {
                 // Try again next launch rather than mark it done.
                 return 0
             }

@@ -39,6 +39,29 @@ final class MomentsSaveProblemUITests: XCTestCase {
         XCTAssertTrue(renamed.exists, "The name went after saving")
     }
 
+    func testAFailedMemoryStaysInItsFieldAndTryAgainSavesIt() {
+        // The first save of a memory under a photo fails.
+        let app = launch(extraArguments: ["-MomentsUITestFailSaveIn", "LibraryView.swift"])
+        let photo = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.photo."))
+            .firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: launchTimeout), "The Library has no photo")
+        let photoID = String(photo.identifier.dropFirst("library.photo.".count))
+        let memory = element(in: app, identifier: "library.memory.\(photoID)")
+        XCTAssertTrue(memory.waitForExistence(timeout: launchTimeout))
+        memory.click()
+        memory.typeText("Synthetic unsaved memory\r")
+
+        let strip = element(in: app, identifier: "save.problem")
+        XCTAssertTrue(strip.waitForExistence(timeout: launchTimeout), "A failed save showed nothing")
+        XCTAssertTrue((memory.value as? String ?? "").contains("Synthetic unsaved memory"), "The memory was lost when saving failed")
+        capture(app, named: "save-problem-03-memory")
+
+        element(in: app, identifier: "save.problem.retry").click()
+        XCTAssertTrue(waitForDisappearance(strip), "Try Again did not save")
+        XCTAssertTrue((memory.value as? String ?? "").contains("Synthetic unsaved memory"), "The memory went after saving")
+    }
+
     func testTheStripCanBeClosed() {
         let app = launch(extraArguments: ["-MomentsUITestFailSaveIn", "EditableTripTitle.swift"])
         let title = app.descendants(matching: .any)
@@ -64,7 +87,9 @@ final class MomentsSaveProblemUITests: XCTestCase {
         // The last section: scroll Settings down to it.
         let page = element(in: app, identifier: "settings.page")
         XCTAssertTrue(page.waitForExistence(timeout: launchTimeout), "Settings did not open")
-        for _ in 0..<6 where !version.isHittable {
+        // A lazy list may not have built the last section yet: scroll until
+        // it exists and can be clicked.
+        for _ in 0..<8 where !(version.exists && version.isHittable) {
             page.scroll(byDeltaX: 0, deltaY: -400)
         }
         XCTAssertTrue(version.waitForExistence(timeout: launchTimeout), "Settings has no version")

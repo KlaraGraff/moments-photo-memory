@@ -105,13 +105,44 @@ final class SaveGuardTests: XCTestCase {
         XCTAssertNotNil(saving.problem)
     }
 
-    func testAStoreThatIsGoneLeavesNothingUnsaved() {
+    func testAStoreThatIsGoneLeavesNothingUnsavedAndIsLogged() {
         let saving = SaveGuard(journal: DiagnosticsJournal())
+        let recorder = ProblemRecorder()
+        saving.onChange = { recorder.append($0) }
         var store: FakeStore? = FakeStore()
         saving.save(store!, site: "a.swift:1", retryable: true)
         XCTAssertNotNil(saving.problem)
         store = nil
         XCTAssertNil(saving.problem)
+        // The window hears that it is gone, and the log says changes went.
+        XCTAssertNil(recorder.all.last ?? nil)
+        XCTAssertEqual(saving.journal.recent.last?.line, "saving save-dropped count=1")
+    }
+
+    func testASaveMadeElsewhereClearsTheProblem() {
+        let saving = SaveGuard(journal: DiagnosticsJournal())
+        let recorder = ProblemRecorder()
+        saving.onChange = { recorder.append($0) }
+        let store = FakeStore()
+        saving.save(store, site: "a.swift:1", retryable: false)
+        // Saved by its own autosave, not through the guard.
+        saving.markSaved(store)
+        XCTAssertNil(saving.problem)
+        XCTAssertNil(recorder.all.last ?? nil)
+        XCTAssertEqual(saving.journal.recent.last?.line, "saving save-recovered site=autosave")
+        // Marking a store with nothing pending says nothing.
+        saving.markSaved(store)
+        XCTAssertEqual(recorder.all.count, 2)
+    }
+
+    func testTryingAgainThatStillFailsKeepsTheProblem() {
+        let saving = SaveGuard(journal: DiagnosticsJournal())
+        let store = FakeStore()
+        store.unsaved = ["kept"]
+        saving.save(store, site: "a.swift:1", retryable: true)
+        XCTAssertFalse(saving.retryFailed())
+        XCTAssertEqual(store.unsaved, ["kept"])
+        XCTAssertEqual(saving.problem?.unsavedTargets, 1)
     }
 
     func testAnInjectedFailureFailsWithoutTouchingTheStore() {

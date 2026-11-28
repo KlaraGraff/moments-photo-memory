@@ -1607,12 +1607,10 @@ struct MemoryEditor: View {
             savedMemory = newMemory
         }
 
-        do {
-            try modelContext.save()
+        // On failure the draft stays in LibraryViewState, so nothing typed is lost.
+        if modelContext.saveOrReport() {
             baseline = savedMemory.map(LibraryMemorySnapshot.init(memory:))
             state.clearDraft(for: item)
-        } catch {
-            // Keep the draft in LibraryViewState so a transient save failure does not lose input.
         }
     }
 }

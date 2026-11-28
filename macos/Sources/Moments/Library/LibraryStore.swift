@@ -18,6 +18,9 @@ struct SavedChanges: Sendable {
     /// True when the save touched something people wrote that search reads
     /// (memories, comments, notes, trip and person names).
     var touchesWrittenText = false
+    /// Which of `searchSourceEntityNames` the save touched, so the search
+    /// index reads again only those kinds of record.
+    var touchedSearchSources: Set<String> = []
 
     var isEmpty: Bool { inserted.isEmpty && updated.isEmpty && deleted.isEmpty }
     var identifierCount: Int { inserted.count + updated.count + deleted.count }
@@ -31,6 +34,7 @@ struct SavedChanges: Sendable {
         isKnown = isKnown && other.isKnown
         touchesGroupSources = touchesGroupSources || other.touchesGroupSources
         touchesWrittenText = touchesWrittenText || other.touchesWrittenText
+        touchedSearchSources.formUnion(other.touchedSearchSources)
     }
 }
 
@@ -73,6 +77,16 @@ private let writtenTextEntityNames: Set<String> = [
     String(describing: Trip.self),
     String(describing: Person.self)
 ]
+
+/// Every kind of record the Library's search index reads besides the photos
+/// and places: what people wrote, tags, and chapters with their members.
+/// A save moves the revision of each it touched.
+let searchSourceEntityNames: Set<String> = writtenTextEntityNames.union([
+    String(describing: MediaTag.self),
+    String(describing: Tag.self),
+    String(describing: UserGroup.self),
+    String(describing: UserGroupItem.self)
+])
 
 /// The library's photos, faces and places, fetched once for every page
 /// instead of once per page. Pages read these lists and use `revision` in
@@ -126,6 +140,12 @@ final class LibraryStore {
     /// search index follows it, so a new day memory or comment is found
     /// without re-reading anything while nothing was written.
     private(set) var writtenTextRevision = 0
+    /// One revision per entity in `searchSourceEntityNames`, moved by a save
+    /// that touched it. Read through `searchSourceRevision(of:)`.
+    @ObservationIgnored private var searchSourceRevisions: [String: Int] = [:]
+    /// Moves when a save could not say what it touched; then every search
+    /// source counts as changed.
+    @ObservationIgnored private var unknownSaveRevision = 0
     /// Moves when someone picks the face that stands for a person. That
     /// choice is a library decision, not a save, so nothing else moves.
     private(set) var keyFaceRevision = 0
@@ -139,6 +159,16 @@ final class LibraryStore {
     /// How many bumps the log keeps, and how many photo ids at most.
     static let photoChangeLogLength = 16
     static let photoChangeLogMaximumIDs = 2_000
+
+    /// Where saves of one kind of record stand (an entity in
+    /// `searchSourceEntityNames`, by its type's name). Moves when a save
+    /// touched that entity or could not say what it touched.
+    func searchSourceRevision(of entityName: String) -> Int {
+        var hasher = Hasher()
+        hasher.combine(searchSourceRevisions[entityName] ?? 0)
+        hasher.combine(unknownSaveRevision)
+        return hasher.finalize()
+    }
 
     /// The string ids of the photos that changed between `photoFaceRevision`
     /// `from` and the current one, when every bump in between only changed
@@ -296,6 +326,12 @@ final class LibraryStore {
                 writtenTextRevision &+= 1
             }
         }
+        if !changes.touchedSearchSources.isEmpty || !changes.isKnown {
+            if savedContext == nil || savedContext?.container === container {
+                if !changes.isKnown { unknownSaveRevision &+= 1 }
+                for name in changes.touchedSearchSources { searchSourceRevisions[name, default: 0] &+= 1 }
+            }
+        }
         // Autosave fires often with nothing this store lists.
         if changes.isKnown && changes.isEmpty { return }
         guard let savedContext else {
@@ -424,6 +460,9 @@ final class LibraryStore {
             }
             if ids.contains(where: { writtenTextEntityNames.contains($0.entityName) }) {
                 changes.touchesWrittenText = true
+            }
+            for id in ids where searchSourceEntityNames.contains(id.entityName) {
+                changes.touchedSearchSources.insert(id.entityName)
             }
             let tracked = ids.filter { trackedEntityNames.contains($0.entityName) }
             if name.contains("insert") { changes.inserted += tracked; changes.isKnown = true }

@@ -178,17 +178,31 @@ final class LibrarySearchIndexTests: XCTestCase {
         }
     }
 
-    // MARK: Built once
+    // MARK: Kept up to date, not built again
 
-    func testTheIndexIsReusedUntilSomethingIsWritten() async throws {
+    func testTypingReadsNoPhotoAgain() throws {
         let fixture = try makeFixture()
         XCTAssertEqual(found("pancakes", in: fixture), [])
         #if DEBUG
-        let builds: Int = LibrarySearchIndex.buildCount
+        LibrarySearchIndex.finishReading()
+        let read: Int = LibrarySearchIndex.photosRead
         _ = found("p", in: fixture)
         _ = found("pa", in: fixture)
         _ = found("pan", in: fixture)
-        XCTAssertEqual(LibrarySearchIndex.buildCount, builds, "Typing reads the index; it is not built again")
+        XCTAssertEqual(LibrarySearchIndex.photosRead, read, "Typing reads the index; no photo is read again")
+        #endif
+    }
+
+    /// Writing something updates only the photos it reaches: a day's memory
+    /// that day's photos, a comment its memory's photo. No photo's fields
+    /// are read again, so the first keystroke after a save stays quick.
+    func testWritingUpdatesOnlyThePhotosItReaches() async throws {
+        let fixture = try makeFixture()
+        XCTAssertEqual(found("pancakes", in: fixture), [])
+        #if DEBUG
+        LibrarySearchIndex.finishReading()
+        var read: Int = LibrarySearchIndex.photosRead
+        var changed: Int = LibrarySearchIndex.entriesChanged
         #endif
 
         let revision: Int = fixture.store.writtenTextRevision
@@ -197,28 +211,69 @@ final class LibrarySearchIndexTests: XCTestCase {
         let moved: Bool = await waitUntil(timeout: 3) { fixture.store.writtenTextRevision != revision }
         XCTAssertTrue(moved, "Saving a day memory moves the written-text revision")
         XCTAssertEqual(found("pancakes", in: fixture), ["day2-a"], "The new memory is found")
+        #if DEBUG
+        XCTAssertEqual(LibrarySearchIndex.photosRead, read, "No photo is read again")
+        XCTAssertEqual(LibrarySearchIndex.entriesChanged - changed, 1, "Only that day's photo changes")
+        #endif
 
-        let commentRevision: Int = fixture.store.writtenTextRevision
+        let memoryRevision: Int = fixture.store.writtenTextRevision
         let memory = Memory(text: "x", author: .me, mediaItem: fixture.store.itemsByID["other"])
         fixture.context.insert(memory)
         try fixture.context.save()
-        _ = await waitUntil(timeout: 3) { fixture.store.writtenTextRevision != commentRevision }
+        _ = await waitUntil(timeout: 3) { fixture.store.writtenTextRevision != memoryRevision }
+        // The store applies the memory's photo a moment later; let it land.
+        try? await Task.sleep(for: .seconds(1.5))
+        _ = found("x", in: fixture)
+        #if DEBUG
+        read = LibrarySearchIndex.photosRead
+        changed = LibrarySearchIndex.entriesChanged
+        #endif
         let afterMemory: Int = fixture.store.writtenTextRevision
         fixture.context.insert(Comment(memoryID: memory.id, text: "a waffle comment"))
         try fixture.context.save()
         let commentMoved: Bool = await waitUntil(timeout: 3) { fixture.store.writtenTextRevision != afterMemory }
         XCTAssertTrue(commentMoved, "Saving a comment moves the written-text revision")
         XCTAssertEqual(found("waffle", in: fixture), ["other"])
+        #if DEBUG
+        XCTAssertEqual(LibrarySearchIndex.photosRead, read, "No photo is read again")
+        XCTAssertEqual(LibrarySearchIndex.entriesChanged - changed, 1, "Only the comment's photo changes")
+        #endif
+
+        // A place note reaches every photo at that place, and only those.
+        #if DEBUG
+        changed = LibrarySearchIndex.entriesChanged
+        #endif
+        let beforeNote: Int = fixture.store.writtenTextRevision
+        fixture.context.insert(PlaceNote(placeName: "合成山顶", text: "windy summit"))
+        try fixture.context.save()
+        _ = await waitUntil(timeout: 3) { fixture.store.writtenTextRevision != beforeNote }
+        XCTAssertEqual(found("summit", in: fixture), ["day2-a"])
+        #if DEBUG
+        XCTAssertEqual(LibrarySearchIndex.entriesChanged - changed, 1)
+        #endif
+    }
+
+    func testAPhotoAddedLaterIsFound() async throws {
+        let fixture = try makeFixture()
+        XCTAssertEqual(found("harbor", in: fixture), ["day1-a", "day1-b"])
+        let late = MediaItem(id: "late", captureDate: Date(timeIntervalSince1970: 1_715_947_200), localDayKey: "2024-05-17")
+        fixture.context.insert(late)
+        late.place = fixture.store.itemsByID["day1-a"]?.place
+        try fixture.context.save()
+        let listed: Bool = await waitUntil(timeout: 5) { fixture.store.itemsByID["late"] != nil }
+        XCTAssertTrue(listed)
+        XCTAssertEqual(found("harbor", in: fixture), ["day1-a", "day1-b", "late"])
     }
 
     // MARK: 50,000 photos
 
     /// Typing a word in a 50,000-photo synthetic library: the old search
-    /// (every photo's fields read for every keystroke) against the index
-    /// (built on the first keystroke, read on the next ones). Prints one
-    /// SEARCH-BENCH line for the pull request; asserts only that both find
-    /// the same photos.
-    func testFiftyThousandPhotoSearchTiming() throws {
+    /// (every photo's fields read for every keystroke) against the index,
+    /// read in slices before the first word as the Library does, then the
+    /// first keystroke after each kind of thing is written. Prints one
+    /// SEARCH-BENCH line for the pull request; asserts what is found and
+    /// that a save reads no photo again.
+    func testFiftyThousandPhotoSearchTiming() async throws {
         let count = 50_000
         let context = try makeContext()
         let calendar = utcCalendar()
@@ -242,6 +297,7 @@ final class LibrarySearchIndexTests: XCTestCase {
             people.append(person)
         }
         var personIndex: [String: Set<String>] = [:]
+        var firstMemory: Memory?
         for index in 0..<count {
             let date = start.addingTimeInterval(Double(index) * 600)
             let id = "bench-\(index)"
@@ -250,7 +306,9 @@ final class LibrarySearchIndexTests: XCTestCase {
             item.place = places[index / 100]
             item.trip = trips[index / 500]
             if index % 5 == 0 {
-                context.insert(Memory(text: "Synthetic memory \(index) by the water 海边", author: index % 10 == 0 ? .me : .partner, mediaItem: item))
+                let memory = Memory(text: "Synthetic memory \(index) by the water 海边", author: index % 10 == 0 ? .me : .partner, mediaItem: item)
+                context.insert(memory)
+                if firstMemory == nil { firstMemory = memory }
             }
             if index % 7 == 0 { personIndex[id] = [people[index % 20].id] }
             if index % 144 == 0 {
@@ -276,9 +334,23 @@ final class LibrarySearchIndexTests: XCTestCase {
             return LibraryFilterEngine.filteredItems(items, by: LibraryFilterCriteria(searchText: query), calendar: calendar, personIDsByMediaID: personIndex, searchExtras: extras).map(\.id)
         }
         // After: the index, then the same filter pass with its matches.
+        func matches(_ query: String) -> Set<String>? {
+            LibrarySearchIndex.matchingIDs(query: query, store: store, people: people, personIndex: personIndex, context: context, calendar: calendar)
+        }
         func newSearch(_ query: String) -> [String] {
-            let matches = LibrarySearchIndex.matchingIDs(query: query, store: store, people: people, personIndex: personIndex, context: context, calendar: calendar)
-            return LibraryFilterEngine.filteredItems(items, by: LibraryFilterCriteria(searchText: query), calendar: calendar, personIDsByMediaID: personIndex, searchMatches: matches).map(\.id)
+            let found = matches(query)
+            return LibraryFilterEngine.filteredItems(items, by: LibraryFilterCriteria(searchText: query), calendar: calendar, personIDsByMediaID: personIndex, searchMatches: found).map(\.id)
+        }
+        /// Saves, waits for the store to see it, then times the next keystroke.
+        func afterSaving(_ query: String) async throws -> (whole: Duration, index: Duration, found: [String]) {
+            try context.save()
+            let revision: Int = store.writtenTextRevision
+            _ = await waitUntil(timeout: 5) { store.writtenTextRevision != revision }
+            var found: [String] = []
+            let whole = clock.measure { found = newSearch(query) }
+            // The index alone, once more for the same word (nothing changed).
+            let index = clock.measure { _ = matches(query) }
+            return (whole, index, found)
         }
 
         let missQuery = "zzqx"
@@ -288,20 +360,65 @@ final class LibrarySearchIndexTests: XCTestCase {
         let oldMissTime = clock.measure { oldMiss = oldSearch(missQuery) }
         let oldHitTime = clock.measure { oldHit = oldSearch(hitQuery) }
 
+        // The Library reads the index in slices before anything is typed.
         LibrarySearchIndex.reset()
+        let warmStart = ContinuousClock.now
+        LibrarySearchIndex.warmUp(store: store, people: people, personIndex: personIndex, context: context, calendar: calendar)
+        #if DEBUG
+        let ready: Bool = await waitUntil(timeout: 300) { LibrarySearchIndex.isReady }
+        XCTAssertTrue(ready, "The index is read in the background")
+        let longestSlice: Double = LibrarySearchIndex.longestSlice
+        #else
+        let longestSlice: Double = -1
+        #endif
+        // Includes the one-second wait before the first slice.
+        let warmTime = ContinuousClock.now - warmStart
+
         var newMiss: [String] = []
         var newHit: [String] = []
         var newDay: [String] = []
-        let firstKeystroke = clock.measure { newMiss = newSearch(missQuery) }
+        let firstMiss = clock.measure { newMiss = newSearch(missQuery) }
         let nextMiss = clock.measure { newMiss = newSearch(missQuery) }
         let nextHit = clock.measure { newHit = newSearch(hitQuery) }
         let dayHit = clock.measure { newDay = newSearch("下雨天") }
 
-        print("SEARCH-BENCH app photos=\(count) old-miss=\(oldMissTime) old-hit=\(oldHitTime) new-first-keystroke(index build)=\(firstKeystroke) new-miss=\(nextMiss) new-hit=\(nextHit) new-day-memory=\(dayHit)")
+        #if DEBUG
+        let readBeforeWriting: Int = LibrarySearchIndex.photosRead
+        let changedBeforeDay: Int = LibrarySearchIndex.entriesChanged
+        #endif
+        // The first keystroke after each kind of thing is written.
+        let dayKey: String = PhotoNoteDay.key(for: start.addingTimeInterval(600 * 300), calendar: calendar)
+        context.insert(CollectionMemory(scope: .day, scopeKey: dayKey, text: "Pancake breakfast"))
+        let afterDay = try await afterSaving("pancake")
+        #if DEBUG
+        let dayPhotos: Int = LibrarySearchIndex.entriesChanged - changedBeforeDay
+        #endif
+        let memory: Memory = try XCTUnwrap(firstMemory)
+        context.insert(Comment(memoryID: memory.id, text: "Bring the kite next time"))
+        let afterComment = try await afterSaving("kite")
+        context.insert(Memory(text: "Kayak at dawn", author: .me, mediaItem: store.itemsByID["bench-77"]))
+        let afterMemory = try await afterSaving("kayak")
+        context.insert(PlaceNote(placeName: places[3].name, text: "Harbor festival night"))
+        let afterPlaceNote = try await afterSaving("festival")
+        #if DEBUG
+        let readAfterWriting: Int = LibrarySearchIndex.photosRead - readBeforeWriting
+        #else
+        let readAfterWriting: Int = -1
+        #endif
+
+        print("SEARCH-BENCH app photos=\(count) old-miss=\(oldMissTime) old-hit=\(oldHitTime) warm-up(background, incl. 1 s wait)=\(warmTime) longest-slice=\(longestSlice)s new-first-miss=\(firstMiss) new-miss=\(nextMiss) new-hit=\(nextHit) new-day-memory=\(dayHit) after-day-memory=\(afterDay.whole) after-comment=\(afterComment.whole) after-memory=\(afterMemory.whole) after-place-note=\(afterPlaceNote.whole) index-only-after-write=\(afterDay.index) photos-read-after-writes=\(readAfterWriting)")
         XCTAssertEqual(oldMiss, [])
         XCTAssertEqual(newMiss, [])
         XCTAssertEqual(Set(newHit), Set(oldHit), "The index finds what the old search found")
         XCTAssertEqual(oldHit.count, count / 5)
         XCTAssertFalse(newDay.isEmpty, "A day memory's words find that day's photos")
+        XCTAssertEqual(afterDay.found.count, 144, "Every photo of that day")
+        XCTAssertEqual(afterComment.found, [memory.mediaID ?? memory.mediaItem?.id ?? ""])
+        XCTAssertEqual(afterMemory.found, ["bench-77"])
+        XCTAssertEqual(afterPlaceNote.found.count, 100, "Every photo at that place")
+        #if DEBUG
+        XCTAssertEqual(dayPhotos, 144, "A day's memory updates that day's photos only")
+        XCTAssertLessThanOrEqual(readAfterWriting, 1, "Writing reads no photo again (a new memory may re-read its own photo)")
+        #endif
     }
 }

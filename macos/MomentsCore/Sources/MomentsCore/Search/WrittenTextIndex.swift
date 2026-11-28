@@ -86,22 +86,36 @@ public enum WrittenTextIndex {
         }
     }
 
+    /// A trip's name, found on every photo of the trip.
+    public struct TripName: Sendable, Equatable {
+        public let tripID: String
+        public let name: String
+
+        public init(tripID: String, name: String) {
+            self.tripID = tripID
+            self.name = name
+        }
+    }
+
     public struct Sources: Sendable, Equatable {
         public var photoTexts: [PhotoText]
         public var collectionTexts: [CollectionText]
         public var placeTexts: [PlaceText]
         public var comments: [CommentText]
+        public var tripNames: [TripName]
 
         public init(
             photoTexts: [PhotoText] = [],
             collectionTexts: [CollectionText] = [],
             placeTexts: [PlaceText] = [],
-            comments: [CommentText] = []
+            comments: [CommentText] = [],
+            tripNames: [TripName] = []
         ) {
             self.photoTexts = photoTexts
             self.collectionTexts = collectionTexts
             self.placeTexts = placeTexts
             self.comments = comments
+            self.tripNames = tripNames
         }
     }
 
@@ -114,55 +128,90 @@ public enum WrittenTextIndex {
     /// are left out; texts that are empty or only whitespace are skipped. A
     /// text reaching a photo twice (a place named twice) is kept once.
     public static func textsByPhoto(photos: [Photo], sources: Sources) -> [String: [String]] {
-        func written(_ text: String) -> Bool {
-            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-
-        var byPhoto: [String: [String]] = [:]
-        // Where a memory sits, so its comments follow it.
-        var photoOfMemory: [String: String] = [:]
-        for entry in sources.photoTexts {
-            if let id = entry.id { photoOfMemory[id] = entry.mediaID }
-            if written(entry.text) { byPhoto[entry.mediaID, default: []].append(entry.text) }
-        }
-
-        var byDay: [String: [String]] = [:]
-        var byChapter: [String: [String]] = [:]
-        var collectionOfMemory: [String: CollectionText] = [:]
-        for entry in sources.collectionTexts {
-            collectionOfMemory[entry.id] = entry
-            guard written(entry.text) else { continue }
-            switch entry.scope {
-            case .day: byDay[entry.key, default: []].append(entry.text)
-            case .chapter: byChapter[entry.key, default: []].append(entry.text)
-            }
-        }
-
-        for comment in sources.comments where written(comment.text) {
-            if let mediaID = photoOfMemory[comment.memoryID] {
-                byPhoto[mediaID, default: []].append(comment.text)
-            } else if let collection = collectionOfMemory[comment.memoryID] {
-                switch collection.scope {
-                case .day: byDay[collection.key, default: []].append(comment.text)
-                case .chapter: byChapter[collection.key, default: []].append(comment.text)
-                }
-            }
-            // A comment whose memory is gone (or not here yet) is shown
-            // nowhere, so it finds nothing.
-        }
-
-        var byPlace: [String: [String]] = [:]
-        for entry in sources.placeTexts where written(entry.text) {
-            let key = placeKey(for: entry.placeName)
-            guard !key.isEmpty else { continue }
-            byPlace[key, default: []].append(entry.text)
-        }
-
-        // Only photos that exist get texts: a memory for a photo that is not
-        // in the list (trashed, not synced yet) is not searched.
+        let lookup = Lookup(sources: sources)
         var result: [String: [String]] = [:]
         result.reserveCapacity(photos.count)
         for photo in photos {
+            let texts: [String] = lookup.texts(for: photo)
+            if !texts.isEmpty { result[photo.id] = texts }
+        }
+        return result
+    }
+
+    /// The written texts gathered by where they belong: a photo, a day, a
+    /// trip or chapter, a place. Built from `Sources` once; a photo's texts
+    /// are then a few dictionary reads. Comparing two lookups tells which
+    /// photos, days, chapters and places a save changed, so only their
+    /// photos are indexed again.
+    public struct Lookup: Sendable, Equatable {
+        /// By photo id: its memories, their comments, its notes' words.
+        public private(set) var byPhoto: [String: [String]] = [:]
+        /// By `yyyy-MM-dd`: that day's memories and their comments.
+        public private(set) var byDay: [String: [String]] = [:]
+        /// By trip or chapter id: its name, memories and their comments.
+        public private(set) var byChapter: [String: [String]] = [:]
+        /// By `placeKey(for:)`: that place's notes.
+        public private(set) var byPlace: [String: [String]] = [:]
+
+        public init() {}
+
+        public init(sources: Sources) {
+            func written(_ text: String) -> Bool {
+                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+
+            // Where a memory sits, so its comments follow it.
+            var photoOfMemory: [String: String] = [:]
+            for entry in sources.photoTexts {
+                if let id = entry.id { photoOfMemory[id] = entry.mediaID }
+                if written(entry.text) { byPhoto[entry.mediaID, default: []].append(entry.text) }
+            }
+
+            var collectionOfMemory: [String: CollectionText] = [:]
+            for entry in sources.collectionTexts {
+                collectionOfMemory[entry.id] = entry
+                guard written(entry.text) else { continue }
+                switch entry.scope {
+                case .day: byDay[entry.key, default: []].append(entry.text)
+                case .chapter: byChapter[entry.key, default: []].append(entry.text)
+                }
+            }
+
+            for trip in sources.tripNames where written(trip.name) {
+                byChapter[trip.tripID, default: []].append(trip.name)
+            }
+
+            for comment in sources.comments where written(comment.text) {
+                if let mediaID = photoOfMemory[comment.memoryID] {
+                    byPhoto[mediaID, default: []].append(comment.text)
+                } else if let collection = collectionOfMemory[comment.memoryID] {
+                    switch collection.scope {
+                    case .day: byDay[collection.key, default: []].append(comment.text)
+                    case .chapter: byChapter[collection.key, default: []].append(comment.text)
+                    }
+                }
+                // A comment whose memory is gone (or not here yet) is shown
+                // nowhere, so it finds nothing.
+            }
+
+            for entry in sources.placeTexts where written(entry.text) {
+                let key = placeKey(for: entry.placeName)
+                guard !key.isEmpty else { continue }
+                byPlace[key, default: []].append(entry.text)
+            }
+
+            // Records come back from the store in no fixed order; sorted, the
+            // same records always give the same lookup.
+            for key in byPhoto.keys { byPhoto[key]?.sort() }
+            for key in byDay.keys { byDay[key]?.sort() }
+            for key in byChapter.keys { byChapter[key]?.sort() }
+            for key in byPlace.keys { byPlace[key]?.sort() }
+        }
+
+        /// What was written for `photo`, wherever it was written. Only
+        /// photos that exist are asked for, so a memory for a photo that is
+        /// not in the library (trashed, not synced yet) is not searched.
+        public func texts(for photo: Photo) -> [String] {
             var texts: [String] = byPhoto[photo.id] ?? []
             if let day = photo.dayKey, let dayTexts = byDay[day] { texts += dayTexts }
             var seenChapters = Set<String>()
@@ -175,8 +224,38 @@ public enum WrittenTextIndex {
                 guard !key.isEmpty, seenPlaces.insert(key).inserted else { continue }
                 texts += byPlace[key] ?? []
             }
-            if !texts.isEmpty { result[photo.id] = texts }
+            return texts
         }
-        return result
+
+        /// Where two lookups differ.
+        public struct Changes: Sendable, Equatable {
+            public var photoIDs = Set<String>()
+            public var dayKeys = Set<String>()
+            public var chapterKeys = Set<String>()
+            public var placeKeys = Set<String>()
+
+            public init() {}
+
+            public var isEmpty: Bool {
+                photoIDs.isEmpty && dayKeys.isEmpty && chapterKeys.isEmpty && placeKeys.isEmpty
+            }
+        }
+
+        /// The photos, days, chapters and places whose texts are not the
+        /// same in `old` as here.
+        public func changes(from old: Lookup) -> Changes {
+            func differing(_ new: [String: [String]], _ old: [String: [String]]) -> Set<String> {
+                var keys = Set<String>()
+                for (key, value) in new where old[key] != value { keys.insert(key) }
+                for key in old.keys where new[key] == nil { keys.insert(key) }
+                return keys
+            }
+            var changes = Changes()
+            changes.photoIDs = differing(byPhoto, old.byPhoto)
+            changes.dayKeys = differing(byDay, old.byDay)
+            changes.chapterKeys = differing(byChapter, old.byChapter)
+            changes.placeKeys = differing(byPlace, old.byPlace)
+            return changes
+        }
     }
 }

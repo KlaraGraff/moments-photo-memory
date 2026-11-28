@@ -666,7 +666,9 @@ struct LibraryView: View {
         step("scope")
         #endif
         // A search finds photos by everything written about them and by
-        // who is in them, from an index built once, not per keystroke.
+        // who is in them, from an index kept up to date a few photos at a
+        // time, not read again per keystroke. With nothing typed, the index
+        // is read in slices so it is ready for the first word.
         let searchMatches: Set<String>? = LibrarySearchIndex.matchingIDs(
             query: criteria.searchText,
             store: store,
@@ -674,6 +676,9 @@ struct LibraryView: View {
             personIndex: personIndex,
             context: modelContext
         )
+        if searchMatches == nil {
+            LibrarySearchIndex.warmUp(store: store, people: people, personIndex: personIndex, context: modelContext)
+        }
         #if DEBUG
         step("search index")
         #endif

@@ -4,24 +4,25 @@ import QuartzCore
 import SwiftData
 
 /// The search behind the Library's search field and every page's shared
-/// search: one index of every word written in the app, by photo id, built
-/// once and kept until something people wrote, or the photos, changes.
+/// search: one index of every word written in the app, by photo id, kept up
+/// to date a few photos at a time.
 ///
-/// Each photo's entry holds its own words (place, trip, memories, tags), the
-/// year and month it was taken, the names of the people in it, and what was
-/// written about it anywhere else: the comments under its memories, the
-/// original words of its notes, its day's memories, its trip's or
-/// chapter's memories and its place's notes. Typing then reads this index
-/// only; nothing is fetched per keystroke.
+/// Each photo's entry holds its place names and the year and month it was
+/// taken, its tags, the names of the people in it, and everything written
+/// about it anywhere: its memories (both people's) and their comments, the
+/// original words of its notes, its day's memories, its trip's or chapter's
+/// name and memories, and its place's notes. Typing reads this index only.
+///
+/// Nothing is built again in full on the main thread while someone types:
+/// - A save of something written reads again only that kind of record and
+///   updates only the photos whose texts changed (a comment: one photo; a
+///   day's memory: that day's photos).
+/// - Reading every photo (the first time, or after places were renamed)
+///   happens in slices between other main-thread work, while the index from
+///   before keeps answering. A photo not read yet is matched the old way.
 @MainActor
 enum LibrarySearchIndex {
-    /// The last index built and the inputs it was built from.
-    private static var cached: (key: Int, corpus: SearchCorpus)?
-
-    #if DEBUG
-    /// How many times an index was built, for tests.
-    private(set) static var buildCount = 0
-    #endif
+    // MARK: What a search asks
 
     /// The photos that match `query`, or nil when it has no words (then the
     /// search narrows nothing).
@@ -34,156 +35,550 @@ enum LibrarySearchIndex {
         calendar: Calendar = .current
     ) -> Set<String>? {
         guard !SearchFolding.words(of: query).isEmpty else { return nil }
-        let corpus: SearchCorpus = corpus(store: store, people: people, personIndex: personIndex, context: context, calendar: calendar)
-        return corpus.ids(matching: query)
+        let state: State = prepare(store: store, people: people, personIndex: personIndex, context: context, calendar: calendar)
+        // A few photos changed by the last save are read now; a whole
+        // library waits for the slices.
+        state.readPending(budget: Self.keystrokeBudget)
+        scheduleSlices(state)
+        guard var found: Set<String> = state.index.ids(matching: query) else { return nil }
+        // Photos not read yet: the old search, so none is missing meanwhile.
+        let unread: [String] = state.pending.filter { !state.index.contains($0) }
+        if !unread.isEmpty {
+            var nameByPerson: [String: String] = [:]
+            for person in people where !person.hidden {
+                if let name = person.name, !name.isEmpty { nameByPerson[person.id] = name }
+            }
+            for id in unread {
+                guard let item = store.itemsByID[id] else { continue }
+                var extras: [String] = LibraryFilterEngine.dateWords(of: item, calendar: calendar)
+                extras += (personIndex[id] ?? []).compactMap { nameByPerson[$0] }
+                if LibraryFilterEngine.matchesSearch(item, query, extras: extras) { found.insert(id) }
+            }
+            #if DEBUG
+            PageProbe.tally("search matched photos not indexed yet")
+            #endif
+        }
+        return found
     }
 
-    /// The index for the library as it is now: the cached one while nothing
-    /// it reads has changed, else a new one.
-    static func corpus(
+    /// Starts reading the library into the index, a slice at a time, so it
+    /// is ready before the first word is typed. Cheap when it is ready.
+    static func warmUp(
         store: LibraryStore,
         people: [Person],
         personIndex: [String: Set<String>],
         context: ModelContext,
         calendar: Calendar = .current
-    ) -> SearchCorpus {
-        let key: Int = key(store: store, people: people, calendar: calendar)
-        if let cached, cached.key == key { return cached.corpus }
-        #if DEBUG
-        let started: CFTimeInterval = CACurrentMediaTime()
-        #endif
-        let corpus: SearchCorpus = makeCorpus(
-            items: store.items,
-            people: people,
-            personIndex: personIndex,
-            context: context,
-            calendar: calendar
-        )
-        cached = (key, corpus)
-        #if DEBUG
-        buildCount += 1
-        PageProbe.tally("search index built", seconds: CACurrentMediaTime() - started)
-        #endif
-        return corpus
+    ) {
+        if let state, state.belongs(to: store, calendar: calendar) {
+            _ = prepare(store: store, people: people, personIndex: personIndex, context: context, calendar: calendar)
+            scheduleSlices(state)
+            return
+        }
+        // The first time: after the page has drawn.
+        warmUpTask?.cancel()
+        warmUpTask = Task { @MainActor [weak store] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, let store else { return }
+            let state: State = prepare(store: store, people: people, personIndex: personIndex, context: context, calendar: calendar)
+            scheduleSlices(state)
+        }
     }
 
-    /// What the index depends on, as revisions the store already keeps, so
-    /// working it out reads no records. People's names are few and read here.
-    static func key(store: LibraryStore, people: [Person], calendar: Calendar) -> Int {
-        var hasher = Hasher()
-        // Photos added, removed, moved in time or place, faces assigned.
-        hasher.combine(store.photoFaceRevision)
-        hasher.combine(store.placeRevision)
-        // Memories, memberships, tags and overrides.
-        hasher.combine(store.groupSourcesRevision)
-        // Comments, notes, day and trip memories, place notes, trip and person names.
-        hasher.combine(store.writtenTextRevision)
-        hasher.combine(store.items.count)
-        for person in people {
-            hasher.combine(person.id)
-            hasher.combine(person.name)
-            hasher.combine(person.hidden)
+    /// Drops the index; the next search starts again.
+    static func reset() {
+        state?.sliceTask?.cancel()
+        state = nil
+        warmUpTask?.cancel()
+        warmUpTask = nil
+    }
+
+    /// How long a keystroke may spend reading photos changed since the last
+    /// one, and how long one slice of a full read takes at most.
+    static let keystrokeBudget: CFTimeInterval = 0.04
+    static let sliceBudget: CFTimeInterval = 0.025
+    /// A full read (every photo) starts at most this often after the last
+    /// one ended; the index from before answers meanwhile.
+    static let fullReadInterval: CFTimeInterval = 10
+
+    #if DEBUG
+    /// Photos whose fields were read, and photos whose entries changed, for tests.
+    static var photosRead: Int { state?.photosRead ?? 0 }
+    static var entriesChanged: Int { state?.entriesChanged ?? 0 }
+    /// True when every photo is read and nothing waits.
+    static var isReady: Bool { state.map { $0.pending.isEmpty && !$0.fullReadRequested } ?? false }
+    /// The longest a slice of a full read took, for the 50,000-photo test.
+    static var longestSlice: CFTimeInterval { state?.longestSlice ?? 0 }
+    /// Reads everything still waiting, at once. Tests only.
+    static func finishReading() {
+        guard let state else { return }
+        if state.fullReadRequested { state.queueFullRead() }
+        state.readPending(budget: .infinity)
+    }
+    #endif
+
+    // MARK: State
+
+    private static var state: State?
+    private static var warmUpTask: Task<Void, Never>?
+
+    /// What a photo's own fields give the index, and where the photo belongs.
+    private struct Fields: Equatable {
+        var texts: [String]
+        var dayKey: String?
+        var tripIDs: [String]
+        var placeNames: [String]
+    }
+
+    /// Where a photo's entry was filed, so a change of day, chapter or
+    /// place can unfile it.
+    private struct Filed: Equatable {
+        var dayKey: String?
+        var chapterKeys: Set<String>
+        var placeKeys: Set<String>
+    }
+
+    /// Everything written, by kind, as read from the store.
+    private struct WrittenParts {
+        var memories: [WrittenTextIndex.PhotoText] = []
+        var notes: [WrittenTextIndex.PhotoText] = []
+        var collections: [WrittenTextIndex.CollectionText] = []
+        var collectionPhotoTexts: [WrittenTextIndex.PhotoText] = []
+        var places: [WrittenTextIndex.PlaceText] = []
+        var comments: [WrittenTextIndex.CommentText] = []
+        var trips: [WrittenTextIndex.TripName] = []
+
+        var sources: WrittenTextIndex.Sources {
+            WrittenTextIndex.Sources(
+                photoTexts: memories + notes + collectionPhotoTexts,
+                collectionTexts: collections,
+                placeTexts: places,
+                comments: comments,
+                tripNames: trips
+            )
         }
+    }
+
+    private static let writtenEntities: [String] = [
+        String(describing: Memory.self),
+        String(describing: PhotoNote.self),
+        String(describing: CollectionMemory.self),
+        String(describing: PlaceNote.self),
+        String(describing: Comment.self),
+        String(describing: Trip.self),
+    ]
+    private static let tagEntities: [String] = [String(describing: MediaTag.self), String(describing: Tag.self)]
+    private static let chapterEntities: [String] = [String(describing: UserGroup.self), String(describing: UserGroupItem.self)]
+    private static let placeOverrideEntity: String = String(describing: PlaceOverride.self)
+
+    private final class State {
+        let storeID: ObjectIdentifier
+        let calendarKey: Int
+        let calendar: Calendar
+        weak var store: LibraryStore?
+
+        var index = SearchIndex()
+        var fields: [String: Fields] = [:]
+        var tags: [String: [String]] = [:]
+        var names: [String: [String]] = [:]
+        var memberships: [String: [String]] = [:]
+        var written = WrittenParts()
+        var lookup = WrittenTextIndex.Lookup()
+        var filed: [String: Filed] = [:]
+        var photosByDay: [String: Set<String>] = [:]
+        var photosByChapter: [String: Set<String>] = [:]
+        var photosByPlace: [String: Set<String>] = [:]
+
+        /// The revisions the index is current to; nil before the first read.
+        var photoRevision: Int?
+        var placeKey: Int?
+        var sourceRevisions: [String: Int] = [:]
+        var namesKey: Int?
+
+        /// Photos whose fields wait to be read, oldest first.
+        var pending: [String] = []
+        var pendingSet: Set<String> = []
+        /// Every photo should be read again (places renamed, a save that
+        /// could not say which photos changed), once the interval allows.
+        var fullReadRequested = false
+        var lastFullReadEnded: CFTimeInterval = -.infinity
+        var fullReadInProgress = false
+        var sliceTask: Task<Void, Never>?
+
+        var photosRead = 0
+        var entriesChanged = 0
+        var longestSlice: CFTimeInterval = 0
+
+        init(store: LibraryStore, calendar: Calendar) {
+            self.storeID = ObjectIdentifier(store)
+            self.store = store
+            self.calendar = calendar
+            self.calendarKey = LibrarySearchIndex.calendarKey(calendar)
+        }
+
+        func belongs(to store: LibraryStore, calendar: Calendar) -> Bool {
+            storeID == ObjectIdentifier(store) && calendarKey == LibrarySearchIndex.calendarKey(calendar)
+        }
+
+        var hasWork: Bool { !pending.isEmpty || fullReadRequested }
+
+        func enqueue<S: Sequence>(_ ids: S) where S.Element == String {
+            for id in ids where pendingSet.insert(id).inserted { pending.append(id) }
+        }
+
+        /// Every photo the store lists, to be read again.
+        func queueFullRead() {
+            guard let store else { return }
+            fullReadRequested = false
+            fullReadInProgress = true
+            enqueue(store.items.map(\.id))
+        }
+
+        /// Takes out photos the store no longer lists and queues the new
+        /// ones first. Cheap: no photo's fields are read.
+        func syncMembership() {
+            guard let store else { return }
+            var removed: [String: [String]?] = [:]
+            for id in index.ids where store.itemsByID[id] == nil { removed[id] = .some(nil) }
+            for id in fields.keys where store.itemsByID[id] == nil { removed[id] = .some(nil) }
+            if !removed.isEmpty {
+                for id in removed.keys {
+                    fields[id] = nil
+                    unfile(id)
+                }
+                index.update(removed)
+            }
+            var added: [String] = []
+            for item in store.items where fields[item.id] == nil && !pendingSet.contains(item.id) { added.append(item.id) }
+            if !added.isEmpty {
+                // Ahead of a full read, so new photos are found soonest.
+                for id in added { pendingSet.insert(id) }
+                pending.insert(contentsOf: added, at: 0)
+            }
+        }
+
+        /// Reads queued photos until `budget` seconds have passed, and
+        /// updates their entries.
+        func readPending(budget: CFTimeInterval) {
+            guard !pending.isEmpty, let store else { return }
+            let started: CFTimeInterval = CACurrentMediaTime()
+            var changes: [String: [String]?] = [:]
+            var taken = 0
+            for id in pending {
+                taken += 1
+                pendingSet.remove(id)
+                guard let item = store.itemsByID[id] else {
+                    fields[id] = nil
+                    unfile(id)
+                    changes[id] = .some(nil)
+                    continue
+                }
+                fields[id] = LibrarySearchIndex.fields(of: item, calendar: calendar)
+                photosRead += 1
+                changes[id] = entry(for: id)
+                // Checked every few photos; reading one is microseconds.
+                if taken % 32 == 0 && CACurrentMediaTime() - started >= budget * 0.6 { break }
+            }
+            pending.removeFirst(taken)
+            entriesChanged += index.update(changes)
+            if pending.isEmpty {
+                // A full read waits `fullReadInterval` after any read ends.
+                fullReadInProgress = false
+                lastFullReadEnded = CACurrentMediaTime()
+            }
+            longestSlice = max(longestSlice, CACurrentMediaTime() - started)
+        }
+
+        /// Writes the entries of `ids` again from what is known now.
+        func refresh(_ ids: Set<String>) {
+            guard !ids.isEmpty else { return }
+            var changes: [String: [String]?] = [:]
+            for id in ids where fields[id] != nil { changes[id] = entry(for: id) }
+            entriesChanged += index.update(changes)
+        }
+
+        /// A photo's entry, and where it is filed. Its fields are read.
+        private func entry(for id: String) -> [String] {
+            guard let own = fields[id] else { return [] }
+            var chapters: [String] = own.tripIDs
+            chapters += memberships[id] ?? []
+            let photo = WrittenTextIndex.Photo(id: id, dayKey: own.dayKey, chapterKeys: chapters, placeNames: own.placeNames)
+            file(id, Filed(
+                dayKey: own.dayKey,
+                chapterKeys: Set(chapters),
+                placeKeys: Set(own.placeNames.map(WrittenTextIndex.placeKey(for:)).filter { !$0.isEmpty })
+            ))
+            var texts: [String] = own.texts
+            texts += tags[id] ?? []
+            texts += names[id] ?? []
+            texts += lookup.texts(for: photo)
+            return texts
+        }
+
+        private func file(_ id: String, _ new: Filed) {
+            if let old = filed[id] {
+                if old == new { return }
+                unfile(id)
+            }
+            filed[id] = new
+            if let day = new.dayKey { photosByDay[day, default: []].insert(id) }
+            for key in new.chapterKeys { photosByChapter[key, default: []].insert(id) }
+            for key in new.placeKeys { photosByPlace[key, default: []].insert(id) }
+        }
+
+        private func unfile(_ id: String) {
+            guard let old = filed.removeValue(forKey: id) else { return }
+            if let day = old.dayKey { photosByDay[day]?.remove(id) }
+            for key in old.chapterKeys { photosByChapter[key]?.remove(id) }
+            for key in old.placeKeys { photosByPlace[key]?.remove(id) }
+        }
+
+        /// The photos a change of the written texts reaches.
+        func photos(reachedBy changes: WrittenTextIndex.Lookup.Changes) -> Set<String> {
+            var ids: Set<String> = changes.photoIDs
+            for key in changes.dayKeys { ids.formUnion(photosByDay[key] ?? []) }
+            for key in changes.chapterKeys { ids.formUnion(photosByChapter[key] ?? []) }
+            for key in changes.placeKeys { ids.formUnion(photosByPlace[key] ?? []) }
+            return ids
+        }
+    }
+
+    // MARK: Keeping up with saves
+
+    /// The state for this store, brought up to date with what was saved
+    /// since: only the kinds of record that changed are read again.
+    private static func prepare(
+        store: LibraryStore,
+        people: [Person],
+        personIndex: [String: Set<String>],
+        context: ModelContext,
+        calendar: Calendar
+    ) -> State {
+        let state: State
+        if let current = Self.state, current.belongs(to: store, calendar: calendar) {
+            state = current
+        } else {
+            Self.state?.sliceTask?.cancel()
+            state = State(store: store, calendar: calendar)
+            Self.state = state
+        }
+        var touched = Set<String>()
+
+        // Photos and places.
+        var placeHasher = Hasher()
+        placeHasher.combine(store.placeRevision)
+        placeHasher.combine(store.searchSourceRevision(of: placeOverrideEntity))
+        let placeKey: Int = placeHasher.finalize()
+        if state.photoRevision == nil {
+            state.syncMembership()
+        } else if state.placeKey != placeKey {
+            // A place's name feeds every photo there: read them all again.
+            state.syncMembership()
+            state.fullReadRequested = true
+        } else if let from = state.photoRevision, from != store.photoFaceRevision {
+            if let ids = store.changedPhotoIDs(sincePhotoFaceRevision: from) {
+                state.enqueue(ids)
+            } else {
+                // Photos added or removed, faces moved: those are cheap to
+                // tell; anything else waits for a full read.
+                state.syncMembership()
+                state.fullReadRequested = true
+            }
+        }
+        state.photoRevision = store.photoFaceRevision
+        state.placeKey = placeKey
+
+        // Tags.
+        let tagKey: Int = revision(of: tagEntities, in: store)
+        if state.sourceRevisions["tags"] != tagKey {
+            state.sourceRevisions["tags"] = tagKey
+            let tags: [String: [String]] = tagsByPhoto(context: context)
+            touched.formUnion(differing(tags, state.tags))
+            state.tags = tags
+        }
+
+        // Chapters and who is in them.
+        let chapterKey: Int = revision(of: chapterEntities, in: store)
+        if state.sourceRevisions["chapters"] != chapterKey {
+            state.sourceRevisions["chapters"] = chapterKey
+            let memberships: [String: [String]] = chapterKeysByPhoto(context: context)
+            touched.formUnion(differing(memberships, state.memberships))
+            state.memberships = memberships
+        }
+
+        // What people wrote, one kind of record at a time.
+        var writtenChanged = false
+        for entity in writtenEntities {
+            let key: Int = store.searchSourceRevision(of: entity)
+            guard state.sourceRevisions[entity] != key else { continue }
+            state.sourceRevisions[entity] = key
+            read(entity, into: &state.written, context: context)
+            writtenChanged = true
+        }
+        if writtenChanged {
+            let lookup = WrittenTextIndex.Lookup(sources: state.written.sources)
+            let changes: WrittenTextIndex.Lookup.Changes = lookup.changes(from: state.lookup)
+            state.lookup = lookup
+            if !changes.isEmpty { touched.formUnion(state.photos(reachedBy: changes)) }
+        }
+
+        // People's names; hidden people are not searched.
+        var namesHasher = Hasher()
+        namesHasher.combine(store.photoFaceRevision)
+        namesHasher.combine(personIndex.count)
+        for person in people {
+            namesHasher.combine(person.id)
+            namesHasher.combine(person.name)
+            namesHasher.combine(person.hidden)
+        }
+        let namesKey: Int = namesHasher.finalize()
+        if state.namesKey != namesKey {
+            state.namesKey = namesKey
+            var nameByPerson: [String: String] = [:]
+            for person in people where !person.hidden {
+                let name: String = person.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !name.isEmpty { nameByPerson[person.id] = name }
+            }
+            var names: [String: [String]] = [:]
+            if !nameByPerson.isEmpty {
+                for (mediaID, personIDs) in personIndex {
+                    let found: [String] = personIDs.compactMap { nameByPerson[$0] }.sorted()
+                    if !found.isEmpty { names[mediaID] = found }
+                }
+            }
+            touched.formUnion(differing(names, state.names))
+            state.names = names
+        }
+
+        state.refresh(touched)
+        return state
+    }
+
+    /// Reads the slices in the background of the main thread: one slice,
+    /// then a pause so input and drawing go first.
+    private static func scheduleSlices(_ state: State) {
+        guard state.sliceTask == nil, state.hasWork else { return }
+        state.sliceTask = Task { @MainActor [weak state] in
+            while !Task.isCancelled {
+                guard let current = state, current.hasWork else { break }
+                if current.pending.isEmpty && current.fullReadRequested {
+                    let wait: CFTimeInterval = current.lastFullReadEnded + fullReadInterval - CACurrentMediaTime()
+                    if wait > 0 {
+                        try? await Task.sleep(for: .seconds(min(wait, 1)))
+                        continue
+                    }
+                    current.queueFullRead()
+                }
+                current.readPending(budget: sliceBudget)
+                try? await Task.sleep(for: .milliseconds(25))
+            }
+            state?.sliceTask = nil
+        }
+    }
+
+    // MARK: Reading records
+
+    private static func calendarKey(_ calendar: Calendar) -> Int {
+        var hasher = Hasher()
         hasher.combine(calendar.identifier)
         hasher.combine(calendar.timeZone.identifier)
         hasher.combine(calendar.locale?.identifier)
         return hasher.finalize()
     }
 
-    /// Drops the cached index; the next search builds one.
-    static func reset() {
-        cached = nil
+    private static func revision(of entities: [String], in store: LibraryStore) -> Int {
+        var hasher = Hasher()
+        for entity in entities { hasher.combine(store.searchSourceRevision(of: entity)) }
+        return hasher.finalize()
     }
 
-    /// Builds the index from the given photos and everything written in
-    /// `context`. Each kind of record is fetched once.
-    static func makeCorpus(
-        items: [MediaItem],
-        people: [Person],
-        personIndex: [String: Set<String>],
-        context: ModelContext,
-        calendar: Calendar = .current
-    ) -> SearchCorpus {
-        let sources: WrittenTextIndex.Sources = writtenSources(context: context)
-        let chapterMemberships: [String: [String]] = chapterKeysByPhoto(context: context)
-
-        var photos: [WrittenTextIndex.Photo] = []
-        photos.reserveCapacity(items.count)
-        for item in items {
-            var chapters: [String] = chapterMemberships[item.id] ?? []
-            if let tripID = item.tripID { chapters.append(tripID) }
-            if let tripID = item.trip?.id, tripID != item.tripID { chapters.append(tripID) }
-            let placeNames: [String] = [item.namedPlace, item.effectivePlaceName, item.displayPlaceName].compactMap { $0 }
-            photos.append(
-                WrittenTextIndex.Photo(
-                    id: item.id,
-                    dayKey: PhotoNoteDay.key(for: item),
-                    chapterKeys: chapters,
-                    placeNames: placeNames
-                )
-            )
-        }
-        let written: [String: [String]] = WrittenTextIndex.textsByPhoto(photos: photos, sources: sources)
-        // The names of the people in each photo; hidden people are not searched.
-        var nameByPerson: [String: String] = [:]
-        for person in people where !person.hidden {
-            let name: String = person.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !name.isEmpty { nameByPerson[person.id] = name }
-        }
-
-        var texts: [String: [String]] = [:]
-        texts.reserveCapacity(items.count)
-        for item in items {
-            var entry: [String] = LibraryFilterEngine.searchableOwnTexts(of: item)
-            entry += LibraryFilterEngine.dateWords(of: item, calendar: calendar)
-            if !nameByPerson.isEmpty, let personIDs = personIndex[item.id] {
-                entry += personIDs.compactMap { nameByPerson[$0] }
-            }
-            entry += written[item.id] ?? []
-            texts[item.id] = entry
-        }
-        return SearchCorpus(textsByID: texts)
+    /// The keys whose values differ between two maps.
+    private static func differing(_ new: [String: [String]], _ old: [String: [String]]) -> Set<String> {
+        var keys = Set<String>()
+        for (key, value) in new where old[key] != value { keys.insert(key) }
+        for key in old.keys where new[key] == nil { keys.insert(key) }
+        return keys
     }
 
-    /// Every written record, as plain values.
-    static func writtenSources(context: ModelContext) -> WrittenTextIndex.Sources {
-        var sources = WrittenTextIndex.Sources()
-        // Both people's memories, also one whose photo link is not set yet.
-        for memory in (try? context.fetch(FetchDescriptor<Memory>())) ?? [] {
-            guard let mediaID = memory.mediaID ?? memory.mediaItem?.id else { continue }
-            sources.photoTexts.append(.init(id: memory.id, mediaID: mediaID, text: memory.text))
-        }
-        // What was typed before the AI organized it.
-        for note in (try? context.fetch(FetchDescriptor<PhotoNote>())) ?? [] {
-            sources.photoTexts.append(.init(mediaID: note.mediaID, text: note.text))
-        }
-        for memory in (try? context.fetch(FetchDescriptor<CollectionMemory>())) ?? [] {
-            switch memory.scope {
-            case .day:
-                sources.collectionTexts.append(.init(id: memory.id, scope: .day, key: memory.scopeKey, text: memory.text))
-            case .trip:
-                sources.collectionTexts.append(.init(id: memory.id, scope: .chapter, key: memory.scopeKey, text: memory.text))
-            case .photo:
-                // Not written by the app; a photo's memory is a `Memory`.
-                sources.photoTexts.append(.init(id: memory.id, mediaID: memory.scopeKey, text: memory.text))
+    /// A photo's own fields: where it was taken and when.
+    private static func fields(of item: MediaItem, calendar: Calendar) -> Fields {
+        var texts: [String] = [item.effectivePlaceName, item.displayPlaceName].compactMap { $0 }
+        texts += LibraryFilterEngine.dateWords(of: item, calendar: calendar)
+        var tripIDs: [String] = []
+        if let tripID = item.tripID { tripIDs.append(tripID) }
+        if let tripID = item.trip?.id, tripID != item.tripID { tripIDs.append(tripID) }
+        return Fields(
+            texts: texts,
+            dayKey: PhotoNoteDay.key(for: item),
+            tripIDs: tripIDs,
+            placeNames: [item.namedPlace, item.effectivePlaceName, item.displayPlaceName].compactMap { $0 }
+        )
+    }
+
+    /// Reads one kind of written record again.
+    private static func read(_ entity: String, into parts: inout WrittenParts, context: ModelContext) {
+        switch entity {
+        case String(describing: Memory.self):
+            // Both people's memories, also one whose photo link is not set yet.
+            parts.memories = ((try? context.fetch(FetchDescriptor<Memory>())) ?? []).compactMap { memory in
+                guard let mediaID = memory.mediaID ?? memory.mediaItem?.id else { return nil }
+                return .init(id: memory.id, mediaID: mediaID, text: memory.text)
             }
-        }
-        for note in (try? context.fetch(FetchDescriptor<PlaceNote>())) ?? [] {
-            sources.placeTexts.append(.init(placeName: note.placeName, text: note.text))
-            // Keyed by its stored key too, in case the name was corrected since.
-            if note.placeKey != WrittenTextIndex.placeKey(for: note.placeName) {
-                sources.placeTexts.append(.init(placeName: note.placeKey, text: note.text))
+        case String(describing: PhotoNote.self):
+            // What was typed before the AI organized it.
+            parts.notes = ((try? context.fetch(FetchDescriptor<PhotoNote>())) ?? []).map { note in
+                .init(mediaID: note.mediaID, text: note.text)
             }
+        case String(describing: CollectionMemory.self):
+            parts.collections = []
+            parts.collectionPhotoTexts = []
+            for memory in (try? context.fetch(FetchDescriptor<CollectionMemory>())) ?? [] {
+                switch memory.scope {
+                case .day:
+                    parts.collections.append(.init(id: memory.id, scope: .day, key: memory.scopeKey, text: memory.text))
+                case .trip:
+                    parts.collections.append(.init(id: memory.id, scope: .chapter, key: memory.scopeKey, text: memory.text))
+                case .photo:
+                    // Not written by the app; a photo's memory is a `Memory`.
+                    parts.collectionPhotoTexts.append(.init(id: memory.id, mediaID: memory.scopeKey, text: memory.text))
+                }
+            }
+        case String(describing: PlaceNote.self):
+            parts.places = []
+            for note in (try? context.fetch(FetchDescriptor<PlaceNote>())) ?? [] {
+                parts.places.append(.init(placeName: note.placeName, text: note.text))
+                // Keyed by its stored key too, in case the name was corrected since.
+                if note.placeKey != WrittenTextIndex.placeKey(for: note.placeName) {
+                    parts.places.append(.init(placeName: note.placeKey, text: note.text))
+                }
+            }
+        case String(describing: Comment.self):
+            parts.comments = ((try? context.fetch(FetchDescriptor<Comment>())) ?? []).map { comment in
+                .init(memoryID: comment.memoryID, text: comment.text)
+            }
+        case String(describing: Trip.self):
+            parts.trips = ((try? context.fetch(FetchDescriptor<Trip>())) ?? []).map { trip in
+                .init(tripID: trip.id, name: trip.effectiveName)
+            }
+        default:
+            break
         }
-        for comment in (try? context.fetch(FetchDescriptor<Comment>())) ?? [] {
-            sources.comments.append(.init(memoryID: comment.memoryID, text: comment.text))
+    }
+
+    /// Each photo's tag names.
+    private static func tagsByPhoto(context: ModelContext) -> [String: [String]] {
+        var result: [String: [String]] = [:]
+        for mediaTag in (try? context.fetch(FetchDescriptor<MediaTag>())) ?? [] {
+            guard let mediaID = mediaTag.mediaID ?? mediaTag.mediaItem?.id, let name = mediaTag.tag?.displayName else { continue }
+            result[mediaID, default: []].append(name)
         }
-        return sources
+        for key in result.keys { result[key]?.sort() }
+        return result
     }
 
     /// The chapters (that are not trips) each photo is in, by the id a
     /// chapter's memories are written under.
-    static func chapterKeysByPhoto(context: ModelContext) -> [String: [String]] {
+    private static func chapterKeysByPhoto(context: ModelContext) -> [String: [String]] {
         let chapterKind: String = UserGroup.Kind.chapter.rawValue
         let groups: [UserGroup] = (try? context.fetch(FetchDescriptor<UserGroup>(predicate: #Predicate<UserGroup> { $0.kindRaw == chapterKind }))) ?? []
         guard !groups.isEmpty else { return [:] }
@@ -194,6 +589,7 @@ enum LibrarySearchIndex {
             guard let key = keyByGroupID[member.groupID] else { continue }
             result[member.mediaID, default: []].append(key)
         }
+        for key in result.keys { result[key]?.sort() }
         return result
     }
 }

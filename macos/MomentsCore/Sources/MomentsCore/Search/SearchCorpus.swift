@@ -77,12 +77,20 @@ public struct SearchCorpus: Sendable {
     public func ids(matching query: String) -> Set<String>? {
         let words: [String] = SearchFolding.words(of: query)
         guard !words.isEmpty else { return nil }
-        // Rarest-looking first: the longest word usually leaves the fewest
-        // photos, and later words only check those.
-        let ordered: [String] = words.sorted { $0.utf8.count > $1.utf8.count }
+        return ids(matchingOrderedWords: Self.ordered(words))
+    }
+
+    /// Folded words, rarest-looking first: the longest word usually leaves
+    /// the fewest photos, and later words only check those.
+    static func ordered(_ words: [String]) -> [[UInt8]] {
+        words.sorted { $0.utf8.count > $1.utf8.count }.map { Array($0.utf8) }
+    }
+
+    /// The photos holding every one of `ordered`, words already folded.
+    func ids(matchingOrderedWords ordered: [[UInt8]]) -> Set<String> {
         var blocks: Set<Int>? = nil
         for word in ordered {
-            let found: Set<Int> = blocksContaining(Array(word.utf8), among: blocks)
+            let found: Set<Int> = blocksContaining(word, among: blocks)
             if found.isEmpty { return [] }
             blocks = found
         }
